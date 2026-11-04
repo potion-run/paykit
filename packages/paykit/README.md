@@ -149,8 +149,8 @@ allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a ra
 price that is not positive whole minor units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
-`{ allowed, remaining: null, resetsAt: null, standing }`, and `Track`, `Reserve`, `Settle` and
-`Release` refuse it with `FeatureNotMetered` because there is no counter behind it.
+`{ allowed, remaining: null, resetsAt: null, standing }`, and `Track` and `Hold` refuse it with
+`FeatureNotMetered` because there is no counter behind it.
 
 `carryOver: true` rolls what a period did not spend into the next one, at most `included`: the new
 period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`, and the read model
@@ -165,7 +165,7 @@ default) zeroes it at a period close while `"never"` keeps it.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no
-count to report, and `resetsAt` is still there because the period still exists. `Track`, `Reserve`,
+count to report, and `resetsAt` is still there because the period still exists. `Track`, `Hold`,
 `Settle` and `Release` all work on it, `used` keeps its honest count, and `ClosePeriod` resets
 `used` without inventing a `remaining`.
 

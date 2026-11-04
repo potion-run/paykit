@@ -8,7 +8,7 @@ import { ChargeProration } from "./ChargeProration.ts";
 import { Check, CheckHttp, CheckInProcess, CheckReadModel, evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
-import { Release, Reserve, Settle } from "./Hold.ts";
+import { Hold, Release, Settle } from "./Hold.ts";
 import { List } from "./List.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
@@ -85,7 +85,7 @@ export const Paykit = {
   CheckHttp,
   evaluateCheck,
   Track,
-  Reserve,
+  Hold,
   Settle,
   Release,
   Subscribe,

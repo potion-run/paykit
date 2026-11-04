@@ -19,9 +19,8 @@ import {
   UsageReset,
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
-import { ReleaseUsage, UsageReleased } from "../../src/Subscription/ReleaseUsage.command.ts";
-import { ReserveUsage, UsageReserved } from "../../src/Subscription/ReserveUsage.command.ts";
-import { SettleUsage, UsageSettled } from "../../src/Subscription/SettleUsage.command.ts";
+import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
+import { SettleHold, UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -130,19 +129,22 @@ it.effect("records usage that never blocks, and keeps no count to report", () =>
 it.effect("holds, settles and releases unlimited units without refusing", () =>
   story(
     ...subscribed,
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 5_000_000 })),
+    Story.when(account, new Hold({ holdId: "hold_1", feature: "messages", amount: 5_000_000 })),
     Story.then(
       account,
       new UsageReserved({
+        holdId: "hold_1",
         feature: "messages",
         amount: 5_000_000,
-        reservedAfter: 5_000_000,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: at("2030-01-01T00:15:00Z"),
         remainingAfter: null,
-        reservationId: "hold:1",
-        sequence: 1,
       }),
     ),
-    Story.when(account, new SettleUsage({ feature: "messages", amount: 4_000_000 })),
+    // One call bills what ran and returns the rest.
+    Story.when(account, new SettleHold({ holdId: "hold_1", amount: 4_000_000 })),
     Story.then(
       account,
       new UsageRecorded({
@@ -154,26 +156,16 @@ it.effect("holds, settles and releases unlimited units without refusing", () =>
         remainingAfter: null,
       }),
       new UsageSettled({
+        holdId: "hold_1",
         feature: "messages",
         amount: 4_000_000,
-        reservedAfter: 1_000_000,
+        released: 1_000_000,
+        cost: 0,
         remainingAfter: null,
-        reservationId: "hold:1",
-      }),
-    ),
-    Story.when(account, new ReleaseUsage({ feature: "messages", amount: 1_000_000 })),
-    Story.then(
-      account,
-      new UsageReleased({
-        feature: "messages",
-        amount: 1_000_000,
-        reservedAfter: 0,
-        remainingAfter: null,
-        reservationId: "hold:1",
       }),
     ),
     Story.view(Entitlements, account, {
-      features: { messages: { ...unlimitedFeature(monthLater), used: 4_000_000 } },
+      features: { messages: { ...unlimitedFeature(monthLater), used: 4_000_000, reserved: 0 } },
     }),
   ),
 );

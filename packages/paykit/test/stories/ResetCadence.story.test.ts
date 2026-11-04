@@ -15,7 +15,7 @@ import {
   UsageReset,
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
-import { ReserveUsage, UsageReserved } from "../../src/Subscription/ReserveUsage.command.ts";
+import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -44,6 +44,7 @@ const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
 const march = at("2030-03-01T00:00:00Z");
+const holdExpiry = DateTime.add(start, { minutes: 15 });
 
 it.effect("a never-reset allowance keeps its usage across a period close", () =>
   story(
@@ -186,34 +187,32 @@ it.effect(
           statusAfter: "active",
         }),
       ),
-      Story.when(
-        account,
-        new ReserveUsage({ feature: "messages", amount: 20, reservationId: "msg-hold" }),
-      ),
+      Story.when(account, new Hold({ holdId: "msg-hold", feature: "messages", amount: 20 })),
       Story.then(
         account,
         new UsageReserved({
+          holdId: "msg-hold",
           feature: "messages",
           amount: 20,
-          reservedAfter: 20,
+          rate: 0,
+          cost: 0,
+          at: start,
+          expiresAt: holdExpiry,
           remainingAfter: 80,
-          reservationId: "msg-hold",
-          sequence: 1,
         }),
       ),
-      Story.when(
-        account,
-        new ReserveUsage({ feature: "seats", amount: 2, reservationId: "seat-hold" }),
-      ),
+      Story.when(account, new Hold({ holdId: "seat-hold", feature: "seats", amount: 2 })),
       Story.then(
         account,
         new UsageReserved({
+          holdId: "seat-hold",
           feature: "seats",
           amount: 2,
-          reservedAfter: 2,
+          rate: 0,
+          cost: 0,
+          at: start,
+          expiresAt: holdExpiry,
           remainingAfter: 3,
-          reservationId: "seat-hold",
-          sequence: 2,
         }),
       ),
       Story.clock(monthLater),
@@ -236,9 +235,18 @@ it.effect(
         new CreditsExpired({ amount: 0, balanceAfter: 0 }),
       ),
       Story.state(account, {
-        reserved: { seats: 2 },
-        reservations: {
-          "seat-hold": { id: "seat-hold", feature: "seats", amount: 2, remaining: 2 },
+        remaining: { messages: 100, seats: 3 },
+        holds: {
+          "seat-hold": {
+            id: "seat-hold",
+            feature: "seats",
+            amount: 2,
+            rate: 0,
+            cost: 0,
+            at: start,
+            expiresAt: holdExpiry,
+            status: "open",
+          },
         },
       }),
       Story.view(Entitlements, account, {

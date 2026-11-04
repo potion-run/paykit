@@ -4,93 +4,144 @@ import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
+import { Hold as holdBinding, Release, Settle } from "../../src/Hold.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { ReleaseUsage, UsageReleased } from "../../src/Subscription/ReleaseUsage.command.ts";
+import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import {
-  ReservationExceeded,
-  ReservationExists,
-  ReserveUsage,
+  Hold,
+  HoldExceeded,
+  HoldExpired,
+  HoldSettled,
+  HoldUnknown,
   UsageReserved,
-} from "../../src/Subscription/ReserveUsage.command.ts";
-import {
-  NoReservation,
-  SettleUsage,
-  UsageSettled,
-} from "../../src/Subscription/SettleUsage.command.ts";
+} from "../../src/Subscription/Hold.command.ts";
+import { ReleaseHold, UsageReleased } from "../../src/Subscription/ReleaseHold.command.ts";
+import { SettleHold, UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2000, overage: "block" })],
+  grants: [allowance(messages, { included: 2_000 })],
 });
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
-const account = Subscription.ref("acct_lock");
-const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
-const monthLater = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+const account = Subscription.ref("acct_hold");
+const at = (iso: string) => DateTime.makeUnsafe(iso);
+const start = at("2030-01-01T00:00:00Z");
+const monthLater = at("2030-02-01T00:00:00Z");
+const quarter = at("2030-01-01T00:15:00Z");
 
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
 
-const activated = new SubscriptionActivated({
-  tier: "pro",
-  credits: 0,
-  creditsExpire: "period",
-  rates: {},
-  allowances: proAllowances,
-  remaining: { messages: 2000 },
-  periodStart: start,
-  periodEnd: monthLater,
-  anchorTz: "UTC",
-  interval: "month",
-  currency: "usd",
-  price: proPrice,
-  statusAfter: "active",
+const subscribed = [
+  Story.provide(Actor, system("test")),
+  Story.clock(start),
+  Story.when(
+    account,
+    new Subscribe({
+      tier: "pro",
+      allowances: proAllowances,
+      price: proPrice,
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+    }),
+  ),
+  Story.then(
+    account,
+    new SubscriptionActivated({
+      tier: "pro",
+      allowances: proAllowances,
+      remaining: { messages: 2_000 },
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      periodStart: start,
+      periodEnd: monthLater,
+      anchorTz: "UTC",
+      interval: "month",
+      currency: "usd",
+      price: proPrice,
+      statusAfter: "active",
+    }),
+  ),
+] as const;
+
+const held = new UsageReserved({
+  holdId: "hold_a",
+  feature: "messages",
+  amount: 400,
+  rate: 0,
+  cost: 0,
+  at: start,
+  expiresAt: quarter,
+  remainingAfter: 1_600,
 });
 
-it.effect("holds allowance, then bills exactly what it held", () =>
+it.effect("bills what a hold used and returns the rest in the same command", () =>
   story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
-      account,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
-      }),
-    ),
-    Story.then(account, activated),
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 400 })),
+    ...subscribed,
+    Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
+    Story.then(account, held),
+    // 250 of the 400 ran: one call bills them and returns the other 150.
+    Story.when(account, new SettleHold({ holdId: "hold_a", amount: 250 })),
     Story.then(
       account,
-      new UsageReserved({
+      new UsageRecorded({
         feature: "messages",
-        amount: 400,
-        reservedAfter: 400,
-        remainingAfter: 1600,
-        reservationId: "hold:1",
-        sequence: 1,
+        amount: 250,
+        cost: 0,
+        creditsAfter: 0,
+        usedAfter: 250,
+        remainingAfter: 1_750,
+      }),
+      new UsageSettled({
+        holdId: "hold_a",
+        feature: "messages",
+        amount: 250,
+        released: 150,
+        cost: 0,
+        remainingAfter: 1_750,
       }),
     ),
-    Story.when(
-      account,
-      new SettleUsage({ feature: "messages", amount: 400, dedupeKey: "settle-1" }),
-    ),
+    Story.view(Entitlements, account, {
+      features: {
+        messages: {
+          included: 2_000,
+          used: 250,
+          reserved: 0,
+          remaining: 1_750,
+          carried: 0,
+          allowed: true,
+          overage: "block",
+          resets: "month",
+          resetsAt: monthLater,
+        },
+      },
+    }),
+  ),
+);
+
+it.effect("settles a whole hold when no amount is given, and a replay bills nothing", () =>
+  story(
+    ...subscribed,
+    Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
+    Story.then(account, held),
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
     Story.then(
       account,
       new UsageRecorded({
@@ -99,364 +150,293 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         cost: 0,
         creditsAfter: 0,
         usedAfter: 400,
-        remainingAfter: 1600,
-        dedupeKey: "settle-1",
+        remainingAfter: 1_600,
       }),
       new UsageSettled({
+        holdId: "hold_a",
         feature: "messages",
         amount: 400,
-        reservedAfter: 0,
-        remainingAfter: 1600,
-        reservationId: "hold:1",
+        released: 0,
+        cost: 0,
+        remainingAfter: 1_600,
       }),
     ),
-    // A settle retried with its key is a replay even when the kernel assigns a
-    // different command id.
-    Story.when(
-      account,
-      new SettleUsage({ feature: "messages", amount: 100, dedupeKey: "settle-1" }),
-    ),
+    // A second settle is the same work billed once: it records nothing.
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
     Story.then(account),
   ),
 );
 
-it.effect("refuses a reservation past the spendable amount, and holding twice", () =>
+it.effect("refuses what a hold may not do, each with its own tag", () =>
   story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
-      account,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
-      }),
-    ),
-    Story.then(account, activated),
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 1_800 })),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 1_800,
-        reservedAfter: 1_800,
-        remainingAfter: 200,
-        reservationId: "hold:1",
-        sequence: 1,
-      }),
-    ),
-    // Only 200 are spendable now, so a second hold of 300 is refused.
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 300 })),
+    ...subscribed,
+    // An id nobody issued.
+    Story.when(account, new SettleHold({ holdId: "hold_ghost" })),
+    Story.rejected(new HoldUnknown({ holdId: "hold_ghost" })),
+    // More than there is room for.
+    Story.when(account, new Hold({ holdId: "hold_big", feature: "messages", amount: 2_500 })),
     Story.rejected(
-      new ReservationExceeded({
+      new HoldExceeded({
         feature: "messages",
-        included: 2000,
-        used: 0,
-        reserved: 1_800,
-        requested: 300,
-        remaining: 200,
+        requested: 2_500,
+        held: 0,
+        remaining: 2_000,
       }),
     ),
-    // The same reservation retried with a dedupe key holds once.
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 300, dedupeKey: "job-1" })),
+    Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
+    Story.then(account, held),
+    // More than the hold holds.
+    Story.when(account, new SettleHold({ holdId: "hold_a", amount: 401 })),
     Story.rejected(
-      new ReservationExceeded({
+      new HoldExceeded({
+        holdId: "hold_a",
         feature: "messages",
-        included: 2000,
-        used: 0,
-        reserved: 1_800,
-        requested: 300,
-        remaining: 200,
+        requested: 401,
+        held: 400,
+        remaining: 1_600,
       }),
     ),
-  ),
-);
-
-it.effect("releases a hold without billing it, and refuses to settle past what is held", () =>
-  story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
-      account,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
-      }),
-    ),
-    Story.then(account, activated),
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 500 })),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 500,
-        reservedAfter: 500,
-        remainingAfter: 1500,
-        reservationId: "hold:1",
-        sequence: 1,
-      }),
-    ),
-    Story.when(account, new ReleaseUsage({ feature: "messages", amount: 500 })),
+    // A released hold was never billed, so a settle refuses it.
+    Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
     Story.then(
       account,
       new UsageReleased({
-        feature: "messages",
-        amount: 500,
-        reservedAfter: 0,
-        remainingAfter: 2000,
-        reservationId: "hold:1",
-      }),
-    ),
-    Story.when(account, new SettleUsage({ feature: "messages", amount: 1 })),
-    Story.rejected(new NoReservation({ feature: "messages", requested: 1, reserved: 0 })),
-  ),
-);
-
-it.effect("addresses one hold by id, leaving another open", () =>
-  story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
-      account,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
-      }),
-    ),
-    Story.then(account, activated),
-    Story.when(
-      account,
-      new ReserveUsage({ feature: "messages", amount: 300, reservationId: "turn-a" }),
-    ),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 300,
-        reservedAfter: 300,
-        remainingAfter: 1700,
-        reservationId: "turn-a",
-        sequence: 1,
-      }),
-    ),
-    Story.replied({ reservationId: "turn-a" }),
-    Story.when(
-      account,
-      new ReserveUsage({ feature: "messages", amount: 200, reservationId: "turn-b" }),
-    ),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 200,
-        reservedAfter: 500,
-        remainingAfter: 1500,
-        reservationId: "turn-b",
-        sequence: 2,
-      }),
-    ),
-    Story.replied({ reservationId: "turn-b" }),
-    // Settling one hold does not touch the other.
-    Story.when(
-      account,
-      new SettleUsage({ feature: "messages", amount: 300, reservationId: "turn-a" }),
-    ),
-    Story.then(
-      account,
-      new UsageRecorded({
-        feature: "messages",
-        amount: 300,
-        cost: 0,
-        creditsAfter: 0,
-        usedAfter: 300,
-        remainingAfter: 1500,
-      }),
-      new UsageSettled({
-        feature: "messages",
-        amount: 300,
-        reservedAfter: 200,
-        remainingAfter: 1500,
-        reservationId: "turn-a",
-      }),
-    ),
-    Story.state(account, {
-      reserved: { messages: 200 },
-      reservations: {
-        "turn-b": { id: "turn-b", feature: "messages", amount: 200, remaining: 200 },
-      },
-    }),
-    Story.when(
-      account,
-      new ReleaseUsage({ feature: "messages", amount: 200, reservationId: "turn-b" }),
-    ),
-    Story.then(
-      account,
-      new UsageReleased({
-        feature: "messages",
-        amount: 200,
-        reservedAfter: 0,
-        remainingAfter: 1700,
-        reservationId: "turn-b",
-      }),
-    ),
-    Story.state(account, { reserved: { messages: 0 }, reservations: {} }),
-  ),
-);
-
-it.effect("settling by amount consumes open holds first-in-first-out", () =>
-  story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
-      account,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
-      }),
-    ),
-    Story.then(account, activated),
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 200 })),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 200,
-        reservedAfter: 200,
-        remainingAfter: 1800,
-        reservationId: "hold:1",
-        sequence: 1,
-      }),
-    ),
-    Story.when(account, new ReserveUsage({ feature: "messages", amount: 300 })),
-    Story.then(
-      account,
-      new UsageReserved({
-        feature: "messages",
-        amount: 300,
-        reservedAfter: 500,
-        remainingAfter: 1500,
-        reservationId: "hold:2",
-        sequence: 2,
-      }),
-    ),
-    Story.when(account, new SettleUsage({ feature: "messages", amount: 400 })),
-    Story.then(
-      account,
-      new UsageRecorded({
+        holdId: "hold_a",
         feature: "messages",
         amount: 400,
         cost: 0,
-        creditsAfter: 0,
-        usedAfter: 400,
-        remainingAfter: 1500,
-      }),
-      new UsageSettled({
-        feature: "messages",
-        amount: 200,
-        reservedAfter: 300,
-        remainingAfter: 1500,
-        reservationId: "hold:1",
-      }),
-      new UsageSettled({
-        feature: "messages",
-        amount: 200,
-        reservedAfter: 100,
-        remainingAfter: 1500,
-        reservationId: "hold:2",
+        remainingAfter: 2_000,
       }),
     ),
-    Story.state(account, {
-      reserved: { messages: 100 },
-      reservations: {
-        "hold:2": { id: "hold:2", feature: "messages", amount: 300, remaining: 100 },
-      },
-    }),
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
+    Story.rejected(new HoldSettled({ holdId: "hold_a", feature: "messages" })),
   ),
 );
 
-it.effect("refuses to reuse an open reservation id", () =>
+it.effect("a settled hold cannot be released, and a late release still returns units", () =>
   story(
-    Story.provide(Actor, system("test")),
-    Story.clock(start),
-    Story.when(
+    ...subscribed,
+    Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 100 })),
+    Story.then(
       account,
+      new UsageReserved({
+        holdId: "hold_a",
+        feature: "messages",
+        amount: 100,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 1_900,
+      }),
+    ),
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "messages",
+        amount: 100,
+        cost: 0,
+        creditsAfter: 0,
+        usedAfter: 100,
+        remainingAfter: 1_900,
+      }),
+      new UsageSettled({
+        holdId: "hold_a",
+        feature: "messages",
+        amount: 100,
+        released: 0,
+        cost: 0,
+        remainingAfter: 1_900,
+      }),
+    ),
+    Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
+    Story.rejected(new HoldSettled({ holdId: "hold_a", feature: "messages" })),
+    // Past `expiresAt` a hold can still be released: a cleanup, not a charge.
+    Story.when(account, new Hold({ holdId: "hold_late", feature: "messages", amount: 50 })),
+    Story.then(
+      account,
+      new UsageReserved({
+        holdId: "hold_late",
+        feature: "messages",
+        amount: 50,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 1_850,
+      }),
+    ),
+    Story.clock(quarter),
+    Story.when(account, new ReleaseHold({ holdId: "hold_late" })),
+    Story.then(
+      account,
+      new UsageReleased({
+        holdId: "hold_late",
+        feature: "messages",
+        amount: 50,
+        cost: 0,
+        remainingAfter: 1_900,
+      }),
+    ),
+  ),
+);
+
+it.effect("a hold past its expiry cannot be settled", () =>
+  story(
+    ...subscribed,
+    Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
+    Story.then(account, held),
+    Story.clock(quarter),
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
+    Story.rejected(
+      new HoldExpired({
+        holdId: "hold_a",
+        feature: "messages",
+        expiresAt: quarter,
+        now: quarter,
+      }),
+    ),
+  ),
+);
+
+const World = PaykitModel.layer(PaykitHandlers)
+  .pipe(Layer.provideMerge(MemoryBillingReadStore))
+  .pipe(Layer.provide(Domain.InMemory))
+  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+it.live("the bindings hold, settle a partial amount, and release what is left", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    const entitlements = yield* Entitlements;
+    const receipt = yield* subscription.send(
+      Subscription.ref(account.id),
       new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
         tier: "pro",
         allowances: proAllowances,
         price: proPrice,
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
       }),
-    ),
-    Story.then(account, activated),
+    );
+    yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
+
+    const hold = yield* holdBinding();
+    const settle = yield* Settle();
+    const release = yield* Release();
+
+    const placed = yield* hold({ account: account.id, feature: "messages", amount: 400 });
+    expect(placed.holdId).toBeDefined();
+    expect(placed.remaining).toBe(1_600);
+
+    // 250 ran: 150 comes back in the same call.
+    expect(yield* settle({ account: account.id, holdId: placed.holdId, amount: 250 })).toEqual({
+      billed: 250,
+      released: 150,
+    });
+
+    const second = yield* hold({ account: account.id, feature: "messages", amount: 100 });
+    expect(yield* release({ account: account.id, holdId: second.holdId })).toEqual({
+      released: 100,
+    });
+
+    // 250 billed, 100 returned: 1,750 is spendable and nothing is held.
+    const view = yield* entitlements.query(Subscription.ref(account.id));
+    expect(Option.getOrNull(view)).toMatchObject({
+      features: { messages: { used: 250, reserved: 0, remaining: 1_750 } },
+    });
+
+    // The read model's `reserved` is the fold of the open holds, so it agrees
+    // with the view after the same events.
+    const store = yield* BillingReadStore;
+    const row = yield* waitForProjection(store, account.id, Option.getOrNull(view));
+    expect(row?.features.messages?.reserved).toBe(0);
+    expect(row?.features.messages?.remaining).toBe(1_750);
+
+    // A hold that has not settled is exactly what `reserved` counts.
+    const open = yield* hold({ account: account.id, feature: "messages", amount: 300 });
+    const held = yield* entitlements.query(Subscription.ref(account.id));
+    const heldRow = yield* waitForProjection(store, account.id, Option.getOrNull(held));
+    expect(heldRow?.features.messages?.reserved).toBe(300);
+    expect(heldRow?.features.messages?.remaining).toBe(1_450);
+    yield* release({ account: account.id, holdId: open.holdId });
+  }).pipe(Effect.provide(World)),
+);
+
+/**
+ * A credit-priced feature holds credits, not units, so a release has to return
+ * `amount × rate`. The view recomputes a credit feature's remaining from the
+ * pool, which is why this bug is invisible to `check()` and only shows up in the
+ * event the log keeps.
+ */
+const creditRates = { ai: { default: 1, "gpt-large": 10 } };
+const creditSubscribed = [
+  Story.provide(Actor, system("test")),
+  Story.clock(start),
+  Story.when(
+    account,
+    new Subscribe({
+      tier: "pro",
+      allowances: proAllowances,
+      price: proPrice,
+      credits: 50_000,
+      creditsExpire: "period",
+      rates: creditRates,
+    }),
+  ),
+  Story.then(
+    account,
+    new SubscriptionActivated({
+      tier: "pro",
+      allowances: proAllowances,
+      remaining: { messages: 2_000 },
+      credits: 50_000,
+      creditsExpire: "period",
+      rates: creditRates,
+      periodStart: start,
+      periodEnd: monthLater,
+      anchorTz: "UTC",
+      interval: "month",
+      currency: "usd",
+      price: proPrice,
+      statusAfter: "active",
+    }),
+  ),
+] as const;
+
+it.effect("returns what a credit hold did not spend, in credits", () =>
+  story(
+    ...creditSubscribed,
     Story.when(
       account,
-      new ReserveUsage({ feature: "messages", amount: 100, reservationId: "turn-1" }),
+      new Hold({ holdId: "hold_ai", feature: "ai", amount: 100, dimension: "gpt-large" }),
     ),
     Story.then(
       account,
       new UsageReserved({
-        feature: "messages",
+        holdId: "hold_ai",
+        feature: "ai",
         amount: 100,
-        reservedAfter: 100,
-        remainingAfter: 1900,
-        reservationId: "turn-1",
-        sequence: 1,
+        dimension: "gpt-large",
+        rate: 10,
+        cost: 1_000,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 49_000,
       }),
     ),
-    Story.when(
+    Story.when(account, new ReleaseHold({ holdId: "hold_ai" })),
+    Story.then(
       account,
-      new ReserveUsage({ feature: "messages", amount: 100, reservationId: "turn-1" }),
-    ),
-    Story.rejected(new ReservationExists({ reservationId: "turn-1" })),
-  ),
-);
-
-it.effect("a settled reservation leaves usage at exactly what was held", () =>
-  Effect.gen(function* () {
-    const subscription = yield* Subscription;
-    const ref = Subscription.ref("acct_lock_math");
-    yield* subscription.send(
-      ref,
-      new Subscribe({
-        credits: 0,
-        creditsExpire: "period",
-        rates: {},
-        tier: "pro",
-        allowances: proAllowances,
-        price: proPrice,
+      new UsageReleased({
+        holdId: "hold_ai",
+        feature: "ai",
+        amount: 100,
+        // 100 units at 10 credits is 1,000 credits back, not 100.
+        cost: 1_000,
+        remainingAfter: 50_000,
       }),
-    );
-    yield* subscription.send(ref, new ReserveUsage({ feature: "messages", amount: 700 }));
-    yield* subscription.send(ref, new SettleUsage({ feature: "messages", amount: 700 }));
-    const state = yield* subscription.state(ref);
-    expect(state._tag).toBe("Subscribed");
-    if (state._tag !== "Subscribed") return;
-    expect(state.usage.messages).toBe(700);
-    expect(state.reserved.messages).toBe(0);
-    // Reserving did not double-count: 2000 - 700, not 2000 - 1400.
-    expect(state.remaining.messages).toBe(1300);
-  }).pipe(
-    Effect.provide(
-      PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
-        .pipe(Layer.provide(Domain.InMemory))
-        .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test")))),
     ),
   ),
 );

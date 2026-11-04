@@ -19,9 +19,7 @@ import {
   UsageReset,
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
-import { ReleaseUsage } from "../../src/Subscription/ReleaseUsage.command.ts";
-import { ReserveUsage } from "../../src/Subscription/ReserveUsage.command.ts";
-import { SettleUsage } from "../../src/Subscription/SettleUsage.command.ts";
+import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
@@ -107,11 +105,7 @@ it.effect("refuses usage against a flag, however it is recorded", () =>
     ...subscribed,
     Story.when(account, new TrackUsage({ feature: "sso", amount: 1 })),
     Story.rejected(new FeatureNotMetered({ feature: "sso" })),
-    Story.when(account, new ReserveUsage({ feature: "sso", amount: 1 })),
-    Story.rejected(new FeatureNotMetered({ feature: "sso" })),
-    Story.when(account, new SettleUsage({ feature: "sso", amount: 1 })),
-    Story.rejected(new FeatureNotMetered({ feature: "sso" })),
-    Story.when(account, new ReleaseUsage({ feature: "sso", amount: 1 })),
+    Story.when(account, new Hold({ holdId: "hold_sso", feature: "sso", amount: 1 })),
     Story.rejected(new FeatureNotMetered({ feature: "sso" })),
     // The meter beside it is untouched by any of that.
     Story.when(account, new TrackUsage({ feature: "messages", amount: 10 })),

@@ -25,6 +25,15 @@ import { Expire, SubscriptionExpired } from "./Expire.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
 import { GraceElapsed } from "./GraceElapsed.command.ts";
 import { CreditsGranted, GrantCredits } from "./GrantCredits.command.ts";
+import {
+  Hold,
+  HoldExceeded,
+  HoldExpired,
+  HoldSettled,
+  HoldUnknown,
+  UsageReserved,
+  defaultHoldExpiry,
+} from "./Hold.command.ts";
 import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { NotScheduled } from "./NotScheduled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
@@ -38,33 +47,27 @@ import {
   RecordProrationInvoice,
 } from "./RecordProrationInvoice.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
-import { ReleaseUsage, UsageReleased } from "./ReleaseUsage.command.ts";
-import {
-  CreditHoldUnsupported,
-  ReservationExceeded,
-  ReservationExists,
-  ReserveUsage,
-  UsageReserved,
-} from "./ReserveUsage.command.ts";
+import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
-import { NoReservation, SettleUsage, UsageSettled } from "./SettleUsage.command.ts";
+import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
 import { StartTrial, TrialStarted } from "./StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import {
   addInterval,
   allowsUsage,
+  availableOf,
   canEnterGrace,
   creditRateOf,
+  holdOf,
   includedRemainingOf,
   initialSubscriptionState,
   periodFrom,
   remainingAfterRelease,
   remainingAfterSpending,
   remainingOf,
-  reservationSequenceOf,
-  reservationsOf,
+  closingHold,
   reservedOf,
   resetOf,
   standingOf,
@@ -134,63 +137,6 @@ const sameProration = (
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
 
-/** One hold the amount being settled or released, or the unnamed remainder. */
-type Allocation = { readonly reservationId: string | undefined; readonly amount: number };
-
-/** The open reservations for one feature, in the order they were taken. */
-const openReservationsOf = (state: SubscribedState, feature: string) =>
-  Object.values(reservationsOf(state)).filter(
-    (reservation) => reservation.feature === feature && reservation.remaining > 0,
-  );
-
-/**
- * Split an amount across open holds. A named hold must cover the whole amount;
- * an unnamed one consumes holds first-in-first-out and falls back to the
- * per-feature total only for state written before holds had ids.
- */
-const allocationsOf = (
-  state: SubscribedState,
-  feature: string,
-  amount: number,
-  reservationId: string | undefined,
-): { readonly allocations: ReadonlyArray<Allocation> } | { readonly rejection: NoReservation } => {
-  const reserved = reservedOf(state, feature);
-  const open = openReservationsOf(state, feature);
-  if (reservationId !== undefined) {
-    const reservation = open.find((candidate) => candidate.id === reservationId);
-    if (reservation === undefined) {
-      return {
-        rejection: new NoReservation({ feature, requested: amount, reserved, reservationId }),
-      };
-    }
-    if (amount > reservation.remaining) {
-      return {
-        rejection: new NoReservation({
-          feature,
-          requested: amount,
-          reserved: reservation.remaining,
-          reservationId,
-        }),
-      };
-    }
-    return { allocations: [{ reservationId, amount }] };
-  }
-  if (amount > reserved) {
-    return { rejection: new NoReservation({ feature, requested: amount, reserved }) };
-  }
-  const allocations: Array<Allocation> = [];
-  let left = amount;
-  for (const reservation of open) {
-    if (left === 0) break;
-    const take = Math.min(reservation.remaining, left);
-    allocations.push({ reservationId: reservation.id, amount: take });
-    left -= take;
-  }
-  // A hold recorded before this state carried ids: the total still covers it.
-  if (left > 0) allocations.push({ reservationId: undefined, amount: left });
-  return { allocations };
-};
-
 const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const nextPeriodStart = periodEnd;
   const nextPeriodEnd = addInterval(nextPeriodStart, state.interval);
@@ -247,9 +193,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RecordPaymentFailure,
     EnterGrace,
     Recover,
-    ReserveUsage,
-    SettleUsage,
-    ReleaseUsage,
+    Hold,
+    SettleHold,
+    ReleaseHold,
     RecordProrationInvoice,
     GrantCredits,
     ConsumeCredits,
@@ -507,7 +453,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       return [new Recovered({ statusAfter: "active" })];
     },
-    ReserveUsage: (state, command) => {
+    Hold: (state, command, { now }) => {
       if (state._tag === "Unsubscribed") {
         return new StandingBlocksUsage({ standing: "blocked", status: "none" });
       }
@@ -517,165 +463,159 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           status: state.status,
         });
       }
+      // A flag has no counter and no pool: it is granted or it is not.
       const allowance = state.allowances[command.feature];
-      // A flag has no counter, so there is nothing to hold against it.
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
-      // Credits are never held: this slice spends them and nothing more.
-      if (state.rates[command.feature] !== undefined) {
-        return new CreditHoldUnsupported({ feature: command.feature });
-      }
+      // A hold with the id this standing already has is a replay: the retry
+      // holds once, and the caller gets the same id back.
+      if (holdOf(state, command.holdId) !== null) return [];
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
-      const used = usedOf(state, command.feature);
-      const reserved = reservedOf(state, command.feature);
-      const remaining = remainingOf(state, command.feature);
-      if (allowance === undefined) {
-        return new ReservationExceeded({
+      // The rate is captured here, so the bill at settle is the price the work
+      // was priced at, not whatever the catalog says when it finishes.
+      const rates = state.rates[command.feature];
+      const rate = rates === undefined ? 0 : creditRateOf(rates, command.dimension);
+      const cost = command.amount * rate;
+      const remaining = availableOf(state, command.feature);
+      const spendable = remaining ?? 0;
+      // A credit-priced feature holds credits from the pool; a counted one
+      // holds its own units. Both are refused when there is not enough room.
+      if (cost > spendable) {
+        return new HoldExceeded({
           feature: command.feature,
-          included: 0,
-          used,
-          reserved,
-          requested: command.amount,
-          remaining: 0,
+          requested: cost,
+          held: 0,
+          remaining: spendable,
         });
       }
-      // A hold is only refused when there is a count it would exceed. An
-      // unlimited allowance holds whatever is asked.
-      if (allowance.included !== "unlimited" && remaining !== null && command.amount > remaining) {
-        return new ReservationExceeded({
+      if (
+        rates === undefined &&
+        allowance?.included !== "unlimited" &&
+        command.amount > spendable
+      ) {
+        return new HoldExceeded({
           feature: command.feature,
-          included: allowance.included,
-          used,
-          reserved,
           requested: command.amount,
-          remaining,
+          held: 0,
+          remaining: spendable,
         });
       }
-      const open = reservationsOf(state);
-      let sequence = reservationSequenceOf(state) + 1;
-      let reservationId = command.reservationId ?? command.dedupeKey ?? `hold:${sequence}`;
-      if (command.reservationId !== undefined && open[reservationId] !== undefined) {
-        return new ReservationExists({ reservationId });
-      }
-      // A generated id never overwrites an id a caller chose earlier.
-      while (command.reservationId === undefined && open[reservationId] !== undefined) {
-        sequence += 1;
-        reservationId = `hold:${sequence}`;
-      }
+      // A credit-priced hold takes credits out of the pool; a counted one takes
+      // its own units.
+      const held = rates === undefined ? command.amount : cost;
       return [
         new UsageReserved({
+          holdId: command.holdId,
           feature: command.feature,
           amount: command.amount,
-          reservedAfter: reserved + command.amount,
-          remainingAfter: remainingAfterSpending(remaining, command.amount),
-          reservationId,
-          sequence,
+          ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+          rate,
+          cost,
+          at: now,
+          expiresAt: command.expiresAt ?? defaultHoldExpiry(now),
+          remainingAfter: remainingAfterSpending(remaining, held),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
     },
-    SettleUsage: (state, command) => {
-      if (state._tag !== "Subscribed" || !allowsUsage(state.status)) {
+    SettleHold: (state, command, { now }) => {
+      if (state._tag === "Unsubscribed") return new HoldUnknown({ holdId: command.holdId });
+      const hold = holdOf(state, command.holdId);
+      if (hold === null) return new HoldUnknown({ holdId: command.holdId });
+      // The work is already billed: a replay records nothing rather than
+      // charging twice, and the id makes the command id derivable.
+      if (hold.status === "settled") return [];
+      if (hold.status === "released") {
+        return new HoldSettled({ holdId: hold.id, feature: hold.feature });
+      }
+      if (!allowsUsage(state.status)) {
         return new StandingBlocksUsage({
-          standing: standingOf(statusOf(state)),
-          status: statusOf(state),
+          standing: standingOf(state.status),
+          status: state.status,
         });
       }
-      const allowance = state.allowances[command.feature];
-      // A flag is never held, so it is never settled: refuse the feature, not
-      // the missing reservation.
-      if (allowance !== undefined && isFlagGrant(allowance)) {
-        return new FeatureNotMetered({ feature: command.feature });
+      if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(hold.expiresAt)) {
+        return new HoldExpired({
+          holdId: hold.id,
+          feature: hold.feature,
+          expiresAt: hold.expiresAt,
+          now,
+        });
       }
-      if (state.rates[command.feature] !== undefined) {
-        return new CreditHoldUnsupported({ feature: command.feature });
+      const billed = command.amount ?? hold.amount;
+      if (billed < 0 || billed > hold.amount) {
+        return new HoldExceeded({
+          holdId: hold.id,
+          feature: hold.feature,
+          requested: billed,
+          held: hold.amount,
+          remaining: availableOf(state, hold.feature) ?? 0,
+        });
       }
-      if (command.amount <= 0) return [];
-      if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
-        return [];
-      }
-      const reserved = reservedOf(state, command.feature);
-      const allocation = allocationsOf(
-        state,
-        command.feature,
-        command.amount,
-        command.reservationId,
+      // Whatever was not billed returns in the same command, so the common
+      // path is two calls and there is no third one to forget.
+      const released = hold.amount - billed;
+      const creditPriced = state.rates[hold.feature] !== undefined;
+      const cost = billed * hold.rate;
+      // The hold took its units (or credits) out when it was placed; what it
+      // did not bill comes back here. An unlimited allowance stays `null`.
+      const available = availableOf(state, hold.feature);
+      const remaining = remainingAfterRelease(
+        available,
+        creditPriced ? released * hold.rate : released,
       );
-      if ("rejection" in allocation) return allocation.rejection;
-      const used = usedOf(state, command.feature);
-      const remaining = remainingOf(state, command.feature);
-      let reservedAfter = reserved;
       return [
         new UsageRecorded({
-          feature: command.feature,
-          amount: command.amount,
-          // Credits are never held, so a settle spends none; the hold commands
-          // refuse a credit-priced feature outright.
-          cost: 0,
-          creditsAfter: state.credits,
-          usedAfter: used + command.amount,
-          // The units left `remaining` when they were reserved.
+          feature: hold.feature,
+          amount: billed,
+          // The rate captured at hold time, not the catalog's current one.
+          cost,
+          creditsAfter: state.credits - cost,
+          // A credit-priced feature counts credits spent; a counted one counts
+          // its units.
+          usedAfter: usedOf(state, hold.feature) + (creditPriced ? cost : billed),
+          // The units left `remaining` when they were held; the released ones
+          // come back here.
           remainingAfter: remaining,
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
-        ...allocation.allocations.map((settled) => {
-          reservedAfter -= settled.amount;
-          return new UsageSettled({
-            feature: command.feature,
-            amount: settled.amount,
-            reservedAfter,
-            remainingAfter: remaining,
-            ...(settled.reservationId === undefined
-              ? {}
-              : { reservationId: settled.reservationId }),
-          });
+        new UsageSettled({
+          holdId: hold.id,
+          feature: hold.feature,
+          amount: billed,
+          released,
+          cost: hold.cost,
+          remainingAfter: remaining,
         }),
       ];
     },
-    ReleaseUsage: (state, command) => {
-      if (state._tag !== "Subscribed") {
-        return new NoReservation({
-          feature: command.feature,
-          requested: command.amount,
-          reserved: 0,
-        });
+    ReleaseHold: (state, command) => {
+      if (state._tag === "Unsubscribed") return new HoldUnknown({ holdId: command.holdId });
+      const hold = holdOf(state, command.holdId);
+      if (hold === null) return new HoldUnknown({ holdId: command.holdId });
+      // A released hold is a replay; a settled one was billed, so the units
+      // are not there to give back.
+      if (hold.status === "released") return [];
+      if (hold.status === "settled") {
+        return new HoldSettled({ holdId: hold.id, feature: hold.feature });
       }
-      const allowance = state.allowances[command.feature];
-      // A flag is never held, so there is nothing to return.
-      if (allowance !== undefined && isFlagGrant(allowance)) {
-        return new FeatureNotMetered({ feature: command.feature });
-      }
-      if (state.rates[command.feature] !== undefined) {
-        return new CreditHoldUnsupported({ feature: command.feature });
-      }
-      if (command.amount <= 0) return [];
-      const reserved = reservedOf(state, command.feature);
-      const allocation = allocationsOf(
-        state,
-        command.feature,
-        command.amount,
-        command.reservationId,
-      );
-      if ("rejection" in allocation) return allocation.rejection;
-      let reservedAfter = reserved;
-      let remainingAfter = remainingOf(state, command.feature);
-      return allocation.allocations.map((released) => {
-        reservedAfter -= released.amount;
-        remainingAfter = remainingAfterRelease(remainingAfter, released.amount);
-        return new UsageReleased({
-          feature: command.feature,
-          amount: released.amount,
-          reservedAfter,
-          remainingAfter,
-          ...(released.reservationId === undefined
-            ? {}
-            : { reservationId: released.reservationId }),
-        });
-      });
+      // A late release is a cleanup, not a charge: expiry does not refuse it.
+      // A credit-priced hold returns what it took — `cost` credits, not
+      // `amount` units — so the log's remaining stays in one unit of account.
+      const returns = state.rates[hold.feature] === undefined ? hold.amount : hold.cost;
+      return [
+        new UsageReleased({
+          holdId: hold.id,
+          feature: hold.feature,
+          amount: hold.amount,
+          cost: hold.cost,
+          remainingAfter: remainingAfterRelease(availableOf(state, hold.feature), returns),
+        }),
+      ];
     },
     RecordProrationInvoice: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
@@ -795,9 +735,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ...(event.price === undefined ? {} : { price: event.price }),
       usage: {},
       remaining: event.remaining,
-      reserved: {},
-      reservations: {},
-      reservationSequence: 0,
+      holds: {},
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: true,
@@ -822,9 +760,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ...(event.price === undefined ? {} : { price: event.price }),
       usage: {},
       remaining: event.remaining,
-      reserved: {},
-      reservations: {},
-      reservationSequence: 0,
+      holds: {},
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
@@ -870,65 +806,52 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 : { ...state.dedupeKeys, [event.dedupeKey]: true },
           }
         : state,
-    UsageReserved: (state, event) => {
-      if (state._tag !== "Subscribed") return state;
-      const reservations =
-        event.reservationId === undefined
-          ? reservationsOf(state)
-          : {
-              ...reservationsOf(state),
-              [event.reservationId]: {
-                id: event.reservationId,
+    UsageReserved: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            // The hold is the entity; `reserved` and `reservedCredits` are
+            // folds of these, not counters a command writes.
+            holds: {
+              ...state.holds,
+              [event.holdId]: {
+                id: event.holdId,
                 feature: event.feature,
                 amount: event.amount,
-                remaining: event.amount,
+                ...(event.dimension === undefined ? {} : { dimension: event.dimension }),
+                rate: event.rate,
+                cost: event.cost,
+                at: event.at,
+                expiresAt: event.expiresAt,
+                status: "open" as const,
               },
-            };
-      return {
-        ...state,
-        reservations,
-        reservationSequence: event.sequence ?? state.reservationSequence ?? 0,
-        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
-        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
-        dedupeKeys:
-          event.dedupeKey === undefined
-            ? state.dedupeKeys
-            : { ...state.dedupeKeys, [event.dedupeKey]: true },
-      };
-    },
+            },
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            dedupeKeys:
+              event.dedupeKey === undefined
+                ? state.dedupeKeys
+                : { ...state.dedupeKeys, [event.dedupeKey]: true },
+          }
+        : state,
     UsageSettled: (state, event) => {
       if (state._tag !== "Subscribed") return state;
-      const reservations = { ...reservationsOf(state) };
-      if (event.reservationId !== undefined) {
-        const reservation = reservations[event.reservationId];
-        if (reservation !== undefined) {
-          const remaining = reservation.remaining - event.amount;
-          if (remaining <= 0) delete reservations[event.reservationId];
-          else reservations[event.reservationId] = { ...reservation, remaining };
-        }
-      }
+      const hold = holdOf(state, event.holdId);
       return {
         ...state,
-        reservations,
-        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+        holds:
+          hold === null ? state.holds : { ...state.holds, [hold.id]: closingHold(hold, "settled") },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },
     UsageReleased: (state, event) => {
       if (state._tag !== "Subscribed") return state;
-      const reservations = { ...reservationsOf(state) };
-      if (event.reservationId !== undefined) {
-        const reservation = reservations[event.reservationId];
-        if (reservation !== undefined) {
-          const remaining = reservation.remaining - event.amount;
-          if (remaining <= 0) delete reservations[event.reservationId];
-          else reservations[event.reservationId] = { ...reservation, remaining };
-        }
-      }
+      const hold = holdOf(state, event.holdId);
       return {
         ...state,
-        reservations,
-        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+        holds:
+          hold === null
+            ? state.holds
+            : { ...state.holds, [hold.id]: closingHold(hold, "released") },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },
@@ -987,13 +910,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         usage: Object.fromEntries(
           Object.entries(state.usage).filter(([feature]) => kept[feature] === true),
         ),
-        reserved: Object.fromEntries(
-          Object.entries(state.reserved).filter(([feature]) => kept[feature] === true),
-        ),
-        reservations: Object.fromEntries(
-          Object.entries(reservationsOf(state)).filter(
-            ([, reservation]) => kept[reservation.feature] === true,
-          ),
+        holds: Object.fromEntries(
+          Object.entries(state.holds).filter(([, hold]) => kept[hold.feature] === true),
         ),
         remaining: event.remaining,
       };
@@ -1021,13 +939,6 @@ export class Subscription extends Domain.Aggregate("Subscription", {
   reply: {
     GrantCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
     ConsumeCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
-    ReserveUsage: (_state, events) => {
-      const reserved = events.find((event) => event._tag === "UsageReserved");
-      return {
-        reservationId:
-          reserved?._tag === "UsageReserved" ? (reserved.reservationId ?? "hold:0") : "hold:0",
-      };
-    },
   },
   // The admin surface reads the aggregate whole. There is no tenant read here:
   // `Entitlements` is the boundary a customer sees. Guarded all the same, so a

@@ -97,35 +97,32 @@ describe("the example billing app", () => {
       const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
       yield* caughtUp(receipt);
 
-      const reserve = yield* Paykit.Reserve();
+      const hold = yield* Paykit.Hold();
       const settle = yield* Paykit.Settle();
       const release = yield* Paykit.Release();
       const check = yield* Paykit.Check();
 
-      const held = yield* reserve({
+      const first = yield* hold({
         account: account.id,
         feature: "messages",
         amount: 30,
         dedupeKey: "turn-1",
       });
-      // The hold's id is the key the caller can settle or release by name.
-      expect(held.reply).toEqual({ reservationId: "turn-1" });
       // The held units are out of `remaining`, and none of them is billed yet.
       expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(70);
 
-      yield* settle({
-        account: account.id,
-        feature: "messages",
-        amount: 20,
-        reservationId: held.reply.reservationId,
+      // One call: 20 ran, so 20 is billed and the other 10 returns.
+      expect(yield* settle({ account: account.id, holdId: first.holdId, amount: 20 })).toEqual({
+        billed: 20,
+        released: 10,
       });
-      yield* release({
-        account: account.id,
-        feature: "messages",
-        amount: 10,
-        reservationId: held.reply.reservationId,
+      expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(80);
+
+      // A hold nothing ran against comes back whole.
+      const second = yield* hold({ account: account.id, feature: "messages", amount: 10 });
+      expect(yield* release({ account: account.id, holdId: second.holdId })).toEqual({
+        released: 10,
       });
-      // 20 billed and 10 returned: 100 - 20 is spendable again, and nothing held.
       expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(80);
     }).pipe(run),
   );

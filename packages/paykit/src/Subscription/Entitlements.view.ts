@@ -136,6 +136,8 @@ export class Entitlements extends Domain.View("Entitlements", {
             event.allowances,
             event.rates,
             event.credits,
+            // A fresh standing holds nothing.
+            0,
             {},
             event.remaining,
             event.periodEnd,
@@ -160,6 +162,8 @@ export class Entitlements extends Domain.View("Entitlements", {
             event.allowances,
             event.rates,
             event.credits,
+            // A fresh standing holds nothing.
+            0,
             {},
             event.remaining,
             event.periodEnd,
@@ -182,6 +186,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             event.rates,
             // A tier change carries the balance over; the new cards price it.
             view.credits,
+            heldOf(view.features),
             view.features,
             event.remaining,
             view.periodEnd,
@@ -196,11 +201,25 @@ export class Entitlements extends Domain.View("Entitlements", {
     UsageRecorded: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
       if (feature === undefined) return withAccount(view, context);
+      // A credit-priced feature spends the shared pool, so it moves the balance
+      // and leaves `remaining` to the pool helper; a counted feature moves its
+      // own counter.
+      if (feature.creditRates !== undefined) {
+        const spent = withCreditsOf(view, event.creditsAfter, heldOf(view.features));
+        return withAccount(
+          {
+            ...spent,
+            features: {
+              ...spent.features,
+              [event.feature]: { ...spent.features[event.feature]!, used: event.usedAfter },
+            },
+          },
+          context,
+        );
+      }
       return withAccount(
         {
           ...view,
-          // A credit-priced feature reports the pool it just spent from; for a
-          // counted feature this is the balance, unchanged.
           credits: event.creditsAfter,
           features: {
             ...view.features,
@@ -215,11 +234,18 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       );
     },
-    // A reservation leaves `remaining` at reserve time, so `check()` refuses a
-    // second caller the unit the first one holds.
+    // A hold leaves `remaining` at hold time, so `check()` refuses a second
+    // caller the unit the first one holds. `reserved` is the fold of the open
+    // holds, not a counter a command writes.
     UsageReserved: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
       if (feature === undefined) return withAccount(view, context);
+      if (feature.creditRates !== undefined) {
+        return withAccount(
+          withCreditsOf(view, view.credits, heldOf(view.features) + event.cost),
+          context,
+        );
+      }
       return withAccount(
         {
           ...view,
@@ -227,7 +253,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             ...view.features,
             [event.feature]: {
               ...feature,
-              reserved: event.reservedAfter,
+              reserved: feature.reserved + event.amount,
               remaining: event.remainingAfter,
               allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
             },
@@ -236,11 +262,17 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       );
     },
-    // The collocated `UsageRecorded` already applied the usage; this only
-    // clears the hold it settled.
+    // The collocated `UsageRecorded` already applied the usage; this closes the
+    // hold and returns whatever it did not bill.
     UsageSettled: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
       if (feature === undefined) return withAccount(view, context);
+      if (feature.creditRates !== undefined) {
+        return withAccount(
+          withCreditsOf(view, view.credits, Math.max(0, heldOf(view.features) - event.cost)),
+          context,
+        );
+      }
       return withAccount(
         {
           ...view,
@@ -248,8 +280,11 @@ export class Entitlements extends Domain.View("Entitlements", {
             ...view.features,
             [event.feature]: {
               ...feature,
-              reserved: event.reservedAfter,
+              // The hold closes in this command, so what it released leaves
+              // `reserved` as well as what it billed.
+              reserved: Math.max(0, feature.reserved - event.amount - event.released),
               remaining: event.remainingAfter,
+              allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
             },
           },
         },
@@ -259,6 +294,12 @@ export class Entitlements extends Domain.View("Entitlements", {
     UsageReleased: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
       if (feature === undefined) return withAccount(view, context);
+      if (feature.creditRates !== undefined) {
+        return withAccount(
+          withCreditsOf(view, view.credits, Math.max(0, heldOf(view.features) - event.cost)),
+          context,
+        );
+      }
       return withAccount(
         {
           ...view,
@@ -266,7 +307,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             ...view.features,
             [event.feature]: {
               ...feature,
-              reserved: event.reservedAfter,
+              reserved: Math.max(0, feature.reserved - event.amount),
               remaining: event.remainingAfter,
               allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
             },
@@ -380,22 +421,8 @@ export class Entitlements extends Domain.View("Entitlements", {
  * Move the shared pool, and with it every credit-priced feature's `remaining`.
  * One balance, so the features cannot report different ones.
  */
-const withPool = (view: EntitlementsState, balance: number): EntitlementsState => ({
-  ...view,
-  credits: balance,
-  features: Object.fromEntries(
-    Object.entries(view.features).map(([feature, value]) => [
-      feature,
-      value.creditRates === undefined
-        ? value
-        : {
-            ...value,
-            remaining: balance,
-            allowed: allowsOne(view.standing, value.overage, balance),
-          },
-    ]),
-  ),
-});
+const withPool = (view: EntitlementsState, balance: number): EntitlementsState =>
+  withCreditsOf(view, balance, heldOf(view.features));
 
 /**
  * Whether one more unit is allowed, from the standing and the allowance. Pure,
@@ -431,24 +458,57 @@ const spendableOf = (
   return includedRemainingOf(allowance);
 };
 
-/** A credit-priced feature's read model: the rate card and the shared pool. */
+/** The credits open holds keep out of the pool: one number, shared. */
+const heldOf = (features: Readonly<Record<string, FeatureEntitlement>>): number => {
+  for (const value of Object.values(features)) {
+    if (value.creditRates !== undefined) return value.reserved;
+  }
+  return 0;
+};
+
+/**
+ * A credit-priced feature's read model: the rate card, the shared pool minus
+ * what open holds keep out of it, and the holds themselves.
+ */
 const creditFeatureOf = (
   rates: CreditRates,
   credits: number,
+  held: number,
   previous: FeatureEntitlement | undefined,
   standing: Standing,
 ): FeatureEntitlement => ({
   creditRates: rates,
   included: null,
   used: previous?.used ?? 0,
-  reserved: 0,
-  remaining: credits,
+  // One pool, so every credit-priced feature reports the same held credits.
+  reserved: held,
+  remaining: credits - held,
   carried: 0,
   // "One more unit" is `check({ amount: 1 })`, which costs the default rate.
-  allowed: standing !== "blocked" && credits >= creditRateOf(rates, undefined),
+  allowed: standing !== "blocked" && credits - held >= creditRateOf(rates, undefined),
   overage: "block",
   resets: "never",
   resetsAt: null,
+});
+
+/**
+ * Move the shared pool and its held credits together, so every credit-priced
+ * feature keeps reporting one balance.
+ */
+const withCreditsOf = (
+  view: EntitlementsState,
+  credits: number,
+  held: number,
+): EntitlementsState => ({
+  ...view,
+  credits,
+  features: Object.fromEntries(
+    Object.entries(view.features).map(([feature, value]) =>
+      value.creditRates === undefined
+        ? [feature, value]
+        : [feature, creditFeatureOf(value.creditRates, credits, held, value, view.standing)],
+    ),
+  ),
 });
 
 const featuresOf = (
@@ -457,6 +517,7 @@ const featuresOf = (
   >,
   rates: Readonly<Record<string, CreditRates>>,
   credits: number,
+  held: number,
   previous: Readonly<Record<string, FeatureEntitlement>>,
   remaining: Readonly<Record<string, number | null>>,
   periodEnd: DateTime.Utc,
@@ -491,7 +552,7 @@ const featuresOf = (
   ...Object.fromEntries(
     Object.entries(rates).map(([feature, card]) => [
       feature,
-      creditFeatureOf(card, credits, previous[feature], standing),
+      creditFeatureOf(card, credits, held, previous[feature], standing),
     ]),
   ),
 });
