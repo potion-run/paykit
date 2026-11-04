@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS "billing_outbox" (seq INTEGER PRIMARY KEY, aggregate 
 CREATE INDEX IF NOT EXISTS "billing_outbox_pending" ON "billing_outbox" (delivered_at, seq);
 CREATE TABLE IF NOT EXISTS "billing_schedule" (aggregate TEXT NOT NULL, account TEXT NOT NULL, command_id TEXT NOT NULL, due_at INTEGER NOT NULL, command TEXT NOT NULL, delivered_at INTEGER, PRIMARY KEY (aggregate, account, command_id));
 CREATE INDEX IF NOT EXISTS "billing_schedule_due" ON "billing_schedule" (delivered_at, due_at);
-CREATE TABLE IF NOT EXISTS "billing_rm_billing_read" (account TEXT PRIMARY KEY, tier TEXT NOT NULL, status TEXT NOT NULL, standing TEXT NOT NULL, period_start INTEGER NOT NULL, period_end INTEGER NOT NULL, cancel_at_period_end INTEGER NOT NULL, credits INTEGER NOT NULL, currency TEXT, features TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS "billing_rm_billing_read" (account TEXT PRIMARY KEY, tier TEXT NOT NULL, status TEXT NOT NULL, standing TEXT NOT NULL, period_start INTEGER NOT NULL, period_end INTEGER NOT NULL, cancel_at_period_end INTEGER NOT NULL, credits INTEGER NOT NULL, dunning_attempts INTEGER NOT NULL, currency TEXT, features TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS "billing_rm_billing_read_standing" ON "billing_rm_billing_read" (standing, tier);
 CREATE TABLE IF NOT EXISTS billing_rm_view_state (
       view TEXT NOT NULL,

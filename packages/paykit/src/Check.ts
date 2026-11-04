@@ -120,6 +120,7 @@ const rowToState = (row: BillingReadRow): EntitlementsState => ({
   periodEnd: row.periodEnd,
   cancelAtPeriodEnd: row.cancelAtPeriodEnd,
   credits: row.credits,
+  dunningAttempts: row.dunningAttempts,
   ...(row.currency === undefined ? {} : { currency: row.currency }),
   features: row.features,
 });

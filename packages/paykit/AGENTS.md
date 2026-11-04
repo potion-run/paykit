@@ -277,7 +277,7 @@ Four export groups and nothing else: deploy-time resources, runtime bindings, mo
 internal, whatever it is.
 
 - Opt-in integrations are an optional peer plus a dev dependency, so a user who never imports
-  `Paykit.Polar()` never installs `@potion.run/paykit-polar`.
+  `@potion.run/paykit-polar` never installs it.
 - Model files under `src/` are `<Noun>.<kind>.ts` (`.aggregate`, `.command`, `.rejection`,
   `.view`, `.stream`, `.projection`, `.saga`); runtime files use Alchemy's resource/binding
   pairing. Plain values keep plain names (`Feature.ts`, `Allowance.ts`, `Tier.ts`, `Catalog.ts`).

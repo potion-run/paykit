@@ -318,8 +318,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         `INSERT INTO ${readModels}
-          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, currency, features)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, currency, features)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (account) DO UPDATE SET
            tier = excluded.tier,
            status = excluded.status,
@@ -328,6 +328,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
            period_end = excluded.period_end,
            cancel_at_period_end = excluded.cancel_at_period_end,
            credits = excluded.credits,
+           dunning_attempts = excluded.dunning_attempts,
            currency = excluded.currency,
            features = excluded.features`,
         [
@@ -339,6 +340,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           row.periodEnd.epochMilliseconds,
           row.cancelAtPeriodEnd ? 1 : 0,
           row.credits,
+          row.dunningAttempts,
           row.currency ?? null,
           featuresJson(row.features),
         ] satisfies ReadonlyArray<SqlValue>,
@@ -352,7 +354,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 export type SqlEventLog = ReturnType<typeof SqlEventLog>;
 
 const READ_MODEL_COLUMNS =
-  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, currency, features";
+  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, currency, features";
 
 interface ReadModelColumns {
   readonly account: string;
@@ -364,6 +366,7 @@ interface ReadModelColumns {
   readonly period_end: number | string;
   readonly cancel_at_period_end: number | string;
   readonly credits: number | string;
+  readonly dunning_attempts: number | string;
   readonly currency: string | null;
   readonly features: string;
 }
@@ -378,6 +381,7 @@ const rowToReadModel = (row: ReadModelColumns): BillingReadRow =>
     periodEnd: dateTimeFrom(numberFrom(row.period_end)),
     cancelAtPeriodEnd: numberFrom(row.cancel_at_period_end) === 1,
     credits: numberFrom(row.credits),
+    dunningAttempts: numberFrom(row.dunning_attempts),
     ...(row.currency === null ? {} : { currency: row.currency }),
     features: decodeFeatures(row.features),
   });

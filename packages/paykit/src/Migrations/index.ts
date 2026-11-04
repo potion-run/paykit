@@ -147,6 +147,7 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
       `period_end ${time} NOT NULL`,
       "cancel_at_period_end INTEGER NOT NULL",
       "credits INTEGER NOT NULL",
+      "dunning_attempts INTEGER NOT NULL",
       "currency TEXT",
       "features TEXT NOT NULL",
     ]),

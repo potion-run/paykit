@@ -1,15 +1,12 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "@potion.run/paykit";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import { Polar, polarBindings, polarPriceOf, type PolarClient } from "../src/Polar.ts";
+import { distilledPolarClient, POLAR_BASE_URL, polarBaseUrl } from "../src/PolarClient.ts";
 
 /** What the Polar SDK raises: tagged, so it never enters a failure channel as `unknown`. */
-class PolarVendorFailure extends Data.TaggedError("PolarVendorFailure")<{
-  readonly message: string;
-}> {}
-
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const tiers = { pro: { price: proPrice, productId: "prod_123" } };
 
@@ -91,7 +88,13 @@ describe("Polar as a paykit provider", () => {
         client: {
           ...recording([]),
           createCheckoutSession: () =>
-            Effect.fail(new PolarVendorFailure({ message: "insufficient_funds" })),
+            Effect.fail(
+              new PaymentDeclined({
+                provider: "polar",
+                code: "insufficient_funds",
+                message: "insufficient_funds",
+              }),
+            ),
         },
       });
       const error = yield* Effect.flip(
@@ -142,9 +145,21 @@ describe("Polar as a paykit provider", () => {
     expect(polarPriceOf({ tiers }, "scale")).toBe(null);
   });
 
-  it("refuses to construct without a client, rather than start a checkout that cannot finish", () => {
-    expect(() => Polar({ accessToken: "polar_t", origin: "https://app.example.com" })).toThrow();
-  });
+  it.effect("builds the real client from the token, so a deployment needs no wiring", () =>
+    Effect.gen(function* () {
+      // No `client`: the distilled SDK is what a deployment gets.
+      const provider = Polar({ accessToken: "polar_t", origin: "https://app.example.com" });
+      expect(provider.kind).toBe("merchant_of_record");
+      // Sandbox is a different host, so a test key cannot hit production.
+      expect(polarBaseUrl({})).toBe("https://api.polar.sh");
+      expect(polarBaseUrl({ server: "sandbox" })).toBe("https://sandbox-api.polar.sh");
+      expect(POLAR_BASE_URL.production).not.toBe(POLAR_BASE_URL.sandbox);
+      const client = distilledPolarClient({ accessToken: Redacted.make("polar_t") });
+      expect(typeof client.createCheckoutSession).toBe("function");
+      expect(typeof client.createCustomerSession).toBe("function");
+      expect(typeof client.createRefund).toBe("function");
+    }),
+  );
 
   it("maps the client to the port without the port knowing Polar", () => {
     const bindings = polarBindings(recording([]), { origin: "https://app.example.com" });

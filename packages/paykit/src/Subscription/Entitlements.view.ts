@@ -38,6 +38,8 @@ export const EntitlementsState = Schema.Struct({
   periodEnd: Schema.DateTimeUtc,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
+  /** Payment failures recorded for this standing; the retries are the provider's. */
+  dunningAttempts: Schema.Int,
   currency: Schema.optionalKey(Schema.String),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
@@ -54,6 +56,7 @@ export const initialEntitlements: EntitlementsState = {
   periodEnd: epoch,
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
   features: {},
 };
 
@@ -209,14 +212,17 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       );
     },
-    PaymentFailed: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "grace", standing: "grace" }, context),
+    PaymentFailed: (view, event, context): EntitlementsState =>
+      withAccount(
+        { ...view, status: "grace", standing: "grace", dunningAttempts: event.attempt },
+        context,
+      ),
     GraceEntered: (view, _event, context): EntitlementsState =>
       withAccount({ ...view, status: "grace", standing: "grace" }, context),
     PaymentRecorded: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "active", standing: "good" }, context),
+      withAccount({ ...view, status: "active", standing: "good", dunningAttempts: 0 }, context),
     Recovered: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "active", standing: "good" }, context),
+      withAccount({ ...view, status: "active", standing: "good", dunningAttempts: 0 }, context),
     SubscriptionExpired: (view, _event, context): EntitlementsState =>
       withAccount({ ...view, status: "expired", standing: "blocked" }, context),
     PeriodClosed: (view, event, context): EntitlementsState =>
@@ -288,6 +294,9 @@ export class Entitlements extends Domain.View("Entitlements", {
     CreditsExpired: (view, event, context): EntitlementsState =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
     ProviderRefAttached: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // Billing an upgrade moves money, not an entitlement; the view still emits
+    // it so the read-model projection sees the whole log.
+    ProrationInvoiced: (view, _event, context): EntitlementsState => withAccount(view, context),
   },
 }) {}
 

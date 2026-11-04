@@ -46,6 +46,7 @@ const readModelRow = {
   periodEnd: later,
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
   features: {
     messages: {
       included: 100,
@@ -229,8 +230,8 @@ describe("SqlEventLog", () => {
     Effect.gen(function* () {
       const { sql, log } = yield* store;
       sql.run(
-        "INSERT INTO billing_rm_billing_read (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, features) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ["acct_bad", "free", "active", "good", 0, 1, 0, 0, '{"messages":{"included":"lots"}}'],
+        "INSERT INTO billing_rm_billing_read (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, features) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ["acct_bad", "free", "active", "good", 0, 1, 0, 0, 0, '{"messages":{"included":"lots"}}'],
       );
       const exit = yield* Effect.exit(log.readModel("acct_bad"));
       expect(Exit.isFailure(exit)).toBe(true);

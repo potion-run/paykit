@@ -9,6 +9,7 @@ import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -221,5 +222,51 @@ it.effect("extending a trial reschedules its close to the new deadline", () =>
     Story.then(account),
     Story.clock(at("2030-01-22T00:00:00Z")),
     Story.then(account, ...closed(start, at("2030-01-22T00:00:00Z"), at("2030-02-22T00:00:00Z"))),
+  ),
+);
+
+it.effect("counts payment failures on the billing page, and clears them on recovery", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.then(account, activated),
+    Story.when(
+      account,
+      new RecordPaymentFailure({ reason: "card_declined", graceUntil: at("2030-01-08T00:00:00Z") }),
+    ),
+    Story.then(
+      account,
+      new PaymentFailed({
+        reason: "card_declined",
+        graceUntilAfter: at("2030-01-08T00:00:00Z"),
+        statusAfter: "grace",
+        attempt: 1,
+      }),
+    ),
+    Story.view(BillingState, account, { status: "grace", dunningAttempts: 1 }),
+    // A second failure is the second attempt, not a fresh count.
+    Story.when(
+      account,
+      new RecordPaymentFailure({ reason: "card_declined", graceUntil: at("2030-01-15T00:00:00Z") }),
+    ),
+    Story.then(
+      account,
+      new PaymentFailed({
+        reason: "card_declined",
+        graceUntilAfter: at("2030-01-15T00:00:00Z"),
+        statusAfter: "grace",
+        attempt: 2,
+      }),
+    ),
+    Story.view(BillingState, account, { status: "grace", dunningAttempts: 2 }),
+    // The retries are the provider's; what paykit records is that they happened,
+    // and a payment settles the run.
+    Story.when(account, new RecordPayment({ amount: 1900, currency: "usd" })),
+    Story.then(
+      account,
+      new PaymentRecorded({ amount: 1900, currency: "usd", statusAfter: "active" }),
+    ),
+    Story.view(BillingState, account, { status: "active", dunningAttempts: 0 }),
   ),
 );

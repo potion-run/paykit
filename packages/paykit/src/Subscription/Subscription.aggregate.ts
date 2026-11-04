@@ -31,6 +31,11 @@ import { PeriodEnded } from "./PeriodEnded.command.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { PaymentRecorded, RecordPayment } from "./RecordPayment.command.ts";
 import { PaymentFailed, RecordPaymentFailure } from "./RecordPaymentFailure.command.ts";
+import {
+  NoProrationDue,
+  ProrationInvoiced,
+  RecordProrationInvoice,
+} from "./RecordProrationInvoice.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
 import { ReleaseUsage, UsageReleased } from "./ReleaseUsage.command.ts";
 import { ReservationExceeded, ReserveUsage, UsageReserved } from "./ReserveUsage.command.ts";
@@ -148,6 +153,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ReserveUsage,
     SettleUsage,
     ReleaseUsage,
+    RecordProrationInvoice,
     GrantCredits,
     ConsumeCredits,
     ScheduleCancellation,
@@ -447,6 +453,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    RecordProrationInvoice: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
+      const proration = state.proration;
+      // Only a positive `due` is money to collect; a credit is applied by the
+      // next period, so there is nothing to invoice.
+      if (proration === undefined || proration.due <= 0) {
+        return new NoProrationDue({ account: id, reason: "none" });
+      }
+      if (state.prorationInvoice !== undefined) {
+        return new NoProrationDue({ account: id, reason: "billed" });
+      }
+      return [
+        new ProrationInvoiced({
+          invoiceId: command.invoiceId,
+          amount: command.amount,
+          currency: command.currency,
+        }),
+      ];
+    },
     GrantCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
       if (command.amount <= 0) return [];
@@ -576,7 +601,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     }),
     TierChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
-      const { price: _previousPrice, ...rest } = state;
+      const {
+        price: _previousPrice,
+        proration: _previousProration,
+        prorationInvoice: _previousInvoice,
+        ...rest
+      } = state;
       return {
         ...rest,
         tier: event.tier,
@@ -587,6 +617,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           : { currency: (event.currency ?? state.currency)! }),
         interval: event.interval ?? state.interval,
         ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
+        // A new tier change replaces what the old one owed; it does not add to
+        // it, and an invoice for the old amount no longer applies.
+        ...(event.proration === undefined ? {} : { proration: event.proration }),
       };
     },
     UsageRecorded: (state, event) =>
@@ -680,6 +713,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       state._tag === "Subscribed"
         ? { ...state, usage: {}, reserved: {}, remaining: event.remaining }
         : state,
+    // The invoice is the outcome: the log now says what was billed and on what.
+    ProrationInvoiced: (state, event) =>
+      state._tag === "Subscribed" ? { ...state, prorationInvoice: event.invoiceId } : state,
     CreditsExpired: (state, event) =>
       state._tag === "Subscribed" ? { ...state, credits: event.balanceAfter } : state,
     SubscriptionExpired: (state, event) =>

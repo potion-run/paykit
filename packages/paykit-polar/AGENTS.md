@@ -31,6 +31,12 @@ const polar = Polar({
 | `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.Stack` |
 | `PolarTier` | where a tier lives in Polar, and the price the catalog states |
 | `PolarProps` | token, server, origin and the tier mapping |
+| `PolarClient` | the three Polar calls, as an interface a test stands in for |
+| `distilledPolarClient` | `@distilled.cloud/polar` behind those three calls |
+
+`Polar()` builds the distilled client from `accessToken` + `server` when no
+`client` is given, so a deployment wires nothing: `server: "sandbox"` points at
+sandbox, and a production token cannot be sent to it by accident.
 
 `Polar()` returns what the catalog needs and nothing else: `kind`, `capabilities`, `payments` and
 `prices`, so `Stack` can check the mapping against the catalog at deploy time.

@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Allowances, type Allowance } from "../Allowance.ts";
+import { Proration } from "../Proration.ts";
 import { Interval, Price } from "../Tier.ts";
 
 /** An account is the key of a Subscription. */
@@ -69,6 +70,14 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   interval: Interval,
   /** What the tier cost when this standing took it. Absent on a free tier. */
   price: Schema.optionalKey(Price),
+  /**
+   * The money the last tier change moved, copied from its event. A positive
+   * `due` is what `ChargeProration` bills; a negative one is a credit recorded
+   * for audit and applied by the next period rather than paid out.
+   */
+  proration: Schema.optionalKey(Proration),
+  /** The provider invoice a proration was billed on, so it bills once. */
+  prorationInvoice: Schema.optionalKey(Schema.String),
   trialEndsAt: Schema.optional(Schema.DateTimeUtc),
   graceUntil: Schema.optional(Schema.DateTimeUtc),
   cancelAtPeriodEnd: Schema.Boolean,

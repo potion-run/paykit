@@ -16,6 +16,8 @@ export const BillingReadRow = Schema.Struct({
   periodEnd: Schema.DateTimeUtc,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
+  /** Payment failures recorded for this standing; the retries are the provider's. */
+  dunningAttempts: Schema.Int,
   currency: Schema.optionalKey(Schema.String),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });

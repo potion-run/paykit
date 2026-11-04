@@ -179,6 +179,12 @@ catalogs:
     '@alchemy.run/test':
       specifier: 2.0.0-beta.85
       version: 2.0.0-beta.85
+    '@distilled.cloud/core':
+      specifier: 1.0.0-rc.18
+      version: 1.0.0-rc.18
+    '@distilled.cloud/polar':
+      specifier: 1.0.0-rc.18
+      version: 1.0.0-rc.18
     '@effect/platform-node':
       specifier: ^4.1.2
       version: 4.1.2
@@ -306,9 +312,6 @@ importers:
       '@alchemy.run/test':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
-      '@potion.run/paykit-polar':
-        specifier: workspace:*
-        version: link:../paykit-polar
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.4
@@ -330,6 +333,12 @@ importers:
 
   packages/paykit-polar:
     dependencies:
+      '@distilled.cloud/core':
+        specifier: 'catalog:'
+        version: 1.0.0-rc.18(effect@4.1.2)
+      '@distilled.cloud/polar':
+        specifier: 'catalog:'
+        version: 1.0.0-rc.18(effect@4.1.2)
       '@potion.run/paykit':
         specifier: workspace:*
         version: link:../paykit
@@ -554,6 +563,11 @@ packages:
 
   '@distilled.cloud/iceberg@1.0.0-rc.18':
     resolution: {integrity: sha512-XjUJ/vEOylhIZbAm85O9H6YqXKWGfVROT5BE9BGA/RXvo0bLK2+sUcjC6BoN77a99lImJkrXJuvbHBhNebObEA==}
+    peerDependencies:
+      effect: ^4.0.5
+
+  '@distilled.cloud/polar@1.0.0-rc.18':
+    resolution: {integrity: sha512-7Ab+qWGoUfmZxNKcmWAKjMHFQv1Moy//rqSRjLHqO1dl6gKtykSZCHXj4CHQhozLPWysKPh/XMWFR74jEF5q8Q==}
     peerDependencies:
       effect: ^4.0.5
 
@@ -1829,6 +1843,11 @@ snapshots:
       effect: 4.1.2
 
   '@distilled.cloud/iceberg@1.0.0-rc.18(effect@4.1.2)':
+    dependencies:
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
+      effect: 4.1.2
+
+  '@distilled.cloud/polar@1.0.0-rc.18(effect@4.1.2)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
       effect: 4.1.2

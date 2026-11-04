@@ -72,8 +72,8 @@ export groups, the peers and the build output.
   registry (`@alchemy.run/sql/Migrations`), not a parallel implementation.
 - `@alchemy.run/domain` is a dependency: the model is the product.
 - `@alchemy.run/cloudflare`, `@alchemy.run/stripe`, `@potion.run/paykit-polar` and `foldkit`
-  are optional peers plus dev dependencies, so a user who never imports `Paykit.Polar()` never
-  installs `@potion.run/paykit-polar`.
+  are optional peers plus dev dependencies, so a user who never imports `Polar` from
+  `@potion.run/paykit-polar` never installs it.
 - Versions come from the workspace catalog in `pnpm-workspace.yaml`; a package that needs a
   different line pins it locally and says why.
 
@@ -134,7 +134,10 @@ Paykit.BillingApi         // the tenant surface
 Paykit.BillingAdminApi    // the ops console
 
 // 4. providers
-Paykit.Memory()  Paykit.Manual()  Paykit.Stripe()  Paykit.Polar()
+Paykit.Memory()  Paykit.Manual()  Paykit.Stripe()  Paykit.PaymentsPolar()
+
+// and, from @potion.run/paykit-polar, the one-call form:
+Polar({ accessToken, origin, tiers })
 
 // opt-in: @potion.run/paykit/Surfaces — loads effect/ai and effect/cli
 BillingMcp  BillingAdminMcp  BillingToolkit  BillingAdminToolkit  BillingCli
@@ -233,6 +236,24 @@ and the actual one. It is a refusal, never a correction: silently rewriting a ca
 turn a client bug into a wrong invoice. Catalog-owning senders — `Paykit.Subscribe`, the webhook
 translator — build the command from `CatalogService` and never see the guard.
 
+### The model computes the proration; a binding collects it
+
+`ChangeTier` carries its `proration`, and `decide` recomputes it with `prorate()` and refuses a
+mismatch (`ProrationMismatch`), so the log records a number the model worked out. It does not
+collect it: `decide` is pure, so the money moves in `ChargeProration`, which reads what the tier
+change owed, opens one invoice through the `Payments` port, and records it with
+`RecordProrationInvoice` → `ProrationInvoiced`.
+
+Three rules make that safe to retry:
+
+- **Only a positive `due` is charged.** A downgrade's credit is recorded and applied by the next
+  period; paying money out is a refund, which is a provider action, not a subscription one.
+- **Once.** The invoice id lives on the state, so a second call is `NoProrationDue { reason: "billed" }`
+  rather than a second invoice, and the command id is the change itself so a retry after a crash
+  records the same invoice.
+- **The log carries the money.** A charge the events cannot reproduce is a charge nobody can audit,
+  which is why it is a command with an event rather than a side effect of `changeTier`.
+
 ### Proration is computed by the model, not sent by the caller
 
 A `ChangeTier` carries its `proration`, but the model does not trust it: `decide` calls `prorate()`
@@ -272,6 +293,12 @@ first issue will be "how do I list past-due".
   not over, so an early fire is a no-op rather than a rejection.
 - `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
   account is still in grace. A recovery before the deadline makes it a no-op.
+
+  **Retries are the provider's.** Asking for the card to be charged again is a money-plane action
+  and the port has no operation for it, so paykit records what happened — `attempt` on
+  `PaymentFailed`, carried to `dunningAttempts` on both read models — and owns the grace window and
+  the expiry. An operator sees the count on the billing page and decides whether to extend grace;
+  the console is the reader, which is why the field is not write-only.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,
@@ -307,7 +334,7 @@ that needs an absent op fails with `ProviderCapabilityMissing` — no silent deg
 Four rules keep the port from re-forming around whichever provider shipped first:
 
 1. **The catalog carries no provider ids.** Tier → price mapping lives in the provider config
-   (`Paykit.Polar({ tiers: { pro: proPrice } })`), so one catalog runs everywhere.
+   (`Polar({ tiers: { pro: { price: proPrice, productId } } })`), so one catalog runs everywhere.
 2. **Vendor identifiers live in `refs`,** keyed by provider. Nothing else in the model learns
    `cus_…`, `sub_…` or `prod_…`.
 3. **A provider's entitlement view is a projection of ours, never the source.** Polar benefits

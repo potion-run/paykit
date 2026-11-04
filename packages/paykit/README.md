@@ -123,7 +123,9 @@ implement an optional op fails with `ProviderCapabilityMissing`; nothing degrade
 | `Paykit.Memory()` | memory | checkout + invoice | refund, portal, syncTier |
 | `Paykit.Manual()` | manual | invoice | refund |
 | `Paykit.Stripe({ bindings, tiers })` | processor | checkout | refund, portal, syncTier |
-| `Paykit.Polar({ bindings, tiers })` | merchant of record | checkout | refund, portal, syncTier |
+| `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal, syncTier |
+
+`Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar). `PaymentsPolar` here is the port mapping it wraps, for a caller who brings its own bindings.
 
 `Manual` is the reference: if the port only fits Stripe, it is not a port. Every provider runs
 the same conformance suite in [`test/conformance`](./test/conformance), parameterized by the

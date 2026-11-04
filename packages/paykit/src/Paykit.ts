@@ -4,6 +4,7 @@ import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
+import { ChargeProration } from "./ChargeProration.ts";
 import { Check, CheckHttp, CheckInProcess, CheckReadModel, evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
@@ -20,7 +21,6 @@ import { MemoryStore, Postgres, Sqlite, Stack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
-import { SqliteDriver } from "./Store/SqliteDriver.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { Subscribe } from "./Subscribe.ts";
 import { tier } from "./Tier.ts";
@@ -76,7 +76,6 @@ export const Paykit = {
   SqlPlatform,
   layerSqlPlatform,
   SqlBillingReadStore,
-  SqliteDriver,
   d1Executor,
   // runtime
   Check,
@@ -92,6 +91,7 @@ export const Paykit = {
   Portal,
   List,
   Preview,
+  ChargeProration,
   Verify,
   verifyState,
   doctor,
@@ -106,5 +106,5 @@ export const Paykit = {
   Memory: PaymentsMemory,
   Manual: PaymentsManual,
   Stripe: PaymentsStripe,
-  Polar: PaymentsPolar,
+  PaymentsPolar,
 } as const;

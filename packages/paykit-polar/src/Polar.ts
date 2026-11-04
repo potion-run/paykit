@@ -1,7 +1,6 @@
 import {
   PaymentDeclined,
   PaymentsPolar,
-  ProviderCapabilityMissing,
   type PolarBindings,
   type PolarTier,
   type Provider,
@@ -9,6 +8,8 @@ import {
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import { distilledPolarClient } from "./PolarClient.ts";
 
 /** Where a tier lives in Polar, and the price the catalog states. */
 export type { PolarTier };
@@ -22,31 +23,34 @@ export type PolarServer = "production" | "sandbox";
  * `polarBindings` maps whatever Polar raises into a `PaymentDeclined`, so
  * paykit's failure channel stays typed.
  */
-export interface PolarClient<VendorError = never> {
+export interface PolarClient {
   /** Create a checkout session for a product, for one customer. */
   readonly createCheckoutSession: (request: {
     readonly productId: string;
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly returnUrl: string;
-  }) => Effect.Effect<{ readonly url: string }, VendorError>;
+  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /** A customer session, which is Polar's way into the customer portal. */
   readonly createCustomerSession: (request: {
     readonly customerExternalId: string;
-  }) => Effect.Effect<{ readonly url: string }, VendorError>;
+    readonly returnUrl: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /** Refund a Polar order. */
   readonly createRefund: (request: {
     readonly orderId: string;
     readonly amount: number;
-  }) => Effect.Effect<unknown, VendorError>;
+  }) => Effect.Effect<unknown, PaymentDeclined>;
 }
 
 /** What `Polar()` needs to stand up a merchant of record. */
-export interface PolarProps<VendorError = never> {
+export interface PolarProps {
   /** The Polar access token. Redacted, because it is a secret. */
   readonly accessToken: string;
   /** Which Polar this token belongs to. Defaults to `production`. */
   readonly server?: PolarServer;
+  /** Override the API base URL, for a proxy or a local Polar. */
+  readonly baseUrl?: string;
   /** The app's origin: checkout returns here. */
   readonly origin: string;
   /** Tier → Polar product, and the price the catalog already states. */
@@ -59,7 +63,7 @@ export interface PolarProps<VendorError = never> {
    * The Polar calls, for a test or an embedding. Omitted in a deployment: the
    * distilled client is built from `accessToken` and `server`.
    */
-  readonly client?: PolarClient<VendorError>;
+  readonly client?: PolarClient;
 }
 
 const declined = (op: string, cause: unknown): PaymentDeclined =>
@@ -70,8 +74,8 @@ const declined = (op: string, cause: unknown): PaymentDeclined =>
   });
 
 /** Map the Polar client onto the `Payments` port's shape. */
-export const polarBindings = <VendorError>(
-  client: PolarClient<VendorError>,
+export const polarBindings = (
+  client: PolarClient,
   where: { readonly origin: string; readonly successPath?: string; readonly billingPath?: string },
 ): PolarBindings => {
   const success = `${where.origin}${where.successPath ?? "/welcome"}`;
@@ -90,7 +94,7 @@ export const polarBindings = <VendorError>(
           Effect.map((session) => ({ url: session.url })),
         ),
     createCustomerSession: ({ account }) =>
-      client.createCustomerSession({ customerExternalId: account }).pipe(
+      client.createCustomerSession({ customerExternalId: account, returnUrl: billing }).pipe(
         Effect.mapError((cause) => declined("createCustomerSession", cause)),
         Effect.map((session) => ({ url: session.url })),
       ),
@@ -131,19 +135,16 @@ export const polarBindings = <VendorError>(
  *
  * @primitive
  */
-export const Polar = <VendorError = never>(
-  props: PolarProps<VendorError>,
-): Provider<"merchant_of_record"> => {
-  if (props.client === undefined) {
-    // A real deployment needs the distilled client, which is not wired yet. Fail
-    // loudly at construction rather than start a checkout that cannot complete.
-    throw new ProviderCapabilityMissing({
-      provider: "polar",
-      op: "createCheckoutSession",
-    }) as unknown as Error;
-  }
+export const Polar = (props: PolarProps): Provider<"merchant_of_record"> => {
+  const client =
+    props.client ??
+    distilledPolarClient({
+      accessToken: Redacted.make(props.accessToken),
+      ...(props.server === undefined ? {} : { server: props.server }),
+      ...(props.baseUrl === undefined ? {} : { baseUrl: props.baseUrl }),
+    });
   return PaymentsPolar({
-    bindings: polarBindings(props.client, props),
+    bindings: polarBindings(client, props),
     ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
   });
 };

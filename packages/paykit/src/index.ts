@@ -61,8 +61,6 @@ export {
 export type { SqlConsumerOptions } from "./Store/SqlConsumers.ts";
 export { SqlPlatform, layerSqlPlatform } from "./Store/SqlPlatform.ts";
 export { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
-export { SqliteDriver, fromDatabase } from "./Store/SqliteDriver.ts";
-export type { ClosableSqlExecutor, SqliteDriverOptions } from "./Store/SqliteDriver.ts";
 export type { SqlModelHost, SqlPlatformOptions } from "./Store/SqlPlatform.ts";
 export type {
   AppendInput,
@@ -119,6 +117,8 @@ export { CatalogService, catalogLayer } from "./CatalogService.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 export { Preview } from "./Preview.ts";
+export { ChargeProration, ChargeProrationResult } from "./ChargeProration.ts";
+export type { ChargeProrationInput } from "./ChargeProration.ts";
 export type { PreviewCommand, PreviewEvent, PreviewInput, PreviewResult } from "./Preview.ts";
 export {
   MissingProviderRef,
@@ -259,6 +259,11 @@ export {
   ProviderRefAttached,
 } from "./Subscription/AttachProviderRef.command.ts";
 export {
+  NoProrationDue,
+  ProrationInvoiced,
+  RecordProrationInvoice,
+} from "./Subscription/RecordProrationInvoice.command.ts";
+export {
   AlreadyCanceled,
   AlreadyCanceled as AlreadyCanceledRejection,
 } from "./Subscription/AlreadyCanceled.rejection.ts";
@@ -281,7 +286,7 @@ export type {
   StripeProps,
   StripeTier,
 } from "./PaymentsStripe.ts";
-export { PaymentsPolar, PaymentsPolar as Polar } from "./PaymentsPolar.ts";
+export { PaymentsPolar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
   PaymentCapability,

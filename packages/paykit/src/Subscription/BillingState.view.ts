@@ -20,6 +20,12 @@ export const BillingStateView = Schema.Struct({
   anchorTz: Schema.String,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
+  /**
+   * How many payment failures this standing has recorded. The retries
+   * themselves are the provider's; this is what paykit knows about them, and
+   * the billing page is where an operator sees it before extending grace.
+   */
+  dunningAttempts: Schema.Int,
   currency: Schema.optionalKey(Schema.String),
   /** What the account pays for the current tier. Absent on a free tier. */
   price: Schema.optionalKey(Price),
@@ -40,6 +46,7 @@ export const initialBillingState: BillingStateView = {
   anchorTz: "UTC",
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
 };
 
 type ViewContext = { readonly key: { readonly id: string } };
@@ -117,13 +124,23 @@ export class BillingState extends Domain.View("BillingState", {
       );
     },
     PaymentRecorded: (view, _event, context): BillingStateView =>
-      withoutGrace({ ...view, status: "active" }, context),
+      // A payment settles the dunning run; the count starts over at the next
+      // failure rather than carrying last quarter's.
+      withoutGrace({ ...view, status: "active", dunningAttempts: 0 }, context),
     PaymentFailed: (view, event, context): BillingStateView =>
-      withAccount({ ...view, status: "grace", graceUntil: event.graceUntilAfter }, context),
+      withAccount(
+        {
+          ...view,
+          status: "grace",
+          graceUntil: event.graceUntilAfter,
+          dunningAttempts: event.attempt,
+        },
+        context,
+      ),
     GraceEntered: (view, event, context): BillingStateView =>
       withAccount({ ...view, status: "grace", graceUntil: event.graceUntil }, context),
     Recovered: (view, _event, context): BillingStateView =>
-      withoutGrace({ ...view, status: "active" }, context),
+      withoutGrace({ ...view, status: "active", dunningAttempts: 0 }, context),
     CreditsGranted: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsConsumed: (view, event, context): BillingStateView =>
@@ -157,5 +174,6 @@ export class BillingState extends Domain.View("BillingState", {
     UsageReleased: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReset: (view, _event, context): BillingStateView => withAccount(view, context),
     ProviderRefAttached: (view, _event, context): BillingStateView => withAccount(view, context),
+    ProrationInvoiced: (view, _event, context): BillingStateView => withAccount(view, context),
   },
 }) {}
