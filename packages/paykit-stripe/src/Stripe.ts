@@ -1,7 +1,7 @@
 import {
   PaymentDeclined,
   PaymentsStripe,
-  type Provider,
+  type MoneyProvider,
   type Price,
   type StripeBindings,
   type StripeTier,
@@ -9,6 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { distilledStripeClient } from "./StripeClient.ts";
+import { stripeWebhook } from "./Webhooks.ts";
 
 /** Where a tier lives in Stripe, and the price the catalog states. */
 export type { StripeTier };
@@ -74,6 +75,13 @@ export interface StripeProps {
   readonly billingPath?: string;
   /** What a proration line says. Defaults to `Plan change`. */
   readonly invoiceDescription?: string;
+  /**
+   * The endpoint's signing secret. With it, the provider carries the decoder,
+   * so a deployment wires the tier mapping and the secret once.
+   */
+  readonly webhookSecret?: Redacted.Redacted<string>;
+  /** How old a signed delivery may be. Stripe's own default is five minutes. */
+  readonly webhookToleranceSeconds?: number;
   /**
    * The Stripe calls, for a test or an embedding. Omitted in a deployment: the
    * distilled client is built from `secretKey`.
@@ -187,16 +195,30 @@ export const stripeClientBindings = (
  *
  * @primitive
  */
-export const Stripe = (props: StripeProps): Provider<"processor"> => {
+export const Stripe = (props: StripeProps): MoneyProvider<"processor"> => {
   const client =
     props.client ??
     distilledStripeClient({
       secretKey: props.secretKey,
       ...(props.apiBaseUrl === undefined ? {} : { apiBaseUrl: props.apiBaseUrl }),
     });
+  const webhook =
+    props.webhookSecret === undefined
+      ? undefined
+      : {
+          provider: "stripe",
+          decode: stripeWebhook({
+            secret: props.webhookSecret,
+            ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
+            ...(props.webhookToleranceSeconds === undefined
+              ? {}
+              : { toleranceSeconds: props.webhookToleranceSeconds }),
+          }),
+        };
   return PaymentsStripe({
     ...stripeClientBindings(client, props),
     ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
+    ...(webhook === undefined ? {} : { webhook }),
   });
 };
 

@@ -34,6 +34,7 @@ const polar = Polar({
 | `PolarClient` | the three Polar calls, as an interface a test stands in for |
 | `distilledPolarClient` | `@distilled.cloud/polar` behind those three calls |
 | `polarWebhook(props)` | verifies and translates a Polar webhook into paykit's `WebhookEvent` |
+| `PolarProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
 | `PolarSignatureInvalid` | the request did not come from Polar, or did not come recently |
 
 `Polar()` builds the distilled client from `accessToken` + `server` when no

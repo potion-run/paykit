@@ -1,26 +1,22 @@
 import * as Stripe from "@distilled.cloud/stripe";
-import { type StripeTier, type WebhookEvent, WebhookInvalid } from "@potion.run/paykit";
+import {
+  type StripeTier,
+  type WebhookError,
+  type WebhookEvent,
+  type WebhookRequest,
+  WebhookInvalid,
+  WebhookSignatureInvalid,
+} from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
-/** A webhook did not come from Stripe, or did not come recently. */
-export class StripeSignatureInvalid extends Schema.TaggedError<StripeSignatureInvalid>()(
-  "StripeSignatureInvalid",
-  {
-    reason: Schema.String,
-  },
-) {}
-
 /** The only errors the webhook translation may return. */
-export type StripeWebhookError = StripeSignatureInvalid | WebhookInvalid;
+export type StripeWebhookError = WebhookError;
 
-/** What Stripe signs and sends: the raw body and its headers. */
-export interface StripeWebhookRequest {
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: string;
-}
+/** A Stripe delivery: the body and the headers that signed it. */
+export type StripeWebhookRequest = WebhookRequest;
 
 /** What `stripeWebhook` needs: the signing secret and the tier → price map. */
 export interface StripeWebhookProps {
@@ -116,7 +112,10 @@ export const stripeWebhook = (
   return Effect.fn("Stripe.webhook")(function* (request: StripeWebhookRequest) {
     const signature = header(request.headers, "stripe-signature");
     if (signature === undefined) {
-      return yield* new StripeSignatureInvalid({ reason: "missing Stripe-Signature header" });
+      return yield* new WebhookSignatureInvalid({
+        provider: "stripe",
+        reason: "missing Stripe-Signature header",
+      });
     }
     const event = yield* Stripe.Webhooks.constructEvent({
       payload: request.body,
@@ -127,7 +126,7 @@ export const stripeWebhook = (
       Effect.mapError((cause) =>
         cause._tag === "StripeWebhookPayloadParseError"
           ? new WebhookInvalid({ event: "unknown", field: "payload" })
-          : new StripeSignatureInvalid({ reason: cause.message }),
+          : new WebhookSignatureInvalid({ provider: "stripe", reason: cause.message }),
       ),
     );
     const id = event.id ?? "";

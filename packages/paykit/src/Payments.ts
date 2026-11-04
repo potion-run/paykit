@@ -4,6 +4,7 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { Price } from "./Tier.ts";
+import type { PaymentsWebhook } from "./Webhooks.ts";
 
 /** A provider did not implement the operation a binding asked for. */
 export class ProviderCapabilityMissing extends Schema.TaggedError<ProviderCapabilityMissing>()(
@@ -103,13 +104,13 @@ export class PaymentsProvider extends Context.Service<
 >()("paykit/PaymentsProvider") {}
 
 /** A provider is a processor or a merchant of record, or an honest fake. */
-export const ProviderKind = Schema.Literals([
+export const MoneyProviderKind = Schema.Literals([
   "processor",
   "merchant_of_record",
   "manual",
   "memory",
 ]);
-export type ProviderKind = typeof ProviderKind.Type;
+export type MoneyProviderKind = typeof MoneyProviderKind.Type;
 
 /**
  * The layer a provider's `payments` field carries: the `Payments` port, built
@@ -119,8 +120,16 @@ export type ProviderKind = typeof ProviderKind.Type;
  */
 export type PaymentsLayer = ReturnType<typeof Payments.toLayer<never, never>>;
 
-/** What `Paykit.<Provider>()` returns: a name, a kind, its ops, and the adapter. */
-export interface Provider<Kind extends ProviderKind = ProviderKind> {
+/**
+ * What `Paykit.<Provider>()` returns: a name, a kind, its ops, its webhook and
+ * the adapter.
+ *
+ * Not `Provider` — Alchemy owns that word for the service that reconciles a
+ * resource (`alchemy/Provider`), and the two live in the same file here
+ * (`BillingStack.resource.ts`). This is the money plane's provider: a value the
+ * catalog is checked against and the router dispatches to, never a lifecycle.
+ */
+export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKind> {
   /**
    * What this provider is called in `refs`, and how a router finds it. Stable:
    * an account's vendor references are keyed by it, so renaming one orphans
@@ -132,14 +141,21 @@ export interface Provider<Kind extends ProviderKind = ProviderKind> {
   readonly payments: PaymentsLayer;
   /** The provider's price handle per tier. The catalog stays provider-free. */
   readonly prices?: Readonly<Record<string, Price>>;
+  /**
+   * How this provider reports a payment, when it can. A provider that sells a
+   * priced tier but cannot say it was paid leaves the account waiting for a
+   * webhook that never comes; carrying the decoder here keeps the secret and
+   * the tier mapping to one config.
+   */
+  readonly webhook?: PaymentsWebhook;
 }
 
 /** The providers a deployment runs, and the one that serves a new account. */
 export interface ProviderSet {
-  readonly all: ReadonlyArray<Provider>;
-  readonly byName: ReadonlyMap<string, Provider>;
+  readonly all: ReadonlyArray<MoneyProvider>;
+  readonly byName: ReadonlyMap<string, MoneyProvider>;
   /** The provider a purchase starts on while the account holds no refs. */
-  readonly fallback: Provider | null;
+  readonly fallback: MoneyProvider | null;
 }
 
 /**
@@ -153,7 +169,7 @@ export class PaymentsRouter extends Context.Service<PaymentsRouter, ProviderSet>
 
 /** One layer holding every provider a deployment runs, first one preferred. */
 export const paymentsRouter = (
-  ...providers: ReadonlyArray<Provider>
+  ...providers: ReadonlyArray<MoneyProvider>
 ): Layer.Layer<PaymentsRouter> =>
   Layer.succeed(PaymentsRouter, {
     all: providers,
@@ -168,7 +184,7 @@ export const paymentsRouter = (
 export const providerFor = (
   set: ProviderSet,
   refs: Readonly<Record<string, unknown>>,
-): Provider | null => {
+): MoneyProvider | null => {
   for (const name of Object.keys(refs)) {
     const found = set.byName.get(name);
     if (found !== undefined) return found;

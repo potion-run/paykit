@@ -7,9 +7,10 @@ import {
   ProviderCapabilityMissing,
   type PaymentCapability,
   type PaymentError,
-  type Provider,
+  type MoneyProvider,
 } from "./Payments.ts";
 import type { Price } from "./Tier.ts";
+import type { PaymentsWebhook } from "./Webhooks.ts";
 
 /** The `@alchemy.run/stripe` bindings paykit consumes. */
 export interface StripeBindings {
@@ -50,6 +51,11 @@ export interface StripeTier {
 }
 
 export interface StripeProps {
+  /**
+   * How this provider reports a payment, when the deployment has a signing
+   * secret for it. `Stack` records whether one is present.
+   */
+  readonly webhook?: PaymentsWebhook;
   readonly bindings: StripeBindings;
   readonly tiers?: Readonly<Record<string, StripeTier>>;
 }
@@ -162,7 +168,7 @@ export const stripeBindings = <CheckoutError, PortalError>(
  * A Stripe processor. It moves money; paykit keeps the entitlement. The price
  * the catalog states is the price Stripe charges, checked by `Stack`.
  */
-export const PaymentsStripe = (props: StripeProps): Provider<"processor"> => {
+export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> => {
   const capabilities: ReadonlySet<PaymentCapability> = new Set<PaymentCapability>([
     "checkout",
     "portal",
@@ -227,5 +233,6 @@ export const PaymentsStripe = (props: StripeProps): Provider<"processor"> => {
     capabilities,
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
+    ...(props.webhook === undefined ? {} : { webhook: props.webhook }),
   };
 };

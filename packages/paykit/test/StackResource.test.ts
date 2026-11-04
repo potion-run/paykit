@@ -25,7 +25,9 @@ const parsed = Effect.runSync(catalog({ features: [messages], tiers: [free, pro]
 
 const props = {
   catalog: parsed,
-  providers: [{ name: "memory", kind: "memory", capabilities: ["checkout" as const] }],
+  providers: [
+    { name: "memory", kind: "memory", webhook: false, capabilities: ["checkout" as const] },
+  ],
   store: { _tag: "MemoryStore" as const },
 };
 
@@ -74,6 +76,7 @@ describe("the BillingStack resource", () => {
           {
             name: "stripe",
             kind: "processor",
+            webhook: false,
             capabilities: ["checkout"],
             prices: { pro: { amount: 100, currency: "usd", interval: "month" } },
           },
@@ -89,7 +92,7 @@ describe("the BillingStack resource", () => {
     const unpurchasable = run(
       reconcileBillingStack({
         ...props,
-        providers: [{ name: "manual", kind: "manual", capabilities: ["refund"] }],
+        providers: [{ name: "manual", kind: "manual", webhook: false, capabilities: ["refund"] }],
       }),
     );
     expect(unpurchasable._tag).toBe("Failure");
@@ -102,8 +105,8 @@ describe("the BillingStack resource", () => {
       reconcileBillingStack({
         ...props,
         providers: [
-          { name: "memory", kind: "memory", capabilities: ["checkout"] },
-          { name: "memory", kind: "manual", capabilities: ["invoice"] },
+          { name: "memory", kind: "memory", webhook: false, capabilities: ["checkout"] },
+          { name: "memory", kind: "manual", webhook: false, capabilities: ["invoice"] },
         ],
       }),
     );

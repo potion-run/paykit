@@ -7,9 +7,10 @@ import {
   ProviderCapabilityMissing,
   type PaymentCapability,
   type PaymentError,
-  type Provider,
+  type MoneyProvider,
 } from "./Payments.ts";
 import type { Price } from "./Tier.ts";
+import type { PaymentsWebhook } from "./Webhooks.ts";
 
 /** The `@potion.run/paykit-polar` bindings paykit consumes. */
 export interface PolarBindings {
@@ -50,6 +51,11 @@ export interface PolarTier {
 }
 
 export interface PolarProps {
+  /**
+   * How this provider reports a payment, when the deployment has a signing
+   * secret for it. `Stack` records whether one is present.
+   */
+  readonly webhook?: PaymentsWebhook;
   readonly bindings: PolarBindings;
   readonly tiers?: Readonly<Record<string, PolarTier>>;
 }
@@ -59,7 +65,7 @@ export interface PolarProps {
  * still owns the entitlement. Polar embeds prices in products, so the handle
  * is a product, never a separate price.
  */
-export const PaymentsPolar = (props: PolarProps): Provider<"merchant_of_record"> => {
+export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_record"> => {
   const capabilities: ReadonlySet<PaymentCapability> = new Set([
     "checkout",
     "refund",
@@ -126,5 +132,6 @@ export const PaymentsPolar = (props: PolarProps): Provider<"merchant_of_record">
     capabilities,
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
+    ...(props.webhook === undefined ? {} : { webhook: props.webhook }),
   };
 };

@@ -5,7 +5,7 @@ import {
   PaymentsProvider,
   ProviderCapabilityMissing,
   type PaymentCapability,
-  type Provider,
+  type MoneyProvider,
 } from "./Payments.ts";
 
 const capabilities: ReadonlySet<PaymentCapability> = new Set(["invoice", "refund"]);
@@ -15,7 +15,7 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set(["invoice", "refund
  * no hosted checkout, no portal and no tier sync, so asking for one is a
  * typed `ProviderCapabilityMissing`, never a silent no-op.
  */
-export const PaymentsManual = (): Provider<"manual"> => {
+export const PaymentsManual = (): MoneyProvider<"manual"> => {
   let sequence = 0;
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "manual", op }));

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import { WebhookSignatureInvalid } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
-import { StripeSignatureInvalid, stripeWebhook } from "../src/Webhooks.ts";
+import { stripeWebhook } from "../src/Webhooks.ts";
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const tiers = { pro: { price: proPrice, priceId: "price_123" } };
@@ -175,7 +176,7 @@ describe("Stripe webhooks", () => {
           }),
         ),
       );
-      expect(error).toBeInstanceOf(StripeSignatureInvalid);
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
 
@@ -183,14 +184,14 @@ describe("Stripe webhooks", () => {
     Effect.gen(function* () {
       const stale = String(Math.floor(nowSeconds()) - 3_600);
       const error = yield* Effect.flip(webhook(request({ body: session(), timestamp: stale })));
-      expect(error).toBeInstanceOf(StripeSignatureInvalid);
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
 
   it.effect("refuses a request with no signature header", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(webhook({ headers: {}, body: JSON.stringify(session()) }));
-      expect(error).toBeInstanceOf(StripeSignatureInvalid);
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
 

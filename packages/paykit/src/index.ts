@@ -137,9 +137,11 @@ export {
   WebhookEvent,
   WebhookInvalid,
   WebhookKind,
+  WebhookSignatureInvalid,
   completeCheckout,
   handleWebhook,
 } from "./Webhooks.ts";
+export type { PaymentsWebhook, WebhookError, WebhookRequest } from "./Webhooks.ts";
 export { Track } from "./Track.ts";
 export type { TrackInput } from "./Track.ts";
 export { Release, Reserve, Settle } from "./Hold.ts";
@@ -299,9 +301,9 @@ export {
   PaymentsProvider,
   PaymentsRouter,
   ProviderCapabilityMissing,
-  ProviderKind,
+  MoneyProviderKind,
   paymentsRouter,
   providerFor,
 } from "./Payments.ts";
 export type { ProviderSet } from "./Payments.ts";
-export type { PaymentError, PaymentsService, Provider } from "./Payments.ts";
+export type { PaymentError, PaymentsService, MoneyProvider } from "./Payments.ts";

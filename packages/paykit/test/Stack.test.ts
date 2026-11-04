@@ -144,6 +144,16 @@ describe("Stack", () => {
     }),
   );
 
+  it("a provider descriptor records whether the provider can report a payment", () => {
+    const bare = providerDescriptor(PaymentsMemory());
+    expect(bare.webhook).toBe(false);
+    const wired = providerDescriptor({
+      ...PaymentsMemory(),
+      webhook: { provider: "memory", decode: () => Effect.succeedNone },
+    });
+    expect(wired.webhook).toBe(true);
+  });
+
   it("a provider descriptor carries no runtime layer", () => {
     const descriptor = providerDescriptor(PaymentsMemory());
     expect(descriptor.kind).toBe("memory");
@@ -164,6 +174,7 @@ describe("Stack", () => {
         {
           name: "memory",
           kind: "memory",
+          webhook: false,
           capabilities: ["checkout"],
           prices: { pro: { amount: 1, currency: "usd", interval: "month" } },
         },
@@ -171,13 +182,13 @@ describe("Stack", () => {
     ).toBeInstanceOf(CatalogPriceMismatch);
     expect(
       validateProviderMappings(parsed.catalog, [
-        { name: "manual", kind: "manual", capabilities: ["refund"] },
+        { name: "manual", kind: "manual", webhook: false, capabilities: ["refund"] },
       ]),
     ).toBeInstanceOf(NoPurchasePath);
     expect(
       validateProviderMappings(parsed.catalog, [
-        { name: "memory", kind: "memory", capabilities: ["checkout"] },
-        { name: "memory", kind: "manual", capabilities: ["invoice"] },
+        { name: "memory", kind: "memory", webhook: false, capabilities: ["checkout"] },
+        { name: "memory", kind: "manual", webhook: false, capabilities: ["invoice"] },
       ]),
     ).toBeInstanceOf(ProviderDuplicate);
   });
@@ -187,7 +198,7 @@ describe("Stack", () => {
     const attrs = Schema.encodeSync(BillingStackAttrs)({
       catalog: proCatalog,
       tiers: ["pro"],
-      providers: [{ name: "memory", kind: "memory", capabilities: ["checkout"] }],
+      providers: [{ name: "memory", kind: "memory", webhook: false, capabilities: ["checkout"] }],
       store: { _tag: "MemoryStore" },
     });
     expect(attrs.tiers).toEqual(["pro"]);

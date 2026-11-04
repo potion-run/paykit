@@ -42,6 +42,7 @@ export default Alchemy.Stack(
       providers: billing.providers.map((provider) => ({
         name: provider.name,
         kind: provider.kind,
+        webhook: provider.webhook !== undefined,
         capabilities: [...provider.capabilities],
         ...(provider.prices === undefined ? {} : { prices: provider.prices }),
       })),

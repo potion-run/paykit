@@ -1,4 +1,11 @@
-import { type PolarTier, type WebhookEvent, WebhookInvalid } from "@potion.run/paykit";
+import {
+  type PolarTier,
+  type WebhookError,
+  type WebhookEvent,
+  type WebhookRequest,
+  WebhookInvalid,
+  WebhookSignatureInvalid,
+} from "@potion.run/paykit";
 import * as Clock from "effect/Clock";
 import { Mac, SecureRandom } from "effect/crypto";
 import * as Effect from "effect/Effect";
@@ -9,22 +16,11 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
-/** A webhook did not come from Polar, or did not come recently. */
-export class PolarSignatureInvalid extends Schema.TaggedError<PolarSignatureInvalid>()(
-  "PolarSignatureInvalid",
-  {
-    reason: Schema.String,
-  },
-) {}
-
 /** The only errors the webhook translation may return. */
-export type PolarWebhookError = PolarSignatureInvalid | WebhookInvalid;
+export type PolarWebhookError = WebhookError;
 
-/** What Polar signs and sends: the raw body and its lowercase-able headers. */
-export interface PolarWebhookRequest {
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: string;
-}
+/** A Polar delivery: the body and the headers that signed it. */
+export type PolarWebhookRequest = WebhookRequest;
 
 /** What `polarWebhook` needs: the signing secret and the tier → product map. */
 export interface PolarWebhookProps {
@@ -77,15 +73,19 @@ const verifySignature = (input: {
   readonly body: string;
   readonly secret: string;
   readonly toleranceSeconds: number;
-}): Effect.Effect<void, PolarSignatureInvalid> =>
+}): Effect.Effect<void, WebhookSignatureInvalid> =>
   Effect.gen(function* () {
     const seconds = Number(input.timestamp);
     if (!Number.isFinite(seconds)) {
-      return yield* new PolarSignatureInvalid({ reason: "webhook-timestamp is not a number" });
+      return yield* new WebhookSignatureInvalid({
+        provider: "polar",
+        reason: "webhook-timestamp is not a number",
+      });
     }
     const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     if (Math.abs(now - seconds) > input.toleranceSeconds) {
-      return yield* new PolarSignatureInvalid({
+      return yield* new WebhookSignatureInvalid({
+        provider: "polar",
         reason: "webhook-timestamp is outside the tolerance",
       });
     }
@@ -102,7 +102,10 @@ const verifySignature = (input: {
         if (yield* mac.verify(key, tag, signed)) return;
       }
     }
-    return yield* new PolarSignatureInvalid({ reason: "webhook-signature does not match" });
+    return yield* new WebhookSignatureInvalid({
+      provider: "polar",
+      reason: "webhook-signature does not match",
+    });
   }).pipe(
     // A runtime without WebCrypto cannot verify anything; that is a defect in
     // the deployment, not a verdict on the request.
@@ -192,13 +195,22 @@ export const polarWebhook = (
     const timestamp = header(request.headers, "webhook-timestamp");
     const signature = header(request.headers, "webhook-signature");
     if (id === undefined) {
-      return yield* new PolarSignatureInvalid({ reason: "missing webhook-id header" });
+      return yield* new WebhookSignatureInvalid({
+        provider: "polar",
+        reason: "missing webhook-id header",
+      });
     }
     if (timestamp === undefined) {
-      return yield* new PolarSignatureInvalid({ reason: "missing webhook-timestamp header" });
+      return yield* new WebhookSignatureInvalid({
+        provider: "polar",
+        reason: "missing webhook-timestamp header",
+      });
     }
     if (signature === undefined) {
-      return yield* new PolarSignatureInvalid({ reason: "missing webhook-signature header" });
+      return yield* new WebhookSignatureInvalid({
+        provider: "polar",
+        reason: "missing webhook-signature header",
+      });
     }
     yield* verifySignature({
       id,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "@potion.run/paykit";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import {
@@ -206,6 +207,35 @@ describe("Stripe as a paykit provider", () => {
         ),
       );
       expect(error).toBeInstanceOf(ProviderCapabilityMissing);
+    }),
+  );
+
+  it.live("carries its own webhook, so the secret and the tiers are wired once", () =>
+    Effect.gen(function* () {
+      const provider = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+        tiers,
+        webhookSecret: Redacted.make("whsec_e2e"),
+        client: recording(),
+      });
+      expect(provider.webhook?.provider).toBe("stripe");
+      const body = JSON.stringify({ id: "evt_1", type: "customer.created", data: { object: {} } });
+      const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000));
+      const tag = new Bun.CryptoHasher("sha256", new TextEncoder().encode("whsec_e2e"))
+        .update(`${timestamp}.${body}`)
+        .digest("hex");
+      const decoded = yield* provider.webhook!.decode({
+        headers: { "stripe-signature": `t=${timestamp},v1=${tag}` },
+        body,
+      });
+      expect(decoded._tag).toBe("None");
+
+      const bare = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+      });
+      expect(bare.webhook).toBe(undefined);
     }),
   );
 

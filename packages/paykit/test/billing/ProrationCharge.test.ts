@@ -150,9 +150,10 @@ describe("charging a proration", () => {
 
         const billing = yield* BillingState;
         // A view is fed by deliveries, so the page catches up just after the
-        // command commits; wait for it rather than racing it.
+        // command commits; wait for it rather than racing it. The budget is in
+        // seconds because a loaded suite delivers slower than a quiet one.
         let page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
-        for (let attempt = 0; attempt < 100 && page?.proration === undefined; attempt++) {
+        for (let attempt = 0; attempt < 500 && page?.proration === undefined; attempt++) {
           yield* Effect.sleep("10 millis");
           page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
         }

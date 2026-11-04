@@ -1,10 +1,10 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { WebhookInvalid } from "@potion.run/paykit";
+import { WebhookInvalid, WebhookSignatureInvalid } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
-import { PolarSignatureInvalid, polarWebhook } from "../src/Webhooks.ts";
+import { polarWebhook } from "../src/Webhooks.ts";
 import { request, secret, tiers } from "./support/Webhook.ts";
 
 const webhook = polarWebhook({ secret: Redacted.make(secret), tiers });
@@ -52,9 +52,9 @@ describe("Polar webhooks", () => {
       );
       expect(exit._tag).toBe("Failure");
       if (exit._tag !== "Failure") return;
-      // Not a `PolarSignatureInvalid`: the signature was accepted.
+      // Not a `WebhookSignatureInvalid`: the signature was accepted.
       expect(String(exit.cause)).toContain("WebhookInvalid");
-      expect(String(exit.cause)).not.toContain("PolarSignatureInvalid");
+      expect(String(exit.cause)).not.toContain("WebhookSignatureInvalid");
     }),
   );
 
@@ -177,7 +177,7 @@ describe("Polar webhooks", () => {
           signature: "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         }),
       );
-      expect(error).toBeInstanceOf(PolarSignatureInvalid);
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
 
@@ -185,8 +185,11 @@ describe("Polar webhooks", () => {
     Effect.gen(function* () {
       const stale = { body: orderPaid, timestamp: String(at / 1000 - 3_600) };
       const error = yield* Effect.flip(translate(stale));
-      expect(error).toBeInstanceOf(PolarSignatureInvalid);
-      if (error._tag === "PolarSignatureInvalid") expect(error.reason).toContain("tolerance");
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
+      if (error._tag === "WebhookSignatureInvalid") {
+        expect(error.provider).toBe("polar");
+        expect(error.reason).toContain("tolerance");
+      }
     }),
   );
 
@@ -196,7 +199,7 @@ describe("Polar webhooks", () => {
       const error = yield* Effect.flip(
         webhook({ headers: { "webhook-id": "msg_1" }, body: JSON.stringify(orderPaid) }),
       );
-      expect(error).toBeInstanceOf(PolarSignatureInvalid);
+      expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
 

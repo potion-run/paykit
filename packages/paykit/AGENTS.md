@@ -240,8 +240,17 @@ const world = Layer.mergeAll(
   `commandId` so a redelivery is a replay, not a second charge.
 - **A missing capability is a typed error**, `ProviderCapabilityMissing`, naming provider and
   op. The console hides the action; nothing degrades silently.
+- **The provider carries its own webhook.** Given a signing secret, `Stripe()` and `Polar()` return
+  a provider whose `webhook.decode` is the vendor's decoder with the tier mapping already bound, so
+  a deployment writes the secret and the mapping once. `ProviderDescriptor.webhook` records whether
+  a stack can hear a payment at all.
 
- A **vendor package** owns the vendor's plumbing: `@potion.run/paykit-stripe` for Stripe and
+ The provider a vendor package returns is `MoneyProvider`, not `Provider`: Alchemy owns that word
+for the service that reconciles a resource (`alchemy/Provider`), and `BillingStack.resource.ts`
+imports both. A `MoneyProvider` is a value — name, kind, capabilities, the `Payments` layer, prices
+and the webhook decoder — never a lifecycle.
+
+A **vendor package** owns the vendor's plumbing: `@potion.run/paykit-stripe` for Stripe and
 `@potion.run/paykit-polar` for Polar, both ours, each in its own package
 ([stripe](../paykit-stripe/AGENTS.md), [polar](../paykit-polar/AGENTS.md)), published separately.
 Each exposes one call that returns the `Provider` the catalog needs, a `Client` interface a test

@@ -1,6 +1,7 @@
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
 import { allowancesOf, tierOf } from "./Catalog.ts";
@@ -39,6 +40,39 @@ export const WebhookEvent = Schema.Struct({
   anchorTz: Schema.optionalKey(Schema.String),
 });
 export type WebhookEvent = typeof WebhookEvent.Type;
+
+/** A webhook did not come from the provider, or did not come recently. */
+export class WebhookSignatureInvalid extends Schema.TaggedError<WebhookSignatureInvalid>()(
+  "WebhookSignatureInvalid",
+  {
+    provider: Schema.String,
+    reason: Schema.String,
+  },
+) {}
+
+/** What a provider signs and sends: the raw body and the headers it signed. */
+export interface WebhookRequest {
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
+/** The only errors a provider's webhook translation may return. */
+export type WebhookError = WebhookSignatureInvalid | WebhookInvalid;
+
+/**
+ * A provider's webhook, as the provider carries it.
+ *
+ * The vendor package that owns the signature and the payload also owns this
+ * decoder, and hands it back on the provider it returns — so a caller wires the
+ * tier mapping and the secret once, instead of once per call site.
+ */
+export interface PaymentsWebhook {
+  /** The provider's name, the same one `refs` are keyed by. */
+  readonly provider: string;
+  readonly decode: (
+    request: WebhookRequest,
+  ) => Effect.Effect<Option.Option<WebhookEvent>, WebhookError>;
+}
 
 /** A webhook was missing data its kind needs. */
 export class WebhookInvalid extends Schema.TaggedError<WebhookInvalid>()("WebhookInvalid", {

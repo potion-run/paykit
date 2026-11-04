@@ -34,6 +34,7 @@ const stripe = Stripe({
 | `StripeClient` | the Stripe calls, as an interface a test stands in for |
 | `distilledStripeClient` | `@distilled.cloud/stripe` behind those calls |
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
+| `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
 | `StripeSignatureInvalid` | the request did not come from Stripe, or did not come recently |
 
 `Stripe()` builds the distilled client from `secretKey` when no `client` is given, so a deployment

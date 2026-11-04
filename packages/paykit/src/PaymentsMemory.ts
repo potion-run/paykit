@@ -5,7 +5,7 @@ import {
   Payments,
   PaymentsProvider,
   type PaymentCapability,
-  type Provider,
+  type MoneyProvider,
 } from "./Payments.ts";
 
 const capabilities: ReadonlySet<PaymentCapability> = new Set([
@@ -20,7 +20,7 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set([
  * The in-memory provider: a full capability surface that never moves money.
  * Use it for tests and `alchemy dev`, never in production.
  */
-export const PaymentsMemory = (): Provider<"memory"> => {
+export const PaymentsMemory = (): MoneyProvider<"memory"> => {
   const checkouts = new Map<string, { account: string; tier: string }>();
   const invoices = new Map<string, { account: string; amount: number; currency: string }>();
   const tiers = new Map<string, string>();

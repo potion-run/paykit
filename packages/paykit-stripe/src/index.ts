@@ -5,5 +5,5 @@ export type { StripeClient, StripeOrigin, StripeProps, StripeTier } from "./Stri
 export { distilledStripeClient, STRIPE_API_BASE_URL, stripeBaseUrl } from "./StripeClient.ts";
 export type { StripeClientConfig } from "./StripeClient.ts";
 // The other half of a deployment: the webhook that activates a standing.
-export { StripeSignatureInvalid, stripeWebhook } from "./Webhooks.ts";
+export { stripeWebhook } from "./Webhooks.ts";
 export type { StripeWebhookError, StripeWebhookProps, StripeWebhookRequest } from "./Webhooks.ts";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { Payments, type Provider } from "../../src/Payments.ts";
+import { Payments, type MoneyProvider } from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { PaymentsPolar, type PolarBindings } from "../../src/PaymentsPolar.ts";
@@ -27,7 +27,7 @@ const polarBindings: PolarBindings = {
   syncTier: () => Effect.succeed({}),
 };
 
-const providers: ReadonlyArray<readonly [string, Provider]> = [
+const providers: ReadonlyArray<readonly [string, MoneyProvider]> = [
   ["Memory", PaymentsMemory()],
   ["Manual", PaymentsManual()],
   [

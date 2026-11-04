@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "@potion.run/paykit";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { Polar, polarBindings, polarPriceOf, type PolarClient } from "../src/Polar.ts";
 import { distilledPolarClient, POLAR_BASE_URL, polarBaseUrl } from "../src/PolarClient.ts";
+import { request, secret } from "./support/Webhook.ts";
 
 /** What the Polar SDK raises: tagged, so it never enters a failure channel as `unknown`. */
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
@@ -201,6 +203,31 @@ describe("Polar as a paykit provider", () => {
         currency: "usd",
         description: "Plan change",
       });
+    }),
+  );
+
+  it.effect("carries its own webhook, so the secret and the tiers are wired once", () =>
+    Effect.gen(function* () {
+      const provider = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        tiers,
+        webhookSecret: Redacted.make(secret),
+        client: recording([]),
+      });
+      expect(provider.webhook?.provider).toBe("polar");
+      const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000));
+      const decoded = yield* provider.webhook!.decode(
+        request({ timestamp, body: { type: "product.updated", data: { id: "p_1" } } }),
+      );
+      expect(decoded._tag).toBe("None");
+
+      const bare = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        client: recording([]),
+      });
+      expect(bare.webhook).toBe(undefined);
     }),
   );
 

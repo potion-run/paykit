@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { catalog, type Catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
-import { PaymentCapability, type Provider } from "./Payments.ts";
+import { PaymentCapability, type MoneyProvider } from "./Payments.ts";
 import { Price, type Tier } from "./Tier.ts";
 
 /** A provider's price for a tier disagrees with the catalog. */
@@ -39,15 +39,18 @@ export const ProviderDescriptor = Schema.Struct({
   /** The name `refs` are keyed by, and the router's key. */
   name: Schema.String,
   kind: Schema.String,
+  /** Whether this provider can report a payment, which a priced tier needs. */
+  webhook: Schema.Boolean,
   capabilities: Schema.Array(PaymentCapability),
   prices: Schema.optional(Schema.Record(Schema.String, Price)),
 });
 export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
 /** Drop the runtime layer; keep what a deploy needs to validate and record. */
-export const providerDescriptor = (provider: Provider): ProviderDescriptor => ({
+export const providerDescriptor = (provider: MoneyProvider): ProviderDescriptor => ({
   name: provider.name,
   kind: provider.kind,
+  webhook: provider.webhook !== undefined,
   capabilities: [...provider.capabilities],
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
 });
@@ -98,7 +101,7 @@ export interface StackProps {
    * starts on; an account that already holds a vendor reference stays on the
    * provider that reference names. Every name must be distinct.
    */
-  readonly providers?: ReadonlyArray<Provider>;
+  readonly providers?: ReadonlyArray<MoneyProvider>;
   readonly store?: Store;
 }
 
@@ -106,7 +109,7 @@ export interface StackProps {
 export interface BillingStack {
   readonly id: string;
   readonly catalog: Catalog;
-  readonly providers: ReadonlyArray<Provider>;
+  readonly providers: ReadonlyArray<MoneyProvider>;
   readonly store: Store;
 }
 

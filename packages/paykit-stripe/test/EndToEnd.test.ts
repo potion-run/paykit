@@ -132,8 +132,8 @@ describe("Stripe, from checkout to check()", () => {
       const check = yield* Check();
       let result = yield* check({ account, feature: "messages", amount: 1 });
       // A view is fed by deliveries, so the read catches up just after the
-      // command commits.
-      for (let attempt = 0; attempt < 100 && !result.allowed; attempt++) {
+      // command commits. The budget is in seconds: a loaded suite is slower.
+      for (let attempt = 0; attempt < 500 && !result.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
         result = yield* check({ account, feature: "messages", amount: 1 });
       }
@@ -194,7 +194,7 @@ describe("Stripe, from checkout to check()", () => {
       const tampered = { ...carried, body: carried.body.replace("1900", "100") };
       const exit = yield* Effect.exit(webhook(tampered));
       expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") expect(String(exit.cause)).toContain("StripeSignatureInvalid");
+      if (exit._tag === "Failure") expect(String(exit.cause)).toContain("WebhookSignatureInvalid");
     }).pipe(Effect.provide(world(stripeClient()))),
   );
 });

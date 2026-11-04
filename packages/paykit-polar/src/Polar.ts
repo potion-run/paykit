@@ -3,13 +3,14 @@ import {
   PaymentsPolar,
   type PolarBindings,
   type PolarTier,
-  type Provider,
+  type MoneyProvider,
   type Price,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { distilledPolarClient } from "./PolarClient.ts";
+import { polarWebhook } from "./Webhooks.ts";
 
 /** Where a tier lives in Polar, and the price the catalog states. */
 export type { PolarTier };
@@ -75,6 +76,13 @@ export interface PolarProps {
   readonly invoiceProductId?: string;
   /** What the invoice line says. Defaults to `Plan change`. */
   readonly invoiceDescription?: string;
+  /**
+   * The webhook endpoint's signing secret. With it, the provider carries the
+   * decoder, so a deployment wires the tier mapping and the secret once.
+   */
+  readonly webhookSecret?: Redacted.Redacted<string>;
+  /** How old a signed delivery may be. Polar's spec recommends five minutes. */
+  readonly webhookToleranceSeconds?: number;
   /** Where a completed checkout returns to. Defaults to `/welcome`. */
   readonly successPath?: string;
   /** Where the portal returns to. Defaults to `/billing`. */
@@ -188,7 +196,7 @@ export const polarBindings = (
  *
  * @primitive
  */
-export const Polar = (props: PolarProps): Provider<"merchant_of_record"> => {
+export const Polar = (props: PolarProps): MoneyProvider<"merchant_of_record"> => {
   const client =
     props.client ??
     distilledPolarClient({
@@ -196,9 +204,23 @@ export const Polar = (props: PolarProps): Provider<"merchant_of_record"> => {
       ...(props.server === undefined ? {} : { server: props.server }),
       ...(props.baseUrl === undefined ? {} : { baseUrl: props.baseUrl }),
     });
+  const webhook =
+    props.webhookSecret === undefined
+      ? undefined
+      : {
+          provider: "polar",
+          decode: polarWebhook({
+            secret: props.webhookSecret,
+            ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
+            ...(props.webhookToleranceSeconds === undefined
+              ? {}
+              : { toleranceSeconds: props.webhookToleranceSeconds }),
+          }),
+        };
   return PaymentsPolar({
     bindings: polarBindings(client, props),
     ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
+    ...(webhook === undefined ? {} : { webhook }),
   });
 };
 

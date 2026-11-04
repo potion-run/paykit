@@ -96,13 +96,18 @@ export const readBillingStack = (
  * The Alchemy provider for `BillingStack`. Reconcile validates; read trusts
  * state; delete touches nothing, because the event log is application data and
  * cancelling a live subscription from a destroy is a support incident.
+ *
+ * `nuke: { singleton: true }` says exactly that: a stack is always-present
+ * configuration with no cloud object, so `alchemy unsafe nuke` must not report
+ * it as "deleted but still there". `list` is left out on purpose — Alchemy's
+ * default for a provider with no enumeration API is `[]`.
  */
 export const BillingStackProvider = () =>
   Provider.succeed(BillingStack, {
+    nuke: { singleton: true },
     reconcile: ({ news }) => reconcileBillingStack(news),
     read: ({ output }) => readBillingStack(output),
     delete: () => Effect.void,
-    list: () => Effect.succeed([]),
   });
 
 /**
