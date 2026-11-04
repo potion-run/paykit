@@ -226,6 +226,64 @@ describe("SqlEventLog", () => {
     }),
   );
 
+  it.effect("round-trips an unlimited feature's absent count through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const unlimited = {
+        ...readModelRow,
+        features: {
+          reports: {
+            included: "unlimited" as const,
+            used: 2_000_000,
+            reserved: 0,
+            allowed: true,
+            remaining: null,
+            overage: "allow" as const,
+            resets: "month" as const,
+            resetsAt: later,
+          },
+        },
+      };
+      yield* log.upsertReadModel(unlimited);
+      const read = yield* log.readModel("acct_1");
+      // `null` is the absence of a count; a store that turned it into 0 would
+      // report a spent-out allowance that never runs out.
+      expect(read?.features.reports?.included).toBe("unlimited");
+      expect(read?.features.reports?.remaining).toBeNull();
+      expect(read?.features.reports?.used).toBe(2_000_000);
+      expect(read).toEqual(unlimited);
+    }),
+  );
+
+  it.effect("round-trips a flag's judgement, and no counter, through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const flagged = {
+        ...readModelRow,
+        features: {
+          sso: {
+            included: 1,
+            used: 0,
+            reserved: 0,
+            allowed: true,
+            remaining: null,
+            overage: "allow" as const,
+            resets: "never" as const,
+            resetsAt: null,
+          },
+        },
+      };
+      yield* log.upsertReadModel(flagged);
+      const read = yield* log.readModel("acct_1");
+      // The read model carries the judgement (`allowed`), not a counter it
+      // invented: an on/off capability has nothing to spend down.
+      expect(read?.features.sso?.allowed).toBe(true);
+      expect(read?.features.sso?.remaining).toBeNull();
+      expect(read?.features.sso?.included).toBe(1);
+      expect(read).toEqual(flagged);
+    }),
+  );
+
   it.effect("refuses to read a corrupt read model", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;

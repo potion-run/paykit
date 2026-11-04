@@ -2,21 +2,33 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Overage, Resets } from "../Allowance.ts";
+import { AllowanceKind, Included, Overage, Resets } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { SubscriptionStatus, Standing } from "./Subscription.state.ts";
+import {
+  SubscriptionStatus,
+  Standing,
+  includedRemainingOf,
+  recordedCount,
+} from "./Subscription.state.ts";
 
 /** What a tier grants, what has been used, and when it resets. */
 export const FeatureEntitlement = Schema.Struct({
-  included: Schema.Int,
+  /**
+   * `metered` counts and `flag` does not. Absent means `metered`, so a view
+   * recorded before the field existed still reads.
+   */
+  kind: Schema.optionalKey(AllowanceKind),
+  /** What the tier includes: a count, or `"unlimited"`. */
+  included: Included,
   used: Schema.Int,
   /** Held by open reservations: out of `remaining`, not yet `used`. */
   reserved: Schema.Int,
-  remaining: Schema.Int,
+  /** Spendable now. `null` means there is no count: an unlimited allowance or a flag. */
+  remaining: Schema.NullOr(Schema.Int),
   /**
    * Whether the account may use one more unit right now: the same judgement
    * `check({ amount: 1 })` makes, carried in the read model so an agent reading
@@ -257,20 +269,23 @@ export class Entitlements extends Domain.View("Entitlements", {
         {
           ...view,
           features: Object.fromEntries(
-            Object.entries(view.features).map(([feature, value]) => [
-              feature,
-              {
-                ...value,
-                used: 0,
-                reserved: 0,
-                remaining: event.remaining[feature] ?? value.included,
-                allowed: allowsOne(
-                  view.standing,
-                  value.overage,
-                  event.remaining[feature] ?? value.included,
-                ),
-              },
-            ]),
+            Object.entries(view.features).map(([feature, value]) => {
+              // An allowance with no count resets to `null` again: usage returns
+              // to zero, but an unlimited allowance and a flag still have no
+              // number to report.
+              const recorded = recordedCount(event.remaining, feature);
+              const spendable = recorded === undefined ? includedRemainingOf(value) : recorded;
+              return [
+                feature,
+                {
+                  ...value,
+                  used: 0,
+                  reserved: 0,
+                  remaining: spendable,
+                  allowed: allowsOne(view.standing, value.overage, spendable),
+                },
+              ];
+            }),
           ),
         },
         context,
@@ -313,15 +328,39 @@ export class Entitlements extends Domain.View("Entitlements", {
 /**
  * Whether one more unit is allowed, from the standing and the allowance. Pure,
  * and the same rule `evaluateCheck` applies at `amount: 1`, so the view and
- * `check()` cannot disagree.
+ * `check()` cannot disagree. A `null` remaining is unbounded, so it always has
+ * room for one more.
  */
-export const allowsOne = (standing: Standing, overage: Overage, remaining: number): boolean =>
-  standing !== "blocked" && (overage !== "block" || remaining >= 1);
+export const allowsOne = (
+  standing: Standing,
+  overage: Overage,
+  remaining: number | null,
+): boolean =>
+  standing !== "blocked" && (overage !== "block" || remaining === null || remaining >= 1);
+
+/**
+ * A feature's spendable count: the outcome an event recorded, or what the
+ * allowance has when the event does not mention the feature. `null` is no
+ * count at all: an unlimited allowance, or a flag's grant.
+ */
+const spendableOf = (
+  recorded: Readonly<Record<string, number | null>>,
+  feature: string,
+  allowance: { readonly included: Included; readonly overage: Overage; readonly resets: Resets },
+): number | null => {
+  const remaining = recordedCount(recorded, feature);
+  // `undefined` is "this event says nothing about the feature"; `null` is a
+  // recorded absence of a count, and must survive as one.
+  if (remaining !== undefined) return remaining;
+  return includedRemainingOf(allowance);
+};
 
 const featuresOf = (
-  allowances: Readonly<Record<string, { included: number; overage: Overage; resets: Resets }>>,
+  allowances: Readonly<
+    Record<string, { kind?: AllowanceKind; included: Included; overage: Overage; resets: Resets }>
+  >,
   previous: Readonly<Record<string, FeatureEntitlement>>,
-  remaining: Readonly<Record<string, number>>,
+  remaining: Readonly<Record<string, number | null>>,
   periodEnd: DateTime.Utc,
   standing: Standing,
   keepUsage = false,
@@ -330,10 +369,11 @@ const featuresOf = (
     Object.entries(allowances).map(([feature, allowance]) => {
       const used = keepUsage ? (previous[feature]?.used ?? 0) : 0;
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
-      const spendable = remaining[feature] ?? allowance.included;
+      const spendable = spendableOf(remaining, feature, allowance);
       return [
         feature,
         {
+          ...(allowance.kind === undefined ? {} : { kind: allowance.kind }),
           included: allowance.included,
           used,
           reserved,

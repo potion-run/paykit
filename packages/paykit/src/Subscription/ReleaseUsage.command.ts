@@ -3,13 +3,14 @@ import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { NoReservation } from "./SettleUsage.command.ts";
 import { AccountId } from "./Subscription.id.ts";
+import { FeatureNotMetered } from "./TrackUsage.command.ts";
 
 /** Held units came back, without recording usage. `remaining` grows again. */
 export class UsageReleased extends Domain.Event("UsageReleased", {
   feature: Schema.String,
   amount: Schema.Int,
   reservedAfter: Schema.Int,
-  remainingAfter: Schema.Int,
+  remainingAfter: Schema.NullOr(Schema.Int),
 }) {}
 
 /**
@@ -25,6 +26,6 @@ export class ReleaseUsage extends Domain.Command("ReleaseUsage", {
     amount: Schema.Int,
   },
   events: [UsageReleased],
-  rejects: [NoReservation],
+  rejects: [NoReservation, FeatureNotMetered],
   middleware: [Session],
 }) {}

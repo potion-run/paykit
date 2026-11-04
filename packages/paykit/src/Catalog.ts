@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { Allowances, type Allowance } from "./Allowance.ts";
+import { Allowances, isFlagGrant, type Allowance } from "./Allowance.ts";
 import { Feature } from "./Feature.ts";
 import { Tier } from "./Tier.ts";
 
@@ -53,6 +53,39 @@ export class CatalogEmptyTier extends Schema.TaggedError<CatalogEmptyTier>()("Ca
   tier: Schema.String,
 }) {}
 
+/**
+ * An unlimited allowance names an overage. Past an allowance that never runs
+ * out there is nothing to block and nothing to bill, so `block` or `bill`
+ * beside `included: "unlimited"` is a contradiction the deploy refuses rather
+ * than a rule `decide` has to interpret.
+ */
+export class CatalogUnlimitedOverage extends Schema.TaggedError<CatalogUnlimitedOverage>()(
+  "CatalogUnlimitedOverage",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/**
+ * A flag was granted with a count. A `kind: "flag"` feature is on or off, so
+ * its allowance is `included: 1` with `overage: "allow"` and `resets: "never"`
+ * — the shape `grant()` writes. Anything else describes a counter that does
+ * not exist, so the deploy refuses it rather than leaving `decide` to
+ * interpret it.
+ */
+export class CatalogFlagNotGranted extends Schema.TaggedError<CatalogFlagNotGranted>()(
+  "CatalogFlagNotGranted",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/**
+ * A metered feature was granted with `grant()`. A flag grant is "granted, not
+ * counted"; beside a feature that is counted it would silently stop recording
+ * usage, so the deploy refuses it.
+ */
+export class CatalogFlagOnMetered extends Schema.TaggedError<CatalogFlagOnMetered>()(
+  "CatalogFlagOnMetered",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -65,6 +98,9 @@ export const CatalogError = Schema.Union([
   CatalogDuplicateAllowance,
   CatalogUnknownFeature,
   CatalogEmptyTier,
+  CatalogUnlimitedOverage,
+  CatalogFlagNotGranted,
+  CatalogFlagOnMetered,
   CatalogInvalid,
 ]);
 export type CatalogError = typeof CatalogError.Type;
@@ -82,8 +118,9 @@ const duplicateOf = <A>(values: ReadonlyArray<A>, key: (value: A) => string): st
 /**
  * Validate a catalog: the schema first, then the references the schema cannot
  * see — duplicate declarations, a grant with no declared feature, a tier that
- * grants nothing. Provider ids never appear here, so the same catalog runs on
- * every provider.
+ * grants nothing, an unlimited allowance that claims an overage, a flag that
+ * was given a count. Provider ids never appear here, so the same catalog runs
+ * on every provider.
  *
  * ### Validating a catalog
  * **Example:** A free and a priced tier, both quoting one declared feature
@@ -121,6 +158,7 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
   }
 
   const declared = new Set(catalog.features.map((feature) => feature.id));
+  const kinds = new Map(catalog.features.map((feature) => [feature.id, feature.kind]));
   for (const tier of catalog.tiers) {
     if (tier.grants.length === 0) {
       return Result.fail(new CatalogEmptyTier({ tier: tier.id }));
@@ -136,6 +174,23 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
         );
       }
       granted.add(grant.feature);
+      // Unlimited means there is no end to be past, so an overage is only
+      // meaningful when it allows: anything else describes a boundary that
+      // cannot exist.
+      if (grant.included === "unlimited" && grant.overage !== "allow") {
+        return Result.fail(new CatalogUnlimitedOverage({ tier: tier.id, feature: grant.feature }));
+      }
+      // A flag has nothing to count, so it is granted with `grant()` and only
+      // with `grant()`; a metered feature is the mirror image. Both directions
+      // are refusals, because either one silently changes what usage recording
+      // means for that feature.
+      const flagFeature = kinds.get(grant.feature) === "flag";
+      if (flagFeature && !isFlagGrant(grant)) {
+        return Result.fail(new CatalogFlagNotGranted({ tier: tier.id, feature: grant.feature }));
+      }
+      if (!flagFeature && isFlagGrant(grant)) {
+        return Result.fail(new CatalogFlagOnMetered({ tier: tier.id, feature: grant.feature }));
+      }
     }
   }
 

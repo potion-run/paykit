@@ -45,8 +45,8 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | Word | Means | Not to be called |
 | --- | --- | --- |
 | `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
-| `Feature` | a meterable thing: `messages`, `seats`, `storage_gb` | `Meter` — this is not the provider's billing meter |
-| `Allowance` | what a tier grants of one feature, and what happens past it | `Limit` — a limit is one field of an allowance |
+| `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
+| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — and what happens past it | `Limit` — a limit is one field of an allowance |
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
@@ -54,8 +54,10 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | `Standing` | `good \| grace \| blocked`, plus per-feature remaining | `Status` |
 | `Actor` | who is calling: an `account`, an `admin`, or the `system` | `User`, `Principal` |
 
-`Allowance.overage` is one of `"block"`, `"bill"`, `"allow"`. `Allowance.resets` is one of
-`"month"`, `"annual"`, `"never"`.
+`Allowance.included` is a non-negative count or `"unlimited"`. `Allowance.overage` is one of
+`"block"`, `"bill"`, `"allow"`, and is only meaningful for a count: an unlimited allowance
+defaults it to `"allow"` and the catalog refuses any other value beside `"unlimited"`
+(`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`.
 
 ## Package
 
@@ -151,15 +153,21 @@ That duality is the point of building on a model framework rather than writing a
 
 A catalog is three plain declarations, and every value it holds is serializable:
 
-- `feature({ id, name })` declares a meter once. Its id is branded, so the id an allowance
-  carries cannot be confused with an arbitrary string.
+- `feature({ id, name, kind })` declares a meter once. Its id is branded, so the id an allowance
+  carries cannot be confused with an arbitrary string. `kind` is `"metered"` (the default) or
+  `"flag"`, an on/off capability with no counter.
 - `allowance(feature, { included, overage, resets })` quotes a declared feature in a tier, with
-  `overage` defaulting to `block` and `resets` to `month`.
+  `overage` defaulting to `block` for a count (and to `allow` for `"unlimited"`) and `resets` to
+  `month`.
+- `grant(feature)` grants a `"flag"` in a tier: `{ included: 1, overage: "allow", resets:
+  "never" }`, which is how `decide` recognizes a flag from state alone. A flag granted any other
+  way is refused.
 - `tier({ id, name, price, grants })` bundles allowances. A tier with no `price` is free; a tier
   must grant at least one allowance, because one that grants nothing could never activate.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
-  `CatalogUnknownFeature`, `CatalogEmptyTier`, or `CatalogInvalid` for a schema failure.
+  `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
+  or `CatalogInvalid` for a schema failure.
 
 Constructors stay pure and total. Validation happens at `catalog()`, which is where a deploy
 can refuse a catalog before it reaches money. `defineCatalog()` is the synchronous `Result`
@@ -182,7 +190,7 @@ state: {
   cancelAtPeriodEnd, credits,
   usage: { [feature]: number },             // billed, a fold of UsageRecorded
   reserved: { [feature]: number },          // held, a fold of the reservation events
-  remaining: { [feature]: number },         // spendable now: included - usage - reserved
+  remaining: { [feature]: number | null },  // spendable now: included - usage - reserved; null when unbounded
   refs: { [provider]: { customer?, subscription?, checkout? } },  // opaque vendor ids
 }
 ```
@@ -197,10 +205,10 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
-| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage` | `Session` |
-| `ReserveUsage` | `UsageReserved` | `ReservationExceeded`, `StandingBlocksUsage` | `Session` |
-| `SettleUsage` | `UsageRecorded`, `UsageSettled` | `NoReservation`, `StandingBlocksUsage` | `Session` |
-| `ReleaseUsage` | `UsageReleased` | `NoReservation` | `Session` |
+| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `ReserveUsage` | `UsageReserved` | `ReservationExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `SettleUsage` | `UsageRecorded`, `UsageSettled` | `NoReservation`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `ReleaseUsage` | `UsageReleased` | `NoReservation`, `FeatureNotMetered` | `Session` |
 | `ConsumeCredits` | `CreditsConsumed` | `NotSubscribed`, `CreditExceedsBalance` | `Session` |
 | `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled`, `NotSubscribed` | `Session` |
 | `Resume` | `CancellationWithdrawn` | `NotScheduled`, `NotSubscribed` | `Session` |

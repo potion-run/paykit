@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { StandingBlocksUsage, UsageRecorded } from "./TrackUsage.command.ts";
+import { FeatureNotMetered, StandingBlocksUsage, UsageRecorded } from "./TrackUsage.command.ts";
 
 /** No open reservation covers the amount being settled. */
 export class NoReservation extends Domain.Rejection("NoReservation", {
@@ -19,7 +19,7 @@ export class UsageSettled extends Domain.Event("UsageSettled", {
   feature: Schema.String,
   amount: Schema.Int,
   reservedAfter: Schema.Int,
-  remainingAfter: Schema.Int,
+  remainingAfter: Schema.NullOr(Schema.Int),
 }) {}
 
 /**
@@ -36,6 +36,6 @@ export class SettleUsage extends Domain.Command("SettleUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded, UsageSettled],
-  rejects: [NoReservation, StandingBlocksUsage],
+  rejects: [NoReservation, StandingBlocksUsage, FeatureNotMetered],
   middleware: [Session],
 }) {}

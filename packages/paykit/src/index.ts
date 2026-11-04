@@ -2,9 +2,17 @@
 // bindings, the model, and providers. Everything a user can import is API.
 
 // ── 1. deploy-time ──────────────────────────────────────────────────────────
-export { Feature, FeatureId, feature, messages, seats, storage_gb } from "./Feature.ts";
+export {
+  Feature,
+  FeatureId,
+  FeatureKind,
+  feature,
+  messages,
+  seats,
+  storage_gb,
+} from "./Feature.ts";
 export type { FeatureInput } from "./Feature.ts";
-export { Allowance, Allowances, Overage, Resets, allowance } from "./Allowance.ts";
+export { Allowance, Allowances, Included, Overage, Resets, allowance, grant } from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
 export { Interval, Price, Tier, TierId, tier } from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
@@ -15,8 +23,11 @@ export {
   CatalogDuplicateTier,
   CatalogEmptyTier,
   CatalogError,
+  CatalogFlagNotGranted,
   CatalogInvalid,
   CatalogUnknownFeature,
+  CatalogUnlimitedOverage,
+  CatalogFlagOnMetered,
   allowancesOf,
   catalog,
   defineCatalog,
@@ -222,6 +233,7 @@ export { TrialStarted, StartTrial } from "./Subscription/StartTrial.command.ts";
 export { TierChanged, ChangeTier, DowngradeBelowUsage } from "./Subscription/ChangeTier.command.ts";
 export {
   AllowanceExceeded,
+  FeatureNotMetered,
   StandingBlocksUsage,
   TrackUsage,
   UsageRecorded,

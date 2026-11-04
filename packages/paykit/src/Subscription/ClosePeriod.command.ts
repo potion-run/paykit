@@ -22,9 +22,12 @@ export class PeriodClosed extends Domain.Event("PeriodClosed", {
   cancelAtPeriodEndAfter: Schema.Boolean,
 }) {}
 
-/** Usage counters returned to zero. `remaining` is the outcome after reset. */
+/**
+ * Usage counters returned to zero. `remaining` is the outcome after reset, and
+ * is `null` for a feature whose allowance never runs out.
+ */
 export class UsageReset extends Domain.Event("UsageReset", {
-  remaining: Schema.Record(Schema.String, Schema.Int),
+  remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
 }) {}
 
 /** Credits do not survive a period boundary. */

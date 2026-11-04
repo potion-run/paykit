@@ -13,7 +13,7 @@ import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 export class SubscriptionActivated extends Domain.Event("SubscriptionActivated", {
   tier: Schema.String,
   allowances: Allowances,
-  remaining: Schema.Record(Schema.String, Schema.Int),
+  remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   periodStart: Schema.DateTimeUtc,
   periodEnd: Schema.DateTimeUtc,
   anchorTz: Schema.String,

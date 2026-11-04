@@ -23,7 +23,7 @@ export class DowngradeBelowUsage extends Domain.Rejection("DowngradeBelowUsage",
 export class TierChanged extends Domain.Event("TierChanged", {
   tier: Schema.String,
   allowances: Allowances,
-  remaining: Schema.Record(Schema.String, Schema.Int),
+  remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Schema.Literals(["month", "annual"])),
   /** What the account was paying before the change. Absent from a free tier. */

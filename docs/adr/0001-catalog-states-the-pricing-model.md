@@ -94,8 +94,10 @@ Not part of this record; each gets its own.
 
 ## Consequences
 
-- **Every catalog change is a state-shape change.** `BILLING_STACK_VERSION` bumps, and `read`
-  refuses a version it does not know — the guard added for exactly this.
+- **A catalog change old state cannot read bumps `BILLING_STACK_VERSION`**, and `read` refuses a
+  version it does not know — the guard added for exactly this. A widening does not bump it:
+  `included: "unlimited"` still decodes from a record that holds a number, so refusing that state
+  would force a reset for no reason.
 - **The catalog becomes the version ledger.** A deploy records what a price was; the log records
   what an account bought. "What was this account paying in March" is answered from events, not
   from a plan-versioning feature.

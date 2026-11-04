@@ -99,6 +99,47 @@ describe("the example billing app", () => {
     }).pipe(run),
   );
 
+  it.live("an unlimited allowance never runs out, so check reports no count", () =>
+    Effect.gen(function* () {
+      const tenant = yield* BillingApi.clientInProcess;
+      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      yield* caughtUp(receipt);
+
+      const track = yield* Paykit.Track();
+      yield* track({ account: account.id, feature: "messages", amount: 1_000_000 });
+
+      const check = yield* Paykit.Check();
+      const answer = yield* check({ account: account.id, feature: "messages", amount: 1_000_000 });
+      expect(answer.allowed).toBe(true);
+      // Unlimited is the absence of a count, not a large one.
+      expect(answer.remaining).toBeNull();
+      // The period still exists, so it still says when it ends.
+      expect(answer.resetsAt).not.toBeNull();
+      expect(answer.standing).toBe("good");
+    }).pipe(run),
+  );
+
+  it.live("a granted flag is allowed but has nothing to track", () =>
+    Effect.gen(function* () {
+      const tenant = yield* BillingApi.clientInProcess;
+      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      yield* caughtUp(receipt);
+
+      const check = yield* Paykit.Check();
+      const answer = yield* check({ account: account.id, feature: "sso" });
+      expect(answer.allowed).toBe(true);
+      // On/off: there is no count, and nothing ever resets.
+      expect(answer.remaining).toBeNull();
+      expect(answer.resetsAt).toBeNull();
+
+      // SSO cannot be consumed, so recording it is refused by tag.
+      const track = yield* Paykit.Track();
+      const refused = yield* Effect.exit(track({ account: account.id, feature: "sso", amount: 1 }));
+      expect(refused._tag).toBe("Failure");
+      expect(String(refused)).toContain("FeatureNotMetered");
+    }).pipe(run),
+  );
+
   it.live("shows the charge before applying it", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
@@ -163,6 +204,6 @@ describe("the example billing app", () => {
 
   it("the catalog the example ships is the one the deploy validates", () => {
     expect(Catalog.tiers.map((tier) => tier.id)).toEqual(["free", "pro", "scale"]);
-    expect(Catalog.features.map((feature) => feature.id)).toEqual(["messages", "seats"]);
+    expect(Catalog.features.map((feature) => feature.id)).toEqual(["messages", "seats", "sso"]);
   });
 });

@@ -2,6 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { isFlagGrant, type Included, type Overage, type Resets } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
@@ -48,8 +49,11 @@ import { AccountId } from "./Subscription.id.ts";
 import {
   addInterval,
   allowsUsage,
+  includedRemainingOf,
   initialSubscriptionState,
   periodFrom,
+  remainingAfterRelease,
+  remainingAfterSpending,
   remainingOf,
   reservedOf,
   standingOf,
@@ -62,29 +66,45 @@ import {
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 import {
   AllowanceExceeded,
+  FeatureNotMetered,
   StandingBlocksUsage,
   TrackUsage,
   UsageRecorded,
 } from "./TrackUsage.command.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 
-const includedRemaining = (
-  allowances: Readonly<Record<string, { readonly included: number }>>,
-): Record<string, number> =>
+/** The part of an allowance `decide` reads when it derives a count. */
+type CountableAllowance = {
+  readonly included: Included;
+  readonly overage: Overage;
+  readonly resets: Resets;
+};
+
+const startingRemaining = (
+  allowances: Readonly<Record<string, CountableAllowance>>,
+): Record<string, number | null> =>
   Object.fromEntries(
-    Object.entries(allowances).map(([feature, allowance]) => [feature, allowance.included]),
+    Object.entries(allowances).map(([feature, allowance]) => [
+      feature,
+      includedRemainingOf(allowance),
+    ]),
   );
 
 const remainingAfterChange = (
   state: SubscribedState,
-  allowances: Readonly<Record<string, { readonly included: number }>>,
-): Record<string, number> =>
+  allowances: Readonly<Record<string, CountableAllowance>>,
+): Record<string, number | null> =>
   Object.fromEntries(
-    Object.entries(allowances).map(([feature, allowance]) => [
-      feature,
-      // Usage and open reservations both still owe the old period's units.
-      allowance.included - usedOf(state, feature) - reservedOf(state, feature),
-    ]),
+    Object.entries(allowances).map(([feature, allowance]) => {
+      // Usage and open reservations both still owe the old period's units. An
+      // allowance with no count — unlimited, or a flag's grant — has none to
+      // owe them against.
+      const spendable = includedRemainingOf(allowance);
+      return [
+        feature,
+        spendable === null ? null : spendable - usedOf(state, feature) - reservedOf(state, feature),
+      ];
+    }),
   );
 
 const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean =>
@@ -124,7 +144,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       remaining: Object.fromEntries(
         Object.entries(state.allowances).map(([feature, allowance]) => [
           feature,
-          allowance.included,
+          includedRemainingOf(allowance),
         ]),
       ),
     }),
@@ -177,7 +197,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new TrialStarted({
           tier: command.tier,
           allowances: command.allowances,
-          remaining: includedRemaining(command.allowances),
+          remaining: startingRemaining(command.allowances),
           periodStart: now,
           periodEnd: command.trialEndsAt,
           anchorTz: command.anchorTz ?? "UTC",
@@ -207,7 +227,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new SubscriptionActivated({
           tier: command.tier,
           allowances: command.allowances,
-          remaining: includedRemaining(command.allowances),
+          remaining: startingRemaining(command.allowances),
           periodStart: period.start,
           periodEnd: period.end,
           anchorTz: period.anchorTz,
@@ -228,7 +248,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (Schema.is(NotSubscribed)(current)) return current;
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         const used = usedOf(current, feature);
-        if (used > allowance.included) {
+        // An unlimited allowance is never below any usage, so only a counted
+        // one can be a downgrade below what the account already spent.
+        if (allowance.included !== "unlimited" && used > allowance.included) {
           return new DowngradeBelowUsage({ feature, included: allowance.included, used });
         }
       }
@@ -279,11 +301,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (!allowsUsage(state.status)) {
         return new StandingBlocksUsage({ standing, status: state.status });
       }
+      const allowance = state.allowances[command.feature];
+      // A flag is granted, not metered: there is no counter to record usage
+      // against, so a Track on one is refused however small the amount is.
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
-      const allowance = state.allowances[command.feature];
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
       if (allowance === undefined) {
@@ -295,7 +322,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining: 0,
         });
       }
-      if (allowance.overage === "block" && command.amount > remaining) {
+      // An allowance that never runs out never blocks: `used` keeps counting
+      // and `remaining` stays absent.
+      if (
+        allowance.included !== "unlimited" &&
+        allowance.overage === "block" &&
+        remaining !== null &&
+        command.amount > remaining
+      ) {
         return new AllowanceExceeded({
           feature: command.feature,
           included: allowance.included,
@@ -309,7 +343,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: command.feature,
           amount: command.amount,
           usedAfter: used + command.amount,
-          remainingAfter: remaining - command.amount,
+          remainingAfter: remainingAfterSpending(remaining, command.amount),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -364,18 +398,34 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           status: state.status,
         });
       }
+      const allowance = state.allowances[command.feature];
+      // A flag has no counter, so there is nothing to hold against it.
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
-      const allowance = state.allowances[command.feature];
       const used = usedOf(state, command.feature);
       const reserved = reservedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
-      if (allowance === undefined || command.amount > remaining) {
+      if (allowance === undefined) {
         return new ReservationExceeded({
           feature: command.feature,
-          included: allowance?.included ?? 0,
+          included: 0,
+          used,
+          reserved,
+          requested: command.amount,
+          remaining: 0,
+        });
+      }
+      // A hold is only refused when there is a count it would exceed. An
+      // unlimited allowance holds whatever is asked.
+      if (allowance.included !== "unlimited" && remaining !== null && command.amount > remaining) {
+        return new ReservationExceeded({
+          feature: command.feature,
+          included: allowance.included,
           used,
           reserved,
           requested: command.amount,
@@ -387,7 +437,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: command.feature,
           amount: command.amount,
           reservedAfter: reserved + command.amount,
-          remainingAfter: remaining - command.amount,
+          remainingAfter: remainingAfterSpending(remaining, command.amount),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -398,6 +448,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           standing: standingOf(statusOf(state)),
           status: statusOf(state),
         });
+      }
+      const allowance = state.allowances[command.feature];
+      // A flag is never held, so it is never settled: refuse the feature, not
+      // the missing reservation.
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
       }
       if (command.amount <= 0) return [];
       const reserved = reservedOf(state, command.feature);
@@ -435,6 +491,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reserved: 0,
         });
       }
+      const allowance = state.allowances[command.feature];
+      // A flag is never held, so there is nothing to return.
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
       if (command.amount <= 0) return [];
       const reserved = reservedOf(state, command.feature);
       if (command.amount > reserved) {
@@ -449,7 +510,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: command.feature,
           amount: command.amount,
           reservedAfter: reserved - command.amount,
-          remainingAfter: remainingOf(state, command.feature) + command.amount,
+          remainingAfter: remainingAfterRelease(
+            remainingOf(state, command.feature),
+            command.amount,
+          ),
         }),
       ];
     },

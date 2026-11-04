@@ -1,4 +1,4 @@
-import { allowance } from "./Allowance.ts";
+import { allowance, grant } from "./Allowance.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
@@ -63,6 +63,7 @@ export const Paykit = {
   // deploy-time
   feature,
   allowance,
+  grant,
   tier,
   catalog,
   defineCatalog,

@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { StandingBlocksUsage } from "./TrackUsage.command.ts";
+import { FeatureNotMetered, StandingBlocksUsage } from "./TrackUsage.command.ts";
 
 /** The spendable amount is smaller than the reservation asked for. */
 export class ReservationExceeded extends Domain.Rejection("ReservationExceeded", {
@@ -24,7 +24,7 @@ export class UsageReserved extends Domain.Event("UsageReserved", {
   feature: Schema.String,
   amount: Schema.Int,
   reservedAfter: Schema.Int,
-  remainingAfter: Schema.Int,
+  remainingAfter: Schema.NullOr(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
 }) {}
 
@@ -44,6 +44,6 @@ export class ReserveUsage extends Domain.Command("ReserveUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageReserved],
-  rejects: [ReservationExceeded, StandingBlocksUsage],
+  rejects: [ReservationExceeded, StandingBlocksUsage, FeatureNotMetered],
   middleware: [Session],
 }) {}

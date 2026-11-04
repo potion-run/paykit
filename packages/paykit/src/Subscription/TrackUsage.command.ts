@@ -19,12 +19,24 @@ export class StandingBlocksUsage extends Domain.Rejection("StandingBlocksUsage",
   status: Schema.String,
 }) {}
 
-/** One usage fact. `remainingAfter` is the outcome `decide` worked out. */
+/**
+ * The feature is an on/off capability, not a meter. A flag is granted or it is
+ * not, so there is no counter to record usage against: `Track`, `Reserve`,
+ * `Settle` and `Release` all refuse one with this tag.
+ */
+export class FeatureNotMetered extends Domain.Rejection("FeatureNotMetered", {
+  feature: Schema.String,
+}) {}
+
+/**
+ * One usage fact. `remainingAfter` is the outcome `decide` worked out, and is
+ * `null` when the allowance never runs out: `usedAfter` still counts.
+ */
 export class UsageRecorded extends Domain.Event("UsageRecorded", {
   feature: Schema.String,
   amount: Schema.Int,
   usedAfter: Schema.Int,
-  remainingAfter: Schema.Int,
+  remainingAfter: Schema.NullOr(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
 }) {}
 
@@ -40,6 +52,6 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded],
-  rejects: [AllowanceExceeded, StandingBlocksUsage],
+  rejects: [AllowanceExceeded, StandingBlocksUsage, FeatureNotMetered],
   middleware: [Session],
 }) {}

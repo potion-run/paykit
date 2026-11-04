@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
-import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
+import { ClosePeriod, UsageReset } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
@@ -25,11 +25,19 @@ const billTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 100, overage: "bill" })],
 });
+const unlimitedTier = tier({
+  id: "unlimited",
+  price: { amount: 9900, currency: "usd", interval: "month" },
+  grants: [allowance(messages, { included: "unlimited" })],
+});
 
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [blockTier, billTier] }));
+const testCatalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [blockTier, billTier, unlimitedTier] }),
+);
 
 const block = allowancesOf(testCatalog, "block")!;
 const bill = allowancesOf(testCatalog, "bill")!;
+const unlimited = allowancesOf(testCatalog, "unlimited")!;
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const ref = Subscription.ref("acct_prop");
@@ -102,9 +110,12 @@ describe("allowance", () => {
         state = evolve(state, decision);
         const event = decision[0] as UsageRecorded;
         expect(event.usedAfter).toBeLessThanOrEqual(100);
-        expect(event.remainingAfter).toBeGreaterThanOrEqual(0);
-        expect(event.remainingAfter).toBeLessThanOrEqual(remaining);
-        remaining = event.remainingAfter;
+        // A blocking allowance always keeps a count to report.
+        expect(event.remainingAfter).not.toBeNull();
+        const after = event.remainingAfter ?? 0;
+        expect(after).toBeGreaterThanOrEqual(0);
+        expect(after).toBeLessThanOrEqual(remaining);
+        remaining = after;
       } else {
         expect((decision as { readonly _tag: string })._tag).toBe("AllowanceExceeded");
       }
@@ -149,6 +160,37 @@ describe("allowance", () => {
     state = evolve(state, closed, state.period.end);
     expect(state.usage.messages ?? 0).toBe(0);
     expect(state.remaining.messages).toBe(100);
+  });
+
+  it("never blocks an unlimited allowance, and closes a period back to no count", () => {
+    let state = activated("unlimited", unlimited) as any;
+    expect(state.remaining.messages).toBeNull();
+    for (const amount of [1_000, 1_000_000]) {
+      const decision = decide(state, new TrackUsage({ feature: "messages", amount })) as
+        | ReadonlyArray<AnyEvent>
+        | { readonly _tag: string };
+      // Never a rejection, however much is asked for.
+      expect(Array.isArray(decision)).toBe(true);
+      if (!Array.isArray(decision)) continue;
+      state = evolve(state, decision);
+      expect((decision[0] as UsageRecorded).remainingAfter).toBeNull();
+    }
+    expect(state.usage.messages).toBe(1_001_000);
+
+    const closed = decide(
+      state,
+      new ClosePeriod({ periodEnd: state.period.end }),
+      "close",
+      state.period.end,
+    ) as ReadonlyArray<AnyEvent>;
+    const reset = closed.find((event) => event._tag === "UsageReset");
+    expect(reset).toBeDefined();
+    if (reset === undefined) return;
+    // Nothing to reset: use counts return to zero, the allowance stays absent.
+    expect((reset as UsageReset).remaining).toEqual({ messages: null });
+    state = evolve(state, closed, state.period.end);
+    expect(state.usage.messages ?? 0).toBe(0);
+    expect(state.remaining.messages).toBeNull();
   });
 
   it("is deterministic: the same command and clock decide the same events", () => {

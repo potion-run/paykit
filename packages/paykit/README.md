@@ -93,12 +93,44 @@ const team = Paykit.tier({
   ],
 });
 
-Paykit.catalog({ features: [Paykit.messages, seats], tiers: [team] });
+// An allowance that never runs out. Past it there is nothing to block or to
+// bill, so `overage` defaults to "allow" and the catalog refuses any other.
+const scale = Paykit.tier({
+  id: "scale",
+  name: "Scale",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  grants: [Paykit.allowance(Paykit.messages, { included: "unlimited" })],
+});
+
+// An on/off capability. A flag is declared once, then granted — not metered:
+// `check()` answers allowed and there is no counter to spend or to reset.
+const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
+
+const enterprise = Paykit.tier({
+  id: "enterprise",
+  name: "Enterprise",
+  price: { amount: 49_900, currency: "usd", interval: "month" },
+  grants: [Paykit.grant(sso), Paykit.allowance(Paykit.messages, { included: 50_000 })],
+});
+
+Paykit.catalog({ features: [Paykit.messages, seats, sso], tiers: [team, scale, enterprise] });
 ```
 
 A feature is declared once and quoted by identity, so a tier cannot grant a feature the catalog
 never declared. `catalog()` refuses duplicate feature ids, duplicate tier ids, a tier that grants
-the same feature twice, a tier with no grants, and a price that is not positive whole minor units.
+the same feature twice, a tier with no grants, an unlimited allowance that also names a `block` or
+`bill` overage (`CatalogUnlimitedOverage`), a `kind: "flag"` feature granted a count
+(`CatalogFlagNotGranted`), and a price that is not positive whole minor units.
+
+`kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
+`{ allowed, remaining: null, resetsAt: null, standing }`, and `Track`, `Reserve`, `Settle` and
+`Release` refuse it with `FeatureNotMetered` because there is no counter behind it.
+
+`included: "unlimited"` grants an allowance with no end. `check()` answers
+`{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no
+count to report, and `resetsAt` is still there because the period still exists. `Track`, `Reserve`,
+`Settle` and `Release` all work on it, `used` keeps its honest count, and `ClosePeriod` resets
+`used` without inventing a `remaining`.
 
 The catalog carries no provider ids. A provider maps tiers to its own handles, and `Stack`
 refuses a mapping whose amount, currency or interval disagrees with the catalog
@@ -108,7 +140,7 @@ refuses a mapping whose amount, currency or interval disagrees with the catalog
 
 | Binding | Answers |
 | --- | --- |
-| `Check()` | `{ allowed, remaining, resetsAt, standing }`, one local read |
+| `Check()` | `{ allowed, remaining, resetsAt, standing }`, one local read (`remaining` is `null` when the allowance never runs out) |
 | `Track()` | records a usage fact, deduped by key, atomically with its allowance check |
 | `Subscribe()` | a hosted checkout URL, an invoice id, or `{ activated: true }` for a free tier |
 | `Portal()` | the provider's customer portal, when it declares one |

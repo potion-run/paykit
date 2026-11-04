@@ -1,6 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { Allowances, type Allowance } from "../Allowance.ts";
+import { Allowances, isFlagGrant, type Allowance, type Included } from "../Allowance.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price } from "../Tier.ts";
 
@@ -46,8 +46,12 @@ export type Refs = typeof Refs.Type;
 export const UsageCounts = Schema.Record(Schema.String, Schema.Int);
 export type UsageCounts = typeof UsageCounts.Type;
 
-/** Per-feature remaining allowance, copied from the event that changed it. */
-export const Remaining = Schema.Record(Schema.String, Schema.Int);
+/**
+ * Per-feature remaining allowance, copied from the event that changed it.
+ * `null` means there is no count: an unlimited allowance, or a flag's grant. A
+ * flag reports the absence of a number rather than one it never spends.
+ */
+export const Remaining = Schema.Record(Schema.String, Schema.NullOr(Schema.Int));
 export type Remaining = typeof Remaining.Type;
 
 /**
@@ -145,14 +149,48 @@ export const usedOf = (state: SubscribedState, feature: string): number =>
   state.usage[feature] ?? 0;
 
 /**
+ * A per-feature count as it was recorded: `undefined` when the record does not
+ * mention the feature at all, which is not the same as a recorded `null`.
+ */
+export const recordedCount = (
+  counts: Readonly<Record<string, number | null>>,
+  feature: string,
+): number | null | undefined => (Object.hasOwn(counts, feature) ? counts[feature] : undefined);
+
+/**
+ * The spendable count an allowance starts a period with: what it includes, or
+ * `null` when there is no count — an unlimited allowance, or a flag's grant.
+ */
+export const includedRemainingOf = (allowance: {
+  readonly kind?: "metered" | "flag";
+  readonly included: Included;
+}): number | null =>
+  allowance.included === "unlimited" || isFlagGrant(allowance) ? null : allowance.included;
+
+/**
+ * A spendable count after spending `amount` of it. An unbounded count has
+ * nothing to spend down, so it stays `null` however much is used.
+ */
+export const remainingAfterSpending = (remaining: number | null, amount: number): number | null =>
+  remaining === null ? null : remaining - amount;
+
+/**
+ * A spendable count after releasing `amount` back into it. An unbounded count
+ * stays `null`.
+ */
+export const remainingAfterRelease = (remaining: number | null, amount: number): number | null =>
+  remaining === null ? null : remaining + amount;
+
+/**
  * A feature's spendable amount, defaulting to what the tier included.
  * `remaining` is already net of open reservations, so this is what a caller
- * may take right now.
+ * may take right now, and `null` means there is no limit to take from.
  */
-export const remainingOf = (state: SubscribedState, feature: string): number => {
-  const remaining = state.remaining[feature];
+export const remainingOf = (state: SubscribedState, feature: string): number | null => {
+  const remaining = recordedCount(state.remaining, feature);
   if (remaining !== undefined) return remaining;
-  return state.allowances[feature]?.included ?? 0;
+  const allowance = state.allowances[feature];
+  return allowance === undefined ? 0 : includedRemainingOf(allowance);
 };
 
 /** The amount currently held by open reservations for one feature. */

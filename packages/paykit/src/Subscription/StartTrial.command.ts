@@ -14,7 +14,7 @@ import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 export class TrialStarted extends Domain.Event("TrialStarted", {
   tier: Schema.String,
   allowances: Allowances,
-  remaining: Schema.Record(Schema.String, Schema.Int),
+  remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   periodStart: Schema.DateTimeUtc,
   periodEnd: Schema.DateTimeUtc,
   anchorTz: Schema.String,

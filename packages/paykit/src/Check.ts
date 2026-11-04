@@ -20,7 +20,8 @@ export type CheckInput = typeof CheckInput.Type;
 /** What every `Check` implementation answers. */
 export const CheckResult = Schema.Struct({
   allowed: Schema.Boolean,
-  remaining: Schema.Int,
+  /** Spendable now. `null` means there is no count: an unlimited allowance or a flag. */
+  remaining: Schema.NullOr(Schema.Int),
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
   standing: Standing,
 });
@@ -55,7 +56,7 @@ export const evaluateCheck = (
         string,
         {
           readonly overage: string;
-          readonly remaining: number;
+          readonly remaining: number | null;
           readonly resetsAt: DateTime.Utc | null;
         }
       >
@@ -69,8 +70,11 @@ export const evaluateCheck = (
     return { allowed: false, remaining: 0, resetsAt: null, standing: state.standing };
   }
   const amount = input.amount ?? 1;
+  // A `null` remaining is an allowance that never runs out: it always has room,
+  // and the answer reports the absence of a count rather than a number.
   const allowed =
-    state.standing !== "blocked" && (feature.overage !== "block" || amount <= feature.remaining);
+    state.standing !== "blocked" &&
+    (feature.overage !== "block" || feature.remaining === null || amount <= feature.remaining);
   return {
     allowed,
     remaining: feature.remaining,
