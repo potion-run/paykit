@@ -15,6 +15,7 @@ import {
   creditRateOf,
   includedRemainingOf,
   recordedCount,
+  spendHeadroomOf,
 } from "./Subscription.state.ts";
 
 /** What a tier grants, what has been used, and when it resets. */
@@ -54,6 +55,12 @@ export const FeatureEntitlement = Schema.Struct({
    */
   allowed: Schema.Boolean,
   overage: Overage,
+  /**
+   * The units this period may bill past `included` before the ceiling stops
+   * it, so a console can say "2,000 of 12,000 used this period". Absent means
+   * no cap.
+   */
+  cap: Schema.optionalKey(Schema.Int),
   resets: Resets,
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
 });
@@ -227,7 +234,13 @@ export class Entitlements extends Domain.View("Entitlements", {
               ...feature,
               used: event.usedAfter,
               remaining: event.remainingAfter,
-              allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
+              allowed: allowsOne(
+                view.standing,
+                feature.overage,
+                event.remainingAfter,
+                feature.cap,
+                feature.carried,
+              ),
             },
           },
         },
@@ -255,7 +268,13 @@ export class Entitlements extends Domain.View("Entitlements", {
               ...feature,
               reserved: feature.reserved + event.amount,
               remaining: event.remainingAfter,
-              allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
+              allowed: allowsOne(
+                view.standing,
+                feature.overage,
+                event.remainingAfter,
+                feature.cap,
+                feature.carried,
+              ),
             },
           },
         },
@@ -284,7 +303,13 @@ export class Entitlements extends Domain.View("Entitlements", {
               // `reserved` as well as what it billed.
               reserved: Math.max(0, feature.reserved - event.amount - event.released),
               remaining: event.remainingAfter,
-              allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
+              allowed: allowsOne(
+                view.standing,
+                feature.overage,
+                event.remainingAfter,
+                feature.cap,
+                feature.carried,
+              ),
             },
           },
         },
@@ -309,7 +334,13 @@ export class Entitlements extends Domain.View("Entitlements", {
               ...feature,
               reserved: Math.max(0, feature.reserved - event.amount),
               remaining: event.remainingAfter,
-              allowed: allowsOne(view.standing, feature.overage, event.remainingAfter),
+              allowed: allowsOne(
+                view.standing,
+                feature.overage,
+                event.remainingAfter,
+                feature.cap,
+                feature.carried,
+              ),
             },
           },
         },
@@ -374,7 +405,13 @@ export class Entitlements extends Domain.View("Entitlements", {
                   reserved: kept ? value.reserved : 0,
                   remaining: spendable,
                   carried: event.carried[feature] ?? 0,
-                  allowed: allowsOne(view.standing, value.overage, spendable),
+                  allowed: allowsOne(
+                    view.standing,
+                    value.overage,
+                    spendable,
+                    value.cap,
+                    value.carried,
+                  ),
                 },
               ];
             }),
@@ -434,8 +471,16 @@ export const allowsOne = (
   standing: Standing,
   overage: Overage,
   remaining: number | null,
-): boolean =>
-  standing !== "blocked" && (overage !== "block" || remaining === null || remaining >= 1);
+  cap?: number,
+  carried?: number,
+): boolean => {
+  if (standing === "blocked") return false;
+  if (overage === "block" && remaining !== null && remaining < 1) return false;
+  // A capped feature answers from the ceiling, not from the standing: at the
+  // ceiling the account is out of what it bought, not in trouble.
+  const headroom = spendHeadroomOf({ remaining, cap, carried });
+  return headroom === null || headroom >= 1;
+};
 
 /**
  * A feature's spendable count: the outcome an event recorded, or what the
@@ -513,7 +558,10 @@ const withCreditsOf = (
 
 const featuresOf = (
   allowances: Readonly<
-    Record<string, { kind?: AllowanceKind; included: Included; overage: Overage; resets: Resets }>
+    Record<
+      string,
+      { kind?: AllowanceKind; included: Included; overage: Overage; resets: Resets; cap?: number }
+    >
   >,
   rates: Readonly<Record<string, CreditRates>>,
   credits: number,
@@ -539,8 +587,9 @@ const featuresOf = (
           remaining: spendable,
           // A period starts with no rollover; only `UsageReset` carries one in.
           carried: 0,
-          allowed: allowsOne(standing, allowance.overage, spendable),
+          allowed: allowsOne(standing, allowance.overage, spendable, allowance.cap),
           overage: allowance.overage,
+          ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
           resets: allowance.resets,
           resetsAt: allowance.resets === "never" ? null : periodEnd,
         },

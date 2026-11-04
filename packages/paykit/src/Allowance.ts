@@ -51,6 +51,12 @@ export const Allowance = Schema.Struct({
    * at `included`. Absent means `false`: the next period starts at `included`.
    */
   carryOver: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The most a period may bill *past* `included`, in the feature's own units:
+   * `included + cap` is the ceiling. Only meaningful with `overage: "bill"`,
+   * which the catalog enforces. Absent means no ceiling.
+   */
+  cap: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
 });
 export type Allowance = typeof Allowance.Type;
 
@@ -74,6 +80,11 @@ export interface AllowanceInput {
    * @default false
    */
   readonly carryOver?: boolean;
+  /**
+   * Bill at most this many units past `included` this period. Requires
+   * `overage: "bill"`: a cap limits quantity, not money.
+   */
+  readonly cap?: number;
 }
 
 /**
@@ -93,6 +104,11 @@ export interface AllowanceInput {
  * // most one period's worth.
  * allowance(messages, { included: 2_000, carryOver: true });
  *
+ * // A ceiling: bill up to 10,000 units past the 2,000 included this period,
+ * // then refuse until it resets. A cap needs `overage: "bill"`.
+ * allowance(messages, { included: 2_000, overage: "bill", cap: 10_000 });
+ * // { feature: "messages", kind: "metered", included: 2_000, overage: "bill", resets: "month", carryOver: false, cap: 10_000 }
+ *
  * // Unlimited: past the end of an allowance that never runs out there is
  * // nothing to block or to bill, so `overage` defaults to "allow".
  * allowance(messages, { included: "unlimited" });
@@ -106,6 +122,7 @@ export const allowance = (feature: Feature, input: AllowanceInput): Allowance =>
   overage: input.overage ?? (input.included === "unlimited" ? "allow" : "block"),
   resets: input.resets ?? "month",
   carryOver: input.carryOver ?? false,
+  ...(input.cap === undefined ? {} : { cap: input.cap }),
 });
 
 /**

@@ -6,7 +6,12 @@ import * as Schema from "effect/Schema";
 import { BillingReadStore, type BillingReadRow } from "./BillingReadStore.ts";
 import { Entitlements, type EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
-import { Standing, SubscriptionStatus, creditRateOf } from "./Subscription/Subscription.state.ts";
+import {
+  Standing,
+  SubscriptionStatus,
+  creditRateOf,
+  spendHeadroomOf,
+} from "./Subscription/Subscription.state.ts";
 
 /** What a caller asks before doing work. */
 export const CheckInput = Schema.Struct({
@@ -62,6 +67,10 @@ export const evaluateCheck = (
           readonly resetsAt: DateTime.Utc | null;
           /** Present on a credit-priced feature, whose `remaining` is the pool. */
           readonly creditRates?: Readonly<Record<string, number>>;
+          /** Units this period may bill past `included`, when the tier caps it. */
+          readonly cap?: number;
+          /** How much of `remaining` a rollover added, which a cap does not. */
+          readonly carried?: number;
         }
       >
     >;
@@ -80,11 +89,19 @@ export const evaluateCheck = (
     feature.creditRates === undefined
       ? amount
       : amount * creditRateOf(feature.creditRates, input.dimension);
+  // A cap is the ceiling, not the standing: at it the account is out of what it
+  // bought, which is why `allowed` can be false while `standing` stays `good`.
+  const headroom = spendHeadroomOf({
+    remaining: feature.remaining,
+    cap: feature.cap,
+    carried: feature.carried,
+  });
   // A `null` remaining is an allowance that never runs out: it always has room,
   // and the answer reports the absence of a count rather than a number.
   const allowed =
     state.standing !== "blocked" &&
-    (feature.overage !== "block" || feature.remaining === null || needed <= feature.remaining);
+    (feature.overage !== "block" || feature.remaining === null || needed <= feature.remaining) &&
+    (headroom === null || needed <= headroom);
   return {
     allowed,
     remaining: feature.remaining,

@@ -242,6 +242,31 @@ describe("the example billing app", () => {
     }).pipe(run),
   );
 
+  it.live("bills up to the cap, then refuses while the standing stays good", () =>
+    Effect.gen(function* () {
+      const tenant = yield* BillingApi.clientInProcess;
+      const receipt = yield* tenant.Subscribe(account.id, tierCommand("pro"), asAccount);
+      yield* caughtUp(receipt);
+
+      const track = yield* Paykit.Track();
+      // The whole allowance: 2,000 included plus the 10,000 the cap allows.
+      yield* track({ account: account.id, feature: "messages", amount: 12_000 });
+
+      const check = yield* Paykit.Check();
+      const atCeiling = yield* check({ account: account.id, feature: "messages", amount: 1 });
+      expect(atCeiling.allowed).toBe(false);
+      // Out of what it bought, not in trouble.
+      expect(atCeiling.standing).toBe("good");
+      expect(atCeiling.remaining).toBe(-10_000);
+
+      const refused = yield* Effect.exit(
+        track({ account: account.id, feature: "messages", amount: 1 }),
+      );
+      expect(refused._tag).toBe("Failure");
+      expect(String(refused)).toContain("SpendCapExceeded");
+    }).pipe(run),
+  );
+
   it.live("shows the charge before applying it", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;

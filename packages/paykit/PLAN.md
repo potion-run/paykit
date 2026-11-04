@@ -46,7 +46,7 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | --- | --- | --- |
 | `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
 | `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
-| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, and whether what is unspent rolls over | `Limit` — a limit is one field of an allowance |
+| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, whether what is unspent rolls over, and the `cap` that stops the billing | `Limit` — a limit is one field of an allowance |
 | `Credit` | the account's pool, spent by every feature whose rate card prices it, granted by a tier | `Balance` — one balance is not a meter; `Points` |
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
@@ -181,10 +181,14 @@ A catalog is three plain declarations, and every value it holds is serializable:
 - `feature({ id, name, kind, creditRates })` may declare a rate card, which makes the feature
   credit-priced: `track({ feature, amount, dimension })` then spends `amount × rate` from the pool,
   and `check({ feature, amount, dimension })` compares against it.
+- `allowance(feature, { ..., cap })` states a ceiling in the feature's own unit: the most a period
+  may bill past `included`. It needs `overage: "bill"`, and `Track` and `Hold` both refuse past it
+  with `SpendCapExceeded`.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
   `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
   `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`,
+  `CatalogCapWithoutBilling`,
   `CatalogCreditRateMissing`, `CatalogCreditRateInvalid`, `CatalogCreditFeatureHasAllowance`,
   `CatalogCreditAllowanceOnFlag`, `CatalogCreditGrantInvalid`, or `CatalogInvalid` for a schema
   failure.

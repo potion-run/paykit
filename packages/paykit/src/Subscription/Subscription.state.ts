@@ -1,6 +1,12 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { Allowances, isFlagGrant, type Allowance, type Included } from "../Allowance.ts";
+import {
+  Allowances,
+  isFlagGrant,
+  type Allowance,
+  type Included,
+  type Overage,
+} from "../Allowance.ts";
 import { CreditRateCards, type CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price } from "../Tier.ts";
@@ -269,6 +275,35 @@ export const resetOf = (
  */
 export const creditRateOf = (rates: CreditRates, dimension: string | undefined): number =>
   rates[dimension ?? "default"] ?? rates["default"] ?? 0;
+
+/**
+ * The most units a period may bill for a feature: `included + cap`, or `null`
+ * when the allowance states no cap. A cap only exists where billing does, so an
+ * allowance that is not billed past `included` has no ceiling to compute.
+ */
+export const spendCeilingOf = (allowance: {
+  readonly included: Included | null;
+  readonly overage: Overage;
+  readonly cap?: number;
+}): number | null =>
+  allowance.cap === undefined || allowance.included === null || allowance.included === "unlimited"
+    ? null
+    : allowance.included + allowance.cap;
+
+/**
+ * The units this period may still bill before the cap: `included + cap − used −
+ * reserved`. Written from `remaining`, `carried` and `cap` because that is what
+ * a read model carries: `remaining` already has use and holds taken out, and
+ * `carried` is the extra `included` a rollover added, which a cap does not.
+ */
+export const spendHeadroomOf = (feature: {
+  readonly remaining: number | null;
+  readonly carried?: number;
+  readonly cap?: number;
+}): number | null =>
+  feature.cap === undefined || feature.remaining === null
+    ? null
+    : feature.remaining + feature.cap - (feature.carried ?? 0);
 
 /** The holds that are still waiting to settle or release. */
 export const openHoldsOf = (state: SubscribedState): ReadonlyArray<HoldRecord> =>

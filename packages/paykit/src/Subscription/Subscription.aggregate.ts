@@ -67,6 +67,7 @@ import {
   remainingAfterRelease,
   remainingAfterSpending,
   remainingOf,
+  spendCeilingOf,
   closingHold,
   reservedOf,
   resetOf,
@@ -82,6 +83,7 @@ import {
   AllowanceExceeded,
   CreditExceeded,
   FeatureNotMetered,
+  SpendCapExceeded,
   StandingBlocksUsage,
   TrackUsage,
   UsageRecorded,
@@ -383,6 +385,21 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining: 0,
         });
       }
+      // A cap is a ceiling in the feature's own units. What is held counts, so
+      // a hold cannot promise a bill the allowance may not run.
+      const ceiling = spendCeilingOf(allowance);
+      if (ceiling !== null) {
+        const reserved = reservedOf(state, command.feature);
+        if (used + reserved + command.amount > ceiling) {
+          return new SpendCapExceeded({
+            feature: command.feature,
+            cap: allowance.cap!,
+            used,
+            reserved,
+            requested: command.amount,
+          });
+        }
+      }
       // An allowance that never runs out never blocks: `used` keeps counting
       // and `remaining` stays absent.
       if (
@@ -475,6 +492,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
+      // A hold is a promise to bill, so it counts against the cap in the same
+      // transaction that would have held the units.
+      const ceiling = allowance === undefined ? null : spendCeilingOf(allowance);
+      if (allowance !== undefined && ceiling !== null) {
+        const used = usedOf(state, command.feature);
+        const reserved = reservedOf(state, command.feature);
+        if (used + reserved + command.amount > ceiling) {
+          return new SpendCapExceeded({
+            feature: command.feature,
+            cap: allowance.cap!,
+            used,
+            reserved,
+            requested: command.amount,
+          });
+        }
+      }
       // The rate is captured here, so the bill at settle is the price the work
       // was priced at, not whatever the catalog says when it finishes.
       const rates = state.rates[command.feature];
@@ -492,11 +525,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining: spendable,
         });
       }
-      if (
-        rates === undefined &&
-        allowance?.included !== "unlimited" &&
-        command.amount > spendable
-      ) {
+      // A blocking allowance has no room past `remaining`, so the hold stops
+      // there. A billed one holds into what it may bill — the cap is its
+      // ceiling, and it is judged above.
+      if (rates === undefined && allowance?.overage === "block" && command.amount > spendable) {
         return new HoldExceeded({
           feature: command.feature,
           requested: command.amount,

@@ -67,7 +67,7 @@ relaxing these three.
 | Prepaid pack | a tier that is `one_off` and grants credits once | grants on activation, no period | expiry and balance |
 | Postpaid usage | `overage: "bill"` plus a `metered` price on the tier | always allows under a cap, records usage | used this period, forecast |
 | Rollover | `Allowance.carryOver: boolean` | closes a period carrying `min(remaining, included)` | carried amount, visible |
-| Spend cap | `Allowance.cap: { amount, currency }` | refuses at the cap, not at the allowance | cap, spend so far |
+| Spend cap | `Allowance.cap: Int` — a ceiling in the feature's own unit; see [0005](./0005-a-spend-cap-is-a-ceiling-in-units.md) for why it is not money | refuses at the cap, not at the allowance | cap, and the units spent against it |
 
 Each row is a schema field, a `decide` rule and a read-model column. None of them is an API.
 

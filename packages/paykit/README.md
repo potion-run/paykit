@@ -90,7 +90,14 @@ const team = Paykit.tier({
   grants: [
     // Rollover: what the month did not spend carries into the next one, at
     // most one month's worth, so `remaining` can pass `included`.
-    Paykit.allowance(Paykit.messages, { included: 10_000, overage: "bill", carryOver: true }),
+    // `cap` bills up to 10,000 units past `included` this period, then stops —
+    // a ceiling in the feature's own unit, not in money.
+    Paykit.allowance(Paykit.messages, {
+      included: 10_000,
+      overage: "bill",
+      carryOver: true,
+      cap: 2_000,
+    }),
     Paykit.allowance(seats, { included: 10, overage: "block", resets: "never" }),
   ],
 });
@@ -145,12 +152,19 @@ the same feature twice, a tier with no grants, an unlimited allowance that also 
 `resets: "never"` (`CatalogCarryOverNeverResets`), a rate card with no `"default"`
 (`CatalogCreditRateMissing`), a rate that is not a positive integer (`CatalogCreditRateInvalid`), an
 allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a rate card on a flag
-(`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), and a
-price that is not positive whole minor units.
+(`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), a `cap`
+where nothing is billed (`CatalogCapWithoutBilling`), and a price that is not positive whole minor
+units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
 `{ allowed, remaining: null, resetsAt: null, standing }`, and `Track` and `Hold` refuse it with
 `FeatureNotMetered` because there is no counter behind it.
+
+`cap` is a ceiling in the feature's own unit: the most a period may bill past `included`, so
+`included + cap` units. `Track` and `Hold` both refuse past it with `SpendCapExceeded` — a hold
+counts, because a hold is a promise to bill — and `check()` answers `allowed: false` at the ceiling
+while the standing stays `good`, because the account is out of what it bought, not in trouble. It
+needs `overage: "bill"` (`CatalogCapWithoutBilling`): a money cap arrives with postpaid pricing.
 
 `carryOver: true` rolls what a period did not spend into the next one, at most `included`: the new
 period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`, and the read model
