@@ -29,6 +29,7 @@ export {
   MemoryStore,
   NoPurchasePath,
   Postgres,
+  ProviderAmbiguous,
   ProviderDescriptor,
   Sqlite,
   Stack,

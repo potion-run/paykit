@@ -133,6 +133,23 @@ describe("doctor", () => {
     }),
   );
 
+  it.effect("fails on an event a known tag cannot decode, rather than skipping it", () =>
+    Effect.gen(function* () {
+      const { sql, log } = yield* opened();
+      // A known tag with a payload the schema cannot read: a rename upstream,
+      // or a hand-edited row. Skipping it would invent a mismatch.
+      sql.run(`UPDATE billing_event SET event = ? WHERE account = ?`, [
+        JSON.stringify({ _tag: "SubscriptionActivated" }),
+        "acct_doctor",
+      ]);
+      const exit = yield* Effect.exit(doctor(log));
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag !== "Failure") return;
+      // A decode failure is the doctor's typed failure, not a defect out of a sync decoder.
+      expect(String(exit.cause)).toContain("SchemaError");
+    }),
+  );
+
   it.effect("reports a read model row with no events as a mismatch", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();

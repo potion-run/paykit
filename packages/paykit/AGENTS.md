@@ -215,7 +215,9 @@ reference: if the port only fits Stripe, it is not a port.
 Processors (Stripe) move money; merchants of record (Polar) also own tax, receipts and the
 customer portal. The port is what they share, and a provider declares the rest. The model never
 imports a provider — the adapter is wired by the user, behind the port. `0.1` runs one provider
-per Stack; `refs` is keyed by provider, so a second one is additive.
+per Stack: `Payments` is one service tag, so a second provider would be a layer that wins by merge
+order, and `Stack` refuses it with `ProviderAmbiguous`. `refs` is keyed by provider, so lifting
+that limit is additive when the port learns to dispatch.
 
 - **The catalog carries no provider ids.** Tier → price mapping lives in the provider config,
   so the same catalog runs on every provider.
@@ -255,6 +257,8 @@ Adding a provider touches the same places every time:
 2. **The adapter** — `Payments<V>.ts`: delegate to those bindings; required ops, plus the
    optional ops it declares.
 3. **The translation** — its webhooks into our commands, provider event id as `commandId`.
+   `polarWebhook` in [`@potion.run/paykit-polar`](../paykit-polar) is the reference: signature,
+   payload, then a tier from the mapping, with nothing guessed.
 4. **The config** — its products in the provider config; the catalog does not move.
 5. **The suite** — its conformance run, green alongside `Manual`'s.
 

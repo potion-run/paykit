@@ -22,6 +22,19 @@ export class NoPurchasePath extends Schema.TaggedError<NoPurchasePath>()("NoPurc
   tier: Schema.String,
 }) {}
 
+/**
+ * A Stack was given more than one provider. Every provider answers the same
+ * `Payments` port, so a second one would silently shadow the first: the
+ * checkout the catalog validated would not be the checkout that ran.
+ */
+export class ProviderAmbiguous extends Schema.TaggedError<ProviderAmbiguous>()(
+  "ProviderAmbiguous",
+  {
+    count: Schema.Int,
+    kinds: Schema.Array(Schema.String),
+  },
+) {}
+
 /** A provider as deploy state can hold it: no layer, no HTTP. */
 export const ProviderDescriptor = Schema.Struct({
   kind: Schema.String,
@@ -78,6 +91,11 @@ export const Sqlite = (props: {
 export interface StackProps {
   /** Plain catalog data; provider ids belong in provider config, never here. */
   readonly catalog: CatalogInput;
+  /**
+   * The money plane. Exactly one in `0.1`: every provider answers the same
+   * `Payments` port, so a second is refused by `ProviderAmbiguous` rather than
+   * merged into whichever layer was provided last.
+   */
   readonly providers?: ReadonlyArray<Provider>;
   readonly store?: Store;
 }
@@ -96,7 +114,15 @@ const priceField = (price: Price, field: keyof Price): string => String(price[fi
 export const validateProviderMappings = (
   parsed: Catalog,
   providers: ReadonlyArray<ProviderDescriptor>,
-): CatalogPriceMismatch | NoPurchasePath | null => {
+): CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous | null => {
+  // One provider, because the port is one service: `Payments` is a single tag,
+  // so a second layer would win by merge order and never say so.
+  if (providers.length > 1) {
+    return new ProviderAmbiguous({
+      count: providers.length,
+      kinds: providers.map((provider) => provider.kind),
+    });
+  }
   for (const provider of providers) {
     for (const [tierId, mapped] of Object.entries(provider.prices ?? {})) {
       const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
@@ -148,13 +174,17 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
 
 /**
  * Declare the billing stack: validate the catalog, refuse a provider price
- * that disagrees with it, and refuse a priced tier nothing can sell. The
- * provider's own price ids never reach the catalog.
+ * that disagrees with it, refuse a second provider that would shadow the
+ * first, and refuse a priced tier nothing can sell. The provider's own price
+ * ids never reach the catalog.
  */
 export const Stack = (
   id: string,
   props: StackProps,
-): Effect.Effect<BillingStack, CatalogError | CatalogPriceMismatch | NoPurchasePath> =>
+): Effect.Effect<
+  BillingStack,
+  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous
+> =>
   Effect.gen(function* () {
     const parsed = yield* catalog(props.catalog);
     const providers = props.providers ?? [];

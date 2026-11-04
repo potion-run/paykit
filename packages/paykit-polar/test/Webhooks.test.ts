@@ -1,0 +1,256 @@
+import { describe, expect, it } from "@alchemy.run/test";
+import { WebhookInvalid } from "@potion.run/paykit";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
+import { PolarSignatureInvalid, polarWebhook } from "../src/Webhooks.ts";
+
+const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+const tiers = { pro: { price: proPrice, productId: "prod_123" } };
+const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
+const webhook = polarWebhook({ secret: Redacted.make(secret), tiers });
+
+/** The instant every test signs at, so a timestamp is a fixture. */
+const at = 1_700_000_000_000;
+const atSeconds = String(at / 1000);
+
+/**
+ * An independent HMAC: `Bun.CryptoHasher` is not the `effect/crypto` path the
+ * decoder uses, so a signature that verifies here proves both agree.
+ */
+const sign = (input: {
+  readonly id: string;
+  readonly timestamp: string;
+  readonly body: string;
+  readonly legacy?: boolean;
+}): string => {
+  const bytes =
+    input.legacy === true
+      ? new TextEncoder().encode(secret)
+      : Buffer.from(secret.slice("whsec_".length), "base64");
+  const tag = new Bun.CryptoHasher("sha256", bytes)
+    .update(`${input.id}.${input.timestamp}.${input.body}`)
+    .digest("base64");
+  return `v1,${tag}`;
+};
+
+const request = (input: {
+  readonly id?: string;
+  readonly body: unknown;
+  readonly timestamp?: string;
+  readonly signature?: string;
+  readonly legacy?: boolean;
+}) => {
+  const id = input.id ?? "msg_1";
+  const timestamp = input.timestamp ?? atSeconds;
+  const body = typeof input.body === "string" ? input.body : JSON.stringify(input.body);
+  return {
+    headers: {
+      "webhook-id": id,
+      "webhook-timestamp": timestamp,
+      "webhook-signature":
+        input.signature ??
+        sign({ id, timestamp, body, ...(input.legacy === true ? { legacy: true } : {}) }),
+    },
+    body,
+  };
+};
+
+/** Run the webhook at the instant the fixtures are signed at. */
+const translate = (input: Parameters<typeof request>[0]) =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(at);
+    return yield* webhook(request(input));
+  });
+
+const orderPaid = {
+  type: "order.paid",
+  data: {
+    id: "ord_1",
+    status: "paid",
+    product_id: "prod_123",
+    total_amount: 1900,
+    currency: "usd",
+    customer: { id: "cus_1", external_id: "acct_1" },
+  },
+};
+
+describe("Polar webhooks", () => {
+  it.effect("verifies the Standard Webhooks test vector, then judges the payload", () =>
+    Effect.gen(function* () {
+      // The published vector: if the key derivation or the signed string were
+      // wrong, this would be a signature failure instead of a payload one.
+      yield* TestClock.setTime(1_614_265_330_000);
+      const exit = yield* Effect.exit(
+        webhook({
+          headers: {
+            "webhook-id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+            "webhook-timestamp": "1614265330",
+            "webhook-signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=",
+          },
+          body: '{"test": 2432232314}',
+        }),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag !== "Failure") return;
+      // Not a `PolarSignatureInvalid`: the signature was accepted.
+      expect(String(exit.cause)).toContain("WebhookInvalid");
+      expect(String(exit.cause)).not.toContain("PolarSignatureInvalid");
+    }),
+  );
+
+  it.effect("turns order.paid into a payment the model can record", () =>
+    Effect.gen(function* () {
+      const event = Option.getOrThrow(yield* translate({ body: orderPaid }));
+      expect(event).toEqual({
+        id: "msg_1",
+        provider: "polar",
+        kind: "payment_succeeded",
+        account: "acct_1",
+        tier: "pro",
+        amount: 1900,
+        currency: "usd",
+      });
+    }),
+  );
+
+  it.effect("turns a succeeded checkout into a completed one, and ignores the rest", () =>
+    Effect.gen(function* () {
+      const checkout = (status: string) => ({
+        type: "checkout.updated",
+        data: {
+          id: "ch_1",
+          status,
+          external_customer_id: "acct_1",
+          product_id: "prod_123",
+          total_amount: 1900,
+          currency: "usd",
+        },
+      });
+      const succeeded = Option.getOrThrow(yield* translate({ body: checkout("succeeded") }));
+      expect(succeeded.kind).toBe("checkout_completed");
+      expect(succeeded.tier).toBe("pro");
+      expect(succeeded.amount).toBe(1900);
+      expect(Option.isNone(yield* translate({ body: checkout("open") }))).toBe(true);
+      expect(Option.isNone(yield* translate({ body: checkout("expired") }))).toBe(true);
+    }),
+  );
+
+  it.effect("turns subscription.past_due into a failed payment", () =>
+    Effect.gen(function* () {
+      const event = Option.getOrThrow(
+        yield* translate({
+          body: {
+            type: "subscription.past_due",
+            data: {
+              id: "sub_1",
+              product_id: "prod_123",
+              amount: 1900,
+              currency: "usd",
+              customer: { id: "cus_1", external_id: "acct_1" },
+            },
+          },
+        }),
+      );
+      expect(event.kind).toBe("payment_failed");
+      expect(event.reason).toBe("past_due");
+      expect(event.account).toBe("acct_1");
+    }),
+  );
+
+  it.effect("turns canceled and revoked subscriptions into a cancellation", () =>
+    Effect.gen(function* () {
+      for (const type of ["subscription.canceled", "subscription.revoked"]) {
+        const event = Option.getOrThrow(
+          yield* translate({
+            body: {
+              type,
+              data: {
+                id: "sub_1",
+                product_id: "prod_123",
+                amount: 1900,
+                currency: "usd",
+                customer: { id: "cus_1", external_id: "acct_1" },
+              },
+            },
+          }),
+        );
+        expect(event.kind).toBe("subscription_canceled");
+        expect(event.account).toBe("acct_1");
+      }
+    }),
+  );
+
+  it.effect("ignores an event paykit does not model", () =>
+    Effect.gen(function* () {
+      const event = yield* translate({ body: { type: "product.updated", data: { id: "p_1" } } });
+      expect(Option.isNone(event)).toBe(true);
+    }),
+  );
+
+  it.effect("verifies a legacy secret, whose key is the secret's own bytes", () =>
+    Effect.gen(function* () {
+      const event = Option.getOrThrow(yield* translate({ body: orderPaid, legacy: true }));
+      expect(event.kind).toBe("payment_succeeded");
+    }),
+  );
+
+  it.effect("refuses a signature that does not match", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        translate({
+          body: orderPaid,
+          signature: "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        }),
+      );
+      expect(error).toBeInstanceOf(PolarSignatureInvalid);
+    }),
+  );
+
+  it.effect("refuses a request older than the tolerance", () =>
+    Effect.gen(function* () {
+      const stale = { body: orderPaid, timestamp: String(at / 1000 - 3_600) };
+      const error = yield* Effect.flip(translate(stale));
+      expect(error).toBeInstanceOf(PolarSignatureInvalid);
+      if (error._tag === "PolarSignatureInvalid") expect(error.reason).toContain("tolerance");
+    }),
+  );
+
+  it.effect("refuses a request with no signature header", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(at);
+      const error = yield* Effect.flip(
+        webhook({ headers: { "webhook-id": "msg_1" }, body: JSON.stringify(orderPaid) }),
+      );
+      expect(error).toBeInstanceOf(PolarSignatureInvalid);
+    }),
+  );
+
+  it.effect("leaves the tier off a product no tier maps, rather than inventing one", () =>
+    Effect.gen(function* () {
+      const event = Option.getOrThrow(
+        yield* translate({
+          body: {
+            ...orderPaid,
+            data: { ...orderPaid.data, product_id: "prod_unknown" },
+          },
+        }),
+      );
+      expect(event.kind).toBe("payment_succeeded");
+      expect(event.tier).toBe(undefined);
+    }),
+  );
+
+  it.effect("refuses an order with no external customer id, naming the field", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
+        translate({
+          body: { ...orderPaid, data: { ...orderPaid.data, customer: { id: "cus_1" } } },
+        }),
+      );
+      expect(error).toBeInstanceOf(WebhookInvalid);
+      if (error._tag === "WebhookInvalid") expect(error.field).toBe("account");
+    }),
+  );
+});

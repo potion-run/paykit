@@ -13,6 +13,7 @@ import {
   MemoryStore,
   NoPurchasePath,
   Postgres,
+  ProviderAmbiguous,
   Stack,
   providerDescriptor,
   validateProviderMappings,
@@ -120,6 +121,21 @@ describe("Stack", () => {
     }),
   );
 
+  it.effect("refuses a second provider rather than letting it shadow the first", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Stack("Billing", {
+          catalog: proCatalog,
+          providers: [PaymentsMemory(), PaymentsManual()],
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("ProviderAmbiguous");
+      const ambiguous = new ProviderAmbiguous({ count: 2, kinds: ["memory", "manual"] });
+      expect(ambiguous.count).toBe(2);
+    }),
+  );
+
   it("a provider descriptor carries no runtime layer", () => {
     const descriptor = providerDescriptor(PaymentsMemory());
     expect(descriptor.kind).toBe("memory");
@@ -147,6 +163,12 @@ describe("Stack", () => {
     expect(
       validateProviderMappings(parsed.catalog, [{ kind: "manual", capabilities: ["refund"] }]),
     ).toBeInstanceOf(NoPurchasePath);
+    expect(
+      validateProviderMappings(parsed.catalog, [
+        { kind: "memory", capabilities: ["checkout"] },
+        { kind: "manual", capabilities: ["invoice"] },
+      ]),
+    ).toBeInstanceOf(ProviderAmbiguous);
   });
 
   it("the BillingStack resource declares serializable attributes", () => {

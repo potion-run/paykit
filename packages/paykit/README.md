@@ -127,6 +127,8 @@ implement an optional op fails with `ProviderCapabilityMissing`; nothing degrade
 
 `Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar). `PaymentsPolar` here is the port mapping it wraps, for a caller who brings its own bindings.
 
+One provider per Stack. `Payments` is a single service, so a second provider would answer the same port and win by layer order, silently; `Stack` refuses it with `ProviderAmbiguous` instead.
+
 `Manual` is the reference: if the port only fits Stripe, it is not a port. Every provider runs
 the same conformance suite in [`test/conformance`](./test/conformance), parameterized by the
 capabilities it declares.

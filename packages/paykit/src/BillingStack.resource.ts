@@ -7,6 +7,7 @@ import { catalog, Catalog, type CatalogError } from "./Catalog.ts";
 import {
   CatalogPriceMismatch,
   NoPurchasePath,
+  ProviderAmbiguous,
   ProviderDescriptor,
   validateProviderMappings,
 } from "./Stack.ts";
@@ -61,7 +62,10 @@ export const BillingStack = Resource<BillingStackResource>("Paykit.BillingStack"
  */
 export const reconcileBillingStack = (
   props: BillingStackProps | undefined,
-): Effect.Effect<BillingStackAttrs, CatalogError | CatalogPriceMismatch | NoPurchasePath> =>
+): Effect.Effect<
+  BillingStackAttrs,
+  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous
+> =>
   Effect.gen(function* () {
     // A reconcile without props is a delete, and delete never reaches here.
     if (props === undefined) return yield* Effect.die("BillingStack reconciles with props");

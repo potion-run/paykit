@@ -41,7 +41,7 @@ export const doctor = (log: SqlEventLog) =>
       const commandIds: Array<string> = [];
       for (const row of rows) {
         commandIds.push(row.commandId);
-        const event = decodeEvent(row.event);
+        const event = yield* decodeEvent(row.event);
         if (event === null) continue;
         const handler = (
           Entitlements.definition.evolve as unknown as Record<
@@ -74,14 +74,31 @@ export const doctor = (log: SqlEventLog) =>
     return mismatches;
   });
 
-const echo = (event: { readonly _tag: string }) => event;
-const decodeEvent = (json: string): { readonly _tag: string } | null => {
-  const raw = JSON.parse(json) as { readonly _tag?: string };
-  const cls = Subscription.definition.events.find((event) => event.tag === raw._tag);
-  if (cls === undefined) return null;
-  const codec = Schema.toCodecJson(cls as never);
-  return echo(Schema.decodeUnknownSync(codec as never)(raw) as { readonly _tag: string });
-};
+/** A stored event, parsed but not yet decoded: the tag picks the codec. */
+const StoredEvent = Schema.fromJsonString(Schema.Unknown);
+
+/**
+ * Decode one stored event by its tag, as an `Effect`. The whole payload is
+ * kept for the second decode — a `Struct` here would strip the fields the
+ * event's own codec needs. An event the current schema cannot read fails the
+ * doctor rather than vanishing from the rebuild: a doctor that silently skips
+ * a corrupt event reports a mismatch it invented.
+ */
+const decodeEvent = (
+  json: string,
+): Effect.Effect<{ readonly _tag: string } | null, Schema.SchemaError> =>
+  Effect.gen(function* () {
+    const raw = yield* Schema.decodeEffect(StoredEvent)(json);
+    if (typeof raw !== "object" || raw === null) return null;
+    const tag = (raw as { readonly _tag?: unknown })._tag;
+    if (typeof tag !== "string") return null;
+    const cls = Subscription.definition.events.find((event) => event.tag === tag);
+    if (cls === undefined) return null;
+    const codec = Schema.toCodecJson(cls as never) as Schema.ConstraintDecoder<unknown>;
+    // `toCodecJson` decodes the JSON wire form, which is what the parse above
+    // handed back: `decodeEffect` is the decoder for exactly that input.
+    return (yield* Schema.decodeEffect(codec)(raw)) as { readonly _tag: string };
+  });
 
 const rowFromState = (account: string, state: EntitlementsState): BillingReadRow => ({
   account,

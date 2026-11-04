@@ -12,7 +12,7 @@ import {
 import { providers } from "../src/BillingStack.resource.ts";
 import { catalog } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
-import { CatalogPriceMismatch, NoPurchasePath } from "../src/Stack.ts";
+import { CatalogPriceMismatch, NoPurchasePath, ProviderAmbiguous } from "../src/Stack.ts";
 import { tier } from "../src/Tier.ts";
 
 const pro = tier({
@@ -94,6 +94,21 @@ describe("the BillingStack resource", () => {
     expect(unpurchasable._tag).toBe("Failure");
     if (unpurchasable._tag !== "Failure") return;
     expect(unpurchasable.failure).toBeInstanceOf(NoPurchasePath);
+  });
+
+  it("refuses a second provider, which the runtime could only serve by merge order", () => {
+    const ambiguous = run(
+      reconcileBillingStack({
+        ...props,
+        providers: [
+          { kind: "memory", capabilities: ["checkout"] },
+          { kind: "manual", capabilities: ["invoice"] },
+        ],
+      }),
+    );
+    expect(ambiguous._tag).toBe("Failure");
+    if (ambiguous._tag !== "Failure") return;
+    expect(ambiguous.failure).toBeInstanceOf(ProviderAmbiguous);
   });
 
   it("read returns state as recorded, and dies when there is none", () => {
