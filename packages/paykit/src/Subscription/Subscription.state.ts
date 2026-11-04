@@ -135,6 +135,17 @@ export const standingOf = (status: SubscriptionStatus | "none"): Standing => {
 export const allowsUsage = (status: SubscriptionStatus | "none"): boolean =>
   status === "trialing" || status === "active" || status === "grace";
 
+/** Whether a status has ended. A terminal standing opens no further periods. */
+export const isTerminalStatus = (status: SubscriptionStatus): boolean =>
+  status === "canceled" || status === "expired";
+
+/** Whether a period may roll from this status. Terminal standings do not. */
+export const rollsPeriod = (status: SubscriptionStatus): boolean => !isTerminalStatus(status);
+
+/** Whether an operator may move this status into grace. */
+export const canEnterGrace = (status: SubscriptionStatus): boolean =>
+  status === "trialing" || status === "active";
+
 /** When an allowance next resets, or `null` for one that never does. */
 export const resetsAt = (period: Period, allowance: Allowance): DateTime.Utc | null =>
   allowance.resets === "never" ? null : period.end;
@@ -208,17 +219,25 @@ export const remainingOf = (state: SubscribedState, feature: string): number | n
  * worth and an overdrawn allowance never deducts from the next one. An
  * allowance that does not carry starts at `included`; one with no count — an
  * unlimited allowance, or a flag — has nothing to carry.
+ *
+ * `resets: "never"` is the one status a period boundary does not move: the
+ * feature keeps its usage, open reservations and remaining count, and `kept`
+ * says so. A monthly or annual reset both happen at the standing's period
+ * boundary, because that is the only boundary the aggregate owns.
  */
 export const resetOf = (
   state: SubscribedState,
   feature: string,
   allowance: Allowance,
-): { readonly remaining: number | null; readonly carried: number } => {
+): { readonly remaining: number | null; readonly carried: number; readonly kept: boolean } => {
   const start = includedRemainingOf(allowance);
-  if (start === null) return { remaining: null, carried: 0 };
-  if (allowance.carryOver !== true) return { remaining: start, carried: 0 };
+  if (start === null) return { remaining: null, carried: 0, kept: false };
+  if (allowance.resets === "never") {
+    return { remaining: remainingOf(state, feature), carried: 0, kept: true };
+  }
+  if (allowance.carryOver !== true) return { remaining: start, carried: 0, kept: false };
   const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), start);
-  return { remaining: start + carried, carried };
+  return { remaining: start + carried, carried, kept: false };
 };
 
 /**

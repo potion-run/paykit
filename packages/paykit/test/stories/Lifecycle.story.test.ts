@@ -43,6 +43,7 @@ import { CreditsGranted, GrantCredits } from "../../src/Subscription/GrantCredit
 import { NotInGrace } from "../../src/Subscription/NotInGrace.rejection.ts";
 import { NotScheduled } from "../../src/Subscription/NotScheduled.rejection.ts";
 import { NotSubscribed } from "../../src/Subscription/NotSubscribed.rejection.ts";
+import { PeriodEnded } from "../../src/Subscription/PeriodEnded.command.ts";
 import { PaymentRecorded, RecordPayment } from "../../src/Subscription/RecordPayment.command.ts";
 import {
   PaymentFailed,
@@ -91,6 +92,7 @@ const account = Subscription.ref("acct_life");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
+const march = at("2030-03-01T00:00:00Z");
 const graceUntil = at("2030-01-08T00:00:00Z");
 
 const activated = new SubscriptionActivated({
@@ -277,6 +279,21 @@ it.effect("a scheduled cancellation blocks usage once the period closes", () =>
     Story.view(Entitlements, account, { status: "canceled", standing: "blocked" }),
     Story.when(account, new TrackUsage({ feature: "messages", amount: 1 })),
     Story.rejected(new StandingBlocksUsage({ standing: "blocked", status: "canceled" })),
+    // The chain stops: a canceled standing closes no further period, even
+    // when a stale timer or an operator asks it to.
+    Story.clock(march),
+    Story.then(account),
+    Story.when(account, new PeriodEnded({ periodEnd: march })),
+    Story.then(account),
+    Story.when(account, new ClosePeriod({ periodEnd: march })),
+    Story.rejected(new PeriodNotClosed({ periodEnd: march, now: march })),
+    Story.when(account, new EnterGrace({ graceUntil })),
+    Story.rejected(new NotInGrace({ status: "canceled" })),
+    Story.view(Entitlements, account, {
+      status: "canceled",
+      standing: "blocked",
+      periodEnd: march,
+    }),
   ),
 );
 
@@ -301,6 +318,8 @@ it.effect("expires only from grace and is terminal", () =>
     Story.when(account, new Expire()),
     Story.then(account),
     Story.view(Entitlements, account, { status: "expired", standing: "blocked" }),
+    Story.when(account, new EnterGrace({ graceUntil })),
+    Story.rejected(new NotInGrace({ status: "expired" })),
   ),
 );
 

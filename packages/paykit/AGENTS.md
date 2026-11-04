@@ -98,7 +98,13 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   properties in `src/Proration.ts`.
 - A reservation moves `remaining` and `reserved`, never `usage`. `SettleUsage` bills the held
   units and `ReleaseUsage` returns them; settling or releasing more than is held is a typed
-  rejection, so a leak surfaces as an error rather than a shrinking allowance.
+  rejection, so a leak surfaces as an error rather than a shrinking allowance. A settled retry
+  with the same `dedupeKey` records once, even under a different command id.
+- A period close resets every allowance except `resets: "never"`, which keeps its usage, open
+  reservations and remaining count. A close that ends the standing (`canceled` or `expired`)
+  opens no further period, and `EnterGrace` is refused once the standing is terminal.
+- A trial opens on the cadence its price states: an annual trial converts into an annual period,
+  not a monthly one.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.

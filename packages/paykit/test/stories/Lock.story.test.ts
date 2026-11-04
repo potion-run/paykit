@@ -84,7 +84,10 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         remainingAfter: 1600,
       }),
     ),
-    Story.when(account, new SettleUsage({ feature: "messages", amount: 400 })),
+    Story.when(
+      account,
+      new SettleUsage({ feature: "messages", amount: 400, dedupeKey: "settle-1" }),
+    ),
     Story.then(
       account,
       new UsageRecorded({
@@ -94,6 +97,7 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         creditsAfter: 0,
         usedAfter: 400,
         remainingAfter: 1600,
+        dedupeKey: "settle-1",
       }),
       new UsageSettled({
         feature: "messages",
@@ -102,6 +106,13 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         remainingAfter: 1600,
       }),
     ),
+    // A settle retried with its key is a replay even when the kernel assigns a
+    // different command id.
+    Story.when(
+      account,
+      new SettleUsage({ feature: "messages", amount: 100, dedupeKey: "settle-1" }),
+    ),
+    Story.then(account),
   ),
 );
 

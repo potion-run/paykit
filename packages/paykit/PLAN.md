@@ -60,7 +60,8 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 defaults it to `"allow"` and the catalog refuses any other value beside `"unlimited"`
 (`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`, and
 `Allowance.carryOver` says whether what a period did not spend rolls into the next one (at most
-`included`); it is refused on a flag and on `resets: "never"`.
+`included`); it is refused on a flag and on `resets: "never"`. A `never` allowance is not moved
+by a period close: its usage, open reservations and remaining count stay where they were.
 
 A feature is priced one of two ways. It counts its own units (`Allowance`), or it declares
 `creditRates: Record<string, Int>` — credits per unit, keyed by a dimension the caller names, with
@@ -320,7 +321,9 @@ first issue will be "how do I list past-due".
 
 - `PeriodRollover` — a policy on the period start schedules `PeriodEnded`, which closes the
   period, resets usage and releases credits. `PeriodEnded` records nothing when the period is
-  not over, so an early fire is a no-op rather than a rejection.
+  not over, so an early fire is a no-op rather than a rejection. A close that ends the standing
+  (`canceled` or `expired`) opens no next period, and `EnterGrace` is refused once a standing is
+  terminal.
 - `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
   account is still in grace. A recovery before the deadline makes it a no-op.
 
