@@ -1,7 +1,11 @@
 import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Interval } from "../Tier.ts";
+import { Actor, mayActOn } from "../Auth/Actor.ts";
+import { Forbidden } from "../Auth/Forbidden.rejection.ts";
+import { Session } from "../Auth/Guards.ts";
+import { Interval, Price } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import { SubscriptionStatus } from "./Subscription.state.ts";
 
@@ -17,6 +21,8 @@ export const BillingStateView = Schema.Struct({
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
   currency: Schema.optionalKey(Schema.String),
+  /** What the account pays for the current tier. Absent on a free tier. */
+  price: Schema.optionalKey(Price),
   trialEndsAt: Schema.optionalKey(Schema.DateTimeUtc),
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
 });
@@ -48,12 +54,23 @@ const withoutGrace = (view: BillingStateView, context: ViewContext): BillingStat
   return withAccount(rest, context);
 };
 
-/** One account's billing page state, folded from its events. */
+/**
+ * One account's billing page state, folded from its events. Guarded by
+ * `Session`: an account reads only itself, an admin reads any.
+ */
 export class BillingState extends Domain.View("BillingState", {
   from: [Subscription],
   key: Subscription,
   state: BillingStateView,
   initial: initialBillingState,
+  middleware: [Session],
+  rejects: [Forbidden],
+  validate: Effect.fn(function* ({ key }) {
+    const actor = yield* Actor;
+    if (!mayActOn(actor, key.id)) {
+      return yield* new Forbidden({ account: key.id, actor: actor.id, kind: actor.kind });
+    }
+  }),
   evolve: {
     TrialStarted: (view, event, context): BillingStateView =>
       withAccount(
@@ -66,6 +83,7 @@ export class BillingState extends Domain.View("BillingState", {
           anchorTz: event.anchorTz,
           cancelAtPeriodEnd: false,
           trialEndsAt: event.trialEndsAt,
+          ...(event.price === undefined ? {} : { price: event.price }),
         },
         context,
       ),
@@ -81,19 +99,23 @@ export class BillingState extends Domain.View("BillingState", {
           anchorTz: event.anchorTz,
           cancelAtPeriodEnd: false,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
+          ...(event.price === undefined ? {} : { price: event.price }),
         },
         context,
       ),
-    TierChanged: (view, event, context): BillingStateView =>
-      withAccount(
+    TierChanged: (view, event, context): BillingStateView => {
+      const { price: _previousPrice, ...rest } = view;
+      return withAccount(
         {
-          ...view,
+          ...rest,
           tier: event.tier,
           interval: event.interval ?? view.interval,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
+          ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
         },
         context,
-      ),
+      );
+    },
     PaymentRecorded: (view, _event, context): BillingStateView =>
       withoutGrace({ ...view, status: "active" }, context),
     PaymentFailed: (view, event, context): BillingStateView =>
@@ -130,6 +152,9 @@ export class BillingState extends Domain.View("BillingState", {
     // Usage and vendor refs do not move a number the billing page shows, but
     // applying them keeps this view's emitted log the whole subscription log.
     UsageRecorded: (view, _event, context): BillingStateView => withAccount(view, context),
+    UsageReserved: (view, _event, context): BillingStateView => withAccount(view, context),
+    UsageSettled: (view, _event, context): BillingStateView => withAccount(view, context),
+    UsageReleased: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReset: (view, _event, context): BillingStateView => withAccount(view, context),
     ProviderRefAttached: (view, _event, context): BillingStateView => withAccount(view, context),
   },

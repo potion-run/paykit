@@ -17,6 +17,16 @@ export const BILLING_TABLES = {
   schedule: "billing_schedule",
   readModel: "billing_rm_billing_read",
   schemaVersion: "billing_schema_version",
+  // Consumer state. Every one of these is rebuildable from `billing_event`:
+  // a view, projection, policy dedupe row or stream is a fold, never truth.
+  viewState: "billing_rm_view_state",
+  viewEntry: "billing_rm_view_entry",
+  viewInput: "billing_rm_view_input",
+  projectionInput: "billing_rm_projection_input",
+  projectionCursor: "billing_rm_projection_cursor",
+  policySeen: "billing_rm_policy_seen",
+  streamMeta: "billing_rm_stream_meta",
+  streamEntry: "billing_rm_stream_entry",
 } as const;
 
 export type BillingTable = (typeof BILLING_TABLES)[keyof typeof BILLING_TABLES];

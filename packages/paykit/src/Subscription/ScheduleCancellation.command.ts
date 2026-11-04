@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Session } from "../Auth/Guards.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -14,4 +15,5 @@ export class ScheduleCancellation extends Domain.Command("ScheduleCancellation",
   target: AccountId,
   events: [CancellationScheduled],
   rejects: [AlreadyCanceled, NotSubscribed],
+  middleware: [Session],
 }) {}

@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
@@ -30,9 +31,9 @@ const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
-const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
-  Layer.provide(Domain.InMemory),
-);
+const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+  .pipe(Layer.provide(Domain.InMemory))
+  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 

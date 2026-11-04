@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Admin } from "../Auth/Guards.ts";
 import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -13,4 +14,5 @@ export class Expire extends Domain.Command("Expire", {
   target: AccountId,
   events: [SubscriptionExpired],
   rejects: [NotInGrace],
+  middleware: [Admin],
 }) {}

@@ -1,6 +1,6 @@
 # PLAN — `@potion.run/paykit`
 
-A billing and entitlement library for Alchemy. You declare a catalog next to your stack,
+A billing and entitlement library for Alchemy. You declare a catalog beside your stack,
 the library keeps each account's **standing** and answers `check()` at request time, and the
 provider you plug in owns the money plane — never the entitlement one.
 
@@ -18,11 +18,25 @@ Two planes, deliberately separated:
 A subscription is not a payment. A payment is an event that changes a standing. Everything
 this library owns is derived from that sentence.
 
+It is a library, not a service. It runs inside the Worker that already holds your accounts,
+next to your stack, against your database. There is no control plane to sign up for and no
+second copy of your customers to reconcile.
+
 ## Non-goals
 
 Tax calculation, invoice PDFs, SCA/3DS, being a merchant of record, refunds beyond a provider
 call, email sending, revenue recognition, per-tenant sharding, and a hosted control plane. If
 a feature needs a compliance officer, it is not in the package.
+
+Three more, each a commitment rather than a backlog item:
+
+- **No customer records.** The account id belongs to your app. Paykit never stores a name, an
+  email or a profile, and never lists accounts it was not asked about by id.
+- **No runtime catalog mutation.** A tier change is a deploy that `BillingStack` diffs. An API
+  that edits a price at runtime has no version and no diff, so it is not in the model.
+- **No multi-subscription per account.** One account, one standing. Allowance extensions are a
+  command (`GrantCredits`, `ChangeTier`), not a second subscription. The single writer per
+  account is what makes `Track` atomic, and it is not negotiable.
 
 ## Vocabulary
 
@@ -36,7 +50,9 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
+| `Reservation` | units held but not yet billed, for work in flight | `Lock` — a lock is a database primitive |
 | `Standing` | `good \| grace \| blocked`, plus per-feature remaining | `Status` |
+| `Actor` | who is calling: an `account`, an `admin`, or the `system` | `User`, `Principal` |
 
 `Allowance.overage` is one of `"block"`, `"bill"`, `"allow"`. `Allowance.resets` is one of
 `"month"`, `"annual"`, `"never"`.
@@ -54,16 +70,16 @@ export groups, the peers and the build output.
 - `alchemy` and `effect` are required peers.
 - `@alchemy.run/sql` is a dependency: the SQL store's migrations are Alchemy's migration
   registry (`@alchemy.run/sql/Migrations`), not a parallel implementation.
+- `@alchemy.run/domain` is a dependency: the model is the product.
 - `@alchemy.run/cloudflare`, `@alchemy.run/stripe`, `@potion.run/paykit-polar` and `foldkit`
   are optional peers plus dev dependencies, so a user who never imports `Paykit.Polar()` never
   installs `@potion.run/paykit-polar`.
-- `@alchemy.run/domain` is a dependency: the model is the product.
 - Versions come from the workspace catalog in `pnpm-workspace.yaml`; a package that needs a
   different line pins it locally and says why.
 
 ## Public surface
 
-Four export groups. Nothing else is exported.
+Four export groups, plus one opt-in entry point. Nothing else is exported.
 
 ```ts
 // 1. deploy-time — resources with Diff / Read / Reconcile / Delete
@@ -95,21 +111,33 @@ yield* check({ account, feature: "messages", amount: 1 });        // => { allowe
 const track = yield* Paykit.Track();
 yield* track({ account, feature: "messages", amount: 1, dedupeKey: requestId });
 
+yield* Paykit.Reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
+yield* Paykit.Settle({ account, feature: "messages", amount: 8 });
+yield* Paykit.Release({ account, feature: "messages", amount: 2 });
+
 const subscribe = yield* Paykit.Subscribe();
-yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId }
+yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId } | { activated: true }
 
 const portal = yield* Paykit.Portal();
+const list = yield* Paykit.List();
+yield* list({ standing: "grace", take: 100 });                     // => { rows, next }
 
-yield* Paykit.consumeEvents("BillingEvents",
-  { events: [Paykit.TierChanged, Paykit.PaymentFailed] },
-  Effect.fn(function* (event) { /* our events, never the provider's */ }));
+const preview = yield* Paykit.Preview();
+yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+
+const verify = yield* Paykit.Verify();
+yield* verify({ account });                                        // => VerifyMismatch[]
 
 // 3. model — embeddable, for apps that already own a Durable Object
-Paykit.Model            // the Domain model, for `Story` tests and custom hosting
-Paykit.BillingAdminApi  // for the ops console
+Paykit.Model              // the Domain model, for `Story` tests and custom hosting
+Paykit.BillingApi         // the tenant surface
+Paykit.BillingAdminApi    // the ops console
 
 // 4. providers
 Paykit.Memory()  Paykit.Manual()  Paykit.Stripe()  Paykit.Polar()
+
+// opt-in: @potion.run/paykit/Surfaces — loads effect/ai and effect/cli
+BillingMcp  BillingAdminMcp  BillingToolkit  BillingAdminToolkit  BillingCli
 ```
 
 `Paykit.Stack` is a convenience, not a requirement. A user who already runs one Durable
@@ -136,67 +164,118 @@ form for tooling and tests.
 
 ## Domain model
 
-One aggregate, keyed by account. Subscription state and usage counters live together so a
-`Track` that would exceed a blocking allowance is refused in the same transaction that
-records it. Counters are always reproduced by folding events, so they are a projection of
-the event log, not a second truth. `refs` is the only place a vendor identifier may live:
-keyed by provider, so a second provider is additive, and unread by `decide`.
+One aggregate, keyed by account. Subscription state, usage counters and open reservations live
+together so a `TrackUsage` or a `ReserveUsage` that would exceed a blocking allowance is refused
+in the same transaction that records it. Counters are always reproduced by folding events, so
+they are a projection of the event log, not a second truth. `refs` is the only place a vendor
+identifier may live: keyed by provider, so a second provider is additive, and unread by `decide`.
 
 ```ts
 Subscription.aggregate   // id: account
 state: {
   tier, status: "trialing" | "active" | "grace" | "canceled" | "expired",
   period: { start, end, anchorTz }, trialEndsAt?, graceUntil?,
-  cancelAtPeriodEnd, credits, usage: { [feature]: number },
+  price?,                                   // what this account was sold at
+  cancelAtPeriodEnd, credits,
+  usage: { [feature]: number },             // billed, a fold of UsageRecorded
+  reserved: { [feature]: number },          // held, a fold of the reservation events
+  remaining: { [feature]: number },         // spendable now: included - usage - reserved
   refs: { [provider]: { customer?, subscription?, checkout? } },  // opaque vendor ids
 }
 ```
 
+**`remaining` is the only number `check()` reads**, and it is already net of reservations. A
+hold therefore refuses a second caller the unit the first one holds, without a second read path.
+
 ### Commands → events
 
-| Command | Events | Rejections |
-| --- | --- | --- |
-| `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog` |
-| `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch` |
-| `ChangeTier` | `TierChanged` (carries proration) | `DowngradeBelowUsage`, `TierNotInCatalog` |
-| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage` |
-| `RecordPayment` | `PaymentRecorded` | `NotInGrace` |
-| `RecordPaymentFailure` | `PaymentFailed` | — |
-| `EnterGrace` | `GraceEntered` | `AlreadyInGrace` |
-| `Recover` | `Recovered` | `NotInGrace` |
-| `GrantCredits` | `CreditsGranted` | — |
-| `ConsumeCredits` | `CreditsConsumed` | `CreditExceedsBalance` |
-| `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled` |
-| `Resume` | `CancellationWithdrawn` | `NotScheduled` |
-| `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `PeriodNotClosed` |
-| `Expire` | `SubscriptionExpired` | `NotInGrace` |
+| Command | Events | Rejections | Guard |
+| --- | --- | --- | --- |
+| `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage` | `Session` |
+| `ReserveUsage` | `UsageReserved` | `ReservationExceeded`, `StandingBlocksUsage` | `Session` |
+| `SettleUsage` | `UsageRecorded`, `UsageSettled` | `NoReservation`, `StandingBlocksUsage` | `Session` |
+| `ReleaseUsage` | `UsageReleased` | `NoReservation` | `Session` |
+| `ConsumeCredits` | `CreditsConsumed` | `NotSubscribed`, `CreditExceedsBalance` | `Session` |
+| `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled`, `NotSubscribed` | `Session` |
+| `Resume` | `CancellationWithdrawn` | `NotScheduled`, `NotSubscribed` | `Session` |
+| `RecordPayment` | `PaymentRecorded` | `NotInGrace` | `Admin` |
+| `RecordPaymentFailure` | `PaymentFailed` | — | `Admin` |
+| `EnterGrace` | `GraceEntered` | `AlreadyInGrace`, `NotSubscribed` | `Admin` |
+| `Recover` | `Recovered` | `NotInGrace` | `Admin` |
+| `Expire` | `SubscriptionExpired` | `NotInGrace` | `Admin` |
+| `GrantCredits` | `CreditsGranted` | `NotSubscribed` | `Admin` |
+| `ExtendTrial` | `TrialExtended` | `NotSubscribed`, `TrialNotActive` | `Admin` |
+| `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `NotSubscribed`, `PeriodNotClosed` | — |
+| `PeriodEnded` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | — | — |
+| `GraceElapsed` | `SubscriptionExpired` | — | — |
+| `AttachProviderRef` | `ProviderRefAttached` | — | — |
 
-`decide` is pure. Proration is a pure function in `src/Proration.ts` with its own properties.
-`evolve` copies outcomes the events carry (`remainingAfter`, `periodAfter`) instead of
-re-deriving a rule.
+`decide` is pure. It cannot read the clock, a provider or an ambient context, so authorization
+lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed` and
+`AttachProviderRef` carry no guard because a policy, a scheduler or a webhook translator sends
+them as the deployment. `Proration` is a pure function in `src/Proration.ts` with its own
+properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
+`periodAfter`, `priceAfter`) instead of re-deriving a rule.
+
+### The command carries its catalog fields
+
+`Subscribe`, `ChangeTier` and `StartTrial` carry the `allowances` and the `price` they will record,
+because `decide` is pure and cannot look them up. That leaves one hole: a caller who does not own the
+catalog could omit the price, or claim allowances its tier does not grant, and write a standing that
+can never be reconciled against an invoice.
+
+`CatalogGuard` closes it. It reads the catalog the deployment validated and refuses a command whose
+`tier`, `allowances` or `price` disagree, with `CatalogMismatch` naming the field, the expected value
+and the actual one. It is a refusal, never a correction: silently rewriting a caller's input would
+turn a client bug into a wrong invoice. Catalog-owning senders — `Paykit.Subscribe`, the webhook
+translator — build the command from `CatalogService` and never see the guard.
+
+### Proration is computed by the model, not sent by the caller
+
+A `ChangeTier` carries its `proration`, but the model does not trust it: `decide` calls `prorate()`
+on the account's own prices and period and refuses a mismatch with `ProrationMismatch`. The event
+records money, so a number a caller invented is a number nobody can audit. Moving that money is a
+separate step, and needs a `Payments` operation the port does not have yet.
+
+### Prices are logged, not looked up
+
+`SubscriptionActivated` carries the `price` the account was sold at, and `TierChanged` carries
+`priceBefore` and `priceAfter`. A catalog price change therefore never rewrites history: an
+invoice can be reconciled against the log alone, and "what were we charging this account in
+March" is one fold. A downgrade to a free tier records the absence of a price rather than
+keeping the old one.
 
 ### Reads
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
-| View | `Entitlements` | per-feature `{ included, used, remaining, resetsAt, overage }` and standing — the `check()` read model |
-| View | `BillingState` | what a billing page shows: tier, period end, cancel-at-period-end, credits |
+| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes |
+| View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
-| Projection | `BillingRead` | SQL rows for `list`, dashboards and the edge read path |
+| Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |
 
-A view folds one key's events, so cross-account dashboards are the `BillingRead` projection,
-never a view. Say so in the docs or the first issue will be "how do I list past-due".
+Both views are guarded by `Session` and scoped by `validate`: an account reads only itself, an
+admin reads any. A view folds one key's events, so cross-account dashboards come from the
+`BillingRead` projection through `Paykit.List`, never from a view. Say so in the docs or the
+first issue will be "how do I list past-due".
+
+`Paykit.List` is a binding rather than an Api read because `Domain.Api` serves keyed reads.
+`after` is a cursor, not an offset, so an account created or deleted between pages shifts no row.
 
 ### Processes
 
-- `Checkout.saga` — create the provider session, wait for `PaymentRecorded`, activate, grant
-  intro credits. Started by a policy on `Subscribe`.
-- `Dunning.saga` — retry schedule, grace window, downgrade, expire. Started by a policy on
-  `PaymentFailed`. Steps are keyed by account, so a replayed start does not double-charge.
-- `TierChange.saga` — proration charge, apply at the boundary, undo if the charge fails.
-
-Policies: `PaymentFailed → Dunning`, `GraceElapsed → Expire`, `PeriodEnded → ClosePeriod`,
-`CreditsGranted → ...` nothing; credits need no notification to be correct.
+- `PeriodRollover` — a policy on the period start schedules `PeriodEnded`, which closes the
+  period, resets usage and releases credits. `PeriodEnded` records nothing when the period is
+  not over, so an early fire is a no-op rather than a rejection.
+- `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
+  account is still in grace. A recovery before the deadline makes it a no-op.
+- Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
+  reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
+  `checkout_completed` webhook activates the account. The provider event id is the command id,
+  so a redelivery is a replay.
 
 ### External systems
 
@@ -267,42 +346,107 @@ that sells a product, its tests are live Polar tests, and paykit-specific helper
 it. If the package slips, `PaymentsPolar` calls `@distilled.cloud/polar` directly; no model or
 port change.
 
+## Surfaces
+
+An Api is a selection of the model; HTTP, MCP and a CLI are protocols over that Api. One
+declaration, four projections, no second place to keep them in step.
+
+```ts
+export class BillingApi extends Domain.Api("BillingApi", { model: PaykitModel, /* tenant */ }) {}
+
+export class BillingAdminApi extends Domain.Api("BillingAdminApi", {
+  model: PaykitModel,
+  commands: ["GrantCredits", "ExtendTrial", "EnterGrace", "Recover", "Expire",
+             "RecordPayment", "RecordPaymentFailure", "ScheduleCancellation", "Resume", "ChangeTier"],
+  views: ["Entitlements", "BillingState"],
+  streams: ["AccountEvents"],
+  aggregates: ["Subscription"],
+}) {}
+```
+
+| Projection | From | What it gives |
+| --- | --- | --- |
+| HTTP | `yield* BillingApi` | a Worker's `fetch`: commands and reads over Effect RPC, live reads over WebSockets |
+| MCP | `DomainAi.toMcp(BillingApi)` | one tool per command and per non-stream read, through the Api's own middleware |
+| CLI | `DomainCli.toCli(BillingAdminApi)` | one subcommand per served entry |
+| Console | `Foldkit.make(BillingAdminApi)` | commands, failures and live snapshots |
+
+`@potion.run/paykit/Surfaces` exports `BillingMcp`, `BillingAdminMcp`, `BillingToolkit`,
+`BillingAdminToolkit` and `BillingCli`. It is a separate entry point so an app that serves only
+HTTP never loads `effect/ai` or `effect/cli`.
+
+Rules that keep the projections honest:
+
+- **The Api is the unit of authorization.** MCP tools run through the Api's middleware using the
+  MCP request's own headers, so the tenant MCP server authenticates exactly as the tenant HTTP
+  surface does. Serve the two Apis at two paths; never merge them.
+- **A tool is destructive unless it is a read.** `TrackUsage`, `ReserveUsage` and every other
+  command is annotated `Destructive`; `Entitlements.get` is `Readonly`. A model that can write
+  cannot be talked into thinking it is reading.
+- **Streams are not tools.** `watch` and `events` are not one result, so they stay on the Api's
+  own clients. An agent reads a snapshot, not a subscription.
+- **Rejections are tool failures with `failureMode: "return"`.** A refusal is a result the model
+  acts on, not a failed generation. Never a stack trace.
+- **Preview before a write.** `Paykit.Preview` runs the same pure `decide` and reports the events
+  and the proration a command would produce, so a console or an agent can show the charge first.
+- **A query that spans accounts is a binding.** `Paykit.List` pages the projection. Do not add a
+  command that writes nothing to get a list onto an Api.
+- **A tool reads the answer, not the arithmetic.** `Entitlements` carries `allowed` per feature, the
+  same judgement `check({ amount: 1 })` makes, so an agent reading the view does not re-derive it.
+  A test asserts the two agree for every standing.
+- **`@potion.run/paykit/Surfaces` is the only place a tool list lives.** It declares no behaviour: a
+  change to a command shows up in the MCP tool list, the CLI and the console at once, and a test
+  asserts the derivation rather than a hand-written list.
+
+### Auth
+
+`Session` and `Admin` are `RpcMiddleware` services. A command declares the weakest guard it
+needs; the Api's composition of commands is the blast radius.
+
+- `Session` resolves the `Actor` from the request and pins an `account` actor to its own account
+  id. An `admin` or the `system` actor may act on any account. Views use the same guard plus a
+  `validate` that re-checks the key, so a read is scoped even if a route forgot to be.
+- `Admin` requires `kind === "admin"`. Granting credit, expiring a standing and replaying a
+  charge declare it, so a tenant session cannot reach them at all.
+- In-process senders (webhooks, policies, bindings) provide the actor themselves with
+  `asSystem`. The deployment already authenticated the work.
+- `CatalogGuard` is a third guard, on the three commands that carry catalog-derived fields. It
+  provides nothing; it refuses a command whose allowances or price disagree with the catalog.
+- `SessionFromHeaders` and `AdminFromHeaders` are development guards. They read
+  `x-paykit-actor` and `x-paykit-kind`. A production deployment replaces them with a Layer over
+  its own session, and the header never becomes an authentication scheme by accident.
+
+`decide` stays pure: it does not read `Actor`, so a model rule never depends on which surface
+sent a command. Authorization at the account boundary is middleware; a model rule about state
+is `decide`.
+
 ## Storage
 
-`Paykit.Postgres` and friends are not schemas. They are a second `Domain.Platform`, which is
-the framework's own swap point: the model, views, policies and sagas are unchanged, and
-`Domain.InMemory` is proof the seam holds.
+`Paykit.Postgres` and friends are a `Domain.Platform`, not a schema: model, views, policies and
+sagas are identical on Postgres, SQLite/D1 and `Domain.InMemory`. `Domain.InMemory` stays green
+as the others land — it is the proof the seam holds.
 
-The store must preserve the whole `AggregateStore` contract:
+A store keeps all five `AggregateStore` guarantees or it is not a store: one writer per account
+id, dedupe by `commandId`, atomic commit of events + state + receipt + deliveries, at-least-once
+delivery in order, `schedule`/`tail` by notify or poll.
 
-| Guarantee | Postgres | SQLite / D1 |
-| --- | --- | --- |
-| single writer per id | `pg_advisory_xact_lock(hashtext($id))` first in the txn | `BEGIN IMMEDIATE` |
-| dedupe by `commandId` | unique index `(aggregate, id, command_id)` | same |
-| atomic commit | one txn: events, state, receipt, deliveries | one txn |
-| at-least-once, in order | outbox + drain | same |
-| `tail` / `changes` | `LISTEN/NOTIFY`, else `seq > after` poll | poll |
-| `schedule` / `unschedule` | `billing_due` + poller | same |
+Two table classes, no more: `billing_event` (append-only, the only truth) and `billing_rm_*`
+(rebuildable at any moment). A read model that becomes a source of truth is a bug.
 
-Advisory locks are what make "your database is the ledger" true rather than aspirational:
-they restore per-account serialization inside the user's own Postgres.
-
-### Schema rules
-
-- Every table is `billing_`-prefixed; the schema is configurable; `public` is never touched.
-- Exactly two table classes: `billing_event` (append-only, the only truth) and `billing_rm_*`
-  (read models, rebuildable at any moment). A read model that becomes a source of truth is
-  a bug, not a cache to invalidate.
-- Migrations are additive SQL records applied through `@alchemy.run/sql/Migrations`, the same
-  registry Alchemy uses. The registry owns `billing_schema_version`, keys applied detection by
-  name plus content hash, upgrades legacy bookkeeping shapes, and refuses a rewritten or
-  removed applied file. `migrate()` returns the ids it applied; a replay returns none.
-  `migrateDryRun()` prints the DDL; nobody runs library DDL against a money table blind.
-- Postgres DDL qualifies every `billing_*` table with the configured schema and uses `BIGINT`
-  for epoch millis. SQLite has no schemas and ignores the field. The registry's unqualified
-  bookkeeping queries run under a scoped `search_path` that is restored afterwards.
-- `paykit doctor` rebuilds every read model into temp tables, diffs, and prints the event ids
-  that disagree. That command is what earns the right to touch someone's database.
+- Every table is `billing_`-prefixed, the schema is configurable, `public` is never touched.
+- Migrations are additive, forward-only SQL records applied through
+  `@alchemy.run/sql/Migrations` — the same registry Alchemy uses. The registry owns the
+  bookkeeping table (`billing_schema_version`), is name-keyed with content hashes, and refuses a
+  rewritten or removed applied file. `migrate()` returns the ids it applied; a replay returns
+  none. `migrateDryRun()` prints the DDL before anyone runs it against a money table.
+- Postgres DDL qualifies every table with the configured schema; SQLite has no schemas. The
+  migration executor sets `search_path` for the registry's unqualified bookkeeping queries and
+  restores it afterwards, so it must be a dedicated session, not a pool that spreads statements.
+- `paykit doctor` rebuilds every read model into temp tables and prints the event ids that
+  disagree. A store ships when `doctor` is clean.
+- Code or a test copied from Alchemy keeps a header with the upstream path and the
+  catalog-pinned ref. Keep the copied shape 1:1 where it is a compatibility check; the mirrors
+  under `.agent_sources/` and the catalog bump then make the next change a diff.
 
 ### Read paths for `check`
 
@@ -310,34 +454,19 @@ Preferred, in order: `CheckInProcess` (same Durable Object), `CheckReadModel` (o
 `billing_rm_*` at the edge), `CheckHttp` (cross-service). Shipping only the HTTP one would
 reintroduce the round trip the library exists to remove.
 
-## Admin surface
+## Verify
 
-Two Apis over one model, different middleware, different blast radius:
+`Paykit.Verify` judges one account's standing against the deploy and returns typed mismatches:
 
-```ts
-export class BillingApi extends Domain.Api("BillingApi", { model: Paykit, /* tenant surface */ }) {}
+| Mismatch | Means |
+| --- | --- |
+| `MissingProviderRef` | a priced tier is in force but the account has no vendor reference, so the checkout never completed |
+| `OrphanProviderRef` | a vendor reference outlived the standing it described |
+| `TierHasNoPurchasePath` | the catalog sells a tier no configured provider can charge |
 
-export class BillingAdminApi extends Domain.Api("BillingAdminApi", {
-  model: Paykit,
-  commands: ["GrantCredits", "ExtendTrial", "ScheduleCancellation", "Resume", "RetryDunning", "ChangeTier"],
-  views: ["Entitlements", "BillingState"],
-  streams: ["AccountEvents"],
-  aggregates: ["Subscription"],
-}) {}
-```
-
-`Foldkit.make(BillingAdminApi)` derives everything the console needs: one `Command` per
-command with a `commandId` and a typed `reply`; a `Failure` union of `Rejected | Denied |
-Unknown`, where `Unknown` is exactly the retry-with-the-same-id case, so a double click
-cannot double-credit. `<Read>.watch({ key, isEnabled, toMessage, onFailure, onDefect })`
-gives live snapshots with `Option` absence and a cursor that does not restart the stream.
-`SnapshotFlags` hydrates the first frame from flags.
-
-Lists and metrics come from `Subscription.list({ where, order, take, after })`. On the SQL
-platform that is one indexed query; on a sharded Durable Object platform it is a fan-out, so
-`BillingRead` serves it. The audit pane tails `AccountEvents` and renders every computed
-number next to the events that produced it, because an operator who cannot audit a number
-will export to a spreadsheet instead.
+`verifyState` is the same judgement without a store, so `doctor` and a test can call it. This is
+account-level drift. Vendor state that disagrees with ours needs a provider read, which is a
+future `Payments` operation rather than something this function can see.
 
 ## Correctness bar
 
@@ -348,11 +477,15 @@ Every one of these fails on purpose before it passes.
    provider webhooks.
 2. Replay determinism: folding an account's events reproduces its stored state for any
    generated command sequence.
-3. Allowance: `used ≤ included` for `block`, never negative, and `remaining` is monotone
-   within a period except at `ClosePeriod`.
+3. Allowance: `used + reserved ≤ included` for `block`, never negative, and `remaining` is
+   monotone within a period except at `ClosePeriod`, `ReserveUsage` and `ReleaseUsage`.
 4. Proration: parts sum to the full price within rounding; credit plus charge nets to zero.
 5. Idempotence: every command replayed with the same `commandId` produces no second event.
 6. Cancellation and resume are idempotent; `Expire` from any state is terminal or a no-op.
+7. Pricing: replaying the log reproduces every price the account was sold at, and a price change
+   in the catalog never moves a standing that already exists.
+8. Reservation: settle plus release never exceeds what was held, and `used` after a settle
+   equals what was held — a hold is not billed twice.
 
 Gates: `Domain.verify(Model)` returns empty, `Story` tests for every command and rejection,
 the `Payments` conformance suite green for all implementations, money as `Schema.Int` minor
@@ -365,15 +498,11 @@ in the test kit so a billing library can be time-travelled.
 | --- | --- | --- | --- |
 | M0 | Foundation | repo bootstrap, `Model`, `PaymentsMemory`, `Domain.InMemory` store, `Check` in-process | `Story` tests green, `Domain.verify` empty, CI runs |
 | M1 | Durable truth | `layerSql` for Postgres and SQLite/D1, event log, receipts, outbox, `migrate`, `doctor` | kill -9 mid-command loses no event and produces no duplicate |
-| M2 | Usage | `Track`, allowances, overage modes, period rollover by `schedule`, replay property | properties 2, 3, 5 pass against generated sequences |
+| M2 | Usage | `Track`, allowances, overage modes, reservations, period rollover by `schedule`, replay property | properties 2, 3, 5, 8 pass against generated sequences |
 | M3 | Catalog and two providers | `Stack`, `tier`/`feature` resources, webhook endpoint, `PaymentsStripe`, `PaymentsPolar`, conformance suite | the same story passes on `Memory`, `Manual`, `Stripe` and `Polar`, and `packages/paykit/src/Subscription/` is untouched |
-| M4 | Money paths | checkout saga, payment events, grace, dunning, proration, cancel/resume, credits | property 1 and 4 pass; a failed charge recovers without a second charge |
-| M5 | Admin | `BillingAdminApi`, foldkit console in `examples/`, audit pane, lists | an operator can answer "why is this account on pro" from the UI alone |
+| M4 | Money paths | purchase path, payment events, grace, dunning, proration, cancel/resume, credits | property 1, 4 and 7 pass; a failed charge recovers without a second charge |
+| M5 | Surfaces | `BillingApi`, `BillingAdminApi`, auth guards, `Surfaces` (MCP + CLI), `Preview`, `Verify`, `List`, foldkit console in `examples/` | an operator can answer "why is this account on pro" from the UI alone; an MCP client calling `BillingApi_TrackUsage_send` with an account header commits a real command and one without is refused |
 | M6 | Release | docs, `alchemy dev` quickstart on `Memory`, versioning policy, `0.1.0` | a stranger bills in ten minutes with no provider key |
-
-M3 depends on `@potion.run/paykit-polar` (see [The vendor package](#the-vendor-package)). It ships
-from `packages/paykit-polar` on its own version line; its live tests are the gate, and paykit
-consumes it as a peer.
 
 Roughly nine weeks of focused work. M4 is where the estimate goes wrong; proration and
 dunning are the two things nobody gets right the first time.
@@ -401,34 +530,35 @@ potion/                          # pnpm workspace root (private)
       tsconfig.test.json         # type-checks ./test, no emit
       scripts/build.ts
       src/
-        index.ts
-        Stack.ts                    # the resource that wires store + catalog + providers
-        Feature.ts  Allowance.ts  Tier.ts  Catalog.ts
-        Check.ts  CheckInProcess.ts  CheckReadModel.ts  CheckHttp.ts
-        Track.ts  TrackBinding.ts
-        Subscribe.ts  Portal.ts
-        Proration.ts
+        index.ts                 # the four export groups and nothing else
+        Surfaces.ts              # opt-in: MCP, toolkits, CLI
+        Stack.ts                 # the resource that wires store + catalog + providers
+        Feature.ts  Allowance.ts  Tier.ts  Catalog.ts  CatalogService.ts
+        BillingStack.resource.ts
+        Check.ts                 # in-process, read-model and HTTP read paths
+        Track.ts  Hold.ts        # Reserve / Settle / Release
+        Subscribe.ts  Portal.ts  List.ts  Preview.ts  Verify.ts  Webhooks.ts
+        Proration.ts  Doctor.ts
+        Auth/
+          Actor.ts  Guards.ts  FromHeaders.ts
+          Unauthenticated.rejection.ts  Forbidden.rejection.ts
         Subscription/
-          Subscription.aggregate.ts
-          Subscription.id.ts
-          ChangeTier.command.ts
-          TrackUsage.command.ts
-          AllowanceExceeded.rejection.ts
-          Entitlements.view.ts
-          BillingState.view.ts
-          AccountEvents.stream.ts
-          BillingRead.projection.ts
-          Dunning.saga.ts
-          Checkout.saga.ts
+          Subscription.aggregate.ts  Subscription.state.ts  Subscription.id.ts
+          <Command>.command.ts  <Rejection>.rejection.ts
+          Entitlements.view.ts  BillingState.view.ts
+          AccountEvents.stream.ts  BillingRead.projection.ts
+          AccountEventsProjection.ts
+          PeriodRollover.policy.ts  Dunning.policy.ts
+        BillingApi.api.ts  BillingAdminApi.api.ts
+        BillingReadStore.ts
         Payments.ts  PaymentsMemory.ts  PaymentsManual.ts
         PaymentsStripe.ts               # delegates to @alchemy.run/stripe
         PaymentsPolar.ts                # delegates to @potion.run/paykit-polar
-        BillingAdminApi.api.ts
-        Store/Postgres.ts  Store/Sqlite.ts  Store/DurableObjects.ts
+        Store/Sql.ts  Store/SqlEventLog.ts  Store/Tables.ts
         Migrations/
       test/
-        toolchain.test.ts               # delete when the first real suite lands
-        properties/  stories/  conformance/
+        stories/  properties/  conformance/  providers/  sql/
+        check/  preview/  list/  verify/  surfaces/  bindings/  subscribe/  webhooks/
     paykit-polar/                # @potion.run/paykit-polar — published separately
       package.json
       tsconfig.json
@@ -437,11 +567,14 @@ potion/                          # pnpm workspace root (private)
       src/
       test/
   examples/
+    billing/                     # a Worker that bills with MemoryStore + Manual, no provider key
     admin/                       # foldkit console
 ```
 
-Model files use `<Noun>.<kind>.ts` from the domain conventions; runtime files use Alchemy's
-resource/binding pairing. `packages/paykit/src/index.ts` re-exports the four groups and nothing
+Model files use `<Noun>.<kind>.ts` from the domain conventions (`.aggregate`, `.command`,
+`.rejection`, `.view`, `.stream`, `.projection`, `.policy`, `.api`); runtime files use Alchemy's
+resource/binding pairing. Plain values keep plain names (`Feature.ts`, `Allowance.ts`,
+`Tier.ts`, `Catalog.ts`). `packages/paykit/src/index.ts` re-exports the four groups and nothing
 else. The root `pnpm typecheck` builds every package through project references, so a change in
 `packages/paykit-polar` cannot land with a broken consumer.
 
@@ -449,7 +582,7 @@ else. The root `pnpm typecheck` builds every package through project references,
 
 - **Proration is unbounded.** Mid-cycle tier change, coupon, trial, partial refund, currency
   rounding. Timebox M4 and ship `ChangeTier` as `next period only` first; mid-cycle is a
-  second pass with its own properties.
+  second pass with its own properties. `Preview` makes it visible before it is charged.
 - **Two stores is double the work.** The SQL store is the expensive half of the library.
   Build it second, after M2 proves the model against `Domain.InMemory`.
 - **Deletion has to respect money.** `RemovalPolicy.RETAIN` on catalog and account resources,
@@ -467,6 +600,26 @@ else. The root `pnpm typecheck` builds every package through project references,
   and release train, and we maintain it. It must stand alone — the moment a paykit-shaped helper
   lands in it, the port has leaked backwards. The conformance suite is still the drift alarm
   between the two version lines.
-- **Events outlive the library.** Event names and their fields are the public API. Version
-  from 0.1.0 and expose `Backfill`/`CatchUp` so a projection change is a rebuild, not a
-  rewrite.
+- **Events are the API.** Event names and their fields are public. Version from 0.1.0 and keep
+  `Backfill`/`CatchUp` so a projection change is a rebuild, not a rewrite.
+- **A reservation that leaks shrinks an allowance.** `ReleaseUsage` refuses to release more than
+  is held rather than clamping, so a leak surfaces as a typed error. Watch `reserved` in
+  `BillingState` and alert on a hold older than its work.
+- **An MCP tool can spend money.** The tool list is derived from the Api, so an Api that serves a
+  priced command publishes a destructive tool. Keep `GrantCredits` off the tenant Api, and
+  require a preview and a `commandId` before any write an agent may retry.
+- **The SQL store has an aggregate store, not yet a platform.** `SqlAggregateStore` implements
+  `Domain.AggregateStore` over `SqlEventLog`, and a test proves each of the five guarantees on real
+  SQLite: dedupe by `commandId`, a restart sees only committed truth, one writer per account, a
+  delivery stays in the outbox until accepted, and a scheduled command survives a restart. `0002`
+  ships the tables the other four `ModelHost` stores need (`billing_rm_view_*`,
+  `billing_rm_projection_*`, `billing_rm_policy_seen`, `billing_rm_stream_*`), but those stores are
+  not written, so the model still runs on `Domain.InMemory`: the aggregate's truth can be SQL while
+  its reads are not. Closing that split is what M1 means.
+- **No provider moves real money.** `PaymentsStripe` and `PaymentsPolar` accept a `Bindings`
+  interface; nothing adapts a vendor package to it, and `@potion.run/paykit-polar` is still a stub.
+  The conformance suite currently proves the fakes.
+- **A catalog-derived command needs the catalog.** `Subscribe`, `ChangeTier` and `StartTrial` carry
+  their own allowances and price. `CatalogGuard` refuses a mismatch, but it cannot invent a missing
+  price, so an Api client must send the fields the catalog implies. `tierCommand()` in the example is
+  the shape to copy; a generated client would be better.

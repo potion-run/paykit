@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Admin } from "../Auth/Guards.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -16,4 +17,5 @@ export class GrantCredits extends Domain.Command("GrantCredits", {
   events: [CreditsGranted],
   rejects: [NotSubscribed],
   reply: { balance: Schema.Int },
+  middleware: [Admin],
 }) {}

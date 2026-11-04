@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
@@ -52,6 +53,7 @@ const activated = new SubscriptionActivated({
   anchorTz: "UTC",
   interval: "month",
   currency: "usd",
+  price: proPrice,
   statusAfter: "active",
 });
 
@@ -72,6 +74,7 @@ const closed = (periodStart: DateTime.Utc, periodEnd: DateTime.Utc, nextEnd: Dat
 
 it.effect("PeriodRollover closes the period on the clock without a manual command", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
     Story.then(account, activated),
@@ -83,6 +86,7 @@ it.effect("PeriodRollover closes the period on the clock without a manual comman
 
 it.effect("a closed period schedules the next rollover, so the chain continues", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
     Story.then(account, activated),
@@ -95,6 +99,7 @@ it.effect("a closed period schedules the next rollover, so the chain continues",
 
 it.effect("Dunning expires an account when grace elapses", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
     Story.then(account, activated),
@@ -119,6 +124,7 @@ it.effect("Dunning expires an account when grace elapses", () =>
 
 it.effect("a payment before the deadline makes the scheduled expiry a no-op", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
     Story.then(account, activated),
@@ -148,6 +154,7 @@ it.effect("a payment before the deadline makes the scheduled expiry a no-op", ()
 
 it.effect("a trial closes its period on the trial deadline and becomes active", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(
       account,
@@ -178,6 +185,7 @@ it.effect("a trial closes its period on the trial deadline and becomes active", 
 
 it.effect("extending a trial reschedules its close to the new deadline", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(
       account,

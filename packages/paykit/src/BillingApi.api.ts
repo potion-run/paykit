@@ -1,10 +1,25 @@
 import * as Domain from "@alchemy.run/domain";
 import { PaykitModel } from "./Paykit.model.ts";
 
-/** What a signed-in account may do and see. */
+/**
+ * What a signed-in account may do and see. Every command here is guarded by
+ * the `Session` middleware and every read by the same guard on the view, so a
+ * route built from this Api cannot serve another account.
+ */
 export class BillingApi extends Domain.Api("BillingApi", {
   model: PaykitModel,
-  commands: ["Subscribe", "TrackUsage", "ChangeTier", "ScheduleCancellation", "Resume"],
+  commands: [
+    "StartTrial",
+    "Subscribe",
+    "TrackUsage",
+    "ReserveUsage",
+    "SettleUsage",
+    "ReleaseUsage",
+    "ConsumeCredits",
+    "ChangeTier",
+    "ScheduleCancellation",
+    "Resume",
+  ],
   views: ["Entitlements", "BillingState"],
   streams: ["AccountEvents"],
   aggregates: [],

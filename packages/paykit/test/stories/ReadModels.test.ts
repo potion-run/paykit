@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
@@ -33,6 +34,7 @@ const story = Story.make(PaykitModel, {
 
 it.effect("appends every subscription event to AccountEvents", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "free", allowances: free })),
     Story.then(
@@ -98,18 +100,20 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
     // BillingRead consumes Entitlements, so wait for the view before the projection.
     yield* state.query(ref, { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);
-    const rows = yield* store.list();
-    expect(rows.length).toBe(1);
-    expect(rows[0]?.account).toBe("acct_read_live");
-    expect(rows[0]?.tier).toBe("free");
-    expect(rows[0]?.standing).toBe("good");
-    expect(rows[0]?.credits).toBe(0);
-    expect(rows[0]?.features.messages?.included).toBe(100);
+    const page = yield* store.list();
+    expect(page.rows.length).toBe(1);
+    expect(page.next).toBeNull();
+    expect(page.rows[0]?.account).toBe("acct_read_live");
+    expect(page.rows[0]?.tier).toBe("free");
+    expect(page.rows[0]?.standing).toBe("good");
+    expect(page.rows[0]?.credits).toBe(0);
+    expect(page.rows[0]?.features.messages?.included).toBe(100);
   }).pipe(
     Effect.provide(
       PaykitModel.layer(PaykitHandlers)
         .pipe(Layer.provideMerge(MemoryBillingReadStore))
-        .pipe(Layer.provide(Domain.InMemory)),
+        .pipe(Layer.provide(Domain.InMemory))
+        .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test")))),
     ),
   ),
 );

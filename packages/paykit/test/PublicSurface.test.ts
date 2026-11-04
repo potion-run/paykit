@@ -32,6 +32,34 @@ it("exports the four groups from the package root", () => {
   // model
   expect(Paykit.Model.modelName).toBe("Paykit");
   expect(Paykit.BillingAdminApi.name).toContain("BillingAdminApi");
+  // the four groups as one namespace
+  expect(Paykit.Paykit.feature).toBe(Paykit.feature);
+  expect(Paykit.Paykit.Model).toBe(Paykit.Model);
+  expect(typeof Paykit.Paykit.providers).toBe("function");
+  expect(typeof Paykit.reconcileBillingStack).toBe("function");
+  expect(typeof Paykit.allowsOne).toBe("function");
+  expect(Paykit.ProrationMismatch).toBeDefined();
+  expect(typeof Paykit.Paykit.CatalogGuard).toBe("object");
+  // preview, verify and list are runtime bindings
+  expect(typeof Paykit.Preview).toBe("function");
+  expect(typeof Paykit.Verify).toBe("function");
+  expect(typeof Paykit.List).toBe("function");
+  expect(typeof Paykit.Reserve).toBe("function");
+  expect(typeof Paykit.Settle).toBe("function");
+  expect(typeof Paykit.Release).toBe("function");
+  // auth primitives
+  expect(Paykit.Actor).toBeDefined();
+  expect(Paykit.Session).toBeDefined();
+  expect(Paykit.Admin).toBeDefined();
+  expect(Paykit.Forbidden).toBeDefined();
+  expect(Paykit.Unauthenticated).toBeDefined();
+  expect(Paykit.CatalogMismatch).toBeDefined();
+  expect(Paykit.mayActOn({ kind: "account", id: "a" }, "a")).toBe(true);
+  expect(Paykit.mayActOn({ kind: "account", id: "a" }, "b")).toBe(false);
+  expect(Paykit.mayActOn({ kind: "admin", id: "ops" }, "b")).toBe(true);
+  // the money events carry what was charged
+  expect(Paykit.SubscriptionActivated).toBeDefined();
+  expect(Paykit.TierChanged).toBeDefined();
   // providers
   expect(Paykit.Memory().kind).toBe("memory");
   expect(Paykit.Manual().kind).toBe("manual");

@@ -2,6 +2,7 @@ import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { asSystem } from "./Auth/Actor.ts";
 import { allowancesOf, tierOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
@@ -74,15 +75,17 @@ export const handleWebhook = Effect.fn("Paykit.handleWebhook")(function* (event:
       return yield* new TierNotInCatalog({ tier: event.tier });
     }
     const tier = tierOf(catalog, event.tier);
-    yield* subscription.send(
-      ref,
-      new SubscribeCommand({
-        tier: event.tier,
-        allowances,
-        ...(tier?.price === undefined ? {} : { price: tier.price }),
-        ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
-      }),
-      { commandId: event.id },
+    yield* asSystem(
+      subscription.send(
+        ref,
+        new SubscribeCommand({
+          tier: event.tier,
+          allowances,
+          ...(tier?.price === undefined ? {} : { price: tier.price }),
+          ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
+        }),
+        { commandId: event.id },
+      ),
     );
     return "activated" as const satisfies WebhookAction;
   });
@@ -99,10 +102,12 @@ export const handleWebhook = Effect.fn("Paykit.handleWebhook")(function* (event:
         return yield* new WebhookInvalid({ event: event.id, field: "currency" });
       }
       if (state._tag === "Subscribed" && state.status === "grace") {
-        yield* subscription.send(
-          ref,
-          new RecordPayment({ amount: event.amount, currency: event.currency }),
-          { commandId: event.id },
+        yield* asSystem(
+          subscription.send(
+            ref,
+            new RecordPayment({ amount: event.amount, currency: event.currency }),
+            { commandId: event.id },
+          ),
         );
         return "recovered" as const satisfies WebhookAction;
       }
@@ -117,13 +122,15 @@ export const handleWebhook = Effect.fn("Paykit.handleWebhook")(function* (event:
         return "ignored" as const satisfies WebhookAction;
       }
       const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-      yield* subscription.send(
-        ref,
-        new RecordPaymentFailure({
-          reason: event.reason ?? "payment_failed",
-          graceUntil: event.graceUntil ?? DateTime.add(now, { days: 7 }),
-        }),
-        { commandId: event.id },
+      yield* asSystem(
+        subscription.send(
+          ref,
+          new RecordPaymentFailure({
+            reason: event.reason ?? "payment_failed",
+            graceUntil: event.graceUntil ?? DateTime.add(now, { days: 7 }),
+          }),
+          { commandId: event.id },
+        ),
       );
       return "failed" as const satisfies WebhookAction;
     }
@@ -132,14 +139,22 @@ export const handleWebhook = Effect.fn("Paykit.handleWebhook")(function* (event:
       if (state._tag !== "Subscribed" || state.status !== "active") {
         return "ignored" as const satisfies WebhookAction;
       }
-      return yield* subscription
-        .send(ref, new ScheduleCancellation(), { commandId: event.id })
-        .pipe(
-          Effect.as("canceled" as const satisfies WebhookAction),
-          Effect.catchTag("AlreadyCanceled", () =>
-            Effect.succeed("ignored" as const satisfies WebhookAction),
-          ),
-        );
+      return yield* asSystem(
+        subscription.send(ref, new ScheduleCancellation(), { commandId: event.id }),
+      ).pipe(
+        Effect.as("canceled" as const satisfies WebhookAction),
+        Effect.catchTag("AlreadyCanceled", () =>
+          Effect.succeed("ignored" as const satisfies WebhookAction),
+        ),
+      );
     }
   }
 });
+
+/**
+ * Complete a checkout from the provider's `checkout_completed` webhook. The
+ * provider event id is the command id, so a redelivery replays rather than
+ * activating twice.
+ */
+export const completeCheckout = (event: Omit<WebhookEvent, "kind">) =>
+  handleWebhook({ ...event, kind: "checkout_completed" });

@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Admin } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
 
 /** A charge failed; the account keeps service until `graceUntilAfter`. */
@@ -22,4 +23,5 @@ export class RecordPaymentFailure extends Domain.Command("RecordPaymentFailure",
   },
   events: [PaymentFailed],
   rejects: [],
+  middleware: [Admin],
 }) {}

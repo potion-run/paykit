@@ -1,7 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Allowances, type Allowance } from "../Allowance.ts";
-import { Interval } from "../Tier.ts";
+import { Interval, Price } from "../Tier.ts";
 
 /** An account is the key of a Subscription. */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"));
@@ -49,6 +49,14 @@ export type UsageCounts = typeof UsageCounts.Type;
 export const Remaining = Schema.Record(Schema.String, Schema.Int);
 export type Remaining = typeof Remaining.Type;
 
+/**
+ * Per-feature amount held by an open reservation, copied from the event that
+ * changed it. A reserved unit is out of `remaining` but not yet `usage`: it is
+ * neither spendable twice nor billed until `SettleUsage` confirms it.
+ */
+export const Reserved = Schema.Record(Schema.String, Schema.Int);
+export type Reserved = typeof Reserved.Type;
+
 /** What an account with no standing looks like: it may still hold checkout refs. */
 export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", { refs: Refs });
 export type UnsubscribedState = typeof UnsubscribedState.Type;
@@ -59,6 +67,8 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   status: SubscriptionStatus,
   period: Period,
   interval: Interval,
+  /** What the tier cost when this standing took it. Absent on a free tier. */
+  price: Schema.optionalKey(Price),
   trialEndsAt: Schema.optional(Schema.DateTimeUtc),
   graceUntil: Schema.optional(Schema.DateTimeUtc),
   cancelAtPeriodEnd: Schema.Boolean,
@@ -66,6 +76,7 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   currency: Schema.optional(Schema.String),
   usage: UsageCounts,
   remaining: Remaining,
+  reserved: Reserved,
   allowances: Allowances,
   refs: Refs,
   trialUsed: Schema.Boolean,
@@ -124,12 +135,20 @@ export const periodFrom = (start: DateTime.Utc, interval: Interval, anchorTz = "
 export const usedOf = (state: SubscribedState, feature: string): number =>
   state.usage[feature] ?? 0;
 
-/** A feature's remaining allowance, defaulting to what the tier included. */
+/**
+ * A feature's spendable amount, defaulting to what the tier included.
+ * `remaining` is already net of open reservations, so this is what a caller
+ * may take right now.
+ */
 export const remainingOf = (state: SubscribedState, feature: string): number => {
   const remaining = state.remaining[feature];
   if (remaining !== undefined) return remaining;
   return state.allowances[feature]?.included ?? 0;
 };
+
+/** The amount currently held by open reservations for one feature. */
+export const reservedOf = (state: SubscribedState, feature: string): number =>
+  state.reserved[feature] ?? 0;
 
 /** The tick a money plane thinks in: integer minor units and a currency. */
 export const Money = Schema.Struct({
@@ -145,6 +164,9 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "SubscriptionActivated",
   "TierChanged",
   "UsageRecorded",
+  "UsageReserved",
+  "UsageSettled",
+  "UsageReleased",
   "PaymentRecorded",
   "PaymentFailed",
   "GraceEntered",

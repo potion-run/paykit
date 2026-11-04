@@ -70,11 +70,15 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 - No provider ids in the catalog. The tier → vendor price mapping lives in provider config;
   `CatalogPriceMismatch` in `Stack` is the backstop.
 - A public catalog function carries a JSDoc example, like an Alchemy primitive.
+- A command that records money carries the number it recorded (`price` on activation, `priceBefore`
+  and `priceAfter` on a change). A catalog whose price moves never rewrites a standing that already
+  exists, so the log alone answers "what were we charging".
 
 ## Model rules
 
 - `decide` is pure: state and command in, events or a rejection out. No I/O, no clock, no
-  provider, no ambient read.
+  provider, no ambient read — and no `Actor`, so authorization is middleware, never a model
+  rule that depends on which surface sent a command.
 - Time arrives as command data or from the supplied `Clock`. `Date.now()` inside `decide` is a
   bug the properties will find for you.
 - Money is `Schema.Int` minor units with a currency on every amount. No floats, no dollars.
@@ -88,6 +92,12 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   have recorded it. Never check-then-write, and dedupe by `dedupeKey` so a retry records once.
 - `ChangeTier` ships next-period-only first. Mid-cycle proration is a second pass with its own
   properties in `src/Proration.ts`.
+- A reservation moves `remaining` and `reserved`, never `usage`. `SettleUsage` bills the held
+  units and `ReleaseUsage` returns them; settling or releasing more than is held is a typed
+  rejection, so a leak surfaces as an error rather than a shrinking allowance.
+- Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
+  `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
+  A catalog price change never rewrites a standing that already exists.
 - Every command has one typed rejection per way it can refuse.
 
 ## The per-command loop
@@ -116,8 +126,45 @@ around it.
 - Both surfaces go through the same `Command` with a `commandId` and typed `reply`. `Unknown`
   means exactly "retry with the same id", so a double click cannot double-credit.
 - A view folds one key's events. Cross-account lists and metrics come from the `BillingRead`
-  projection, never from a view.
+  projection through `Paykit.List`, never from a view. `after` is a cursor, not an offset.
 - An admin action is a command, not a state write. No back doors, no direct row edits.
+- `@potion.run/paykit/Surfaces` is the only place MCP and CLI live, and it derives both from
+  the two Apis: `DomainAi.toMcp`, `DomainAi.toToolkit`, `DomainCli.toCli`. Never hand-write a
+  tool list or a subcommand. It is a separate entry point so HTTP-only apps never load
+  `effect/ai` or `effect/cli`.
+- A tool is a projection of an Api: one per command and per non-stream read, named
+  `<Api>_<Name>_<operation>`, `Destructive` for a command and `Readonly` for a read, with a
+  rejection returned as a tool failure. `watch` and `events` are streams, not tools.
+- The Api is the unit of authorization. `toMcp` runs each tool call through the Api's own
+  middleware using the MCP request's headers, so serving the two Apis at two paths is the whole
+  security model. Never merge them.
+- `Paykit.Preview` runs the same pure `decide` and reports the events and proration a command
+  would produce. Show the charge before applying it; a write an agent may retry carries a
+  `commandId`.
+
+## Auth
+
+`Session` and `Admin` are the two `RpcMiddleware` services in `src/Auth/`. A command declares the
+weakest guard it needs; the Api's composition of commands is the blast radius.
+
+- `Session` resolves the `Actor` and pins an `account` actor to its own account id; an `admin`
+  or the `system` actor may act on any account. Both views declare it and re-check the key in
+  `validate`, so a read is scoped even if a route forgot to be.
+- `Admin` requires `kind === "admin"`. `GrantCredits`, `ExtendTrial`, `EnterGrace`, `Recover`,
+  `Expire` and the payment commands declare it, so a tenant session cannot reach them.
+- In-process senders — `Webhooks`, `Track`, `Hold`, `Subscribe` — provide the actor with
+  `asSystem`. The deployment already authenticated the work; a send without a guard is for
+  `PeriodEnded`, `GraceElapsed`, `ClosePeriod` and `AttachProviderRef` only.
+- `SessionFromHeaders` and `AdminFromHeaders` read `x-paykit-actor` and `x-paykit-kind`. They are
+  development guards. Production replaces them with a Layer over its own session; the header
+  must never become an authentication scheme by accident.
+- A new command without a guard is a review failure unless it is a system fact. Say why in the
+  command's JSDoc.
+- `CatalogGuard` sits on the three commands that carry catalog-derived fields (`Subscribe`,
+  `ChangeTier`, `StartTrial`). `decide` is pure and cannot look a price up, so the command carries
+  it — and the guard refuses a payload whose `tier`, `allowances` or `price` disagrees with the
+  catalog the deployment validated. Never make the guard "correct" a payload: a client bug must not
+  become a wrong invoice.
 
 ## Storage
 
@@ -144,6 +191,10 @@ Two table classes, no more: `billing_event` (append-only, the only truth) and `b
   restores it afterwards, so it must be a dedicated session, not a pool that spreads statements.
 - `paykit doctor` rebuilds every read model into temp tables and prints the event ids that
   disagree. A store ships when `doctor` is clean.
+- `SqlAggregateStore` is the only thing that writes the log, and each of the five guarantees has
+  one place in it. Do not add a path that writes `billing_event` without its state, receipt and
+  deliveries in the same transaction, and do not deliver before the commit: the outbox row is what
+  makes a crash replay instead of drop.
 - Code or a test copied from Alchemy keeps a header with the upstream path and the
   catalog-pinned ref. Keep the copied shape 1:1 where it is a compatibility check; the mirrors
   under `.agent_sources/` and the catalog bump then make the next change a diff.
@@ -226,8 +277,10 @@ internal, whatever it is.
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | the six properties in [the correctness bar](./PLAN.md#correctness-bar) |
+| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar) |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
+| `test/surfaces` | the MCP tool list and the CLI are derived from the Apis, not written twice |
+| `test/Api.test.ts` | each guard refuses what it should: no caller, another account, an operator command |
 
 Write the property red first. A property that has never failed proves nothing, and a rejection
 without a story is unimplemented.

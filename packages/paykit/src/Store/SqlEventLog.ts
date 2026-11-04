@@ -82,7 +82,7 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
     schema: options.schema ?? DEFAULT_SCHEMA,
   };
   const event = tableName(BILLING_TABLES.event, scope);
-  const receipt = tableName(BILLING_TABLES.receipt, scope);
+  const receiptTable = tableName(BILLING_TABLES.receipt, scope);
   const state = tableName(BILLING_TABLES.state, scope);
   const outbox = tableName(BILLING_TABLES.outbox, scope);
   const schedule = tableName(BILLING_TABLES.schedule, scope);
@@ -93,7 +93,7 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
       sql.transaction(() => {
         sql.lock(input.account);
         const seen = sql.get<{ version: number | string }>(
-          `SELECT version FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
+          `SELECT version FROM ${receiptTable} WHERE aggregate = ? AND account = ? AND command_id = ?`,
           [input.aggregate, input.account, input.commandId],
         );
         if (seen !== undefined) return { version: numberFrom(seen.version), duplicate: true };
@@ -138,7 +138,7 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
           [input.aggregate, input.account, version, JSON.stringify(input.state)],
         );
         sql.run(
-          `INSERT INTO ${receipt} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
+          `INSERT INTO ${receiptTable} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
           [input.aggregate, input.account, input.commandId, version, JSON.stringify(input.receipt)],
         );
         return { version, duplicate: false };
@@ -151,6 +151,26 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
           [aggregate, account, after],
         )
         .map((row) => ({ ...row, seq: numberFrom(row.seq), at: numberFrom(row.at) })),
+
+    /** The receipt a command id already produced, as JSON, if it ran. */
+    receipt: (aggregate: string, account: string, commandId: string): string | undefined =>
+      sql.get<{ receipt: string }>(
+        `SELECT receipt FROM ${receiptTable} WHERE aggregate = ? AND account = ? AND command_id = ?`,
+        [aggregate, account, commandId],
+      )?.receipt,
+
+    /** A pending scheduled command, if one is waiting under this command id. */
+    pendingFor: (
+      aggregate: string,
+      account: string,
+      commandId: string,
+    ): { readonly dueAt: number; readonly command: string } | undefined => {
+      const row = sql.get<{ dueAt: number | string; command: string }>(
+        `SELECT due_at AS dueAt, command FROM ${schedule} WHERE aggregate = ? AND account = ? AND command_id = ? AND delivered_at IS NULL`,
+        [aggregate, account, commandId],
+      );
+      return row === undefined ? undefined : { dueAt: numberFrom(row.dueAt), command: row.command };
+    },
 
     state: (aggregate: string, account: string) =>
       sql.get<{ version: number; state: string }>(

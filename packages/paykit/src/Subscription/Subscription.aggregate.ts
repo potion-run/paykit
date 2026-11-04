@@ -1,5 +1,11 @@
 import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { Actor, mayActOn } from "../Auth/Actor.ts";
+import { Forbidden } from "../Auth/Forbidden.rejection.ts";
+import { Session } from "../Auth/Guards.ts";
+import { prorate } from "../Proration.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
 import { ChangeTier, DowngradeBelowUsage, TierChanged } from "./ChangeTier.command.ts";
@@ -22,11 +28,15 @@ import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { NotScheduled } from "./NotScheduled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PeriodEnded } from "./PeriodEnded.command.ts";
+import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { PaymentRecorded, RecordPayment } from "./RecordPayment.command.ts";
 import { PaymentFailed, RecordPaymentFailure } from "./RecordPaymentFailure.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
+import { ReleaseUsage, UsageReleased } from "./ReleaseUsage.command.ts";
+import { ReservationExceeded, ReserveUsage, UsageReserved } from "./ReserveUsage.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
+import { NoReservation, SettleUsage, UsageSettled } from "./SettleUsage.command.ts";
 import { StartTrial, TrialStarted } from "./StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -36,6 +46,7 @@ import {
   initialSubscriptionState,
   periodFrom,
   remainingOf,
+  reservedOf,
   standingOf,
   statusOf,
   SubscriptionState,
@@ -66,12 +77,22 @@ const remainingAfterChange = (
   Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => [
       feature,
-      allowance.included - usedOf(state, feature),
+      // Usage and open reservations both still owe the old period's units.
+      allowance.included - usedOf(state, feature) - reservedOf(state, feature),
     ]),
   );
 
 const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean =>
   Object.keys(allowances).length === 0;
+
+/** Two prorations are the same money, or both absent. */
+const sameProration = (
+  left: { readonly credit: number; readonly charge: number; readonly due: number } | null,
+  right: { readonly credit: number; readonly charge: number; readonly due: number } | null,
+): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.credit === right.credit && left.charge === right.charge && left.due === right.due;
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
@@ -124,6 +145,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RecordPaymentFailure,
     EnterGrace,
     Recover,
+    ReserveUsage,
+    SettleUsage,
+    ReleaseUsage,
     GrantCredits,
     ConsumeCredits,
     ScheduleCancellation,
@@ -152,6 +176,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           periodEnd: command.trialEndsAt,
           anchorTz: command.anchorTz ?? "UTC",
           trialEndsAt: command.trialEndsAt,
+          ...(command.price === undefined ? {} : { price: command.price }),
           statusAfter: "trialing",
         }),
       ];
@@ -184,16 +209,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...((priceCurrency ?? currentCurrency) === undefined
             ? {}
             : { currency: (priceCurrency ?? currentCurrency)! }),
+          ...(command.price === undefined ? {} : { price: command.price }),
           statusAfter: "active",
         }),
       ];
     },
-    ChangeTier: (state, command, { id }) => {
+    ChangeTier: (state, command, { id, now }) => {
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
       }
       const current = subscribed(state, id);
-      if (current instanceof NotSubscribed) return current;
+      if (Schema.is(NotSubscribed)(current)) return current;
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         const used = usedOf(current, feature);
         if (used > allowance.included) {
@@ -208,6 +234,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ) {
         return new CurrencyMismatch({ expected: current.currency, actual: priceCurrency });
       }
+      // The proration is money the event will carry, so it is judged here, in
+      // the pure decision, against the prices and the period the model holds.
+      // A caller that sends a number the model did not compute is refused
+      // rather than trusted: an unverifiable charge is worse than no charge.
+      const expected = prorate({
+        from: current.price,
+        to: command.price,
+        period: { start: current.period.start, end: current.period.end },
+        at: now,
+      });
+      if (sameProration(expected, command.proration ?? null) === false) {
+        return new ProrationMismatch({
+          expected,
+          actual: command.proration ?? null,
+        });
+      }
       return [
         new TierChanged({
           tier: command.tier,
@@ -217,6 +259,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ? {}
             : { currency: (priceCurrency ?? current.currency)! }),
           ...(command.price?.interval === undefined ? {} : { interval: command.price.interval }),
+          ...(current.price === undefined ? {} : { priceBefore: current.price }),
+          ...(command.price === undefined ? {} : { priceAfter: command.price }),
           ...(command.proration === undefined ? {} : { proration: command.proration }),
         }),
       ];
@@ -303,6 +347,105 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return new NotInGrace({ status: statusOf(state) });
       }
       return [new Recovered({ statusAfter: "active" })];
+    },
+    ReserveUsage: (state, command) => {
+      if (state._tag === "Unsubscribed") {
+        return new StandingBlocksUsage({ standing: "blocked", status: "none" });
+      }
+      if (!allowsUsage(state.status)) {
+        return new StandingBlocksUsage({
+          standing: standingOf(state.status),
+          status: state.status,
+        });
+      }
+      if (command.amount <= 0) return [];
+      if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
+        return [];
+      }
+      const allowance = state.allowances[command.feature];
+      const used = usedOf(state, command.feature);
+      const reserved = reservedOf(state, command.feature);
+      const remaining = remainingOf(state, command.feature);
+      if (allowance === undefined || command.amount > remaining) {
+        return new ReservationExceeded({
+          feature: command.feature,
+          included: allowance?.included ?? 0,
+          used,
+          reserved,
+          requested: command.amount,
+          remaining,
+        });
+      }
+      return [
+        new UsageReserved({
+          feature: command.feature,
+          amount: command.amount,
+          reservedAfter: reserved + command.amount,
+          remainingAfter: remaining - command.amount,
+          ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+        }),
+      ];
+    },
+    SettleUsage: (state, command) => {
+      if (state._tag !== "Subscribed" || !allowsUsage(state.status)) {
+        return new StandingBlocksUsage({
+          standing: standingOf(statusOf(state)),
+          status: statusOf(state),
+        });
+      }
+      if (command.amount <= 0) return [];
+      const reserved = reservedOf(state, command.feature);
+      if (command.amount > reserved) {
+        return new NoReservation({
+          feature: command.feature,
+          requested: command.amount,
+          reserved,
+        });
+      }
+      const used = usedOf(state, command.feature);
+      const remaining = remainingOf(state, command.feature);
+      return [
+        new UsageRecorded({
+          feature: command.feature,
+          amount: command.amount,
+          usedAfter: used + command.amount,
+          // The units left `remaining` when they were reserved.
+          remainingAfter: remaining,
+          ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+        }),
+        new UsageSettled({
+          feature: command.feature,
+          amount: command.amount,
+          reservedAfter: reserved - command.amount,
+          remainingAfter: remaining,
+        }),
+      ];
+    },
+    ReleaseUsage: (state, command) => {
+      if (state._tag !== "Subscribed") {
+        return new NoReservation({
+          feature: command.feature,
+          requested: command.amount,
+          reserved: 0,
+        });
+      }
+      if (command.amount <= 0) return [];
+      const reserved = reservedOf(state, command.feature);
+      if (command.amount > reserved) {
+        return new NoReservation({
+          feature: command.feature,
+          requested: command.amount,
+          reserved,
+        });
+      }
+      return [
+        new UsageReleased({
+          feature: command.feature,
+          amount: command.amount,
+          reservedAfter: reserved - command.amount,
+          remainingAfter: remainingOf(state, command.feature) + command.amount,
+        }),
+      ];
     },
     GrantCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
@@ -398,8 +541,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ...(state._tag === "Subscribed" && state.currency !== undefined
         ? { currency: state.currency }
         : {}),
+      ...(event.price === undefined ? {} : { price: event.price }),
       usage: {},
       remaining: event.remaining,
+      reserved: {},
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: true,
@@ -419,27 +564,31 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       cancelAtPeriodEnd: false,
       credits: state._tag === "Subscribed" ? state.credits : 0,
       ...(event.currency === undefined ? {} : { currency: event.currency }),
+      ...(event.price === undefined ? {} : { price: event.price }),
       usage: {},
       remaining: event.remaining,
+      reserved: {},
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
       dedupeKeys: {},
       dunningAttempts: 0,
     }),
-    TierChanged: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            tier: event.tier,
-            allowances: event.allowances,
-            remaining: event.remaining,
-            ...((event.currency ?? state.currency) === undefined
-              ? {}
-              : { currency: (event.currency ?? state.currency)! }),
-            interval: event.interval ?? state.interval,
-          }
-        : state,
+    TierChanged: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { price: _previousPrice, ...rest } = state;
+      return {
+        ...rest,
+        tier: event.tier,
+        allowances: event.allowances,
+        remaining: event.remaining,
+        ...((event.currency ?? state.currency) === undefined
+          ? {}
+          : { currency: (event.currency ?? state.currency)! }),
+        interval: event.interval ?? state.interval,
+        ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
+      };
+    },
     UsageRecorded: (state, event) =>
       state._tag === "Subscribed"
         ? {
@@ -450,6 +599,34 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               event.dedupeKey === undefined
                 ? state.dedupeKeys
                 : { ...state.dedupeKeys, [event.dedupeKey]: true },
+          }
+        : state,
+    UsageReserved: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            dedupeKeys:
+              event.dedupeKey === undefined
+                ? state.dedupeKeys
+                : { ...state.dedupeKeys, [event.dedupeKey]: true },
+          }
+        : state,
+    UsageSettled: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+          }
+        : state,
+    UsageReleased: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
           }
         : state,
     PaymentRecorded: (state, event) =>
@@ -500,7 +677,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           }
         : state,
     UsageReset: (state, event) =>
-      state._tag === "Subscribed" ? { ...state, usage: {}, remaining: event.remaining } : state,
+      state._tag === "Subscribed"
+        ? { ...state, usage: {}, reserved: {}, remaining: event.remaining }
+        : state,
     CreditsExpired: (state, event) =>
       state._tag === "Subscribed" ? { ...state, credits: event.balanceAfter } : state,
     SubscriptionExpired: (state, event) =>
@@ -523,8 +702,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ConsumeCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
   },
   // The admin surface reads the aggregate whole. There is no tenant read here:
-  // `Entitlements` is the boundary a customer sees.
-  read: {},
+  // `Entitlements` is the boundary a customer sees. Guarded all the same, so a
+  // route cannot reach raw state without an actor that may see it.
+  read: {
+    middleware: [Session],
+    rejects: [Forbidden],
+    validate: Effect.fn(function* ({ key }) {
+      const actor = yield* Actor;
+      if (!mayActOn(actor, key.id)) {
+        return yield* new Forbidden({ account: key.id, actor: actor.id, kind: actor.kind });
+      }
+    }),
+  },
 }) {}
 
 /** The account's aggregate reference, for bindings and views. */

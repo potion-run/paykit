@@ -154,6 +154,92 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
       "standing",
       "tier",
     ]),
+    ...consumerStatements(scope),
+  ];
+};
+
+/**
+ * The consumer tables: a view's snapshot, its emitted entries, and the input
+ * log each consumer dedupes by. All of them are `billing_rm_*`, so dropping
+ * every one and rebuilding from `billing_event` is always allowed.
+ */
+const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
+  const time = millisType(scope.dialect);
+  const name = scope.dialect === "postgres" && scope.schema !== undefined;
+  const table = (logical: string) =>
+    name ? `${quoteIdentifier(scope.schema!)}.${quoteIdentifier(logical)}` : logical;
+  return [
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewState)} (
+      view TEXT NOT NULL,
+      key TEXT NOT NULL,
+      generation INTEGER NOT NULL,
+      version INTEGER NOT NULL,
+      seq INTEGER NOT NULL,
+      checkpoints TEXT NOT NULL,
+      state TEXT,
+      PRIMARY KEY (view, key)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewEntry)} (
+      view TEXT NOT NULL,
+      key TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event TEXT NOT NULL,
+      envelope TEXT NOT NULL,
+      state TEXT NOT NULL,
+      PRIMARY KEY (view, key, seq)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewInput)} (
+      view TEXT NOT NULL,
+      key TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_seq INTEGER NOT NULL,
+      generation INTEGER NOT NULL,
+      PRIMARY KEY (view, key, source, source_seq)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionInput)} (
+      projection TEXT NOT NULL,
+      key TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_seq INTEGER NOT NULL,
+      generation INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      delivery TEXT NOT NULL,
+      accepted_at ${time} NOT NULL,
+      processed_at ${time},
+      PRIMARY KEY (projection, key, source, source_seq)
+    )`,
+    `CREATE INDEX IF NOT EXISTS ${table("billing_rm_projection_pending")}
+      ON ${table(BILLING_TABLES.projectionInput)} (projection, key, processed_at, position)`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionCursor)} (
+      projection TEXT NOT NULL,
+      key TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (projection, key)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.policySeen)} (
+      policy TEXT NOT NULL,
+      key TEXT NOT NULL,
+      source TEXT NOT NULL,
+      source_seq INTEGER NOT NULL,
+      PRIMARY KEY (policy, key, source, source_seq)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamMeta)} (
+      stream TEXT NOT NULL,
+      key TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      checkpoints TEXT NOT NULL,
+      origin_a INTEGER NOT NULL,
+      origin_b INTEGER NOT NULL,
+      PRIMARY KEY (stream, key)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamEntry)} (
+      stream TEXT NOT NULL,
+      key TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event TEXT NOT NULL,
+      envelope TEXT NOT NULL,
+      PRIMARY KEY (stream, key, seq)
+    )`,
   ];
 };
 

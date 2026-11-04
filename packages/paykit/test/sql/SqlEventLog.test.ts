@@ -190,6 +190,8 @@ describe("SqlEventLog", () => {
           messages: {
             included: 100,
             used: 0,
+            reserved: 0,
+            allowed: true,
             remaining: 100,
             overage: "block" as const,
             resets: "month" as const,
@@ -198,6 +200,8 @@ describe("SqlEventLog", () => {
           seats: {
             included: 5,
             used: 1,
+            reserved: 0,
+            allowed: true,
             remaining: 4,
             overage: "allow" as const,
             resets: "never" as const,
@@ -279,6 +283,8 @@ describe("SqlEventLog", () => {
           messages: {
             included: 100,
             used: 0,
+            reserved: 0,
+            allowed: true,
             remaining: 100,
             overage: "block",
             resets: "month",

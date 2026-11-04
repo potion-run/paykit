@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Session } from "../Auth/Guards.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -22,4 +23,5 @@ export class ConsumeCredits extends Domain.Command("ConsumeCredits", {
   events: [CreditsConsumed],
   rejects: [NotSubscribed, CreditExceedsBalance],
   reply: { balance: Schema.Int },
+  middleware: [Session],
 }) {}

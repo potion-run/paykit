@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { Admin } from "../Auth/Guards.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -18,4 +19,5 @@ export class EnterGrace extends Domain.Command("EnterGrace", {
   input: { graceUntil: Schema.DateTimeUtc },
   events: [GraceEntered],
   rejects: [AlreadyInGrace, NotSubscribed],
+  middleware: [Admin],
 }) {}

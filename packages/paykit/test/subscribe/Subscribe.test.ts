@@ -6,13 +6,14 @@ import { allowance } from "../../src/Allowance.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
-import { Checkout, completeCheckout } from "../../src/Checkout.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
+import { Subscribe } from "../../src/Subscribe.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import { completeCheckout } from "../../src/Webhooks.ts";
 
 const freeTier = tier({
   id: "free",
@@ -54,20 +55,20 @@ const state = Effect.gen(function* () {
   return yield* subscription.state(Subscription.ref(account));
 });
 
-describe("Checkout", () => {
-  it.effect("activates a free tier immediately", () =>
+describe("Subscribe purchase path", () => {
+  it.live("activates a free tier immediately", () =>
     Effect.gen(function* () {
-      const checkout = yield* Checkout();
-      const started = yield* checkout({ account, tier: "free" });
+      const subscribe = yield* Subscribe();
+      const started = yield* subscribe({ account, tier: "free" });
       expect(started).toEqual({ activated: true });
       expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free" });
     }).pipe(withMemory),
   );
 
-  it.effect("opens a hosted checkout and stores its reference before standing exists", () =>
+  it.live("opens a hosted checkout and stores its reference before standing exists", () =>
     Effect.gen(function* () {
-      const checkout = yield* Checkout();
-      const started = yield* checkout({ account, tier: "pro" });
+      const subscribe = yield* Subscribe();
+      const started = yield* subscribe({ account, tier: "pro" });
       expect("url" in started).toBe(true);
       const current = yield* state;
       expect(current._tag).toBe("Unsubscribed");
@@ -77,10 +78,10 @@ describe("Checkout", () => {
     }).pipe(withMemory),
   );
 
-  it.effect("a checkout_completed webhook activates and keeps the reference", () =>
+  it.live("a checkout_completed webhook activates and keeps the reference", () =>
     Effect.gen(function* () {
-      const checkout = yield* Checkout();
-      yield* checkout({ account, tier: "pro" });
+      const subscribe = yield* Subscribe();
+      yield* subscribe({ account, tier: "pro" });
       const action = yield* completeCheckout({
         id: "evt_checkout_1",
         provider: "memory",
@@ -97,10 +98,10 @@ describe("Checkout", () => {
     }).pipe(withMemory),
   );
 
-  it.effect("falls back to an invoice when the provider has no hosted checkout", () =>
+  it.live("falls back to an invoice when the provider has no hosted checkout", () =>
     Effect.gen(function* () {
-      const checkout = yield* Checkout();
-      const started = yield* checkout({ account, tier: "pro" });
+      const subscribe = yield* Subscribe();
+      const started = yield* subscribe({ account, tier: "pro" });
       expect("invoiceId" in started).toBe(true);
       const current = yield* state;
       if (current._tag === "Unsubscribed") {
@@ -109,10 +110,10 @@ describe("Checkout", () => {
     }).pipe(withManual),
   );
 
-  it.effect("a priced checkout without a provider fails typed", () =>
+  it.live("a priced checkout without a provider fails typed", () =>
     Effect.gen(function* () {
-      const checkout = yield* Checkout();
-      const exit = yield* Effect.exit(checkout({ account, tier: "pro" }));
+      const subscribe = yield* Subscribe();
+      const exit = yield* Effect.exit(subscribe({ account, tier: "pro" }));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
         expect(String(exit.cause)).toContain("ProviderCapabilityMissing");

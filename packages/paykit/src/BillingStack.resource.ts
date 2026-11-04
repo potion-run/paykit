@@ -1,9 +1,15 @@
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { catalog, Catalog } from "./Catalog.ts";
-import { ProviderDescriptor, validateProviderMappings } from "./Stack.ts";
+import { catalog, Catalog, type CatalogError } from "./Catalog.ts";
+import {
+  CatalogPriceMismatch,
+  NoPurchasePath,
+  ProviderDescriptor,
+  validateProviderMappings,
+} from "./Stack.ts";
 
 /** The store kind a stack records; the connection URL is a runtime binding. */
 export const BillingStore = Schema.Union([
@@ -44,23 +50,61 @@ export const BillingStack = Resource<BillingStackResource>("Paykit.BillingStack"
   defaultRemovalPolicy: "retain",
 });
 
-/** The Alchemy provider for `BillingStack`. */
+/**
+ * What a reconcile records: the catalog re-validated, the tier ids a console
+ * can list, and the store kind. Pure in, pure out, so a deploy that changes
+ * nothing produces the same attributes byte for byte and Alchemy diffs it to
+ * a no-op.
+ *
+ * A catalog that does not validate fails the deploy with its tagged error
+ * rather than recording half a stack.
+ */
+export const reconcileBillingStack = (
+  props: BillingStackProps | undefined,
+): Effect.Effect<BillingStackAttrs, CatalogError | CatalogPriceMismatch | NoPurchasePath> =>
+  Effect.gen(function* () {
+    // A reconcile without props is a delete, and delete never reaches here.
+    if (props === undefined) return yield* Effect.die("BillingStack reconciles with props");
+    const parsed = yield* catalog(props.catalog);
+    const providers = props.providers ?? [];
+    const invalid = validateProviderMappings(parsed, providers);
+    if (invalid !== null) return yield* invalid;
+    return {
+      catalog: parsed,
+      tiers: parsed.tiers.map((tier) => tier.id),
+      providers,
+      store: props.store ?? { _tag: "MemoryStore" as const },
+    };
+  });
+
+/**
+ * What a read returns: the attributes already in state, never a re-derive. A
+ * read with no state is a resource that has not been created yet.
+ */
+export const readBillingStack = (
+  output: BillingStackAttrs | undefined,
+): Effect.Effect<BillingStackAttrs> =>
+  output === undefined
+    ? Effect.die("BillingStack is read before it was reconciled")
+    : Effect.succeed(output);
+
+/**
+ * The Alchemy provider for `BillingStack`. Reconcile validates; read trusts
+ * state; delete touches nothing, because the event log is application data and
+ * cancelling a live subscription from a destroy is a support incident.
+ */
 export const BillingStackProvider = () =>
   Provider.succeed(BillingStack, {
-    reconcile: ({ news }) =>
-      Effect.gen(function* () {
-        const parsed = yield* catalog(news.catalog);
-        const providers = news.providers ?? [];
-        const invalid = validateProviderMappings(parsed, providers);
-        if (invalid !== null) return yield* invalid;
-        return {
-          catalog: parsed,
-          tiers: parsed.tiers.map((tier) => tier.id),
-          providers,
-          store: news.store ?? { _tag: "MemoryStore" as const },
-        };
-      }),
-    read: ({ output }) => Effect.succeed(output),
+    reconcile: ({ news }) => reconcileBillingStack(news),
+    read: ({ output }) => readBillingStack(output),
     delete: () => Effect.void,
     list: () => Effect.succeed([]),
   });
+
+/**
+ * Every Alchemy provider this package owns, as one Layer, so a stack declares
+ * `Paykit.providers()` beside `Cloudflare.providers()`.
+ *
+ * @layer
+ */
+export const providers = () => Layer.mergeAll(BillingStackProvider());

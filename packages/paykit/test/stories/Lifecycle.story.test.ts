@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
@@ -101,6 +102,7 @@ const activated = new SubscriptionActivated({
   anchorTz: "UTC",
   interval: "month",
   currency: "usd",
+  price: proPrice,
   statusAfter: "active",
 });
 
@@ -112,6 +114,7 @@ const subscribed = [
 
 it.effect("fails a charge, enters grace, and recovers on payment", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new RecordPayment({ amount: 1900, currency: "usd" })),
     Story.rejected(new NotInGrace({ status: "active" })),
@@ -141,6 +144,7 @@ it.effect("fails a charge, enters grace, and recovers on payment", () =>
 
 it.effect("enters grace from the console and recovers without a payment", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new EnterGrace({ graceUntil })),
     Story.then(account, new GraceEntered({ graceUntil, statusAfter: "grace" })),
@@ -151,6 +155,7 @@ it.effect("enters grace from the console and recovers without a payment", () =>
 
 it.effect("grants and spends credits, refusing to overdraw", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new GrantCredits({ amount: 500 })),
     Story.then(account, new CreditsGranted({ amount: 500, balanceAfter: 500 })),
@@ -165,6 +170,7 @@ it.effect("grants and spends credits, refusing to overdraw", () =>
 
 it.effect("schedules and withdraws a cancellation", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new ScheduleCancellation()),
     Story.then(account, new CancellationScheduled({ cancelAtPeriodEndAfter: true })),
@@ -179,6 +185,7 @@ it.effect("schedules and withdraws a cancellation", () =>
 
 it.effect("closes the period, resets usage, expires credits and opens the next period", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new TrackUsage({ feature: "messages", amount: 500 })),
     Story.then(
@@ -216,6 +223,8 @@ it.effect("closes the period, resets usage, expires credits and opens the next p
         messages: {
           included: 2000,
           used: 0,
+          reserved: 0,
+          allowed: true,
           remaining: 2000,
           overage: "bill",
           resets: "month",
@@ -230,6 +239,7 @@ it.effect("closes the period, resets usage, expires credits and opens the next p
 
 it.effect("a scheduled cancellation blocks usage once the period closes", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new ScheduleCancellation()),
     Story.then(account, new CancellationScheduled({ cancelAtPeriodEndAfter: true })),
@@ -256,6 +266,7 @@ it.effect("a scheduled cancellation blocks usage once the period closes", () =>
 
 it.effect("expires only from grace and is terminal", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new Expire()),
     Story.rejected(new NotInGrace({ status: "active" })),
@@ -279,6 +290,7 @@ it.effect("expires only from grace and is terminal", () =>
 
 it.effect("extends a trial and refuses when there is none", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(
       account,
@@ -324,6 +336,7 @@ it.effect("extends a trial and refuses when there is none", () =>
 
 it.effect("attaches vendor refs without changing entitlements", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(
       account,
@@ -348,6 +361,7 @@ it.effect("attaches vendor refs without changing entitlements", () =>
 
 it.effect("refuses commands that need a standing", () =>
   story(
+    Story.provide(Actor, system()),
     Story.when(account, new ScheduleCancellation()),
     Story.rejected(new NotSubscribed({ account: "acct_life" })),
     Story.when(account, new GrantCredits({ amount: 10 })),
@@ -361,6 +375,7 @@ it.effect("refuses commands that need a standing", () =>
 
 it.effect("a trial started after a free tier keeps the account's credits and refs", () =>
   story(
+    Story.provide(Actor, system()),
     Story.clock(start),
     Story.when(account, new Subscribe({ tier: "free", allowances: allowances("free") })),
     Story.then(
@@ -420,6 +435,7 @@ it.effect("a trial started after a free tier keeps the account's credits and ref
 
 it.effect("refuses to extend a trial that is not running", () =>
   story(
+    Story.provide(Actor, system()),
     ...subscribed,
     Story.when(account, new ExtendTrial({ trialEndsAt: graceUntil })),
     Story.rejected(new TrialNotActive()),

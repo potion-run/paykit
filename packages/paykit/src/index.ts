@@ -42,10 +42,25 @@ export {
   BillingStackProps,
   BillingStackProvider,
   BillingStore,
+  providers,
+  readBillingStack,
+  reconcileBillingStack,
 } from "./BillingStack.resource.ts";
 export { doctor } from "./Doctor.ts";
+export { Paykit } from "./Paykit.ts";
 export type { DoctorMismatch } from "./Doctor.ts";
 export { SqlEventLog } from "./Store/SqlEventLog.ts";
+export { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
+export type { SqlAggregateStoreOptions } from "./Store/SqlAggregateStore.ts";
+export {
+  SqlPolicyStore,
+  SqlProjectionStore,
+  SqlStreamStore,
+  SqlViewStore,
+} from "./Store/SqlConsumers.ts";
+export type { SqlConsumerOptions } from "./Store/SqlConsumers.ts";
+export { SqlPlatform, layerSqlPlatform } from "./Store/SqlPlatform.ts";
+export type { SqlModelHost, SqlPlatformOptions } from "./Store/SqlPlatform.ts";
 export type {
   AppendInput,
   AppendResult,
@@ -83,28 +98,45 @@ export {
   evaluateCheck,
 } from "./Check.ts";
 export type { CheckInput, CheckResult } from "./Check.ts";
-export { Checkout, completeCheckout } from "./Checkout.ts";
-export type { CheckoutInput, CheckoutResult } from "./Checkout.ts";
+export { Subscribe } from "./Subscribe.ts";
+export type { SubscribeInput, SubscribeResult } from "./Subscribe.ts";
+export { Portal } from "./Portal.ts";
+export type { PortalInput } from "./Portal.ts";
+export { List } from "./List.ts";
+export { CatalogService, catalogLayer } from "./CatalogService.ts";
+export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
+export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
+export { Preview } from "./Preview.ts";
+export type { PreviewCommand, PreviewEvent, PreviewInput, PreviewResult } from "./Preview.ts";
+export {
+  MissingProviderRef,
+  OrphanProviderRef,
+  TierHasNoPurchasePath,
+  Verify,
+  VerifyMismatch,
+  verifyState,
+} from "./Verify.ts";
+export type { VerifyOptions } from "./Verify.ts";
 export {
   WebhookAction,
   WebhookEvent,
   WebhookInvalid,
   WebhookKind,
+  completeCheckout,
   handleWebhook,
 } from "./Webhooks.ts";
 export { Track } from "./Track.ts";
 export type { TrackInput } from "./Track.ts";
-export { Subscribe } from "./Subscribe.ts";
-export type { SubscribeInput, SubscribeResult } from "./Subscribe.ts";
-export { Portal } from "./Portal.ts";
-export type { PortalInput } from "./Portal.ts";
-export { CatalogService, catalogLayer } from "./CatalogService.ts";
+export { Release, Reserve, Settle } from "./Hold.ts";
+export type { ReleaseInput, ReserveInput } from "./Hold.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel as Model } from "./Paykit.model.ts";
 export { BillingApi } from "./BillingApi.api.ts";
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";
+export { allowsOne } from "./Subscription/Entitlements.view.ts";
+export { ProrationMismatch } from "./Subscription/ProrationMismatch.rejection.ts";
 export {
   Period,
   Standing,
@@ -119,14 +151,43 @@ export type {
   SubscriptionState,
   UnsubscribedState,
 } from "./Subscription/Subscription.state.ts";
+// ── auth ────────────────────────────────────────────────────────────────────
+export {
+  Actor,
+  account as actorAccount,
+  admin as actorAdmin,
+  mayActOn,
+  system,
+} from "./Auth/Actor.ts";
+export type { ActorKind, ActorValue } from "./Auth/Actor.ts";
+export { Forbidden } from "./Auth/Forbidden.rejection.ts";
+export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
+export { Admin, Session } from "./Auth/Guards.ts";
+export {
+  ACTOR_HEADER,
+  AdminFromHeaders,
+  DevGuards,
+  KIND_HEADER,
+  SessionFromHeaders,
+  actorFromHeaders,
+} from "./Auth/FromHeaders.ts";
 export { AccountId } from "./Subscription/Subscription.id.ts";
 export { AccountEvents } from "./Subscription/AccountEvents.stream.ts";
 export { AccountEventsProjection } from "./Subscription/AccountEventsProjection.ts";
 export { BillingRead } from "./Subscription/BillingRead.projection.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export { Dunning } from "./Subscription/Dunning.policy.ts";
-export { BillingReadStore, MemoryBillingReadStore } from "./BillingReadStore.ts";
-export type { BillingReadRow } from "./BillingReadStore.ts";
+export {
+  AccountOrder,
+  BillingReadQuery,
+  BillingReadStore,
+  BillingReadPage,
+  DEFAULT_PAGE,
+  MAX_PAGE,
+  MemoryBillingReadStore,
+  BillingReadRow,
+  queryRows,
+} from "./BillingReadStore.ts";
 export { BillingState } from "./Subscription/BillingState.view.ts";
 export type { BillingStateView } from "./Subscription/BillingState.view.ts";
 export { Entitlements } from "./Subscription/Entitlements.view.ts";
@@ -145,6 +206,13 @@ export {
   TrackUsage,
   UsageRecorded,
 } from "./Subscription/TrackUsage.command.ts";
+export {
+  ReservationExceeded,
+  ReserveUsage,
+  UsageReserved,
+} from "./Subscription/ReserveUsage.command.ts";
+export { NoReservation, SettleUsage, UsageSettled } from "./Subscription/SettleUsage.command.ts";
+export { ReleaseUsage, UsageReleased } from "./Subscription/ReleaseUsage.command.ts";
 export { PaymentRecorded, RecordPayment } from "./Subscription/RecordPayment.command.ts";
 export {
   PaymentFailed,

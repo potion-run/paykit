@@ -2,7 +2,9 @@ import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import {
@@ -25,13 +27,20 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
+const proTier = tier({
+  id: "pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [allowance(messages, { included: 2000, overage: "bill" })],
+});
+const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
 const free = allowancesOf(testCatalog, "free")!;
+const pro = allowancesOf(testCatalog, "pro")!;
 const account = "acct_paths";
 
 const World = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
-  .pipe(Layer.provide(Domain.InMemory));
+  .pipe(Layer.provide(Domain.InMemory))
+  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 
@@ -130,6 +139,51 @@ describe("Check read paths", () => {
       const answer = yield* check({ account, feature: "seats" });
       expect(answer.allowed).toBe(false);
       expect(answer.standing).toBe("good");
+    }).pipe(run),
+  );
+});
+
+describe("the read model answers what check() answers", () => {
+  it.live("Entitlements.allowed is check({ amount: 1 }).allowed, for every standing", () =>
+    Effect.gen(function* () {
+      const receipt = yield* subscribeFree;
+      yield* BillingRead.caughtUp(receipt);
+      const entitlements = yield* Entitlements;
+      const check = yield* CheckInProcess();
+
+      const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
+      const answered = yield* check({ account, feature: "messages", amount: 1 });
+      expect(view?.features.messages?.allowed).toBe(answered.allowed);
+      expect(view?.features.messages?.remaining).toBe(answered.remaining);
+      expect(view?.standing).toBe(answered.standing);
+
+      // Spend the whole allowance: the view says no, and so does check().
+      const track = yield* Track();
+      const spent = yield* track({ account, feature: "messages", amount: 100 });
+      yield* BillingRead.caughtUp(spent);
+      const empty = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
+      expect(empty?.features.messages?.allowed).toBe(false);
+      expect(empty?.features.messages?.remaining).toBe(0);
+      expect((yield* check({ account, feature: "messages", amount: 1 })).allowed).toBe(false);
+    }).pipe(run),
+  );
+
+  it.live("a bill overage stays allowed at zero remaining, and a block does not", () =>
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const entitlements = yield* Entitlements;
+      const track = yield* Track();
+      const check = yield* CheckInProcess();
+      const receipt = yield* subscription.send(
+        Subscription.ref(account),
+        new Subscribe({ tier: "pro", allowances: pro }),
+      );
+      yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
+      yield* track({ account, feature: "messages", amount: 2000 });
+      const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
+      expect(view?.features.messages?.remaining).toBe(0);
+      expect(view?.features.messages?.allowed).toBe(true);
+      expect((yield* check({ account, feature: "messages", amount: 1 })).allowed).toBe(true);
     }).pipe(run),
   );
 });

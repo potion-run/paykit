@@ -1,6 +1,9 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Allowances } from "../Allowance.ts";
+import { Session } from "../Auth/Guards.ts";
+import { CatalogGuard } from "../CatalogGuard.ts";
+import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { Price } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -16,6 +19,8 @@ export class SubscriptionActivated extends Domain.Event("SubscriptionActivated",
   anchorTz: Schema.String,
   interval: Schema.Literals(["month", "annual"]),
   currency: Schema.optionalKey(Schema.String),
+  /** What this account was sold at. The log answers the invoice, not the catalog. */
+  price: Schema.optionalKey(Price),
   statusAfter: Schema.Literal("active"),
 }) {}
 
@@ -29,5 +34,6 @@ export class Subscribe extends Domain.Command("Subscribe", {
     anchorTz: Schema.optionalKey(Schema.String),
   },
   events: [SubscriptionActivated],
-  rejects: [TierNotInCatalog, CurrencyMismatch],
+  rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
+  middleware: [Session, CatalogGuard],
 }) {}

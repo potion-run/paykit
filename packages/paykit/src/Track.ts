@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import { asSystem } from "./Auth/Actor.ts";
 import { Entitlements } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import { TrackUsage } from "./Subscription/TrackUsage.command.ts";
@@ -21,14 +22,16 @@ export const Track = Effect.fn("Paykit.Track")(function* () {
   const subscription = yield* Subscription;
   const entitlements = yield* Entitlements;
   return Effect.fn("Paykit.Track.record")(function* (input: TrackInput) {
-    const receipt = yield* subscription.send(
-      Subscription.ref(input.account),
-      new TrackUsage({
-        feature: input.feature,
-        amount: input.amount,
-        ...(input.dedupeKey === undefined ? {} : { dedupeKey: input.dedupeKey }),
-      }),
-      input.dedupeKey === undefined ? undefined : { commandId: input.dedupeKey },
+    const receipt = yield* asSystem(
+      subscription.send(
+        Subscription.ref(input.account),
+        new TrackUsage({
+          feature: input.feature,
+          amount: input.amount,
+          ...(input.dedupeKey === undefined ? {} : { dedupeKey: input.dedupeKey }),
+        }),
+        input.dedupeKey === undefined ? undefined : { commandId: input.dedupeKey },
+      ),
     );
     yield* entitlements.query(Subscription.ref(input.account), { atLeast: receipt });
     return receipt;

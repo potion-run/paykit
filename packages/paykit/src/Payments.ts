@@ -110,11 +110,19 @@ export const ProviderKind = Schema.Literals([
 ]);
 export type ProviderKind = typeof ProviderKind.Type;
 
+/**
+ * The layer a provider's `payments` field carries: the `Payments` port, built
+ * from the provider's own props. Spelling out the parameters matters — a bare
+ * `ReturnType<typeof Payments.toLayer>` leaves them `unknown`, which then leaks
+ * `unknown` into every requirement of the stack that merges the provider.
+ */
+export type PaymentsLayer = ReturnType<typeof Payments.toLayer<never, never>>;
+
 /** What `Paykit.<Provider>()` returns: a kind, its ops, and the `Payments` adapter. */
 export interface Provider<Kind extends ProviderKind = ProviderKind> {
   readonly kind: Kind;
   readonly capabilities: ReadonlySet<PaymentCapability>;
-  readonly payments: ReturnType<typeof Payments.toLayer>;
+  readonly payments: PaymentsLayer;
   /** The provider's price handle per tier. The catalog stays provider-free. */
   readonly prices?: Readonly<Record<string, Price>>;
 }

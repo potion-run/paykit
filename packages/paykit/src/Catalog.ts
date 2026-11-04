@@ -104,7 +104,7 @@ const duplicateOf = <A>(values: ReadonlyArray<A>, key: (value: A) => string): st
  * ```
  */
 export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, CatalogError> => {
-  const decoded = Schema.decodeUnknownResult(Catalog)(input);
+  const decoded = Schema.decodeResult(Catalog)(input);
   if (Result.isFailure(decoded)) {
     return Result.fail(new CatalogInvalid({ message: decoded.failure.message }));
   }

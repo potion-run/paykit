@@ -1,0 +1,133 @@
+import * as Domain from "@alchemy.run/domain";
+import { expect, it } from "@alchemy.run/test";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
+import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { catalogLayer } from "../../src/CatalogService.ts";
+import { messages } from "../../src/Feature.ts";
+import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { Preview } from "../../src/Preview.ts";
+import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
+import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { tier } from "../../src/Tier.ts";
+
+const freeTier = tier({
+  id: "free",
+  grants: [allowance(messages, { included: 100 })],
+});
+const proTier = tier({
+  id: "pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [allowance(messages, { included: 2000, overage: "bill" })],
+});
+const scaleTier = tier({
+  id: "scale",
+  price: { amount: 9900, currency: "usd", interval: "month" },
+  grants: [allowance(messages, { included: 5000, overage: "block" })],
+});
+const testCatalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
+);
+const proAllowances = allowancesOf(testCatalog, "pro")!;
+const account = "acct_preview";
+
+const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+  .pipe(Layer.provide(Domain.InMemory))
+  .pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
+    ),
+  );
+
+const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
+
+it.live("previews a subscribe without recording anything", () =>
+  Effect.gen(function* () {
+    const preview = yield* Preview();
+    const result = yield* preview({ account, command: { kind: "subscribe", tier: "pro" } });
+    expect(result._tag).toBe("accepted");
+    if (result._tag !== "accepted") return;
+    expect(result.state._tag).toBe("Subscribed");
+    expect(result.events.map((event) => event._tag)).toEqual(["SubscriptionActivated"]);
+    // Nothing was written.
+    const subscription = yield* Subscription;
+    const state = yield* subscription.state(Subscription.ref(account));
+    expect(state._tag).toBe("Unsubscribed");
+  }).pipe(run),
+);
+
+it.live("previews the charge a tier change would make", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    yield* subscription.send(
+      Subscription.ref(account),
+      new Subscribe({
+        tier: "pro",
+        allowances: proAllowances,
+        price: { amount: 1900, currency: "usd", interval: "month" },
+      }),
+    );
+    const preview = yield* Preview();
+    const result = yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+    expect(result._tag).toBe("accepted");
+    if (result._tag !== "accepted") return;
+    expect(result.proration?.due).toBe(8000);
+    expect(result.proration?.credit).toBe(1900);
+  }).pipe(run),
+);
+
+it.live("a preview carries the rejection the write would return", () =>
+  Effect.gen(function* () {
+    const preview = yield* Preview();
+    const result = yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+    expect(result._tag).toBe("rejected");
+    if (result._tag !== "rejected") return;
+    expect(result.rejection._tag).toBe("NotSubscribed");
+  }).pipe(run),
+);
+
+it.live("a preview of a tier the catalog does not carry fails typed", () =>
+  Effect.gen(function* () {
+    const preview = yield* Preview();
+    const exit = yield* Effect.exit(
+      preview({ account, command: { kind: "subscribe", tier: "enterprise" } }),
+    );
+    expect(exit._tag).toBe("Failure");
+    expect(String(exit)).toContain("TierNotInCatalog");
+  }).pipe(run),
+);
+
+it("a preview's events match what the same command records", () =>
+  Effect.gen(function* () {
+    const preview = yield* Preview();
+    const predicted = yield* preview({ account, command: { kind: "subscribe", tier: "free" } });
+    expect(predicted._tag).toBe("accepted");
+    if (predicted._tag !== "accepted") return;
+    // `predict` runs the same `decide`, so the tag and the period agree with
+    // the event the model would record at the same instant.
+    const subscription = yield* Subscription;
+    const receipt = yield* subscription.send(
+      Subscription.ref(account),
+      new Subscribe({ tier: "free", allowances: allowancesOf(testCatalog, "free")! }),
+    );
+    expect(receipt.events.map((event) => event._tag)).toEqual(
+      predicted.events.map((event) => event._tag),
+    );
+  }).pipe(run));
+
+it("the clock a preview decides at is the clock the model used", () =>
+  Effect.gen(function* () {
+    const preview = yield* Preview();
+    const result = yield* preview({ account, command: { kind: "subscribe", tier: "free" } });
+    expect(result._tag).toBe("accepted");
+    if (result._tag !== "accepted" || result.state._tag !== "Subscribed") return;
+    const now = DateTime.makeUnsafe(yield* Effect.sync(() => Date.now()));
+    const drift = Math.abs(
+      DateTime.toEpochMillis(result.state.period.start) - DateTime.toEpochMillis(now),
+    );
+    expect(drift).toBeLessThan(5_000);
+  }).pipe(run));
