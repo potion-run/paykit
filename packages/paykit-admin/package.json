@@ -1,0 +1,63 @@
+{
+  "name": "@potion.run/paykit-admin",
+  "version": "0.1.0",
+  "description": "A Foldkit ops console for paykit.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "packages/paykit-admin"
+  },
+  "files": [
+    "lib",
+    "src",
+    "styles.css"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./styles.css": "./styles.css",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./styles.css": "./styles.css",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "devDependencies": {
+    "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/test": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@potion.run/paykit": "workspace:*",
+    "effect": "catalog:",
+    "foldkit": "catalog:"
+  }
+}

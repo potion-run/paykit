@@ -10,6 +10,7 @@ beside its source.
 | --- | --- | --- | --- |
 | `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
 | `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, in one call | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
+| `@potion.run/paykit-admin` | `packages/paykit-admin` | Foldkit ops console for a paykit deployment | [AGENTS.md](./packages/paykit-admin/AGENTS.md) · [README.md](./packages/paykit-admin/README.md) |
 
 `examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
 it needs no database and no provider key. It is in the workspace, in the root `tsconfig.json` and in

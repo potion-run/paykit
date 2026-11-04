@@ -1,0 +1,337 @@
+@layer paykit-admin {
+  .pk-admin {
+    --pk-bg: #f7f7f5;
+    --pk-panel: #ffffff;
+    --pk-ink: #1b1b19;
+    --pk-muted: #6b6b64;
+    --pk-line: #e2e2dc;
+    --pk-good: #186b3a;
+    --pk-good-bg: #e7f5ec;
+    --pk-grace: #8a5a00;
+    --pk-grace-bg: #fdf1d8;
+    --pk-blocked: #9b2c2c;
+    --pk-blocked-bg: #fde8e8;
+    --pk-accent: #1f5fbf;
+    --pk-radius: 10px;
+    --pk-space: 16px;
+
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 24px;
+    background: var(--pk-bg);
+    color: var(--pk-ink);
+    font:
+      14px/1.45 ui-sans-serif,
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
+  }
+
+  .pk-admin *,
+  .pk-admin *::before,
+  .pk-admin *::after {
+    box-sizing: border-box;
+  }
+
+  .pk-header,
+  .pk-panel-head,
+  .pk-badges,
+  .pk-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .pk-header {
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .pk-header h1 {
+    margin: 0;
+    font-size: 20px;
+  }
+
+  .pk-main {
+    display: grid;
+    grid-template-columns: minmax(340px, 0.9fr) minmax(420px, 1.4fr);
+    gap: var(--pk-space);
+    align-items: start;
+  }
+
+  .pk-account {
+    display: flex;
+    flex-direction: column;
+    gap: var(--pk-space);
+  }
+
+  .pk-panel {
+    padding: var(--pk-space);
+    border: 1px solid var(--pk-line);
+    border-radius: var(--pk-radius);
+    background: var(--pk-panel);
+  }
+
+  .pk-panel h2 {
+    margin: 0 0 12px;
+    font-size: 15px;
+  }
+
+  .pk-panel-head {
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .pk-panel-head h2 {
+    margin: 0;
+  }
+
+  .pk-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .pk-input,
+  .pk-select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--pk-line);
+    border-radius: 8px;
+    background: var(--pk-panel);
+    color: inherit;
+    font: inherit;
+  }
+
+  .pk-button {
+    padding: 8px 12px;
+    border: 1px solid var(--pk-line);
+    border-radius: 8px;
+    background: var(--pk-panel);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .pk-button:hover {
+    border-color: var(--pk-accent);
+  }
+
+  .pk-button:focus-visible,
+  .pk-input:focus-visible,
+  .pk-select:focus-visible,
+  .pk-row:focus-visible {
+    outline: 2px solid var(--pk-accent);
+    outline-offset: 2px;
+  }
+
+  .pk-button-danger {
+    color: var(--pk-blocked);
+  }
+
+  .pk-table-wrap {
+    overflow-x: auto;
+  }
+
+  .pk-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .pk-table th,
+  .pk-table td {
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--pk-line);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .pk-table th {
+    color: var(--pk-muted);
+    font-weight: 600;
+  }
+
+  .pk-row {
+    cursor: pointer;
+  }
+
+  .pk-row:hover {
+    background: color-mix(in srgb, var(--pk-accent) 6%, transparent);
+  }
+
+  .pk-account-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  .pk-badges {
+    flex-wrap: wrap;
+  }
+
+  .pk-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--pk-line);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: lowercase;
+  }
+
+  .pk-badge-standing[data-paykit-standing="good"],
+  .pk-badge-feed[data-paykit-feed="Live"] {
+    background: var(--pk-good-bg);
+    color: var(--pk-good);
+  }
+
+  .pk-badge-standing[data-paykit-standing="grace"],
+  .pk-badge-status[data-paykit-status="grace"],
+  .pk-badge-feed[data-paykit-feed="CatchingUp"] {
+    background: var(--pk-grace-bg);
+    color: var(--pk-grace);
+  }
+
+  .pk-badge-standing[data-paykit-standing="blocked"],
+  .pk-badge-status[data-paykit-status="expired"],
+  .pk-badge-status[data-paykit-status="canceled"],
+  .pk-badge-feed[data-paykit-feed="Failed"],
+  .pk-badge-pending[data-paykit-pending="Rejected"],
+  .pk-badge-pending[data-paykit-pending="Denied"] {
+    background: var(--pk-blocked-bg);
+    color: var(--pk-blocked);
+  }
+
+  .pk-badge-pending[data-paykit-pending="Unknown"] {
+    background: var(--pk-grace-bg);
+    color: var(--pk-grace);
+  }
+
+  .pk-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 18px;
+    margin: 0;
+  }
+
+  .pk-facts div {
+    min-width: 0;
+  }
+
+  .pk-facts dt {
+    color: var(--pk-muted);
+    font-size: 12px;
+  }
+
+  .pk-facts dd {
+    margin: 2px 0 0;
+    overflow-wrap: anywhere;
+  }
+
+  .pk-actions {
+    flex-wrap: wrap;
+  }
+
+  .pk-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  .pk-field-label {
+    color: var(--pk-muted);
+    font-size: 12px;
+  }
+
+  .pk-muted {
+    color: var(--pk-muted);
+  }
+
+  .pk-error {
+    color: var(--pk-blocked);
+  }
+
+  .pk-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--pk-grace);
+    border-radius: 8px;
+    background: var(--pk-grace-bg);
+    color: var(--pk-grace);
+  }
+
+  .pk-empty {
+    color: var(--pk-muted);
+  }
+
+  .pk-pending-list,
+  .pk-events {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .pk-pending,
+  .pk-event {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--pk-line);
+  }
+
+  .pk-event {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pk-event-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .pk-event pre {
+    max-width: 100%;
+    margin: 0;
+    overflow-x: auto;
+    color: var(--pk-muted);
+    font-size: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .pk-admin {
+      --pk-bg: #111211;
+      --pk-panel: #191b19;
+      --pk-ink: #eceee9;
+      --pk-muted: #a1a59c;
+      --pk-line: #2e322d;
+      --pk-good: #7fd7a1;
+      --pk-good-bg: #173222;
+      --pk-grace: #f0c36b;
+      --pk-grace-bg: #352a12;
+      --pk-blocked: #f2a0a0;
+      --pk-blocked-bg: #3a1c1c;
+      --pk-accent: #7aa7f5;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .pk-main {
+      grid-template-columns: 1fr;
+    }
+
+    .pk-filters {
+      grid-template-columns: 1fr;
+    }
+  }
+}
