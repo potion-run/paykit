@@ -1,0 +1,75 @@
+name: Check
+
+# Validates the repo the way a consumer will meet it: formatting, the type
+# graph, lint, tests, and — the step a passing test suite never covers — that the
+# published artifacts build and load in plain Node.
+#
+# Modelled on alchemy's `check.yml`: one job, steps in the order that makes each
+# later step meaningful, and every action pinned to a commit rather than a tag.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A superseded pull-request run is wasted work; a push to main is not, because
+# whatever it reports is the state of the branch.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Installs pnpm, Node and Bun from `packageManager`, `devEngines.runtime`
+      # and `.node-version`, so the runtime a test runs on is the one declared.
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      # Type-aware, so it needs the type graph below to be sound. It runs first
+      # because a type error makes its findings meaningless.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      # The four gates above never compile `lib/`. A published artifact is a
+      # different question, and answering it here is what caught a `bun:` import
+      # reaching the root export of a package that built cleanly and could not
+      # be loaded at all.
+      - name: Build packages
+        run: pnpm build
+
+      - name: Load the built artifacts
+        run: |
+          set -euo pipefail
+          node scripts/smoke-artifact.mjs packages/paykit/lib/index.js \
+            Paykit Preview Verify List ChargeProration SqlEventLog SqlPlatform SqlBillingReadStore
+          node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js \
+            Polar distilledPolarClient polarBindings polarBaseUrl
+
+      # The example is a deployment, not a library: it is typechecked and tested
+      # above, and this proves its Worker bundle is what a deploy would ship.
+      - name: Typecheck the example's Worker against the built package
+        run: pnpm --filter @potion.run/example-billing exec tsrs -b

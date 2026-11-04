@@ -141,7 +141,16 @@ from typecheck, lint and format. Do not import from them and do not commit them.
 
 ## Gates
 
-Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. Run
+Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+The first four never compile `lib/`; `pnpm build` and `node scripts/smoke-artifact.mjs` are what
+prove a published artifact loads.
+
+`.github/workflows/check.yml` runs all six on every push and pull request, and is modelled on
+alchemy's `check.yml`: one job, steps in the order that makes each later step meaningful, every
+action pinned to a commit rather than a tag, and `cancel-in-progress` only for pull requests.
+`.github/workflows/release.yml` is a manual run on `main` that re-runs the gates, bumps the shared
+version (`scripts/release/bump.ts`), packs both tarballs, and publishes with provenance only when
+`dry-run` is off. Run
 `pnpm exports:check` and `pnpm validate:publish-packages` when you move a module out of `src/`,
 touch an export map, or bump a version. Formatting is fixable in place (`pnpm format`,
 `pnpm lint:fix`); the type check, the tests and the manifest gates are not. If a gate is missing,

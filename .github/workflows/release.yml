@@ -1,0 +1,116 @@
+name: Release
+
+# Publishes every `@potion.run/*` package on one version line, from a manual run
+# and only from `main`. Modelled on alchemy's `release.yml`: the version is an
+# input, the packages are packed before anything is published, and the tag is
+# what a consumer can point at afterwards.
+#
+# Nothing here runs on a push. A release is a decision, and a repo whose gates
+# are not green publishes nothing: `check.yml` must pass on the commit that is
+# released, which is why this job re-runs the artifact smoke check itself rather
+# than trusting the branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          The version every package is published at. `patch`, `minor` or `major`
+          bumps from the version the packages share; `x.y.z` publishes exactly
+          that. Nothing is committed: the tag records what shipped.
+        required: true
+        type: string
+        default: patch
+      dry-run:
+        description: "Pack and verify without publishing."
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # A release from a branch other than main is a mistake, not a variant.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - id: version
+        name: Bump the shared version
+        run: |
+          set -euo pipefail
+          node scripts/release/bump.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Verify the artifacts load
+        run: |
+          set -euo pipefail
+          node scripts/smoke-artifact.mjs packages/paykit/lib/index.js Paykit ChargeProration
+          node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js Polar distilledPolarClient
+
+      - name: Pack both packages
+        run: |
+          set -euo pipefail
+          mkdir -p release-packages
+          pnpm --filter @potion.run/paykit pack --pack-destination "$GITHUB_WORKSPACE/release-packages"
+          pnpm --filter @potion.run/paykit-polar pack --pack-destination "$GITHUB_WORKSPACE/release-packages"
+
+      # The tarballs are the record of what shipped, whether or not it is
+      # published. A dry run stops here.
+      - name: Upload the tarballs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-packages
+          path: release-packages/*.tgz
+          if-no-files-found: error
+
+      - name: Publish
+        if: ${{ !inputs.dry-run }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          for tarball in release-packages/*.tgz; do
+            echo "publishing $tarball"
+            npm publish "$tarball" --provenance --access public
+          done
+
+      - name: Tag what shipped
+        if: ${{ !inputs.dry-run }}
+        run: |
+          set -euo pipefail
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
