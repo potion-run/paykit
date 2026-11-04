@@ -6,11 +6,13 @@ import { AllowanceKind, Included, Overage, Resets } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   SubscriptionStatus,
   Standing,
+  creditRateOf,
   includedRemainingOf,
   recordedCount,
 } from "./Subscription.state.ts";
@@ -22,8 +24,17 @@ export const FeatureEntitlement = Schema.Struct({
    * recorded before the field existed still reads.
    */
   kind: Schema.optionalKey(AllowanceKind),
-  /** What the tier includes: a count, or `"unlimited"`. */
-  included: Included,
+  /**
+   * The rate card of a credit-priced feature: credits per unit by dimension.
+   * Present exactly when the feature is priced in credits, in which case
+   * `remaining` is the account's shared pool and there is no `included`.
+   */
+  creditRates: Schema.optionalKey(CreditRates),
+  /**
+   * What the tier includes: a count, or `"unlimited"`. `null` for a
+   * credit-priced feature, which includes no units of its own.
+   */
+  included: Schema.NullOr(Included),
   used: Schema.Int,
   /** Held by open reservations: out of `remaining`, not yet `used`. */
   reserved: Schema.Int,
@@ -120,7 +131,16 @@ export class Entitlements extends Domain.View("Entitlements", {
           periodStart: event.periodStart,
           periodEnd: event.periodEnd,
           cancelAtPeriodEnd: false,
-          features: featuresOf(event.allowances, {}, event.remaining, event.periodEnd, "good"),
+          credits: event.credits,
+          features: featuresOf(
+            event.allowances,
+            event.rates,
+            event.credits,
+            {},
+            event.remaining,
+            event.periodEnd,
+            "good",
+          ),
         },
         context,
       ),
@@ -135,7 +155,16 @@ export class Entitlements extends Domain.View("Entitlements", {
           periodEnd: event.periodEnd,
           cancelAtPeriodEnd: false,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
-          features: featuresOf(event.allowances, {}, event.remaining, event.periodEnd, "good"),
+          credits: event.credits,
+          features: featuresOf(
+            event.allowances,
+            event.rates,
+            event.credits,
+            {},
+            event.remaining,
+            event.periodEnd,
+            "good",
+          ),
         },
         context,
       ),
@@ -150,6 +179,9 @@ export class Entitlements extends Domain.View("Entitlements", {
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           features: featuresOf(
             event.allowances,
+            event.rates,
+            // A tier change carries the balance over; the new cards price it.
+            view.credits,
             view.features,
             event.remaining,
             view.periodEnd,
@@ -167,6 +199,9 @@ export class Entitlements extends Domain.View("Entitlements", {
       return withAccount(
         {
           ...view,
+          // A credit-priced feature reports the pool it just spent from; for a
+          // counted feature this is the balance, unchanged.
+          credits: event.creditsAfter,
           features: {
             ...view.features,
             [event.feature]: {
@@ -277,6 +312,11 @@ export class Entitlements extends Domain.View("Entitlements", {
           ...view,
           features: Object.fromEntries(
             Object.entries(view.features).map(([feature, value]) => {
+              // A credit-priced feature has no allowance to reset: the pool is
+              // shared, and only this feature's spend in the period restarts.
+              if (value.creditRates !== undefined) {
+                return [feature, { ...value, used: 0, reserved: 0 }];
+              }
               // An allowance with no count resets to `null` again: usage returns
               // to zero, but an unlimited allowance and a flag still have no
               // number to report.
@@ -320,11 +360,11 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       ),
     CreditsGranted: (view, event, context): EntitlementsState =>
-      withAccount({ ...view, credits: event.balanceAfter }, context),
+      withAccount(withPool(view, event.balanceAfter), context),
     CreditsConsumed: (view, event, context): EntitlementsState =>
-      withAccount({ ...view, credits: event.balanceAfter }, context),
+      withAccount(withPool(view, event.balanceAfter), context),
     CreditsExpired: (view, event, context): EntitlementsState =>
-      withAccount({ ...view, credits: event.balanceAfter }, context),
+      withAccount(withPool(view, event.balanceAfter), context),
     ProviderRefAttached: (view, _event, context): EntitlementsState => withAccount(view, context),
     // Billing an upgrade moves money, not an entitlement; the view still emits
     // it so the read-model projection sees the whole log.
@@ -332,6 +372,27 @@ export class Entitlements extends Domain.View("Entitlements", {
       withAccount({ ...view, prorationInvoice: event.invoiceId }, context),
   },
 }) {}
+
+/**
+ * Move the shared pool, and with it every credit-priced feature's `remaining`.
+ * One balance, so the features cannot report different ones.
+ */
+const withPool = (view: EntitlementsState, balance: number): EntitlementsState => ({
+  ...view,
+  credits: balance,
+  features: Object.fromEntries(
+    Object.entries(view.features).map(([feature, value]) => [
+      feature,
+      value.creditRates === undefined
+        ? value
+        : {
+            ...value,
+            remaining: balance,
+            allowed: allowsOne(view.standing, value.overage, balance),
+          },
+    ]),
+  ),
+});
 
 /**
  * Whether one more unit is allowed, from the standing and the allowance. Pure,
@@ -354,7 +415,11 @@ export const allowsOne = (
 const spendableOf = (
   recorded: Readonly<Record<string, number | null>>,
   feature: string,
-  allowance: { readonly included: Included; readonly overage: Overage; readonly resets: Resets },
+  allowance: {
+    readonly included: Included | null;
+    readonly overage: Overage;
+    readonly resets: Resets;
+  },
 ): number | null => {
   const remaining = recordedCount(recorded, feature);
   // `undefined` is "this event says nothing about the feature"; `null` is a
@@ -363,17 +428,39 @@ const spendableOf = (
   return includedRemainingOf(allowance);
 };
 
+/** A credit-priced feature's read model: the rate card and the shared pool. */
+const creditFeatureOf = (
+  rates: CreditRates,
+  credits: number,
+  previous: FeatureEntitlement | undefined,
+  standing: Standing,
+): FeatureEntitlement => ({
+  creditRates: rates,
+  included: null,
+  used: previous?.used ?? 0,
+  reserved: 0,
+  remaining: credits,
+  carried: 0,
+  // "One more unit" is `check({ amount: 1 })`, which costs the default rate.
+  allowed: standing !== "blocked" && credits >= creditRateOf(rates, undefined),
+  overage: "block",
+  resets: "never",
+  resetsAt: null,
+});
+
 const featuresOf = (
   allowances: Readonly<
     Record<string, { kind?: AllowanceKind; included: Included; overage: Overage; resets: Resets }>
   >,
+  rates: Readonly<Record<string, CreditRates>>,
+  credits: number,
   previous: Readonly<Record<string, FeatureEntitlement>>,
   remaining: Readonly<Record<string, number | null>>,
   periodEnd: DateTime.Utc,
   standing: Standing,
   keepUsage = false,
-): Record<string, FeatureEntitlement> =>
-  Object.fromEntries(
+): Record<string, FeatureEntitlement> => ({
+  ...Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
       const used = keepUsage ? (previous[feature]?.used ?? 0) : 0;
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
@@ -395,4 +482,13 @@ const featuresOf = (
         },
       ];
     }),
-  );
+  ),
+  // A credit-priced feature has no allowance, so it is not in the map above:
+  // its read model is the rate card and the one pool every such feature shares.
+  ...Object.fromEntries(
+    Object.entries(rates).map(([feature, card]) => [
+      feature,
+      creditFeatureOf(card, credits, previous[feature], standing),
+    ]),
+  ),
+});

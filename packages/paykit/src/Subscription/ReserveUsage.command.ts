@@ -4,6 +4,15 @@ import { Session } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { FeatureNotMetered, StandingBlocksUsage } from "./TrackUsage.command.ts";
 
+/**
+ * The feature is priced in credits. Holding credits is a later slice, so the
+ * three hold commands refuse rather than pretend to hold units that do not
+ * exist.
+ */
+export class CreditHoldUnsupported extends Domain.Rejection("CreditHoldUnsupported", {
+  feature: Schema.String,
+}) {}
+
 /** The spendable amount is smaller than the reservation asked for. */
 export class ReservationExceeded extends Domain.Rejection("ReservationExceeded", {
   feature: Schema.String,
@@ -44,6 +53,6 @@ export class ReserveUsage extends Domain.Command("ReserveUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageReserved],
-  rejects: [ReservationExceeded, StandingBlocksUsage, FeatureNotMetered],
+  rejects: [ReservationExceeded, StandingBlocksUsage, FeatureNotMetered, CreditHoldUnsupported],
   middleware: [Session],
 }) {}

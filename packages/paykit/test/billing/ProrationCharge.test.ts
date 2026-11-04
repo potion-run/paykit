@@ -100,11 +100,24 @@ const world = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
 const upgraded = Effect.gen(function* () {
   const subscription = yield* Subscription;
   const ref = Subscription.ref(account);
-  yield* subscription.send(ref, new Subscribe({ tier: "pro", allowances: pro, price: proPrice }));
+  yield* subscription.send(
+    ref,
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+    }),
+  );
   yield* subscription.send(
     ref,
     new ChangeTier({
       tier: "scale",
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
       allowances: scale,
       price: scalePrice,
       proration: upgrade,
@@ -202,7 +215,14 @@ describe("charging a proration", () => {
         const subscription = yield* Subscription;
         yield* subscription.send(
           Subscription.ref(account),
-          new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "pro",
+            allowances: pro,
+            price: proPrice,
+          }),
         );
         const charge = yield* ChargeProration();
         const error = yield* Effect.flip(charge({ account }));
@@ -222,11 +242,25 @@ describe("charging a proration", () => {
         const ref = Subscription.ref(account);
         yield* subscription.send(
           ref,
-          new Subscribe({ tier: "scale", allowances: scale, price: scalePrice }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "scale",
+            allowances: scale,
+            price: scalePrice,
+          }),
         );
         yield* subscription.send(
           ref,
-          new ChangeTier({ tier: "free", allowances: free, proration: downgrade }),
+          new ChangeTier({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+            proration: downgrade,
+          }),
         );
         const charge = yield* ChargeProration();
         const error = yield* Effect.flip(charge({ account }));

@@ -9,6 +9,8 @@ export interface TrackInput {
   readonly account: string;
   readonly feature: string;
   readonly amount: number;
+  /** Which rate prices this usage, for a credit-priced feature. */
+  readonly dimension?: string;
   readonly dedupeKey?: string;
 }
 
@@ -28,6 +30,7 @@ export const Track = Effect.fn("Paykit.Track")(function* () {
         new TrackUsage({
           feature: input.feature,
           amount: input.amount,
+          ...(input.dimension === undefined ? {} : { dimension: input.dimension }),
           ...(input.dedupeKey === undefined ? {} : { dedupeKey: input.dedupeKey }),
         }),
         input.dedupeKey === undefined ? undefined : { commandId: input.dedupeKey },

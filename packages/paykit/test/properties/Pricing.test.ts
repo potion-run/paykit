@@ -98,7 +98,15 @@ it("replaying the log reproduces the price the account was sold at", () => {
     state = fold(committed, now) as typeof initialSubscriptionState;
   };
 
-  apply(new Subscribe({ tier: "free", allowances: free }));
+  apply(
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "free",
+      allowances: free,
+    }),
+  );
   let seed = 11;
   for (let step = 0; step < 60; step++) {
     seed = next(seed);
@@ -106,6 +114,9 @@ it("replaying the log reproduces the price the account was sold at", () => {
     apply(
       new ChangeTier({
         tier: choice.id,
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: choice.allowances,
         ...(choice.price === undefined ? {} : { price: choice.price }),
       }),
@@ -133,7 +144,14 @@ it("replaying the log reproduces the price the account was sold at", () => {
 it("an activation records the price it was sold at", () => {
   const decision = decide.Subscribe!(
     initialSubscriptionState,
-    new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+    }),
     ctx(start, "subscribe"),
   ) as ReadonlyArray<{ readonly _tag: string; readonly price?: { readonly amount: number } }>;
   const activated = decision[0]!;
@@ -144,7 +162,14 @@ it("an activation records the price it was sold at", () => {
 it("a tier change records both prices it moved between", () => {
   const opened = decide.Subscribe!(
     initialSubscriptionState,
-    new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+    }),
     ctx(start, "subscribe"),
   ) as ReadonlyArray<AnyEvent>;
   const state = fold(opened);
@@ -152,6 +177,9 @@ it("a tier change records both prices it moved between", () => {
     state,
     new ChangeTier({
       tier: "scale",
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
       allowances: scale,
       price: scalePrice,
       // A priced change carries the proration the model would compute.
@@ -178,6 +206,9 @@ it("a tier change records both prices it moved between", () => {
       fold([...opened, ...(decision as ReadonlyArray<AnyEvent>)]),
       new ChangeTier({
         tier: "free",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: free,
         // Downgrading to a free tier credits the unused scale price.
         proration: prorate({
@@ -196,7 +227,14 @@ it("a tier change records both prices it moved between", () => {
 it("a period boundary does not move the price", () => {
   const opened = decide.Subscribe!(
     initialSubscriptionState,
-    new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+    }),
     ctx(start, "subscribe"),
   ) as ReadonlyArray<AnyEvent>;
   const monthLater = DateTime.makeUnsafe("2030-02-01T00:00:00Z");

@@ -2,8 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Allowances, isFlagGrant, type Allowance } from "./Allowance.ts";
-import { Feature } from "./Feature.ts";
-import { Tier } from "./Tier.ts";
+import { CreditRateCards, Feature } from "./Feature.ts";
+import { CreditsExpire, Price, Tier } from "./Tier.ts";
 
 /**
  * The deploy-time catalog: every declared feature and every purchasable tier.
@@ -105,6 +105,47 @@ export class CatalogCarryOverNeverResets extends Schema.TaggedError<CatalogCarry
   { tier: Schema.String, feature: Schema.String },
 ) {}
 
+/**
+ * A credit-priced feature has no rate for the default dimension. Every rate
+ * card needs a `"default"`, or a caller that names no dimension cannot be
+ * priced at all.
+ */
+export class CatalogCreditRateMissing extends Schema.TaggedError<CatalogCreditRateMissing>()(
+  "CatalogCreditRateMissing",
+  { feature: Schema.String },
+) {}
+
+/** A rate that is not a positive integer of credits per unit. */
+export class CatalogCreditRateInvalid extends Schema.TaggedError<CatalogCreditRateInvalid>()(
+  "CatalogCreditRateInvalid",
+  { feature: Schema.String, dimension: Schema.String },
+) {}
+
+/**
+ * A tier grants an allowance for a feature priced in credits. A pool and a
+ * counter cannot both be the answer to "how much is left", so the allowance is
+ * refused rather than silently shadowed.
+ */
+export class CatalogCreditFeatureHasAllowance extends Schema.TaggedError<CatalogCreditFeatureHasAllowance>()(
+  "CatalogCreditFeatureHasAllowance",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/** A `kind: "flag"` feature declared a rate card. A flag has nothing to spend. */
+export class CatalogCreditRatesOnFlag extends Schema.TaggedError<CatalogCreditRatesOnFlag>()(
+  "CatalogCreditRatesOnFlag",
+  { feature: Schema.String },
+) {}
+
+/**
+ * A tier states an impossible credit grant: a negative pool, or an expiry for
+ * credits it never grants.
+ */
+export class CatalogCreditGrantInvalid extends Schema.TaggedError<CatalogCreditGrantInvalid>()(
+  "CatalogCreditGrantInvalid",
+  { tier: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -122,6 +163,11 @@ export const CatalogError = Schema.Union([
   CatalogFlagOnMetered,
   CatalogCarryOverOnFlag,
   CatalogCarryOverNeverResets,
+  CatalogCreditRateMissing,
+  CatalogCreditRateInvalid,
+  CatalogCreditFeatureHasAllowance,
+  CatalogCreditRatesOnFlag,
+  CatalogCreditGrantInvalid,
   CatalogInvalid,
 ]);
 export type CatalogError = typeof CatalogError.Type;
@@ -180,9 +226,34 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
 
   const declared = new Set(catalog.features.map((feature) => feature.id));
   const kinds = new Map(catalog.features.map((feature) => [feature.id, feature.kind]));
+  const creditPriced = new Set<string>();
+  for (const feature of catalog.features) {
+    const rates = feature.creditRates;
+    if (rates === undefined) continue;
+    if (feature.kind === "flag") {
+      return Result.fail(new CatalogCreditRatesOnFlag({ feature: feature.id }));
+    }
+    // `undefined` is checked as a key, not a value: a rate of 0 is refused
+    // below, and a missing default by itself.
+    if (!Object.hasOwn(rates, "default")) {
+      return Result.fail(new CatalogCreditRateMissing({ feature: feature.id }));
+    }
+    for (const [dimension, rate] of Object.entries(rates)) {
+      if (rate <= 0) {
+        return Result.fail(new CatalogCreditRateInvalid({ feature: feature.id, dimension }));
+      }
+    }
+    creditPriced.add(feature.id);
+  }
   for (const tier of catalog.tiers) {
     if (tier.grants.length === 0) {
       return Result.fail(new CatalogEmptyTier({ tier: tier.id }));
+    }
+    if (
+      (tier.credits !== undefined && tier.credits < 0) ||
+      (tier.creditsExpire !== undefined && tier.credits === undefined)
+    ) {
+      return Result.fail(new CatalogCreditGrantInvalid({ tier: tier.id }));
     }
     const granted = new Set<string>();
     for (const grant of tier.grants) {
@@ -195,6 +266,13 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
         );
       }
       granted.add(grant.feature);
+      // A credit-priced feature spends the pool; an allowance would be a second
+      // answer to how much is left.
+      if (creditPriced.has(grant.feature)) {
+        return Result.fail(
+          new CatalogCreditFeatureHasAllowance({ tier: tier.id, feature: grant.feature }),
+        );
+      }
       // Unlimited means there is no end to be past, so an overage is only
       // meaningful when it allows: anything else describes a boundary that
       // cannot exist.
@@ -252,6 +330,60 @@ export const tierOf = (catalog: Catalog, tierId: string): Tier | null =>
 /** A declared feature, or `null` when the catalog has no such feature. */
 export const featureOf = (catalog: Catalog, featureId: string): Feature | null =>
   catalog.features.find((feature) => feature.id === featureId) ?? null;
+
+/**
+ * Every credit-priced feature's rate card, keyed by feature id. A command
+ * carries this because `decide` is pure and never sees the catalog.
+ */
+export const creditRatesOf = (catalog: Catalog): CreditRateCards => {
+  const rates: Record<string, Record<string, number>> = {};
+  for (const feature of catalog.features) {
+    if (feature.creditRates !== undefined) rates[feature.id] = { ...feature.creditRates };
+  }
+  return rates;
+};
+
+/** The credit terms a tier sells: its grant, when it expires, and every rate. */
+export interface TierCreditTerms {
+  readonly credits: number;
+  readonly creditsExpire: CreditsExpire;
+  readonly rates: CreditRateCards;
+}
+
+/** What a tier grants in credits, with the defaults the catalog implies. */
+export const creditTermsOf = (catalog: Catalog, tierId: string): TierCreditTerms | null => {
+  const tier = tierOf(catalog, tierId);
+  if (tier === null) return null;
+  return {
+    credits: tier.credits ?? 0,
+    creditsExpire: tier.creditsExpire ?? "period",
+    rates: creditRatesOf(catalog),
+  };
+};
+
+/**
+ * Everything a `Subscribe`, `StartTrial` or `ChangeTier` carries that comes
+ * from the catalog: the allowances, the price, and the credit terms. One
+ * helper, so a caller cannot assemble half of a tier and forget a field the
+ * guard would then refuse.
+ */
+export interface TierTerms extends TierCreditTerms {
+  readonly allowances: Allowances;
+  readonly price?: Price;
+}
+
+/** The command fields a tier implies, or `null` when the catalog lacks it. */
+export const tierTermsOf = (catalog: Catalog, tierId: string): TierTerms | null => {
+  const tier = tierOf(catalog, tierId);
+  const allowances = allowancesOf(catalog, tierId);
+  const terms = creditTermsOf(catalog, tierId);
+  if (tier === null || allowances === null || terms === null) return null;
+  return {
+    ...terms,
+    allowances,
+    ...(tier.price === undefined ? {} : { price: tier.price }),
+  };
+};
 
 /** Fold a tier's `grants` into the map a command and a view carry. */
 export const allowancesOf = (catalog: Catalog, tierId: string): Allowances | null => {

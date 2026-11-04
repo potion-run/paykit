@@ -316,6 +316,41 @@ describe("SqlEventLog", () => {
     }),
   );
 
+  it.effect("round-trips a credit-priced feature's pool through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const metered = {
+        ...readModelRow,
+        credits: 49_000,
+        features: {
+          ai: {
+            creditRates: { default: 1, "gpt-large": 10 },
+            included: null,
+            used: 1_000,
+            reserved: 0,
+            remaining: 49_000,
+            carried: 0,
+            allowed: true,
+            overage: "block" as const,
+            resets: "never" as const,
+            resetsAt: null,
+          },
+        },
+      };
+      yield* log.upsertReadModel(metered);
+      const read = yield* log.readModel("acct_1");
+      // The card, the credits this feature spent, and the shared pool it
+      // reports all survive the JSON column, so the edge prices a request
+      // without reading the catalog.
+      expect(read?.credits).toBe(49_000);
+      expect(read?.features.ai?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
+      expect(read?.features.ai?.remaining).toBe(49_000);
+      expect(read?.features.ai?.used).toBe(1_000);
+      expect(read?.features.ai?.included).toBeNull();
+      expect(read).toEqual(metered);
+    }),
+  );
+
   it.effect("refuses to read a corrupt read model", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;

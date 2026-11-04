@@ -51,7 +51,13 @@ const subscribeFree = Effect.gen(function* () {
   const store = yield* BillingReadStore;
   const receipt = yield* subscription.send(
     Subscription.ref(account),
-    new Subscribe({ tier: "free", allowances: free }),
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "free",
+      allowances: free,
+    }),
   );
   const view = Option.getOrNull(
     yield* entitlements.query(Subscription.ref(account), { atLeast: receipt }),
@@ -189,7 +195,13 @@ describe("the read model answers what check() answers", () => {
       const check = yield* CheckInProcess();
       const receipt = yield* subscription.send(
         Subscription.ref(account),
-        new Subscribe({ tier: "pro", allowances: pro }),
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "pro",
+          allowances: pro,
+        }),
       );
       yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
       yield* track({ account, feature: "messages", amount: 2000 });

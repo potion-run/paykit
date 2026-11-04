@@ -28,13 +28,28 @@ export class FeatureNotMetered extends Domain.Rejection("FeatureNotMetered", {
   feature: Schema.String,
 }) {}
 
+/** The pool cannot cover what this usage costs. */
+export class CreditExceeded extends Domain.Rejection("CreditExceeded", {
+  feature: Schema.String,
+  /** What the usage costs in credits: `amount × rate`. */
+  cost: Schema.Int,
+  /** The pool at the moment it was refused, untouched. */
+  balance: Schema.Int,
+}) {}
+
 /**
  * One usage fact. `remainingAfter` is the outcome `decide` worked out, and is
- * `null` when the allowance never runs out: `usedAfter` still counts.
+ * `null` when there is no count: an allowance that never runs out, or a
+ * credit-priced feature whose count is the shared pool. `cost` is the credits
+ * the usage spent (`0` for a feature counted in its own units), and
+ * `creditsAfter` is the pool it left behind, so replaying the log reproduces
+ * the balance.
  */
 export class UsageRecorded extends Domain.Event("UsageRecorded", {
   feature: Schema.String,
   amount: Schema.Int,
+  cost: Schema.Int,
+  creditsAfter: Schema.Int,
   usedAfter: Schema.Int,
   remainingAfter: Schema.NullOr(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
@@ -49,9 +64,11 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
   input: {
     feature: Schema.String,
     amount: Schema.Int,
+    /** Which rate prices this usage. Omitted means the card's `"default"`. */
+    dimension: Schema.optionalKey(Schema.String),
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded],
-  rejects: [AllowanceExceeded, StandingBlocksUsage, FeatureNotMetered],
+  rejects: [AllowanceExceeded, StandingBlocksUsage, FeatureNotMetered, CreditExceeded],
   middleware: [Session],
 }) {}

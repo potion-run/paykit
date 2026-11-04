@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
+import { CreditHoldUnsupported } from "./ReserveUsage.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { FeatureNotMetered, StandingBlocksUsage, UsageRecorded } from "./TrackUsage.command.ts";
 
@@ -36,6 +37,6 @@ export class SettleUsage extends Domain.Command("SettleUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded, UsageSettled],
-  rejects: [NoReservation, StandingBlocksUsage, FeatureNotMetered],
+  rejects: [NoReservation, StandingBlocksUsage, FeatureNotMetered, CreditHoldUnsupported],
   middleware: [Session],
 }) {}

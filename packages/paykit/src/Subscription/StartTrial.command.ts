@@ -4,7 +4,8 @@ import { Allowances } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
-import { Price } from "../Tier.ts";
+import { CreditRateCards } from "../Feature.ts";
+import { CreditsExpire, Price } from "../Tier.ts";
 import { AccountId } from "./Subscription.id.ts";
 import type { SubscriptionStatus } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -15,6 +16,10 @@ export class TrialStarted extends Domain.Event("TrialStarted", {
   tier: Schema.String,
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
+  /** The credit pool this trial grants. */
+  credits: Schema.Int,
+  creditsExpire: CreditsExpire,
+  rates: CreditRateCards,
   periodStart: Schema.DateTimeUtc,
   periodEnd: Schema.DateTimeUtc,
   anchorTz: Schema.String,
@@ -30,6 +35,9 @@ export class StartTrial extends Domain.Command("StartTrial", {
   input: {
     tier: Schema.String,
     allowances: Allowances,
+    credits: Schema.Int,
+    creditsExpire: CreditsExpire,
+    rates: CreditRateCards,
     trialEndsAt: Schema.DateTimeUtc,
     anchorTz: Schema.optionalKey(Schema.String),
     price: Schema.optionalKey(Price),

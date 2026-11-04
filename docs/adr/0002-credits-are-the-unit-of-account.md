@@ -56,7 +56,7 @@ remaining is the balance, and the amount asked for is multiplied by its rate bef
 | Catalog | `Feature.creditRates?: Record<string, Int>`; required `"default"` when present, every rate a positive integer |
 | Tier | `credits?: Int` and `creditsExpire?: "period" \| "never"` |
 | `Track` | accepts an optional `dimension`; on a credit-priced feature spends `amount × rate`, and the event carries `cost` and `creditsAfter` |
-| Holds | `Reserve`/`Settle`/`Release` on a credit-priced feature hold credits, symmetrically |
+| Holds | `Reserve`/`Settle`/`Release` on a credit-priced feature refuse with `CreditHoldUnsupported` — holding credits is slice 1b |
 | `check()` | `remaining` is the pool; `amount × rate` is what is compared |
 | Read model | `FeatureEntitlement` for a credit-priced feature carries the rate used and the shared balance |
 
@@ -64,6 +64,14 @@ Refusals, all at the deploy: a credit-priced feature with an `included` allowanc
 (`CatalogCreditFeatureHasAllowance`), an allowance naming a feature that is priced in credits
 (`CatalogAllowanceOnCreditFeature`), a rate card with no `"default"`
 (`CatalogCreditRateMissing`), and a non-positive rate (`CatalogCreditRateInvalid`).
+
+### 1b — holds on credits
+
+A reservation against a credit-priced feature holds *credits* from the shared
+pool, so the pool needs a reserved count as well as a balance, and settle
+converts a hold into a `UsageRecorded` carrying its cost. Until then the three
+hold commands refuse on a credit-priced feature rather than pretending to hold
+units that do not exist.
 
 ### 2 — prepaid
 

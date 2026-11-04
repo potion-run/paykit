@@ -50,6 +50,9 @@ const story = Story.make(PaykitModel, {
 /** An account on the unlimited tier: no count, but still a period. */
 const activated = new SubscriptionActivated({
   tier: "unlimited",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: unlimited,
   remaining: { messages: null },
   periodStart: start,
@@ -64,7 +67,17 @@ const activated = new SubscriptionActivated({
 const subscribed = [
   Story.provide(Actor, system("test")),
   Story.clock(start),
-  Story.when(account, new Subscribe({ tier: "unlimited", allowances: unlimited, price })),
+  Story.when(
+    account,
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "unlimited",
+      allowances: unlimited,
+      price,
+    }),
+  ),
   Story.then(account, activated),
 ] as const;
 
@@ -89,6 +102,8 @@ it.effect("records usage that never blocks, and keeps no count to report", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 1_000_000,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 1_000_000,
         remainingAfter: null,
       }),
@@ -100,6 +115,8 @@ it.effect("records usage that never blocks, and keeps no count to report", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 1_000_000,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 2_000_000,
         remainingAfter: null,
       }),
@@ -129,6 +146,8 @@ it.effect("holds, settles and releases unlimited units without refusing", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 4_000_000,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 4_000_000,
         remainingAfter: null,
       }),
@@ -164,6 +183,8 @@ it.effect("closes the period: usage resets, the count stays absent, the period s
       new UsageRecorded({
         feature: "messages",
         amount: 5,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 5,
         remainingAfter: null,
       }),
@@ -203,7 +224,14 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
     const entitlements = yield* Entitlements;
     const receipt = yield* subscription.send(
       Subscription.ref(account.id),
-      new Subscribe({ tier: "unlimited", allowances: unlimited, price }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "unlimited",
+        allowances: unlimited,
+        price,
+      }),
     );
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);

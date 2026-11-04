@@ -6,6 +6,11 @@ import { allowance, grant } from "../src/Allowance.ts";
 import {
   CatalogCarryOverNeverResets,
   CatalogCarryOverOnFlag,
+  CatalogCreditRatesOnFlag,
+  CatalogCreditFeatureHasAllowance,
+  CatalogCreditGrantInvalid,
+  CatalogCreditRateInvalid,
+  CatalogCreditRateMissing,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
@@ -26,6 +31,7 @@ import { TierId, tier } from "../src/Tier.ts";
 
 const seats = feature({ id: "seats", name: "Seats" });
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
+const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });
 
 const free = tier({
   id: "free",
@@ -233,6 +239,87 @@ describe("catalog", () => {
         // The refusal names the feature, so an operator can find the grant.
         expect(result.failure.feature).toBe("messages");
         expect(result.failure.tier).toBe("contradictory");
+      }
+    }
+  });
+
+  it("accepts a credit-priced feature and a tier that sells a pool", () => {
+    const creditsTier = tier({
+      id: "credits",
+      price: { amount: 9_900, currency: "usd", interval: "month" },
+      credits: 50_000,
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const result = defineCatalog({ features: [messages, ai], tiers: [creditsTier] });
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result)) {
+      expect(featureOf(result.success, "ai")?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
+      expect(tierOf(result.success, "credits")?.credits).toBe(50_000);
+    }
+  });
+
+  it("refuses a rate card with no default, and a rate that is not positive", () => {
+    const missing = defineCatalog({
+      features: [feature({ id: "ai", creditRates: { "gpt-large": 10 } })],
+      tiers: [],
+    });
+    expect(Result.isFailure(missing)).toBe(true);
+    if (Result.isFailure(missing)) {
+      expect(Schema.is(CatalogCreditRateMissing)(missing.failure)).toBe(true);
+      if (!Schema.is(CatalogCreditRateMissing)(missing.failure)) return;
+      expect(missing.failure.feature).toBe("ai");
+    }
+
+    for (const rate of [0, -1]) {
+      const invalid = defineCatalog({
+        features: [feature({ id: "ai", creditRates: { default: 1, "gpt-large": rate } })],
+        tiers: [],
+      });
+      expect(Result.isFailure(invalid)).toBe(true);
+      if (Result.isFailure(invalid)) {
+        expect(Schema.is(CatalogCreditRateInvalid)(invalid.failure)).toBe(true);
+        if (!Schema.is(CatalogCreditRateInvalid)(invalid.failure)) return;
+        expect(invalid.failure.feature).toBe("ai");
+        expect(invalid.failure.dimension).toBe("gpt-large");
+      }
+    }
+  });
+
+  it("refuses an allowance for a credit-priced feature, or a rate card on a flag", () => {
+    const counted = tier({ id: "counted", grants: [allowance(ai, { included: 100 })] });
+    const withAllowance = defineCatalog({ features: [ai], tiers: [counted] });
+    expect(Result.isFailure(withAllowance)).toBe(true);
+    if (Result.isFailure(withAllowance)) {
+      expect(Schema.is(CatalogCreditFeatureHasAllowance)(withAllowance.failure)).toBe(true);
+      if (!Schema.is(CatalogCreditFeatureHasAllowance)(withAllowance.failure)) return;
+      expect(withAllowance.failure.tier).toBe("counted");
+      expect(withAllowance.failure.feature).toBe("ai");
+    }
+
+    const flagged = feature({ id: "sso", kind: "flag", creditRates: { default: 1 } });
+    const onFlag = defineCatalog({
+      features: [flagged],
+      tiers: [tier({ id: "flagged", grants: [grant(flagged)] })],
+    });
+    expect(Result.isFailure(onFlag)).toBe(true);
+    if (Result.isFailure(onFlag)) {
+      expect(Schema.is(CatalogCreditRatesOnFlag)(onFlag.failure)).toBe(true);
+      if (!Schema.is(CatalogCreditRatesOnFlag)(onFlag.failure)) return;
+      expect(onFlag.failure.feature).toBe("sso");
+    }
+  });
+
+  it("refuses a credit grant that is negative or expires with nothing to expire", () => {
+    for (const bad of [
+      tier({ id: "negative", credits: -1, grants: [allowance(messages, { included: 1 })] }),
+      tier({ id: "empty", creditsExpire: "never", grants: [allowance(messages, { included: 1 })] }),
+    ]) {
+      const result = defineCatalog({ features: [messages], tiers: [bad] });
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(Schema.is(CatalogCreditGrantInvalid)(result.failure)).toBe(true);
+        if (!Schema.is(CatalogCreditGrantInvalid)(result.failure)) return;
+        expect(result.failure.tier).toBe(bad.id);
       }
     }
   });

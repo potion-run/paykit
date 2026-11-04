@@ -47,6 +47,7 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
 | `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
 | `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, and whether what is unspent rolls over | `Limit` — a limit is one field of an allowance |
+| `Credit` | the account's pool, spent by every feature whose rate card prices it, granted by a tier | `Balance` — one balance is not a meter; `Points` |
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
@@ -60,6 +61,13 @@ defaults it to `"allow"` and the catalog refuses any other value beside `"unlimi
 (`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`, and
 `Allowance.carryOver` says whether what a period did not spend rolls into the next one (at most
 `included`); it is refused on a flag and on `resets: "never"`.
+
+A feature is priced one of two ways. It counts its own units (`Allowance`), or it declares
+`creditRates: Record<string, Int>` — credits per unit, keyed by a dimension the caller names, with
+a required `"default"` — and spends the account's `Credit` pool. A credit-priced feature has no
+allowance (`CatalogCreditFeatureHasAllowance`) and its `remaining` is the pool, shared with every
+other credit-priced feature. A tier states `credits` and `creditsExpire` (`"period"` by default,
+which zeroes the pool at a close; `"never"` keeps it).
 
 ## Package
 
@@ -169,11 +177,16 @@ A catalog is three plain declarations, and every value it holds is serializable:
   a flag grant on a metered feature — is refused.
 - `tier({ id, name, price, grants })` bundles allowances. A tier with no `price` is free; a tier
   must grant at least one allowance, because one that grants nothing could never activate.
+- `feature({ id, name, kind, creditRates })` may declare a rate card, which makes the feature
+  credit-priced: `track({ feature, amount, dimension })` then spends `amount × rate` from the pool,
+  and `check({ feature, amount, dimension })` compares against it.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
   `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
-  `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`, or
-  `CatalogInvalid` for a schema failure.
+  `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`,
+  `CatalogCreditRateMissing`, `CatalogCreditRateInvalid`, `CatalogCreditFeatureHasAllowance`,
+  `CatalogCreditAllowanceOnFlag`, `CatalogCreditGrantInvalid`, or `CatalogInvalid` for a schema
+  failure.
 
 Constructors stay pure and total. Validation happens at `catalog()`, which is where a deploy
 can refuse a catalog before it reaches money. `defineCatalog()` is the synchronous `Result`

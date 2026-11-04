@@ -16,6 +16,17 @@ export const seats = Paykit.feature({ id: "seats", name: "Seats" });
  */
 export const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
 
+/**
+ * A feature priced in credits: a unit costs credits by the dimension that
+ * served it, and every credit-priced feature spends the one pool the tier
+ * grants. There is no allowance for it, because the pool is the count.
+ */
+export const ai = Paykit.feature({
+  id: "ai",
+  name: "AI",
+  creditRates: { default: 1, "gpt-large": 10 },
+});
+
 export const free = Paykit.tier({
   id: "free",
   name: "Free",
@@ -38,6 +49,9 @@ export const scale = Paykit.tier({
   id: "scale",
   name: "Scale",
   price: { amount: 9_900, currency: "usd", interval: "month" },
+  // The pool `ai` spends from, granted when the tier activates and expired at
+  // the period close (the default).
+  credits: 50_000,
   grants: [
     // Unlimited: `overage` defaults to "allow", because past an allowance that
     // never runs out there is nothing to block and nothing to bill. `check()`
@@ -48,4 +62,4 @@ export const scale = Paykit.tier({
   ],
 });
 
-export const billingCatalog = { features: [messages, seats, sso], tiers: [free, pro, scale] };
+export const billingCatalog = { features: [messages, seats, sso, ai], tiers: [free, pro, scale] };

@@ -55,9 +55,19 @@ describe("the model hosted on SQL", () => {
       const { platform, log } = yield* world;
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
-        yield* subscription.send(account, new Subscribe({ tier: "free", allowances: free }), {
-          commandId: "subscribe-1",
-        } as never);
+        yield* subscription.send(
+          account,
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
+          {
+            commandId: "subscribe-1",
+          } as never,
+        );
       }).pipe(Effect.provide(hosted(platform)));
 
       // The truth is in SQL, keyed by the model and the aggregate.
@@ -74,7 +84,13 @@ describe("the model hosted on SQL", () => {
         const subscription = yield* Subscription;
         const receipt = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         const entitlements = yield* Entitlements;
@@ -110,12 +126,24 @@ describe("the model hosted on SQL", () => {
         const subscription = yield* Subscription;
         const first = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         const again = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         expect(again.version).toBe(first.version);
@@ -132,7 +160,13 @@ describe("the model hosted on SQL", () => {
         const entitlements = yield* Entitlements;
         const receipt = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         yield* entitlements.query(account, { atLeast: receipt });
@@ -167,7 +201,13 @@ describe("the model hosted on SQL", () => {
         const entitlements = yield* Entitlements;
         const subscribed = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         yield* entitlements.query(account, { atLeast: subscribed });
@@ -220,7 +260,13 @@ describe("the model hosted on SQL", () => {
         const entitlements = yield* Entitlements;
         const receipt = yield* subscription.send(
           account,
-          new Subscribe({ tier: "free", allowances: free }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
           { commandId: "subscribe-1" } as never,
         );
         yield* entitlements.query(account, { atLeast: receipt });

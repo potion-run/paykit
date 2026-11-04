@@ -3,6 +3,8 @@
 
 // ── 1. deploy-time ──────────────────────────────────────────────────────────
 export {
+  CreditRateCards,
+  CreditRates,
   Feature,
   FeatureId,
   FeatureKind,
@@ -14,7 +16,7 @@ export {
 export type { FeatureInput } from "./Feature.ts";
 export { Allowance, Allowances, Included, Overage, Resets, allowance, grant } from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
-export { Interval, Price, Tier, TierId, tier } from "./Tier.ts";
+export { CreditsExpire, Interval, Price, Tier, TierId, tier } from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
 export {
   Catalog,
@@ -23,6 +25,11 @@ export {
   CatalogDuplicateTier,
   CatalogCarryOverNeverResets,
   CatalogCarryOverOnFlag,
+  CatalogCreditRatesOnFlag,
+  CatalogCreditFeatureHasAllowance,
+  CatalogCreditGrantInvalid,
+  CatalogCreditRateInvalid,
+  CatalogCreditRateMissing,
   CatalogEmptyTier,
   CatalogError,
   CatalogFlagNotGranted,
@@ -32,9 +39,12 @@ export {
   CatalogFlagOnMetered,
   allowancesOf,
   catalog,
+  creditRatesOf,
+  creditTermsOf,
   defineCatalog,
   featureOf,
   tierOf,
+  tierTermsOf,
 } from "./Catalog.ts";
 export type { CatalogInput } from "./Catalog.ts";
 export {
@@ -235,12 +245,14 @@ export { TrialStarted, StartTrial } from "./Subscription/StartTrial.command.ts";
 export { TierChanged, ChangeTier, DowngradeBelowUsage } from "./Subscription/ChangeTier.command.ts";
 export {
   AllowanceExceeded,
+  CreditExceeded,
   FeatureNotMetered,
   StandingBlocksUsage,
   TrackUsage,
   UsageRecorded,
 } from "./Subscription/TrackUsage.command.ts";
 export {
+  CreditHoldUnsupported,
   ReservationExceeded,
   ReserveUsage,
   UsageReserved,

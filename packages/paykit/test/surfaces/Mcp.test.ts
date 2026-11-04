@@ -120,7 +120,16 @@ describe("the MCP surface", () => {
         "tools/call",
         {
           name: "BillingApi_Subscribe_send",
-          arguments: { target: account.id, input: { tier: "free", allowances: free } },
+          arguments: {
+            target: account.id,
+            input: {
+              tier: "free",
+              allowances: free,
+              credits: 0,
+              creditsExpire: "period",
+              rates: {},
+            },
+          },
         },
         { "x-paykit-actor": account.id },
       );

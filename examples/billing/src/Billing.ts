@@ -3,6 +3,7 @@ import {
   allowancesOf,
   catalog,
   catalogLayer,
+  tierTermsOf,
   DevGuards,
   Manual,
   MemoryBillingReadStore,
@@ -28,13 +29,9 @@ export const Catalog = Effect.runSync(catalog(billingCatalog));
  * refuses anything that disagrees with the catalog.
  */
 export const tierCommand = (tierId: string) => {
-  const tier = Catalog.tiers.find((candidate) => candidate.id === tierId);
-  if (tier === undefined) throw new Error(`no tier ${tierId} in the catalog`);
-  return {
-    tier: tier.id,
-    allowances: allowancesOf(Catalog, tier.id)!,
-    ...(tier.price === undefined ? {} : { price: tier.price }),
-  };
+  const terms = tierTermsOf(Catalog, tierId);
+  if (terms === null) throw new Error(`no tier ${tierId} in the catalog`);
+  return { tier: tierId, ...terms };
 };
 
 /** What a tier grants, for an assertion or a fixture. */

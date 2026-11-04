@@ -59,6 +59,9 @@ const story = Story.make(PaykitModel, {
 /** A flag is granted, so it carries no count while the meter beside it does. */
 const activated = new SubscriptionActivated({
   tier: "enterprise",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: enterprise,
   remaining: { sso: null, messages: 50_000 },
   periodStart: start,
@@ -73,7 +76,17 @@ const activated = new SubscriptionActivated({
 const subscribed = [
   Story.provide(Actor, system("test")),
   Story.clock(start),
-  Story.when(account, new Subscribe({ tier: "enterprise", allowances: enterprise, price })),
+  Story.when(
+    account,
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "enterprise",
+      allowances: enterprise,
+      price,
+    }),
+  ),
   Story.then(account, activated),
 ] as const;
 
@@ -107,6 +120,8 @@ it.effect("refuses usage against a flag, however it is recorded", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 10,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 10,
         remainingAfter: 49_990,
       }),
@@ -159,7 +174,13 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     // No grant at all: the existing missing-feature path, unchanged.
     const basicReceipt = yield* subscription.send(
       Subscription.ref(account.id),
-      new Subscribe({ tier: "basic", allowances: basic }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "basic",
+        allowances: basic,
+      }),
     );
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: basicReceipt });
     yield* BillingRead.caughtUp(basicReceipt);
@@ -170,7 +191,14 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     // A granted flag: allowed, with no count and no reset to wait for.
     const receipt = yield* subscription.send(
       Subscription.ref(account.id),
-      new Subscribe({ tier: "enterprise", allowances: enterprise, price }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "enterprise",
+        allowances: enterprise,
+        price,
+      }),
     );
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);

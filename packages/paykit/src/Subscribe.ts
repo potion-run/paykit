@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { asSystem } from "./Auth/Actor.ts";
-import { allowancesOf, tierOf } from "./Catalog.ts";
+import { tierOf, tierTermsOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import {
   type PaymentError,
@@ -96,16 +96,27 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
 
   return Effect.fn("Paykit.Subscribe.start")(function* (input: SubscribeInput) {
     const tier = tierOf(catalog, input.tier);
-    const allowances = allowancesOf(catalog, input.tier);
-    if (tier === null || allowances === null) {
+    const terms = tierTermsOf(catalog, input.tier);
+    if (tier === null || terms === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
+    const { allowances, credits, creditsExpire, rates } = terms;
     const ref = Subscription.ref(input.account);
     const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
 
     if (tier.price === undefined) {
       const receipt = yield* asSystem(
-        subscription.send(ref, new SubscribeCommand({ tier: tier.id, allowances, ...anchored })),
+        subscription.send(
+          ref,
+          new SubscribeCommand({
+            tier: tier.id,
+            allowances,
+            credits,
+            creditsExpire,
+            rates,
+            ...anchored,
+          }),
+        ),
       );
       yield* entitlements.query(ref, { atLeast: receipt });
       return { activated: true } as const satisfies SubscribeResult;

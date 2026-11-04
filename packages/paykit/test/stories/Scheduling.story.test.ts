@@ -47,6 +47,9 @@ const march = at("2030-03-01T00:00:00Z");
 
 const activated = new SubscriptionActivated({
   tier: "pro",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: pro,
   remaining: { messages: 2000 },
   periodStart: start,
@@ -77,7 +80,17 @@ it.effect("PeriodRollover closes the period on the clock without a manual comman
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.clock(monthLater),
     Story.then(account, ...closed(start, monthLater, march)),
@@ -89,7 +102,17 @@ it.effect("a closed period schedules the next rollover, so the chain continues",
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.clock(monthLater),
     Story.then(account, ...closed(start, monthLater, march)),
@@ -102,7 +125,17 @@ it.effect("Dunning expires an account when grace elapses", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(
       account,
@@ -127,7 +160,17 @@ it.effect("a payment before the deadline makes the scheduled expiry a no-op", ()
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(
       account,
@@ -161,6 +204,9 @@ it.effect("a trial closes its period on the trial deadline and becomes active", 
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: pro,
         trialEndsAt: at("2030-01-15T00:00:00Z"),
       }),
@@ -169,6 +215,9 @@ it.effect("a trial closes its period on the trial deadline and becomes active", 
       account,
       new TrialStarted({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: pro,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -192,6 +241,9 @@ it.effect("extending a trial reschedules its close to the new deadline", () =>
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: pro,
         trialEndsAt: at("2030-01-15T00:00:00Z"),
       }),
@@ -200,6 +252,9 @@ it.effect("extending a trial reschedules its close to the new deadline", () =>
       account,
       new TrialStarted({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: pro,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -229,7 +284,17 @@ it.effect("counts payment failures on the billing page, and clears them on recov
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: pro, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(
       account,

@@ -115,7 +115,26 @@ const enterprise = Paykit.tier({
   grants: [Paykit.grant(sso), Paykit.allowance(Paykit.messages, { included: 50_000 })],
 });
 
-Paykit.catalog({ features: [Paykit.messages, seats, sso], tiers: [team, scale, enterprise] });
+// A feature priced in credits: a unit costs credits by the dimension that
+// served it, and the tier grants the pool they are drawn from.
+const ai = Paykit.feature({
+  id: "ai",
+  name: "AI",
+  creditRates: { default: 1, "gpt-large": 10 },
+});
+
+const credits = Paykit.tier({
+  id: "credits",
+  name: "Credits",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  credits: 50_000, // granted on activation; `creditsExpire: "period"` is the default
+  grants: [Paykit.allowance(Paykit.messages, { included: 50_000 })],
+});
+
+Paykit.catalog({
+  features: [Paykit.messages, seats, sso, ai],
+  tiers: [team, scale, enterprise, credits],
+});
 ```
 
 A feature is declared once and quoted by identity, so a tier cannot grant a feature the catalog
@@ -123,8 +142,11 @@ never declared. `catalog()` refuses duplicate feature ids, duplicate tier ids, a
 the same feature twice, a tier with no grants, an unlimited allowance that also names a `block` or
 `bill` overage (`CatalogUnlimitedOverage`), a `kind: "flag"` feature granted a count
 (`CatalogFlagNotGranted`), `carryOver` on a flag (`CatalogCarryOverOnFlag`) or beside
-`resets: "never"` (`CatalogCarryOverNeverResets`), and a price that is not positive whole minor
-units.
+`resets: "never"` (`CatalogCarryOverNeverResets`), a rate card with no `"default"`
+(`CatalogCreditRateMissing`), a rate that is not a positive integer (`CatalogCreditRateInvalid`), an
+allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a rate card on a flag
+(`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), and a
+price that is not positive whole minor units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
 `{ allowed, remaining: null, resetsAt: null, standing }`, and `Track`, `Reserve`, `Settle` and
@@ -133,6 +155,13 @@ units.
 `carryOver: true` rolls what a period did not spend into the next one, at most `included`: the new
 period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`, and the read model
 carries the rolled-over amount so a console can show it.
+
+`creditRates` prices a feature in credits instead of units. One pool per account: every
+credit-priced feature reports the same `remaining`, `track({ feature, amount, dimension })` spends
+`amount × rate` from it, and a request the pool cannot cover is refused with `CreditExceeded`.
+`check({ feature, amount, dimension })` prices the request before comparing it, so it answers from
+the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
+default) zeroes it at a period close while `"never"` keeps it.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no

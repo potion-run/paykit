@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { BillingReadStore, type BillingReadRow } from "./BillingReadStore.ts";
 import { Entitlements, type EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
-import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
+import { Standing, SubscriptionStatus, creditRateOf } from "./Subscription/Subscription.state.ts";
 
 /** What a caller asks before doing work. */
 export const CheckInput = Schema.Struct({
@@ -14,6 +14,8 @@ export const CheckInput = Schema.Struct({
   feature: Schema.String,
   /** How much will be consumed. Defaults to 1. */
   amount: Schema.optionalKey(Schema.Int),
+  /** Which rate prices it, for a credit-priced feature. */
+  dimension: Schema.optionalKey(Schema.String),
 });
 export type CheckInput = typeof CheckInput.Type;
 
@@ -58,6 +60,8 @@ export const evaluateCheck = (
           readonly overage: string;
           readonly remaining: number | null;
           readonly resetsAt: DateTime.Utc | null;
+          /** Present on a credit-priced feature, whose `remaining` is the pool. */
+          readonly creditRates?: Readonly<Record<string, number>>;
         }
       >
     >;
@@ -70,11 +74,17 @@ export const evaluateCheck = (
     return { allowed: false, remaining: 0, resetsAt: null, standing: state.standing };
   }
   const amount = input.amount ?? 1;
+  // A credit-priced feature is priced before it is compared: the pool must
+  // cover `amount × rate`, not `amount`. Everything else is a count.
+  const needed =
+    feature.creditRates === undefined
+      ? amount
+      : amount * creditRateOf(feature.creditRates, input.dimension);
   // A `null` remaining is an allowance that never runs out: it always has room,
   // and the answer reports the absence of a count rather than a number.
   const allowed =
     state.standing !== "blocked" &&
-    (feature.overage !== "block" || feature.remaining === null || amount <= feature.remaining);
+    (feature.overage !== "block" || feature.remaining === null || needed <= feature.remaining);
   return {
     allowed,
     remaining: feature.remaining,

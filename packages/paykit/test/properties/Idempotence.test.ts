@@ -42,9 +42,19 @@ describe("idempotence", () => {
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const account = Subscription.ref("acct_idem");
-      yield* subscription.send(account, new Subscribe({ tier: "free", allowances: free }), {
-        commandId: "subscribe-1",
-      });
+      yield* subscription.send(
+        account,
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "free",
+          allowances: free,
+        }),
+        {
+          commandId: "subscribe-1",
+        },
+      );
       const first = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 10, dedupeKey: "req-1" }),
@@ -65,9 +75,20 @@ describe("idempotence", () => {
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const account = Subscription.ref("acct_idem_2");
-      yield* subscription.send(account, new Subscribe({ tier: "pro", allowances: pro, price }), {
-        commandId: "subscribe-2",
-      });
+      yield* subscription.send(
+        account,
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "pro",
+          allowances: pro,
+          price,
+        }),
+        {
+          commandId: "subscribe-2",
+        },
+      );
       const graceUntil = DateTime.makeUnsafe("2030-01-08T00:00:00Z");
       const command = new RecordPaymentFailure({ reason: "card_declined", graceUntil });
       yield* subscription.send(account, command, { commandId: "evt_failed_1" });
@@ -81,9 +102,19 @@ describe("idempotence", () => {
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const account = Subscription.ref("acct_idem_3");
-      yield* subscription.send(account, new Subscribe({ tier: "free", allowances: free }), {
-        commandId: "subscribe-3",
-      });
+      yield* subscription.send(
+        account,
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "free",
+          allowances: free,
+        }),
+        {
+          commandId: "subscribe-3",
+        },
+      );
       const first = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 7, dedupeKey: "req-7" }),

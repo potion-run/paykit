@@ -17,6 +17,14 @@ export type FeatureId = typeof FeatureId.Type;
 export const FeatureKind = Schema.Literals(["metered", "flag"]);
 export type FeatureKind = typeof FeatureKind.Type;
 
+/** Credits per unit, keyed by the dimension a caller names. */
+export const CreditRates = Schema.Record(Schema.String, Schema.Int);
+export type CreditRates = typeof CreditRates.Type;
+
+/** Every credit-priced feature's rate card, keyed by feature id. */
+export const CreditRateCards = Schema.Record(Schema.String, CreditRates);
+export type CreditRateCards = typeof CreditRateCards.Type;
+
 /**
  * A meterable thing a tier grants. A feature is declared once in a catalog
  * and quoted by identity from every tier that grants it, so a typo is a
@@ -27,6 +35,12 @@ export const Feature = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   /** A `metered` feature is counted; a `flag` is on or off. */
   kind: FeatureKind,
+  /**
+   * What a unit costs in credits, keyed by the dimension that served it, with
+   * a required `"default"`. A feature with a rate card is priced in credits and
+   * draws on the account's pool instead of counting units of its own.
+   */
+  creditRates: Schema.optionalKey(CreditRates),
 });
 export type Feature = typeof Feature.Type;
 
@@ -37,6 +51,8 @@ export interface FeatureInput {
   readonly name?: string;
   /** @default "metered" */
   readonly kind?: FeatureKind;
+  /** Credits per unit by dimension; `"default"` is required when present. */
+  readonly creditRates?: CreditRates;
 }
 
 /**
@@ -50,12 +66,21 @@ export interface FeatureInput {
  *
  * // A flag is on or off: a tier grants it with `grant()`, and nothing counts.
  * const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
+ *
+ * // A credit-priced feature: a unit costs credits by the dimension that
+ * // served it, and the credits come out of the account's pool.
+ * const ai = feature({
+ *   id: "ai",
+ *   name: "AI",
+ *   creditRates: { default: 1, "gpt-large": 10 },
+ * });
  * ```
  */
 export const feature = (input: FeatureInput): Feature => ({
   id: input.id as FeatureId,
   ...(input.name === undefined ? {} : { name: input.name }),
   kind: input.kind ?? "metered",
+  ...(input.creditRates === undefined ? {} : { creditRates: { ...input.creditRates } }),
 });
 
 /**

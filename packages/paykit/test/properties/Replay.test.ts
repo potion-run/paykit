@@ -81,7 +81,14 @@ describe("replay", () => {
   it("folds a generated command sequence back to the state it walked", () => {
     const opened = decide(
       initialSubscriptionState,
-      new Subscribe({ tier: "pro", allowances: pro, price }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price,
+      }),
     ) as ReadonlyArray<AnyEvent>;
     let state = evolve(initialSubscriptionState, opened) as SubscribedState;
     const committed: AnyEvent[] = [...opened];
@@ -136,7 +143,14 @@ describe("replay", () => {
       initialSubscriptionState,
       decide(
         initialSubscriptionState,
-        new Subscribe({ tier: "pro", allowances: pro, price }),
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "pro",
+          allowances: pro,
+          price,
+        }),
       ) as ReadonlyArray<AnyEvent>,
     );
     const command = new TrackUsage({ feature: "messages", amount: 12 });

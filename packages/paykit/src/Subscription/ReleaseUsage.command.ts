@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
+import { CreditHoldUnsupported } from "./ReserveUsage.command.ts";
 import { NoReservation } from "./SettleUsage.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { FeatureNotMetered } from "./TrackUsage.command.ts";
@@ -26,6 +27,6 @@ export class ReleaseUsage extends Domain.Command("ReleaseUsage", {
     amount: Schema.Int,
   },
   events: [UsageReleased],
-  rejects: [NoReservation, FeatureNotMetered],
+  rejects: [NoReservation, FeatureNotMetered, CreditHoldUnsupported],
   middleware: [Session],
 }) {}

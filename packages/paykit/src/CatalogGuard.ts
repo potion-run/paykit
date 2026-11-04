@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import type { Allowance } from "./Allowance.ts";
-import { allowancesOf, tierOf } from "./Catalog.ts";
+import { allowancesOf, creditRatesOf, tierOf } from "./Catalog.ts";
 import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { Price } from "./Tier.ts";
@@ -12,6 +12,9 @@ interface CatalogCarried {
   readonly tier?: string;
   readonly allowances?: Readonly<Record<string, Allowance>>;
   readonly price?: Price;
+  readonly credits?: number;
+  readonly creditsExpire?: string;
+  readonly rates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }
 
 /**
@@ -30,6 +33,19 @@ const allowancesKey = (allowances: Readonly<Record<string, Allowance>>): string 
 
 const priceKey = (price: Price | undefined): string =>
   price === undefined ? "free" : `${price.amount}:${price.currency}:${price.interval}`;
+
+/** Every rate, dimension by dimension, in a stable order. */
+const ratesKey = (rates: Readonly<Record<string, Readonly<Record<string, number>>>>): string =>
+  Object.keys(rates)
+    .sort()
+    .map(
+      (feature) =>
+        `${feature}=${Object.keys(rates[feature]!)
+          .sort()
+          .map((dimension) => `${dimension}:${rates[feature]![dimension]}`)
+          .join(",")}`,
+    )
+    .join("|");
 
 /**
  * Compare a command's catalog-derived fields with what the catalog says, and
@@ -65,6 +81,38 @@ export const catalogMismatchOf = (
       field: "price",
       expected: expectedPrice,
       actual: actualPrice,
+    });
+  }
+  // The credit terms decide what a request costs and when the pool runs out,
+  // so a command that claims different ones never reaches `decide`.
+  const expectedCredits = String(tier.credits ?? 0);
+  const actualCredits = String(input.credits ?? 0);
+  if (expectedCredits !== actualCredits) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "credits",
+      expected: expectedCredits,
+      actual: actualCredits,
+    });
+  }
+  const expectedExpire = tier.creditsExpire ?? "period";
+  const actualExpire = input.creditsExpire ?? "period";
+  if (expectedExpire !== actualExpire) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "creditsExpire",
+      expected: expectedExpire,
+      actual: actualExpire,
+    });
+  }
+  const expectedRates = ratesKey(creditRatesOf(catalog));
+  const actualRates = ratesKey(input.rates ?? {});
+  if (expectedRates !== actualRates) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "rates",
+      expected: expectedRates,
+      actual: actualRates,
     });
   }
   return null;

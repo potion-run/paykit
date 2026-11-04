@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
-import { allowancesOf, tierOf } from "./Catalog.ts";
+import { tierOf, tierTermsOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "./Subscription/RecordPaymentFailure.command.ts";
@@ -113,8 +113,8 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
         if (event.tier === undefined) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
-        const allowances = allowancesOf(catalog, event.tier);
-        if (allowances === null) {
+        const terms = tierTermsOf(catalog, event.tier);
+        if (terms === null) {
           return yield* new TierNotInCatalog({ tier: event.tier });
         }
         const tier = tierOf(catalog, event.tier);
@@ -123,7 +123,10 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
             ref,
             new SubscribeCommand({
               tier: event.tier,
-              allowances,
+              allowances: terms.allowances,
+              credits: terms.credits,
+              creditsExpire: terms.creditsExpire,
+              rates: terms.rates,
               ...(tier?.price === undefined ? {} : { price: tier.price }),
               ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
             }),

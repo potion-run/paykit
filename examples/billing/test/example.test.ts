@@ -181,6 +181,42 @@ describe("the example billing app", () => {
     }).pipe(run),
   );
 
+  it.live("prices a request in credits, by dimension, from one shared pool", () =>
+    Effect.gen(function* () {
+      const tenant = yield* BillingApi.clientInProcess;
+      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      yield* caughtUp(receipt);
+
+      const track = yield* Paykit.Track();
+      // 100 large-model units at 10 credits each: 1,000 credits of the pool.
+      yield* track({ account: account.id, feature: "ai", amount: 100, dimension: "gpt-large" });
+
+      const check = yield* Paykit.Check();
+      const answer = yield* check({
+        account: account.id,
+        feature: "ai",
+        amount: 1,
+        dimension: "gpt-large",
+      });
+      expect(answer.allowed).toBe(true);
+      // 50,000 granted, 1,000 spent: `remaining` is the pool, not a counter.
+      expect(answer.remaining).toBe(49_000);
+
+      // 5,000 large-model units cost 50,000, which the pool cannot cover.
+      const tooMuch = yield* check({
+        account: account.id,
+        feature: "ai",
+        amount: 5_000,
+        dimension: "gpt-large",
+      });
+      expect(tooMuch.allowed).toBe(false);
+      // The same 5,000 units at the default rate cost 5,000, which it can.
+      expect((yield* check({ account: account.id, feature: "ai", amount: 5_000 })).allowed).toBe(
+        true,
+      );
+    }).pipe(run),
+  );
+
   it.live("shows the charge before applying it", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
@@ -245,6 +281,11 @@ describe("the example billing app", () => {
 
   it("the catalog the example ships is the one the deploy validates", () => {
     expect(Catalog.tiers.map((tier) => tier.id)).toEqual(["free", "pro", "scale"]);
-    expect(Catalog.features.map((feature) => feature.id)).toEqual(["messages", "seats", "sso"]);
+    expect(Catalog.features.map((feature) => feature.id)).toEqual([
+      "messages",
+      "seats",
+      "sso",
+      "ai",
+    ]);
   });
 });

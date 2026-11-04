@@ -88,6 +88,9 @@ const decide = (
 const activated = (tierId: string, allowances: typeof block) => {
   const subscribe = new Subscribe({
     tier: tierId,
+    credits: 0,
+    creditsExpire: "period",
+    rates: {},
     allowances,
     ...(tierId === "bill" ? { price } : {}),
   });

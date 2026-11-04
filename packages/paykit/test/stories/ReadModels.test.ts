@@ -38,11 +38,23 @@ it.effect("appends every subscription event to AccountEvents", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "free", allowances: free })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: free,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "free",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: free,
         remaining: { messages: 100 },
         periodStart: start,
@@ -57,6 +69,9 @@ it.effect("appends every subscription event to AccountEvents", () =>
       account,
       new SubscriptionActivated({
         tier: "free",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: free,
         remaining: { messages: 100 },
         periodStart: start,
@@ -72,6 +87,8 @@ it.effect("appends every subscription event to AccountEvents", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 12,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 12,
         remainingAfter: 88,
       }),
@@ -82,6 +99,8 @@ it.effect("appends every subscription event to AccountEvents", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 12,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 12,
         remainingAfter: 88,
       }),
@@ -97,7 +116,13 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
     const ref = Subscription.ref("acct_read_live");
     const receipt = yield* subscription.send(
       ref,
-      new Subscribe({ tier: "free", allowances: free }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: free,
+      }),
     );
     // BillingRead consumes Entitlements, so wait for the view before the projection.
     const view = Option.getOrNull(yield* state.query(ref, { atLeast: receipt }));

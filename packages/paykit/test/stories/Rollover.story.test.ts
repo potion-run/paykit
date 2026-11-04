@@ -68,11 +68,24 @@ const subscribed = (tierId: string, allowances: typeof carrying) =>
   [
     Story.provide(Actor, system("test")),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: tierId, allowances, price })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: tierId,
+        allowances,
+        price,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: tierId,
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances,
         remaining: { messages: includedOf(allowances) },
         periodStart: start,
@@ -133,6 +146,8 @@ it.effect("carries what the period did not spend into the next one", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 520,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 520,
         remainingAfter: 1_480,
       }),
@@ -163,6 +178,8 @@ it.effect("carries what the period did not spend into the next one", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 3_480,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 3_480,
         remainingAfter: 0,
       }),
@@ -212,6 +229,8 @@ it.effect("resets an allowance that does not carry to what it includes", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 520,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 520,
         remainingAfter: 1_480,
       }),
@@ -245,6 +264,8 @@ it.effect("carries nothing when the period ended over its allowance", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 150,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 150,
         remainingAfter: -50,
       }),
@@ -281,6 +302,8 @@ it.effect("an unlimited allowance closes to no count and carries nothing", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 5,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 5,
         remainingAfter: null,
       }),

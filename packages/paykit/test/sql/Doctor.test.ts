@@ -29,7 +29,13 @@ const opened = (account = "acct_doctor") =>
     const log = SqlEventLog(sql, { now: () => 1_000 });
     const events = Subscription.definition.decide.Subscribe(
       initialSubscriptionState,
-      new Subscribe({ tier: "free", allowances: free }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: free,
+      }),
       {
         id: Subscription.ref(account).id,
         commandId: "evt_1",

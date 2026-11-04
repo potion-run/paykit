@@ -44,6 +44,9 @@ const story = Story.make(PaykitModel, {
 
 const activated = new SubscriptionActivated({
   tier: "pro",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: proAllowances,
   remaining: { messages: 2000 },
   periodStart: start,
@@ -59,7 +62,17 @@ it.effect("holds allowance, then bills exactly what it held", () =>
   story(
     Story.provide(Actor, system("test")),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(account, new ReserveUsage({ feature: "messages", amount: 400 })),
     Story.then(
@@ -77,6 +90,8 @@ it.effect("holds allowance, then bills exactly what it held", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 400,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 400,
         remainingAfter: 1600,
       }),
@@ -94,7 +109,17 @@ it.effect("refuses a reservation past the spendable amount, and holding twice", 
   story(
     Story.provide(Actor, system("test")),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(account, new ReserveUsage({ feature: "messages", amount: 1_800 })),
     Story.then(
@@ -137,7 +162,17 @@ it.effect("releases a hold without billing it, and refuses to settle past what i
   story(
     Story.provide(Actor, system("test")),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(account, activated),
     Story.when(account, new ReserveUsage({ feature: "messages", amount: 500 })),
     Story.then(
@@ -170,7 +205,14 @@ it.effect("a settled reservation leaves usage at exactly what was held", () =>
     const ref = Subscription.ref("acct_lock_math");
     yield* subscription.send(
       ref,
-      new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
     );
     yield* subscription.send(ref, new ReserveUsage({ feature: "messages", amount: 700 }));
     yield* subscription.send(ref, new SettleUsage({ feature: "messages", amount: 700 }));

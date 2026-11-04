@@ -39,7 +39,12 @@ import {
 } from "./RecordProrationInvoice.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
 import { ReleaseUsage, UsageReleased } from "./ReleaseUsage.command.ts";
-import { ReservationExceeded, ReserveUsage, UsageReserved } from "./ReserveUsage.command.ts";
+import {
+  CreditHoldUnsupported,
+  ReservationExceeded,
+  ReserveUsage,
+  UsageReserved,
+} from "./ReserveUsage.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { NoReservation, SettleUsage, UsageSettled } from "./SettleUsage.command.ts";
@@ -49,6 +54,7 @@ import { AccountId } from "./Subscription.id.ts";
 import {
   addInterval,
   allowsUsage,
+  creditRateOf,
   includedRemainingOf,
   initialSubscriptionState,
   periodFrom,
@@ -67,6 +73,7 @@ import {
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 import {
   AllowanceExceeded,
+  CreditExceeded,
   FeatureNotMetered,
   StandingBlocksUsage,
   TrackUsage,
@@ -150,7 +157,10 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       remaining: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.remaining])),
       carried: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.carried])),
     }),
-    new CreditsExpired({ amount: state.credits, balanceAfter: 0 }),
+    // Expiry is a property of the grant: a "never" pool survives the boundary.
+    ...(state.creditsExpire === "period"
+      ? [new CreditsExpired({ amount: state.credits, balanceAfter: 0 })]
+      : []),
   ];
 };
 
@@ -205,6 +215,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           anchorTz: command.anchorTz ?? "UTC",
           trialEndsAt: command.trialEndsAt,
           ...(command.price === undefined ? {} : { price: command.price }),
+          credits: command.credits,
+          creditsExpire: command.creditsExpire,
+          rates: command.rates,
           statusAfter: "trialing",
         }),
       ];
@@ -238,6 +251,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ? {}
             : { currency: (priceCurrency ?? currentCurrency)! }),
           ...(command.price === undefined ? {} : { price: command.price }),
+          credits: command.credits,
+          creditsExpire: command.creditsExpire,
+          rates: command.rates,
           statusAfter: "active",
         }),
       ];
@@ -289,6 +305,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ? {}
             : { currency: (priceCurrency ?? current.currency)! }),
           ...(command.price?.interval === undefined ? {} : { interval: command.price.interval }),
+          // A tier change does not re-grant: the pool the account already holds
+          // is what the event records, while the expiry rule and the rate cards
+          // move to the new tier's.
+          credits: current.credits,
+          creditsExpire: command.creditsExpire,
+          rates: command.rates,
           ...(current.price === undefined ? {} : { priceBefore: current.price }),
           ...(command.price === undefined ? {} : { priceAfter: command.price }),
           ...(command.proration === undefined ? {} : { proration: command.proration }),
@@ -312,6 +334,32 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
+      }
+      // A credit-priced feature spends the account's pool: the event carries
+      // the cost and the balance after it, so the pool is a fold of the log.
+      const rates = state.rates[command.feature];
+      if (rates !== undefined) {
+        const cost = command.amount * creditRateOf(rates, command.dimension);
+        if (cost > state.credits) {
+          return new CreditExceeded({
+            feature: command.feature,
+            cost,
+            balance: state.credits,
+          });
+        }
+        return [
+          new UsageRecorded({
+            feature: command.feature,
+            amount: command.amount,
+            cost,
+            creditsAfter: state.credits - cost,
+            // `used` counts credits spent on this feature, and `remaining` is
+            // the one pool every credit-priced feature shares.
+            usedAfter: usedOf(state, command.feature) + cost,
+            remainingAfter: state.credits - cost,
+            ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+          }),
+        ];
       }
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
@@ -344,6 +392,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new UsageRecorded({
           feature: command.feature,
           amount: command.amount,
+          // A feature counted in its own units spends no credits.
+          cost: 0,
+          creditsAfter: state.credits,
           usedAfter: used + command.amount,
           remainingAfter: remainingAfterSpending(remaining, command.amount),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
@@ -405,6 +456,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
+      // Credits are never held: this slice spends them and nothing more.
+      if (state.rates[command.feature] !== undefined) {
+        return new CreditHoldUnsupported({ feature: command.feature });
+      }
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
@@ -457,6 +512,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
+      if (state.rates[command.feature] !== undefined) {
+        return new CreditHoldUnsupported({ feature: command.feature });
+      }
       if (command.amount <= 0) return [];
       const reserved = reservedOf(state, command.feature);
       if (command.amount > reserved) {
@@ -472,6 +530,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new UsageRecorded({
           feature: command.feature,
           amount: command.amount,
+          // Credits are never held, so a settle spends none; the hold commands
+          // refuse a credit-priced feature outright.
+          cost: 0,
+          creditsAfter: state.credits,
           usedAfter: used + command.amount,
           // The units left `remaining` when they were reserved.
           remainingAfter: remaining,
@@ -497,6 +559,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // A flag is never held, so there is nothing to return.
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
+      }
+      if (state.rates[command.feature] !== undefined) {
+        return new CreditHoldUnsupported({ feature: command.feature });
       }
       if (command.amount <= 0) return [];
       const reserved = reservedOf(state, command.feature);
@@ -628,7 +693,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       interval: "month" as const,
       trialEndsAt: event.trialEndsAt,
       cancelAtPeriodEnd: false,
-      credits: state._tag === "Subscribed" ? state.credits : 0,
+      credits: event.credits,
+      creditsExpire: event.creditsExpire,
+      rates: event.rates,
       ...(state._tag === "Subscribed" && state.currency !== undefined
         ? { currency: state.currency }
         : {}),
@@ -653,7 +720,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       },
       interval: event.interval,
       cancelAtPeriodEnd: false,
-      credits: state._tag === "Subscribed" ? state.credits : 0,
+      credits: event.credits,
+      creditsExpire: event.creditsExpire,
+      rates: event.rates,
       ...(event.currency === undefined ? {} : { currency: event.currency }),
       ...(event.price === undefined ? {} : { price: event.price }),
       usage: {},
@@ -678,6 +747,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         tier: event.tier,
         allowances: event.allowances,
         remaining: event.remaining,
+        credits: event.credits,
+        creditsExpire: event.creditsExpire,
+        rates: event.rates,
         ...((event.currency ?? state.currency) === undefined
           ? {}
           : { currency: (event.currency ?? state.currency)! }),
@@ -692,6 +764,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       state._tag === "Subscribed"
         ? {
             ...state,
+            credits: event.creditsAfter,
             usage: { ...state.usage, [event.feature]: event.usedAfter },
             remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
             dedupeKeys:

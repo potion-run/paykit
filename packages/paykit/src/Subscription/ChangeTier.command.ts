@@ -4,8 +4,9 @@ import { Allowances } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
+import { CreditRateCards } from "../Feature.ts";
 import { Proration as ProrationValue } from "../Proration.ts";
-import { Price } from "../Tier.ts";
+import { CreditsExpire, Price } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
@@ -24,6 +25,15 @@ export class TierChanged extends Domain.Event("TierChanged", {
   tier: Schema.String,
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
+  /**
+   * The balance this change leaves in place. A tier change does not re-grant,
+   * so it is the balance the account already had.
+   */
+  credits: Schema.Int,
+  /** The new tier's expiry rule for the pool. */
+  creditsExpire: CreditsExpire,
+  /** The new tier's rate cards, so `check` prices from the standing. */
+  rates: CreditRateCards,
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Schema.Literals(["month", "annual"])),
   /** What the account was paying before the change. Absent from a free tier. */
@@ -40,6 +50,10 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     tier: Schema.String,
     allowances: Allowances,
     price: Schema.optionalKey(Price),
+    /** What the new tier grants; carrying the balance over means it is not re-granted. */
+    credits: Schema.Int,
+    creditsExpire: CreditsExpire,
+    rates: CreditRateCards,
     proration: Schema.optionalKey(ProrationValue),
   },
   events: [TierChanged],

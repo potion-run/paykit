@@ -1,8 +1,9 @@
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Allowances, isFlagGrant, type Allowance, type Included } from "../Allowance.ts";
+import { CreditRateCards, type CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
-import { Interval, Price } from "../Tier.ts";
+import { CreditsExpire, Interval, Price } from "../Tier.ts";
 
 /** An account is the key of a Subscription. */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"));
@@ -85,7 +86,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   trialEndsAt: Schema.optional(Schema.DateTimeUtc),
   graceUntil: Schema.optional(Schema.DateTimeUtc),
   cancelAtPeriodEnd: Schema.Boolean,
+  /** The account's credit pool, shared by every credit-priced feature. */
   credits: Schema.Int,
+  /** Whether that pool expires at a period close. */
+  creditsExpire: CreditsExpire,
+  /** Every credit-priced feature's rate card, copied from the event that set it. */
+  rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
   usage: UsageCounts,
   remaining: Remaining,
@@ -163,9 +169,11 @@ export const recordedCount = (
  */
 export const includedRemainingOf = (allowance: {
   readonly kind?: "metered" | "flag";
-  readonly included: Included;
+  readonly included: Included | null;
 }): number | null =>
-  allowance.included === "unlimited" || isFlagGrant(allowance) ? null : allowance.included;
+  allowance.included === null || allowance.included === "unlimited" || isFlagGrant(allowance)
+    ? null
+    : allowance.included;
 
 /**
  * A spendable count after spending `amount` of it. An unbounded count has
@@ -212,6 +220,15 @@ export const resetOf = (
   const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), start);
   return { remaining: start + carried, carried };
 };
+
+/**
+ * The credits one unit of a credit-priced feature costs at `dimension`, or at
+ * `"default"` when the caller names none. A dimension the card does not price
+ * falls back to `"default"`: the catalog requires it, so every unit has a
+ * price.
+ */
+export const creditRateOf = (rates: CreditRates, dimension: string | undefined): number =>
+  rates[dimension ?? "default"] ?? rates["default"] ?? 0;
 
 /** The amount currently held by open reservations for one feature. */
 export const reservedOf = (state: SubscribedState, feature: string): number =>
