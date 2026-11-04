@@ -555,8 +555,9 @@ Every one of these fails on purpose before it passes.
 
 Gates: `Domain.verify(Model)` returns empty, `Story` tests for every command and rejection,
 the `Payments` conformance suite green for all implementations, money as `Schema.Int` minor
-units with currency on every amount, no `Date.now()` inside `decide`, and a `TestClock` layer
-in the test kit so a billing library can be time-travelled.
+units with currency on every amount, no `Date.now()` inside `decide`, a `TestClock` layer in the
+test kit so a billing library can be time-travelled, and properties generated and shrunk with
+`effect/Arbitrary` so every falsification carries a replay token.
 
 ## Milestones
 
