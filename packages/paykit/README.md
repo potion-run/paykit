@@ -281,10 +281,13 @@ Not shipped yet, and deliberately not faked:
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | proration, allowances, replay and idempotence |
+| `test/properties` | generated command sequences for replay, allowances, holds, lifecycle, credits, pricing, proration and paging |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
 | `test/sql` | the event log's transaction, dedupe and read-model contract, plus migration apply, drift and dry-run |
 | `test/providers` | each adapter's own price mapping, optional capabilities and typed refusals |
+
+Properties are generated and shrunk with `effect/Arbitrary`. A failing property prints its
+smallest counterexample and a replay token; the token goes back into `replay` to reproduce it.
 
 Run the gates from the repo root: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`.
 
