@@ -41,6 +41,12 @@ export const WebhookEvent = Schema.Struct({
 });
 export type WebhookEvent = typeof WebhookEvent.Type;
 
+/** A webhook was missing data its kind needs. */
+export class WebhookInvalid extends Schema.TaggedError<WebhookInvalid>()("WebhookInvalid", {
+  event: Schema.String,
+  field: Schema.String,
+}) {}
+
 /** A webhook did not come from the provider, or did not come recently. */
 export class WebhookSignatureInvalid extends Schema.TaggedError<WebhookSignatureInvalid>()(
   "WebhookSignatureInvalid",
@@ -74,12 +80,6 @@ export interface PaymentsWebhook {
   ) => Effect.Effect<Option.Option<WebhookEvent>, WebhookError>;
 }
 
-/** A webhook was missing data its kind needs. */
-export class WebhookInvalid extends Schema.TaggedError<WebhookInvalid>()("WebhookInvalid", {
-  event: Schema.String,
-  field: Schema.String,
-}) {}
-
 /** What the edge did with an event. */
 export const WebhookAction = Schema.Literals([
   "activated",
@@ -91,99 +91,119 @@ export const WebhookAction = Schema.Literals([
 export type WebhookAction = typeof WebhookAction.Type;
 
 /**
- * Translate one provider webhook into a command. The provider event id is the
- * command id; a redelivery therefore replays rather than recording twice.
+ * The webhook edge as a binding: the model's services resolved once, an event
+ * applied per delivery. A Worker route builds this beside its other bindings, so
+ * a delivery does not re-resolve the model on every call.
  */
-export const handleWebhook = Effect.fn("Paykit.handleWebhook")(function* (event: WebhookEvent) {
+export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
   const subscription = yield* Subscription;
   const catalog = yield* CatalogService;
-  const ref = Subscription.ref(event.account);
-  const state = yield* subscription.state(ref);
 
-  const activate = Effect.gen(function* () {
-    if (event.tier === undefined) {
-      return yield* new WebhookInvalid({ event: event.id, field: "tier" });
-    }
-    const allowances = allowancesOf(catalog, event.tier);
-    if (allowances === null) {
-      return yield* new TierNotInCatalog({ tier: event.tier });
-    }
-    const tier = tierOf(catalog, event.tier);
-    yield* asSystem(
-      subscription.send(
-        ref,
-        new SubscribeCommand({
-          tier: event.tier,
-          allowances,
-          ...(tier?.price === undefined ? {} : { price: tier.price }),
-          ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
-        }),
-        { commandId: event.id },
-      ),
-    );
-    return "activated" as const satisfies WebhookAction;
-  });
+  /**
+   * Translate one provider event into a command and apply it. The provider
+   * event id is the command id; a redelivery therefore replays rather than
+   * recording twice.
+   */
+  const apply = (event: WebhookEvent) =>
+    Effect.gen(function* () {
+      const ref = Subscription.ref(event.account);
+      const state = yield* subscription.state(ref);
 
-  switch (event.kind) {
-    case "checkout_completed":
-      return yield* activate;
-
-    case "payment_succeeded": {
-      if (event.amount === undefined) {
-        return yield* new WebhookInvalid({ event: event.id, field: "amount" });
-      }
-      if (event.currency === undefined) {
-        return yield* new WebhookInvalid({ event: event.id, field: "currency" });
-      }
-      if (state._tag === "Subscribed" && state.status === "grace") {
+      const activate = Effect.gen(function* () {
+        if (event.tier === undefined) {
+          return yield* new WebhookInvalid({ event: event.id, field: "tier" });
+        }
+        const allowances = allowancesOf(catalog, event.tier);
+        if (allowances === null) {
+          return yield* new TierNotInCatalog({ tier: event.tier });
+        }
+        const tier = tierOf(catalog, event.tier);
         yield* asSystem(
           subscription.send(
             ref,
-            new RecordPayment({ amount: event.amount, currency: event.currency }),
+            new SubscribeCommand({
+              tier: event.tier,
+              allowances,
+              ...(tier?.price === undefined ? {} : { price: tier.price }),
+              ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
+            }),
             { commandId: event.id },
           ),
         );
-        return "recovered" as const satisfies WebhookAction;
-      }
-      if (state._tag === "Unsubscribed" || state.status === "expired") {
-        return yield* activate;
-      }
-      return "ignored" as const satisfies WebhookAction;
-    }
+        return "activated" as const satisfies WebhookAction;
+      });
 
-    case "payment_failed": {
-      if (state._tag !== "Subscribed" || state.status === "canceled") {
-        return "ignored" as const satisfies WebhookAction;
-      }
-      const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-      yield* asSystem(
-        subscription.send(
-          ref,
-          new RecordPaymentFailure({
-            reason: event.reason ?? "payment_failed",
-            graceUntil: event.graceUntil ?? DateTime.add(now, { days: 7 }),
-          }),
-          { commandId: event.id },
-        ),
-      );
-      return "failed" as const satisfies WebhookAction;
-    }
+      switch (event.kind) {
+        case "checkout_completed":
+          return yield* activate;
 
-    case "subscription_canceled": {
-      if (state._tag !== "Subscribed" || state.status !== "active") {
-        return "ignored" as const satisfies WebhookAction;
+        case "payment_succeeded": {
+          if (event.amount === undefined) {
+            return yield* new WebhookInvalid({ event: event.id, field: "amount" });
+          }
+          if (event.currency === undefined) {
+            return yield* new WebhookInvalid({ event: event.id, field: "currency" });
+          }
+          if (state._tag === "Subscribed" && state.status === "grace") {
+            yield* asSystem(
+              subscription.send(
+                ref,
+                new RecordPayment({ amount: event.amount, currency: event.currency }),
+                { commandId: event.id },
+              ),
+            );
+            return "recovered" as const satisfies WebhookAction;
+          }
+          if (state._tag === "Unsubscribed" || state.status === "expired") {
+            return yield* activate;
+          }
+          return "ignored" as const satisfies WebhookAction;
+        }
+
+        case "payment_failed": {
+          if (state._tag !== "Subscribed" || state.status === "canceled") {
+            return "ignored" as const satisfies WebhookAction;
+          }
+          const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+          yield* asSystem(
+            subscription.send(
+              ref,
+              new RecordPaymentFailure({
+                reason: event.reason ?? "payment_failed",
+                graceUntil: event.graceUntil ?? DateTime.add(now, { days: 7 }),
+              }),
+              { commandId: event.id },
+            ),
+          );
+          return "failed" as const satisfies WebhookAction;
+        }
+
+        case "subscription_canceled": {
+          if (state._tag !== "Subscribed" || state.status !== "active") {
+            return "ignored" as const satisfies WebhookAction;
+          }
+          return yield* asSystem(
+            subscription.send(ref, new ScheduleCancellation(), { commandId: event.id }),
+          ).pipe(
+            Effect.as("canceled" as const satisfies WebhookAction),
+            Effect.catchTag("AlreadyCanceled", () =>
+              Effect.succeed("ignored" as const satisfies WebhookAction),
+            ),
+          );
+        }
       }
-      return yield* asSystem(
-        subscription.send(ref, new ScheduleCancellation(), { commandId: event.id }),
-      ).pipe(
-        Effect.as("canceled" as const satisfies WebhookAction),
-        Effect.catchTag("AlreadyCanceled", () =>
-          Effect.succeed("ignored" as const satisfies WebhookAction),
-        ),
-      );
-    }
-  }
+    });
+
+  return apply;
 });
+
+/**
+ * Translate one provider webhook into a command, reading the model from the
+ * context. The provider event id is the command id; a redelivery therefore
+ * replays rather than recording twice.
+ */
+export const handleWebhook = (event: WebhookEvent) =>
+  Webhook().pipe(Effect.flatMap((apply) => apply(event)));
 
 /**
  * Complete a checkout from the provider's `checkout_completed` webhook. The

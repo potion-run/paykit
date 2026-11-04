@@ -137,6 +137,7 @@ export {
   WebhookEvent,
   WebhookInvalid,
   WebhookKind,
+  Webhook,
   WebhookSignatureInvalid,
   completeCheckout,
   handleWebhook,

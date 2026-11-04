@@ -112,6 +112,8 @@ refuses a mapping whose amount, currency or interval disagrees with the catalog
 | `Track()` | records a usage fact, deduped by key, atomically with its allowance check |
 | `Subscribe()` | a hosted checkout URL, an invoice id, or `{ activated: true }` for a free tier |
 | `Portal()` | the provider's customer portal, when it declares one |
+| `Webhook()` | the webhook edge as a binding: `(event) => WebhookAction`, services resolved once |
+| `handleWebhook(event)` | the same edge, reading the model from the context |
 
 All money is `Schema.Int` minor units with a currency on every amount. A provider that does not
 implement an optional op fails with `ProviderCapabilityMissing`; nothing degrades silently.

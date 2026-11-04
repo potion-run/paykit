@@ -26,7 +26,7 @@ import { Subscribe } from "./Subscribe.ts";
 import { tier } from "./Tier.ts";
 import { Track } from "./Track.ts";
 import { Verify, verifyState } from "./Verify.ts";
-import { completeCheckout, handleWebhook } from "./Webhooks.ts";
+import { Webhook, completeCheckout, handleWebhook } from "./Webhooks.ts";
 
 /**
  * The four export groups as one namespace, so the docs' `Paykit.feature(...)`
@@ -95,6 +95,7 @@ export const Paykit = {
   Verify,
   verifyState,
   doctor,
+  Webhook,
   handleWebhook,
   completeCheckout,
   // model

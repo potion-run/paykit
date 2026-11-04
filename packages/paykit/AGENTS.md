@@ -237,7 +237,9 @@ const world = Layer.mergeAll(
 - **The price has one meaning.** The catalog states it, the vendor package charges it, and
   `Stack` fails with `CatalogPriceMismatch` when the mapping disagrees.
 - **Webhooks translate at the edge**, into our events, with the provider's event id as the
-  `commandId` so a redelivery is a replay, not a second charge.
+  `commandId` so a redelivery is a replay, not a second charge. `Webhook()` is that edge as a
+  binding — the model's services resolved once, an event applied per delivery — so a route builds
+  it beside its other bindings instead of re-resolving the model on every call.
 - **A missing capability is a typed error**, `ProviderCapabilityMissing`, naming provider and
   op. The console hides the action; nothing degrades silently.
 - **The provider carries its own webhook.** Given a signing secret, `Stripe()` and `Polar()` return
