@@ -67,6 +67,10 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   evidence and a test; `CatalogInvalid` is only for a schema failure.
 - Constructors stay pure; `catalog()` is the only effectful step. Lookups are `tierOf`,
   `featureOf` and `allowancesOf`.
+- What a tier can express is a decision with a record: [ADR
+  0001](../../docs/adr/0001-catalog-states-the-pricing-model.md) says pricing is catalog data and
+  the deploy provisions the vendor, so a new shape lands as a field plus a `decide` rule, never as
+  a provider id or a runtime edit.
 - No provider ids in the catalog. The tier → vendor price mapping lives in provider config;
   `CatalogPriceMismatch` in `Stack` is the backstop.
 - A public catalog function carries a JSDoc example, like an Alchemy primitive.
@@ -263,9 +267,9 @@ Both are **paykit packages**, not general Alchemy providers: they import `@potio
 export the shortest path from a catalog to a working provider. That is a maintenance decision, not a
 coupling accident — a general provider would need its own users, docs and release train, and we
 would carry all of it to serve one adapter. If someone needs Stripe or Polar without paykit,
-`@alchemy.run/stripe` exists for exactly that. A caller who already owns vendor bindings — an
-Alchemy deployment, or a test — still uses the adapters directly: `stripeBindings(...)` and
-`polarBindings(...)` map theirs onto the port.
+`@alchemy.run/stripe` exists for exactly that. A test, or a caller with its own vendor bindings,
+still uses the adapters directly: `PaymentsStripe({ bindings, tiers })` and
+`PaymentsPolar({ bindings, tiers })` are the port mappings the packages fill in.
 
 Adding a provider touches the same places every time:
 

@@ -167,6 +167,9 @@ add it; if a gate fails, fix the code rather than the gate.
 
 ## Further reading
 
+- [ADRs](./docs/adr/) — decisions that shaped the model, oldest first. Read
+  [0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
+  express: it is the record that says pricing is catalog data and the deploy provisions the vendor.
 - [Alchemy AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) — engine
   concepts, the Reconciler doctrine, the Typed Error Doctrine and the binding conventions every
   provider package here follows.
