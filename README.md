@@ -43,7 +43,11 @@ yield* track({ account, feature: "messages", dedupeKey: requestId });
 ```
 
 [`examples/billing`](./examples/billing) is a runnable Worker that bills with a real database and no
-provider key:
+provider key. It serves the API (`/api`), the console (`/admin`), MCP (`/mcp`), and the two money
+routes — `/checkout?tier=pro` asks the provider for a path to pay, and `/webhooks/*` verifies and
+applies a delivery with that provider's own decoder. Swap `Manual()` for `Polar({ ..., webhookSecret })`
+in [`Billing.ts`](./examples/billing/src/Billing.ts) and the same two routes carry the whole loop;
+the test suite already drives them with a fake client, so the loop is proven without a key.
 
 ```sh
 pnpm install
