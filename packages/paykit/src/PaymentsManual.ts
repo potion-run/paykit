@@ -12,8 +12,8 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set(["invoice", "refund
 
 /**
  * The honest first provider: an invoice payable by transfer or cash. It has
- * no hosted checkout, no portal and no tier sync, so asking for one is a
- * typed `ProviderCapabilityMissing`, never a silent no-op.
+ * no hosted checkout and no portal, so asking for one is a typed
+ * `ProviderCapabilityMissing`, never a silent no-op.
  */
 export const PaymentsManual = (): MoneyProvider<"manual"> => {
   let sequence = 0;
@@ -26,7 +26,6 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
       createInvoice: () => Effect.succeed({ invoiceId: `manual_invoice_${++sequence}` }),
       refund: () => Effect.succeed({}),
       createPortal: () => missing("createPortal"),
-      syncTier: () => missing("syncTier"),
     }),
   );
   const payments = Layer.merge(

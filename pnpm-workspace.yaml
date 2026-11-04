@@ -14,7 +14,6 @@ catalog:
   "@alchemy.run/cloudflare": "2.0.0-beta.85"
   "@alchemy.run/domain": "2.0.0-beta.85"
   "@alchemy.run/sql": "2.0.0-beta.85"
-  "@alchemy.run/stripe": "2.0.0-beta.85"
   "@alchemy.run/test": "2.0.0-beta.85"
   "@distilled.cloud/core": "1.0.0-rc.18"
   "@distilled.cloud/polar": "1.0.0-rc.18"

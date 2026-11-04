@@ -53,9 +53,9 @@ a redelivery replays instead of charging twice.
 - **The catalog never carries a Stripe id.** A tier maps to a `priceId` here, in provider config.
   `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
 - **A capability is what the client implements.** `checkout` and `portal` are always there;
-  `invoice`, `refund` and `syncTier` are declared only when the client carries them, and asking for
-  an absent one fails with `ProviderCapabilityMissing`. A stub that returns success would be a
-  silent degradation.
+  `invoice` and `refund` are declared only when the client carries them, and asking for an absent
+  one fails with `ProviderCapabilityMissing`. A stub that returns success would be a silent
+  degradation.
 - **The checkout carries the tier.** The session is created with `client_reference_id` and
   `metadata.tier`, so the webhook reads what was bought instead of grepping a line item. An invoice
   or a subscription has no such metadata, so its tier comes from the price the buyer paid for — and

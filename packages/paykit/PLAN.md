@@ -71,7 +71,7 @@ export groups, the peers and the build output.
 - `@alchemy.run/sql` is a dependency: the SQL store's migrations are Alchemy's migration
   registry (`@alchemy.run/sql/Migrations`), not a parallel implementation.
 - `@alchemy.run/domain` is a dependency: the model is the product.
-- `@alchemy.run/cloudflare`, `@alchemy.run/stripe`, `@potion.run/paykit-polar` and `foldkit`
+- `@alchemy.run/cloudflare`, `@potion.run/paykit-stripe`, `@potion.run/paykit-polar` and `foldkit`
   are optional peers plus dev dependencies, so a user who never imports `Polar` from
   `@potion.run/paykit-polar` never installs it.
 - Versions come from the workspace catalog in `pnpm-workspace.yaml`; a package that needs a
@@ -317,7 +317,6 @@ Payments = Domain.ExternalSystem("Payments", {
   refund:         Op<{ chargeId, amount }, {}>,
   // optional — declared per provider and surfaced as capabilities
   createPortal:   Op<{ account }, { url }>,
-  syncTier:       Op<{ account, tier }, {}>,
 });
 ```
 
@@ -359,9 +358,9 @@ and webhook endpoint as Alchemy resources, and exposes checkout, portal and refu
 over its distilled SDK. paykit's adapter is a thin translation over those bindings: vendor HTTP,
 auth and signature verification live in the vendor package, and the model imports neither.
 
-Stripe uses Alchemy's `@alchemy.run/stripe`. Polar has no such package, so we publish
-`@potion.run/paykit-polar` — a paykit provider, not a general Alchemy one: it imports paykit and
-exports the single call that stands Polar up. It lives at
+Neither vendor has an Alchemy provider that does what paykit needs, so we publish both:
+`@potion.run/paykit-stripe` and `@potion.run/paykit-polar` — paykit providers, not general Alchemy
+ones: each imports paykit and exports the single call that stands the vendor up. It lives at
 `packages/paykit-polar/` in this workspace, versioned and published on its own, and paykit takes
 it as an optional peer plus a `workspace:*` dev dependency. Its `package.json` mirrors Alchemy's
 `packages/stripe`: `alchemy` and `effect` as peers, `@distilled.cloud/polar` as a dependency.
@@ -587,7 +586,7 @@ potion/                          # pnpm workspace root (private)
         BillingApi.api.ts  BillingAdminApi.api.ts
         BillingReadStore.ts
         Payments.ts  PaymentsMemory.ts  PaymentsManual.ts
-        PaymentsStripe.ts               # delegates to @alchemy.run/stripe
+        PaymentsStripe.ts               # the port mapping @potion.run/paykit-stripe fills in
         PaymentsPolar.ts                # delegates to @potion.run/paykit-polar
         Store/Sql.ts  Store/SqlEventLog.ts  Store/Tables.ts
         Migrations/
@@ -661,21 +660,18 @@ else. The root `pnpm typecheck` builds every package through project references,
   puts the read models in the same schema, and `migrations/0001_init.sql` — generated from
   `migrationFiles` — is the DDL. `examples/billing/test/sql.test.ts` runs that same wiring over SQLite
   and asserts the event, the view row and the read-model page are rows in one database.
-- **Stripe is adapted, not repackaged.** `stripeBindings(bindings, where)` maps `@alchemy.run/stripe`'s
-  `CreateCheckoutSession` and `CreateBillingPortalSession` onto the `Payments` port, and a test
-  proves the mapping and that a vendor failure becomes a typed `PaymentDeclined`. There is no
-  `@potion.run/paykit-stripe` and there should not be: Alchemy ships the vendor package, and a
-  paykit-shaped wrapper around it would be a second product with no user of its own.
+- **Stripe and Polar are both paykit-shaped packages.** `@potion.run/paykit-stripe` and
+  `@potion.run/paykit-polar` each build a client on their distilled SDK and return the provider the
+  catalog needs, so a deployment writes one call and no bindings. `PaymentsStripe` and
+  `PaymentsPolar` are the port mappings underneath, for a test or a caller with its own bindings.
 - **Polar has no Alchemy package, so paykit publishes one — and it is paykit-shaped.**
   `Polar(props)` in `@potion.run/paykit-polar` returns the `Provider` the catalog needs, so a user
   writes one call and no bindings. It imports `@potion.run/paykit` on purpose: a general Alchemy
   provider would need its own users, docs and release train, and we would carry all of it to serve
-  one adapter. Polar without paykit, if anyone wants it, is a different package with a different
-  name. Stripe needs no such package: `@alchemy.run/stripe` exists, so the adapter is
-  `stripeBindings(...)` in `PaymentsStripe.ts` behind the optional peer.
-- **A missing capability is not a fabricated decline.** `stripeBindings` omits `createRefund`
-  because `@alchemy.run/stripe` has no refund binding, so Stripe declares no `refund` capability and
-  asking for one fails with `ProviderCapabilityMissing`. Nothing pretends a card was declined.
+  one adapter. Stripe without paykit, if anyone wants it, is `@alchemy.run/stripe`.
+- **A missing capability is not a fabricated decline.** A client that cannot refund declares no
+  `refund` capability, and asking for one fails with `ProviderCapabilityMissing`. Nothing pretends
+  a card was declined.
 - **A catalog-derived command needs the catalog.** `Subscribe`, `ChangeTier` and `StartTrial` carry
   their own allowances and price. `CatalogGuard` refuses a mismatch, but it cannot invent a missing
   price, so an Api client must send the fields the catalog implies. `tierCommand()` in the example is

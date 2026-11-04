@@ -56,10 +56,8 @@ decodes the payload and answers the `WebhookEvent` `handleWebhook` already knows
   `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
 - **A missing capability is `ProviderCapabilityMissing`.** `Polar()` sells through checkout,
   refunds on request and opens the customer portal, so it declares `checkout`, `refund` and
-  `portal`. `createInvoice` is never declared — Polar's purchase path is checkout — and `syncTier`
-  is declared only when the supplied `client` implements it, because the distilled client exposes
-  no benefit sync. A binding that asks for an absent op fails with a typed error rather than
-  silently doing nothing.
+  `portal`, and `invoice` when `invoiceProductId` is configured. A binding that asks for an
+  absent op fails with a typed error rather than silently doing nothing.
 - **A vendor failure is `PaymentDeclined`**, never a defect. The model must be able to record a
   failed charge. The one defect the webhook path has is a runtime without WebCrypto: nothing can
   be verified there, and that is a deployment to fix, not a request to refuse.

@@ -122,10 +122,10 @@ implement an optional op fails with `ProviderCapabilityMissing`; nothing degrade
 
 | Provider | Kind | Required purchase path | Optional ops |
 | --- | --- | --- | --- |
-| `Paykit.Memory()` | memory | checkout + invoice | refund, portal, syncTier |
+| `Paykit.Memory()` | memory | checkout + invoice | refund, portal |
 | `Paykit.Manual()` | manual | invoice | refund |
-| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal, syncTier |
-| `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal, syncTier |
+| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal |
+| `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal |
 
 `Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar), and
 `Stripe`'s is [`@potion.run/paykit-stripe`](../paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
@@ -139,9 +139,9 @@ sold through one provider never gets upgraded through another. Names must be dis
 the same conformance suite in [`test/conformance`](./test/conformance), parameterized by the
 capabilities it declares.
 
-The Stripe and Polar adapters take the vendor bindings (`StripeBindings`, `PolarBindings`) that
-`@alchemy.run/stripe` and `@potion.run/paykit-polar` expose. The vendored packages own HTTP, auth
-and signature verification; paykit owns the model.
+The Stripe and Polar adapters take the bindings (`StripeBindings`, `PolarBindings`) a vendor
+package supplies: `@potion.run/paykit-stripe` and `@potion.run/paykit-polar`. Those own HTTP, auth,
+signatures and the webhook decoder; paykit owns the model.
 
 ## The model
 

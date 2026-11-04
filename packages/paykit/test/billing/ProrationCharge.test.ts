@@ -76,8 +76,6 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "refund" })),
         createPortal: () =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "createPortal" })),
-        syncTier: () =>
-          Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "syncTier" })),
       }),
     ),
     Layer.succeed(PaymentsProvider, { name: "test", capabilities: new Set(["invoice"] as const) }),

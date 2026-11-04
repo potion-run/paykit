@@ -13,7 +13,6 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set([
   "invoice",
   "refund",
   "portal",
-  "syncTier",
 ]);
 
 /**
@@ -23,7 +22,6 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set([
 export const PaymentsMemory = (): MoneyProvider<"memory"> => {
   const checkouts = new Map<string, { account: string; tier: string }>();
   const invoices = new Map<string, { account: string; amount: number; currency: string }>();
-  const tiers = new Map<string, string>();
   let sequence = 0;
 
   const service = Payments.toLayer(
@@ -69,11 +67,6 @@ export const PaymentsMemory = (): MoneyProvider<"memory"> => {
         createPortal: ({ account }: { account: string }) =>
           Effect.succeed({
             url: `https://paykit.memory/portal/${encodeURIComponent(account)}`,
-          }),
-        syncTier: ({ account, tier }: { account: string; tier: string }) =>
-          Effect.sync(() => {
-            tiers.set(account, tier);
-            return {};
           }),
       };
     }),

@@ -1,18 +1,12 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { PaymentsPolar, type PolarBindings } from "../../src/PaymentsPolar.ts";
-import { PaymentsStripe, stripeBindings } from "../../src/PaymentsStripe.ts";
+import { PaymentsStripe } from "../../src/PaymentsStripe.ts";
 import type { StripeBindings } from "../../src/PaymentsStripe.ts";
-
-/** What a vendor SDK raises: tagged, so it never enters a failure channel as `unknown`. */
-class StripeVendorFailure extends Data.TaggedError("StripeVendorFailure")<{
-  readonly message: string;
-}> {}
 
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
@@ -56,7 +50,6 @@ describe("provider adapters", () => {
       );
       expect(url).toBe("https://stripe.test/checkout/price_1");
       expect(provider.prices).toEqual({ pro: price });
-      expect(provider.capabilities.has("syncTier")).toBe(false);
     }),
   );
 
@@ -75,25 +68,6 @@ describe("provider adapters", () => {
       if (error._tag === "PaymentDeclined") {
         expect(error.code).toBe("price_not_configured");
       }
-    }),
-  );
-
-  it.effect("Stripe declares syncTier only when the binding exists", () =>
-    Effect.gen(function* () {
-      const withSync = PaymentsStripe({
-        bindings: { ...stripeFixture, syncTier: () => Effect.succeed({}) },
-        tiers: { pro: { price, priceId: "price_1" } },
-      });
-      expect(withSync.capabilities.has("syncTier")).toBe(true);
-      const error = yield* Effect.flip(
-        withProvider(
-          PaymentsStripe({ bindings: stripeFixture }),
-          Effect.gen(function* () {
-            return yield* (yield* Payments).syncTier({ account: "acct_1", tier: "pro" });
-          }),
-        ),
-      );
-      expect(error).toBeInstanceOf(ProviderCapabilityMissing);
     }),
   );
 
@@ -151,17 +125,14 @@ describe("provider adapters", () => {
         never
       >;
       expect(result).toEqual(["manual_invoice_1", "manual_invoice_2"]);
-      for (const op of ["createCheckout", "createPortal", "syncTier"] as const) {
+      for (const op of ["createCheckout", "createPortal"] as const) {
         const error = yield* Effect.flip(
           Effect.gen(function* () {
             const payments = yield* Payments;
             if (op === "createCheckout") {
               return yield* payments.createCheckout({ account: "acct_1", tier: "pro" });
             }
-            if (op === "createPortal") {
-              return yield* payments.createPortal({ account: "acct_1" });
-            }
-            return yield* payments.syncTier({ account: "acct_1", tier: "pro" });
+            return yield* payments.createPortal({ account: "acct_1" });
           }).pipe(Effect.provide(manual.payments)) as Effect.Effect<never, unknown, never>,
         );
         expect(error).toBeInstanceOf(ProviderCapabilityMissing);
@@ -192,90 +163,6 @@ describe("provider adapters", () => {
 
 describe("the Stripe adapter", () => {
   const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
-
-  it.effect("maps the account's two Alchemy bindings onto the port", () =>
-    Effect.gen(function* () {
-      const asked: Array<Record<string, unknown>> = [];
-      const adapter = stripeBindings(
-        {
-          createCheckoutSession: (request) =>
-            Effect.sync(() => {
-              asked.push(request as never);
-              return { url: "https://checkout.stripe.com/c/pay/cs_test" };
-            }),
-          createBillingPortalSession: (request) =>
-            Effect.sync(() => {
-              asked.push(request as never);
-              return { url: "https://billing.stripe.com/p/session" };
-            }),
-        },
-        { origin: "https://app.example.com" },
-      );
-
-      const checkout = yield* adapter.bindings.createCheckoutSession({
-        account: "cus_1",
-        tier: "pro",
-        priceId: "price_1",
-      });
-      expect(checkout.url).toContain("checkout.stripe.com");
-      expect(asked[0]).toMatchObject({
-        mode: "subscription",
-        line_items: [{ price: "price_1", quantity: 1 }],
-        customer: "cus_1",
-        success_url: "https://app.example.com/welcome",
-        cancel_url: "https://app.example.com/pricing",
-      });
-
-      const portal = yield* adapter.bindings.createCustomerSession({ account: "cus_1" });
-      expect(portal.url).toContain("billing.stripe.com");
-      expect(asked[1]).toMatchObject({
-        customer: "cus_1",
-        return_url: "https://app.example.com/billing",
-      });
-    }),
-  );
-
-  it.effect("a vendor failure becomes a typed declined payment, not a defect", () =>
-    Effect.gen(function* () {
-      const adapter = stripeBindings(
-        {
-          createCheckoutSession: () =>
-            Effect.fail(new StripeVendorFailure({ message: "card_declined" })),
-          createBillingPortalSession: () =>
-            Effect.fail(new StripeVendorFailure({ message: "no such customer" })),
-        },
-        { origin: "https://app.example.com" },
-      );
-      const exit = yield* Effect.flip(
-        adapter.bindings.createCheckoutSession({
-          account: "cus_1",
-          tier: "pro",
-          priceId: "price_1",
-        }),
-      );
-      expect(exit).toBeInstanceOf(PaymentDeclined);
-      expect(exit.message).toContain("card_declined");
-    }),
-  );
-
-  it.effect("refund is not a capability, because Alchemy ships no refund binding", () =>
-    Effect.gen(function* () {
-      const adapter = stripeBindings(
-        {
-          createCheckoutSession: () => Effect.succeed({ url: "u" }),
-          createBillingPortalSession: () => Effect.succeed({ url: "u" }),
-        },
-        { origin: "https://app.example.com" },
-      );
-      const provider = PaymentsStripe({
-        ...adapter,
-        tiers: { pro: { price: proPrice, priceId: "price_1" } },
-      });
-      expect(provider.capabilities.has("refund")).toBe(false);
-      expect(provider.capabilities.has("checkout")).toBe(true);
-      expect(provider.capabilities.has("portal")).toBe(true);
-    }),
-  );
 
   it.effect("an invoice binding is a capability, and the amount reaches the vendor", () =>
     Effect.gen(function* () {

@@ -26,13 +26,7 @@ export class PaymentDeclined extends Schema.TaggedError<PaymentDeclined>()("Paym
 export type PaymentError = ProviderCapabilityMissing | PaymentDeclined;
 
 /** The optional surface a provider may add to the required port. */
-export const PaymentCapability = Schema.Literals([
-  "checkout",
-  "invoice",
-  "refund",
-  "portal",
-  "syncTier",
-]);
+export const PaymentCapability = Schema.Literals(["checkout", "invoice", "refund", "portal"]);
 export type PaymentCapability = typeof PaymentCapability.Type;
 
 export const PaymentCapabilities = Schema.Array(PaymentCapability);
@@ -63,11 +57,6 @@ export const Payments = Domain.ExternalSystem("Payments", {
     success: { url: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
-  syncTier: {
-    args: { account: Schema.String, tier: Schema.String },
-    success: {},
-    error: [ProviderCapabilityMissing, PaymentDeclined],
-  },
 });
 
 /** What `yield* Payments` gives a binding. */
@@ -88,10 +77,6 @@ export interface PaymentsService {
   readonly createPortal: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
-  readonly syncTier: (args: {
-    readonly account: string;
-    readonly tier: string;
-  }) => Effect.Effect<void, PaymentError>;
 }
 
 /** The provider behind the `Payments` service: its name and declared ops. */

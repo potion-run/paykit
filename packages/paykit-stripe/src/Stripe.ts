@@ -50,11 +50,6 @@ export interface StripeClient {
     readonly chargeId: string;
     readonly amount: number;
   }) => Effect.Effect<{}, PaymentDeclined>;
-  /** Write the tier into a Stripe entitlement, where one is configured. */
-  readonly syncTier?: (request: {
-    readonly customerExternalId: string;
-    readonly tier: string;
-  }) => Effect.Effect<{}, PaymentDeclined>;
 }
 
 /** What `Stripe()` needs to stand up a processor. */
@@ -158,14 +153,6 @@ export const stripeClientBindings = (
               Effect.mapError((cause) => declined("createRefund", cause)),
             ),
         }),
-    ...(client.syncTier === undefined
-      ? {}
-      : {
-          syncTier: ({ account, tier }: { account: string; tier: string }) =>
-            client.syncTier!({ customerExternalId: account, tier }).pipe(
-              Effect.mapError((cause) => declined("syncTier", cause)),
-            ),
-        }),
   };
   return { bindings };
 };
@@ -177,9 +164,8 @@ export const stripeClientBindings = (
  * needs, with the tier → price mapping and the price the catalog states, so
  * `Stack` can refuse a mapping that disagrees at deploy time.
  *
- * It moves money; paykit keeps the entitlement. A Stripe entitlement is written
- * by `syncTier` when the client implements it and is never read back —
- * `check()` answers from paykit's own read model.
+ * It moves money; paykit keeps the entitlement, and `check()` answers from
+ * paykit's own read model rather than from anything read back out of Stripe.
  *
  * ### Selling a tier with Stripe
  * **Example:** A processor behind the catalog

@@ -15,7 +15,6 @@ const stripeBindings: StripeBindings = {
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
   createRefund: () => Effect.succeed({}),
-  syncTier: () => Effect.succeed({}),
 };
 
 const polarBindings: PolarBindings = {
@@ -24,7 +23,6 @@ const polarBindings: PolarBindings = {
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://polar.test/portal/${account}` }),
   createRefund: () => Effect.succeed({}),
-  syncTier: () => Effect.succeed({}),
 };
 
 const providers: ReadonlyArray<readonly [string, MoneyProvider]> = [
@@ -106,17 +104,6 @@ describe("Payments conformance", () => {
             }
           }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
       );
-
-      it.effect(
-        "syncTier succeeds or is missing as declared",
-        () =>
-          Effect.gen(function* () {
-            const exit = yield* Effect.exit(
-              (yield* Payments).syncTier({ account: "acct_1", tier: "pro" }),
-            );
-            expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("syncTier"));
-          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
-      );
     });
   }
 
@@ -138,9 +125,10 @@ describe("Payments conformance", () => {
     });
     expect(stripe.kind).toBe("processor");
     expect(polar.kind).toBe("merchant_of_record");
-    expect(stripe.capabilities.has("syncTier")).toBe(true);
-    expect(polar.capabilities.has("syncTier")).toBe(true);
+    // Neither fixture supplies an invoice binding, so neither declares one.
     expect(stripe.capabilities.has("invoice")).toBe(false);
+    expect(polar.capabilities.has("invoice")).toBe(false);
+    expect(stripe.capabilities.has("portal")).toBe(true);
   });
 
   it.effect(

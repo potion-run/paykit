@@ -286,14 +286,7 @@ export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
 export { PaymentsStripe, PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
-export { stripeBindings } from "./PaymentsStripe.ts";
-export type {
-  StripeBindingSource,
-  StripeBindings,
-  StripeOrigin,
-  StripeProps,
-  StripeTier,
-} from "./PaymentsStripe.ts";
+export type { StripeBindings, StripeProps, StripeTier } from "./PaymentsStripe.ts";
 export { PaymentsPolar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
