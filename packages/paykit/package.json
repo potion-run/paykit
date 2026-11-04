@@ -1,0 +1,80 @@
+{
+  "name": "@potion.run/paykit",
+  "version": "0.1.0",
+  "description": "Billing and entitlement for Alchemy.",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/domain": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/sql": "catalog:",
+    "@alchemy.run/stripe": "catalog:",
+    "@alchemy.run/test": "catalog:",
+    "@potion.run/polar": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/sql": "catalog:",
+    "@alchemy.run/stripe": "catalog:",
+    "@potion.run/polar": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@alchemy.run/cloudflare": {
+      "optional": true
+    },
+    "@alchemy.run/sql": {
+      "optional": true
+    },
+    "@alchemy.run/stripe": {
+      "optional": true
+    },
+    "@potion.run/polar": {
+      "optional": true
+    },
+    "foldkit": {
+      "optional": true
+    }
+  }
+}

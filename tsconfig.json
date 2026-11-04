@@ -1,0 +1,18 @@
+{
+  "files": [],
+  "exclude": ["node_modules", "dist", "lib"],
+  "references": [
+    {
+      "path": "./packages/polar"
+    },
+    {
+      "path": "./packages/polar/tsconfig.test.json"
+    },
+    {
+      "path": "./packages/paykit"
+    },
+    {
+      "path": "./packages/paykit/tsconfig.test.json"
+    }
+  ]
+}

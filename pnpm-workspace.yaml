@@ -1,0 +1,98 @@
+packages:
+  - packages/*
+  - examples/*
+
+# Postinstall scripts from dependencies. `workerd` ships the emulated
+# Cloudflare runtime the stores and tests run against; everything else in this
+# dependency graph is prebuilt.
+allowBuilds:
+  workerd: true
+
+# One version per dependency for the whole scope. A package that needs a
+# different line pins it locally and says why.
+catalog:
+  "@alchemy.run/cloudflare": "2.0.0-beta.85"
+  "@alchemy.run/domain": "2.0.0-beta.85"
+  "@alchemy.run/sql": "2.0.0-beta.85"
+  "@alchemy.run/stripe": "2.0.0-beta.85"
+  "@alchemy.run/test": "2.0.0-beta.85"
+  "@distilled.cloud/core": "1.0.0-rc.18"
+  "@distilled.cloud/polar": "1.0.0-rc.18"
+  "@distilled.cloud/stripe": "1.0.0-rc.18"
+  "@types/bun": "1.4.4"
+  "@types/node": "26.6.6"
+  alchemy: "2.0.0-beta.85"
+  effect: "^4.1.2"
+  foldkit: "^0.170.0"
+  husky: "^9.1.7"
+  oxfmt: "^0.76.0"
+  oxlint: "^1.91.0"
+  oxlint-tsgolint: "7.0.2005"
+  tsrs: "0.21.0-ts7.1.0-beta"
+  typescript: "^7.0.2"
+
+# Packages published inside pnpm's release-age window, recorded by pnpm.
+# Managed by pnpm — do not hand-edit.
+minimumReleaseAgeExclude:
+  - "@oxfmt/binding-android-arm-eabi@0.76.0"
+  - "@oxfmt/binding-android-arm64@0.76.0"
+  - "@oxfmt/binding-darwin-arm64@0.76.0"
+  - "@oxfmt/binding-darwin-x64@0.76.0"
+  - "@oxfmt/binding-freebsd-x64@0.76.0"
+  - "@oxfmt/binding-linux-arm-gnueabihf@0.76.0"
+  - "@oxfmt/binding-linux-arm-musleabihf@0.76.0"
+  - "@oxfmt/binding-linux-arm64-gnu@0.76.0"
+  - "@oxfmt/binding-linux-arm64-musl@0.76.0"
+  - "@oxfmt/binding-linux-ppc64-gnu@0.76.0"
+  - "@oxfmt/binding-linux-riscv64-gnu@0.76.0"
+  - "@oxfmt/binding-linux-riscv64-musl@0.76.0"
+  - "@oxfmt/binding-linux-s390x-gnu@0.76.0"
+  - "@oxfmt/binding-linux-x64-gnu@0.76.0"
+  - "@oxfmt/binding-linux-x64-musl@0.76.0"
+  - "@oxfmt/binding-openharmony-arm64@0.76.0"
+  - "@oxfmt/binding-win32-arm64-msvc@0.76.0"
+  - "@oxfmt/binding-win32-ia32-msvc@0.76.0"
+  - "@oxfmt/binding-win32-x64-msvc@0.76.0"
+  - "@oxlint/binding-android-arm-eabi@1.91.0"
+  - "@oxlint/binding-android-arm64@1.91.0"
+  - "@oxlint/binding-darwin-arm64@1.91.0"
+  - "@oxlint/binding-darwin-x64@1.91.0"
+  - "@oxlint/binding-freebsd-x64@1.91.0"
+  - "@oxlint/binding-linux-arm-gnueabihf@1.91.0"
+  - "@oxlint/binding-linux-arm-musleabihf@1.91.0"
+  - "@oxlint/binding-linux-arm64-gnu@1.91.0"
+  - "@oxlint/binding-linux-arm64-musl@1.91.0"
+  - "@oxlint/binding-linux-ppc64-gnu@1.91.0"
+  - "@oxlint/binding-linux-riscv64-gnu@1.91.0"
+  - "@oxlint/binding-linux-riscv64-musl@1.91.0"
+  - "@oxlint/binding-linux-s390x-gnu@1.91.0"
+  - "@oxlint/binding-linux-x64-gnu@1.91.0"
+  - "@oxlint/binding-linux-x64-musl@1.91.0"
+  - "@oxlint/binding-openharmony-arm64@1.91.0"
+  - "@oxlint/binding-win32-arm64-msvc@1.91.0"
+  - "@oxlint/binding-win32-ia32-msvc@1.91.0"
+  - "@oxlint/binding-win32-x64-msvc@1.91.0"
+  - "@tsrs/darwin-arm64@0.21.0-ts7.1.0-beta"
+  - "@tsrs/darwin-x64@0.21.0-ts7.1.0-beta"
+  - "@tsrs/linux-arm64-gnu@0.21.0-ts7.1.0-beta"
+  - "@tsrs/linux-arm64-musl@0.21.0-ts7.1.0-beta"
+  - "@tsrs/linux-x64-gnu@0.21.0-ts7.1.0-beta"
+  - "@tsrs/linux-x64-musl@0.21.0-ts7.1.0-beta"
+  - "@tsrs/win32-x64@0.21.0-ts7.1.0-beta"
+  - oxfmt@0.76.0
+  - oxlint@1.91.0
+  - tsrs@0.21.0-ts7.1.0-beta
+
+permissions:
+  "@alchemy.run/domain":
+    skills: true
+
+# Recursive `pnpm -r run` graph. Builds are never triggered by install.
+tasks:
+  build:package:
+    dependsOn:
+      - ^build:package
+  typecheck:
+    dependsOn: []
+  test:
+    dependsOn: []

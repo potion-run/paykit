@@ -1,0 +1,17 @@
+node_modules/
+lib/
+dist/
+*.tsbuildinfo
+.env
+.DS_Store
+.alchemy/
+coverage/
+.tmp/
+*.tgz
+
+# Husky's generated hooks; the hook we author is checked in.
+.husky/_
+!.husky/pre-commit
+
+# Agent skills installed by pnpm.
+.agents/
