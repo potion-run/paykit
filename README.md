@@ -8,6 +8,7 @@ one read. The provider owns the money plane; it never decides an entitlement.
 | --- | --- |
 | [`@potion.run/paykit`](./packages/paykit) | billing and entitlement: catalog, model, store, providers |
 | [`@potion.run/paykit-polar`](./packages/paykit-polar) | Polar as a paykit provider, in one call |
+| [`@potion.run/paykit-stripe`](./packages/paykit-stripe) | Stripe as a paykit provider, in one call |
 
 ## Quickstart
 

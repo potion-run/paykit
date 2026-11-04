@@ -1,0 +1,65 @@
+{
+  "name": "@potion.run/paykit-stripe",
+  "version": "0.1.0",
+  "description": "Stripe for paykit: a processor in one call.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "packages/paykit-stripe"
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./lib/index.d.ts",
+        "bun": "./src/index.ts",
+        "worker": "./src/index.ts",
+        "default": "./lib/index.js"
+      },
+      "./*": {
+        "types": "./lib/*.d.ts",
+        "bun": "./src/*.ts",
+        "worker": "./src/*.ts",
+        "default": "./lib/*.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm -r --filter \"{.}...\" run build:package",
+    "build:package": "node scripts/build.ts",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@distilled.cloud/core": "catalog:",
+    "@distilled.cloud/stripe": "catalog:",
+    "@potion.run/paykit": "workspace:*"
+  },
+  "devDependencies": {
+    "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/test": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "typescript": "catalog:"
+  },
+  "peerDependencies": {
+    "@potion.run/paykit": "workspace:*",
+    "effect": "catalog:"
+  }
+}

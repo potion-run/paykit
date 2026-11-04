@@ -231,36 +231,35 @@ that limit is additive when the port learns to dispatch.
 - **A missing capability is a typed error**, `ProviderCapabilityMissing`, naming provider and
   op. The console hides the action; nothing degrades silently.
 
-A **vendor package** owns the vendor's plumbing: `@alchemy.run/stripe` for Stripe, and
-`@potion.run/paykit-polar` for Polar (ours, [its own package](../paykit-polar/AGENTS.md),
-published separately). They declare products, prices and the webhook endpoint as Alchemy
-resources and expose checkout/portal/refund as bindings over their distilled SDK. The
-`Payments<V>` adapter delegates to them — if an op is missing, add it to the vendor package, not
-to the adapter.
+ A **vendor package** owns the vendor's plumbing: `@potion.run/paykit-stripe` for Stripe and
+`@potion.run/paykit-polar` for Polar, both ours, each in its own package
+([stripe](../paykit-stripe/AGENTS.md), [polar](../paykit-polar/AGENTS.md)), published separately.
+Each exposes one call that returns the `Provider` the catalog needs, a `Client` interface a test
+stands in for, and the webhook decoder — built on the vendor's distilled SDK. The `Payments<V>`
+adapter delegates to them: if an op is missing, add it to the vendor package, not to the adapter.
 
-`@potion.run/paykit-polar` is a **paykit package**, not a general Alchemy provider: it imports
-`@potion.run/paykit` and exports the one call that stands Polar up as a merchant of record. That is a
-maintenance decision, not a coupling accident — a general provider would need its own users, docs and
-release train, and we would carry all of it to serve one adapter. If someone needs Polar without
-paykit, that is a different package with a different name.
-
-Stripe needs no such package: `@alchemy.run/stripe` exists, so paykit's adapter lives in
-`PaymentsStripe.ts` behind the optional peer and `stripeBindings(...)` maps that package's bindings
-onto the port.
+Both are **paykit packages**, not general Alchemy providers: they import `@potion.run/paykit` and
+export the shortest path from a catalog to a working provider. That is a maintenance decision, not a
+coupling accident — a general provider would need its own users, docs and release train, and we
+would carry all of it to serve one adapter. If someone needs Stripe or Polar without paykit,
+`@alchemy.run/stripe` exists for exactly that. A caller who already owns vendor bindings — an
+Alchemy deployment, or a test — still uses the adapters directly: `stripeBindings(...)` and
+`polarBindings(...)` map theirs onto the port.
 
 Adding a provider touches the same places every time:
 
-1. **The vendor package** — `@alchemy.run/<vendor>` when one exists, else
-   `@potion.run/paykit-<vendor>`, which is then paykit-shaped on purpose: products, prices and webhook
-   endpoint as resources, checkout/portal/refund as bindings, and a single call that returns the
-   `Provider` the catalog needs.
+1. **The vendor package** — `@potion.run/paykit-<vendor>` when no Alchemy provider fits what paykit
+   needs (`paykit-stripe`, `paykit-polar`), or `@alchemy.run/<vendor>` bindings mapped by
+   `Payments<V>.ts` when one does. Either way: a client interface, a distilled-backed client, and a
+   single call that returns the `Provider` the catalog needs.
 2. **The adapter** — `Payments<V>.ts`: delegate to those bindings; required ops, plus the
    optional ops it declares.
 3. **The translation** — its webhooks into our commands, provider event id as `commandId`.
-   `polarWebhook` in [`@potion.run/paykit-polar`](../paykit-polar) is the reference: signature,
-   payload, then a tier from the mapping, with nothing guessed.
+   `polarWebhook` and `stripeWebhook` are the references: signature, payload, then a tier from the
+   mapping, with nothing guessed.
 4. **The config** — its products in the provider config; the catalog does not move.
-5. **The suite** — its conformance run, green alongside `Manual`'s.
+5. **The suite** — its conformance run, green alongside `Manual`'s, and an end-to-end story that
+   signs a webhook and reads the answer back out of `check()`.
 
 Done when `Manual` and the new provider pass the same cases and no `Subscription/*` file changed.
 

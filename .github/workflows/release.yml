@@ -80,6 +80,7 @@ jobs:
           set -euo pipefail
           node scripts/smoke-artifact.mjs packages/paykit/lib/index.js Paykit ChargeProration
           node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js Polar distilledPolarClient
+          node scripts/smoke-artifact.mjs packages/paykit-stripe/lib/index.js Stripe distilledStripeClient
 
       - name: Pack both packages
         run: |

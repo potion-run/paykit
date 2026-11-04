@@ -1,0 +1,131 @@
+import * as Stripe from "@distilled.cloud/stripe";
+import {
+  CreateBillingPortalSession,
+  CreateCheckoutSession,
+  CreateInvoice,
+  CreateInvoiceFinalize,
+  CreateInvoiceitem,
+  CreateRefund,
+} from "@distilled.cloud/stripe/stripe";
+import { PaymentDeclined } from "@potion.run/paykit";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import type { StripeClient } from "./Stripe.ts";
+
+/** What a deployment hands the Stripe client. */
+export interface StripeClientConfig {
+  /** The secret key. A secret, so it arrives redacted. */
+  readonly secretKey: Redacted.Redacted<string>;
+  /** Override the API base URL, for a proxy or a local Stripe. */
+  readonly apiBaseUrl?: string;
+}
+
+/** Stripe's own host. A test key and a live key both point here. */
+export const STRIPE_API_BASE_URL = "https://api.stripe.com";
+
+/**
+ * The `@distilled.cloud/stripe` client behind paykit's calls.
+ *
+ * Every op needs Stripe's credentials, protocol and an HTTP client in context,
+ * so the whole set is provided once here rather than by each caller. The
+ * `@distilled.cloud/stripe` types are the vendor's: a field renamed upstream is
+ * a compile error here, not a silently dropped argument.
+ */
+export const distilledStripeClient = (config: StripeClientConfig): StripeClient => {
+  const apiBaseUrl = config.apiBaseUrl ?? STRIPE_API_BASE_URL;
+  /** A vendor failure is a declined payment the model can record. */
+  const declined = (op: string) => (cause: unknown) =>
+    new PaymentDeclined({
+      provider: "stripe",
+      code: "stripe_error",
+      message: `${op} failed: ${String((cause as { message?: unknown })?.message ?? cause)}`,
+    });
+
+  const live = Layer.mergeAll(
+    Stripe.credentials({ apiKey: config.secretKey, apiBaseUrl }),
+    Stripe.StripeProtocol,
+    FetchHttpClient.layer,
+  );
+
+  return {
+    createCheckoutSession: (request) =>
+      CreateCheckoutSession({
+        mode: "subscription",
+        line_items: [{ price: request.priceId, quantity: 1 }],
+        customer: request.customerExternalId,
+        client_reference_id: request.customerExternalId,
+        // The tier travels on the session, so the webhook does not have to
+        // read the price back or grep a line item to know what was bought.
+        metadata: { tier: request.tier },
+        success_url: request.successUrl,
+        cancel_url: request.cancelUrl,
+      }).pipe(
+        Effect.map((session) => ({ url: String(session.url) })),
+        Effect.mapError(declined("createCheckoutSession")),
+        Effect.provide(live),
+      ),
+    createBillingPortalSession: (request) =>
+      CreateBillingPortalSession({
+        customer: request.customerExternalId,
+        return_url: request.returnUrl,
+      }).pipe(
+        Effect.map((session) => ({ url: String(session.url) })),
+        Effect.mapError(declined("createBillingPortalSession")),
+        Effect.provide(live),
+      ),
+    // Stripe bills an arbitrary amount as an invoice with one line item. It is
+    // created as a draft, given the proration's amount, then finalized with
+    // `auto_advance`, which makes Stripe attempt the card. A decline surfaces
+    // as `invoice.payment_failed`, which the model records as a failed charge
+    // and dunning chases; the invoice id is what the log keeps.
+    createInvoice: (request) =>
+      Effect.gen(function* () {
+        const draft = yield* CreateInvoice({
+          customer: request.customerExternalId,
+          collection_method: "charge_automatically",
+          auto_advance: false,
+        });
+        if (draft.id === undefined) {
+          return yield* new PaymentDeclined({
+            provider: "stripe",
+            code: "stripe_error",
+            message: "createInvoice returned an invoice with no id",
+          });
+        }
+        yield* CreateInvoiceitem({
+          customer: request.customerExternalId,
+          invoice: draft.id,
+          amount: request.amount,
+          currency: request.currency,
+          description: request.description,
+        });
+        const finalized = yield* CreateInvoiceFinalize({
+          invoice: draft.id,
+          auto_advance: true,
+        });
+        if (finalized.id === undefined) {
+          return yield* new PaymentDeclined({
+            provider: "stripe",
+            code: "stripe_error",
+            message: "createInvoice finalized an invoice with no id",
+          });
+        }
+        return { invoiceId: finalized.id };
+      }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
+    createRefund: (request) =>
+      CreateRefund({ charge: request.chargeId, amount: request.amount }).pipe(
+        Effect.as({}),
+        Effect.mapError(declined("createRefund")),
+        Effect.provide(live),
+      ),
+  };
+};
+
+/** The HTTP client a Worker uses; named so a test can see what is provided. */
+export const StripeHttp = FetchHttpClient.layer;
+
+/** The base URL resolved from a config, or `https://api.stripe.com`. */
+export const stripeBaseUrl = (config: { readonly apiBaseUrl?: string }): string =>
+  config.apiBaseUrl ?? STRIPE_API_BASE_URL;

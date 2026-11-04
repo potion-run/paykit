@@ -9,6 +9,12 @@
       "path": "./packages/paykit-polar/tsconfig.test.json"
     },
     {
+      "path": "./packages/paykit-stripe"
+    },
+    {
+      "path": "./packages/paykit-stripe/tsconfig.test.json"
+    },
+    {
       "path": "./packages/paykit"
     },
     {

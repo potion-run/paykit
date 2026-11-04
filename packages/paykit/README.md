@@ -122,10 +122,12 @@ implement an optional op fails with `ProviderCapabilityMissing`; nothing degrade
 | --- | --- | --- | --- |
 | `Paykit.Memory()` | memory | checkout + invoice | refund, portal, syncTier |
 | `Paykit.Manual()` | manual | invoice | refund |
-| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | refund, portal, syncTier |
+| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal, syncTier |
 | `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal, syncTier |
 
-`Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar). `PaymentsPolar` here is the port mapping it wraps, for a caller who brings its own bindings.
+`Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar), and
+`Stripe`'s is [`@potion.run/paykit-stripe`](../paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
+here are the port mappings those packages wrap, for a caller who brings its own bindings.
 
 One provider per Stack. `Payments` is a single service, so a second provider would answer the same port and win by layer order, silently; `Stack` refuses it with `ProviderAmbiguous` instead.
 
