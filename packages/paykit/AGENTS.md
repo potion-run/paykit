@@ -105,6 +105,11 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   units, because a late release is a cleanup and not a charge. A hold on a credit-priced feature
   reserves `amount × rate` at the rate captured when it was placed, so a catalog change mid-flight
   does not reprice work already priced.
+- A period close resets every allowance except `resets: "never"`, which keeps its usage, open
+  holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
+  further period, and `EnterGrace` is refused once the standing is terminal.
+- A trial opens on the cadence its price states: an annual trial converts into an annual period,
+  not a monthly one.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.

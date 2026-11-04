@@ -36,6 +36,22 @@ const caughtUp = (receipt: { readonly stream: string; readonly version: number }
     yield* entitlements.query(account, { atLeast: receipt });
   });
 
+/**
+ * Wait until the cross-account projection lists the account. `BillingRead`
+ * consumes the view, so its row can trail the view a `caughtUp` awaited.
+ */
+const listed = (id: string) =>
+  Effect.gen(function* () {
+    const list = yield* Paykit.List();
+    return yield* list({ take: 10 }).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("10 millis"),
+        times: 200,
+        until: (page) => page.rows.some((row) => row.account === id),
+      }),
+    );
+  });
+
 describe("the example billing app", () => {
   it.live("sells a free tier and answers check from local state", () =>
     Effect.gen(function* () {
@@ -302,11 +318,10 @@ describe("the example billing app", () => {
       const tenant = yield* BillingApi.clientInProcess;
       const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
       yield* caughtUp(receipt);
-      // The projection consumes the view, so wait for it too.
+      // Wait for the view, then for the projection that consumes it.
       const check = yield* Paykit.Check();
       yield* check({ account: account.id, feature: "messages" });
-      const list = yield* Paykit.List();
-      const page = yield* list({ take: 10 });
+      const page = yield* listed(account.id);
       expect(page.rows.map((row) => row.account)).toContain(account.id);
       expect(page.rows[0]?.tier).toBe("free");
       expect(page.next).toBeNull();

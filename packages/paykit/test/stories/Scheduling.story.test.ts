@@ -36,6 +36,7 @@ const proTier = tier({
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
 const pro = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+const annualPrice = { amount: 19_000, currency: "usd", interval: "annual" as const };
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
@@ -233,6 +234,46 @@ it.effect("a trial closes its period on the trial deadline and becomes active", 
   ),
 );
 
+it.effect("a trial of an annual tier opens an annual period", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new StartTrial({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: pro,
+        trialEndsAt: at("2030-01-15T00:00:00Z"),
+        price: annualPrice,
+      }),
+    ),
+    Story.then(
+      account,
+      new TrialStarted({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: pro,
+        remaining: { messages: 2000 },
+        periodStart: start,
+        periodEnd: at("2030-01-15T00:00:00Z"),
+        anchorTz: "UTC",
+        trialEndsAt: at("2030-01-15T00:00:00Z"),
+        price: annualPrice,
+        statusAfter: "trialing",
+      }),
+    ),
+    Story.clock(at("2030-01-15T00:00:00Z")),
+    // The conversion keeps the cadence the tier was sold on.
+    Story.then(account, ...closed(start, at("2030-01-15T00:00:00Z"), at("2031-01-15T00:00:00Z"))),
+    Story.view(Entitlements, account, { status: "active", standing: "good" }),
+  ),
+);
+
 it.effect("extending a trial reschedules its close to the new deadline", () =>
   story(
     Story.provide(Actor, system()),
@@ -332,6 +373,9 @@ it.effect("counts payment failures on the billing page, and clears them on recov
       account,
       new PaymentRecorded({ amount: 1900, currency: "usd", statusAfter: "active" }),
     ),
+    // A payment settles the dunning run in the aggregate too, not only in the
+    // two read models.
+    Story.state(account, { dunningAttempts: 0 }),
     Story.view(BillingState, account, { status: "active", dunningAttempts: 0 }),
   ),
 );

@@ -389,6 +389,9 @@ export class Entitlements extends Domain.View("Entitlements", {
               if (value.creditRates !== undefined) {
                 return [feature, { ...value, used: 0, reserved: 0 }];
               }
+              // `resets: "never"` keeps its usage and open reservations: the
+              // boundary moves the period, not this allowance.
+              const kept = event.kept?.[feature] === true;
               // An allowance with no count resets to `null` again: usage returns
               // to zero, but an unlimited allowance and a flag still have no
               // number to report.
@@ -398,8 +401,8 @@ export class Entitlements extends Domain.View("Entitlements", {
                 feature,
                 {
                   ...value,
-                  used: 0,
-                  reserved: 0,
+                  used: kept ? value.used : 0,
+                  reserved: kept ? value.reserved : 0,
                   remaining: spendable,
                   carried: event.carried[feature] ?? 0,
                   allowed: allowsOne(

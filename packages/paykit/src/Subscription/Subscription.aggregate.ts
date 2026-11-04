@@ -58,6 +58,7 @@ import {
   addInterval,
   allowsUsage,
   availableOf,
+  canEnterGrace,
   creditRateOf,
   holdOf,
   includedRemainingOf,
@@ -151,6 +152,9 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const resets = Object.entries(state.allowances).map(
     ([feature, allowance]) => [feature, resetOf(state, feature, allowance)] as const,
   );
+  const kept = Object.fromEntries(
+    resets.filter(([, reset]) => reset.kept).map(([feature]) => [feature, true]),
+  );
   return [
     new PeriodClosed({
       periodStart: state.period.start,
@@ -164,6 +168,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     new UsageReset({
       remaining: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.remaining])),
       carried: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.carried])),
+      ...(Object.keys(kept).length === 0 ? {} : { kept }),
     }),
     // Expiry is a property of the grant: a "never" pool survives the boundary.
     ...(state.creditsExpire === "period"
@@ -456,6 +461,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     EnterGrace: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
       if (state.status === "grace") return new AlreadyInGrace();
+      if (!canEnterGrace(state.status)) return new NotInGrace({ status: state.status });
       return [new GraceEntered({ graceUntil: command.graceUntil, statusAfter: "grace" })];
     },
     Recover: (state) => {
@@ -749,7 +755,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         end: event.periodEnd,
         anchorTz: event.anchorTz,
       },
-      interval: "month" as const,
+      interval: event.price?.interval ?? ("month" as const),
       trialEndsAt: event.trialEndsAt,
       cancelAtPeriodEnd: false,
       credits: event.credits,
@@ -883,7 +889,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     PaymentRecorded: (state, event) =>
       state._tag === "Subscribed"
-        ? { ...state, status: event.statusAfter, graceUntil: undefined }
+        ? { ...state, status: event.statusAfter, graceUntil: undefined, dunningAttempts: 0 }
         : state,
     PaymentFailed: (state, event) =>
       state._tag === "Subscribed"
@@ -900,7 +906,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         : state,
     Recovered: (state, event) =>
       state._tag === "Subscribed"
-        ? { ...state, status: event.statusAfter, graceUntil: undefined }
+        ? { ...state, status: event.statusAfter, graceUntil: undefined, dunningAttempts: 0 }
         : state,
     CreditsGranted: (state, event) =>
       state._tag === "Subscribed" ? { ...state, credits: event.balanceAfter } : state,
@@ -928,10 +934,20 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             lastClosedPeriodStart: event.periodStart,
           }
         : state,
-    UsageReset: (state, event) =>
-      state._tag === "Subscribed"
-        ? { ...state, usage: {}, holds: {}, remaining: event.remaining }
-        : state,
+    UsageReset: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const kept = event.kept ?? {};
+      return {
+        ...state,
+        usage: Object.fromEntries(
+          Object.entries(state.usage).filter(([feature]) => kept[feature] === true),
+        ),
+        holds: Object.fromEntries(
+          Object.entries(state.holds).filter(([, hold]) => kept[hold.feature] === true),
+        ),
+        remaining: event.remaining,
+      };
+    },
     // The invoice is the outcome: the log now says what was billed and on what.
     ProrationInvoiced: (state, event) =>
       state._tag === "Subscribed" ? { ...state, prorationInvoice: event.invoiceId } : state,
