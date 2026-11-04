@@ -51,7 +51,7 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
-| `Reservation` | units held but not yet billed, for work in flight | `Lock` — a lock is a database primitive |
+| `Hold` | units or credits held, by id, for work in flight and not yet billed | `Reservation`, `Lock` — a hold is addressable, and a lock is a database primitive |
 | `Standing` | `good \| grace \| blocked`, plus per-feature remaining | `Status` |
 | `Actor` | who is calling: an `account`, an `admin`, or the `system` | `User`, `Principal` |
 
@@ -123,9 +123,9 @@ yield* check({ account, feature: "messages", amount: 1 });        // => { allowe
 const track = yield* Paykit.Track();
 yield* track({ account, feature: "messages", amount: 1, dedupeKey: requestId });
 
-yield* Paykit.Reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
-yield* Paykit.Settle({ account, feature: "messages", amount: 8 });
-yield* Paykit.Release({ account, feature: "messages", amount: 2 });
+const { holdId } = yield* Paykit.Hold({ account, feature: "messages", amount: 10, dedupeKey: turnId });
+yield* Paykit.Settle({ account, holdId, amount: 8 });              // => { billed: 8, released: 2 }
+yield* Paykit.Release({ account, holdId });                        // => { released: 10 }
 
 const subscribe = yield* Paykit.Subscribe();
 yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId } | { activated: true }
@@ -195,7 +195,7 @@ form for tooling and tests.
 ## Domain model
 
 One aggregate, keyed by account. Subscription state, usage counters and open reservations live
-together so a `TrackUsage` or a `ReserveUsage` that would exceed a blocking allowance is refused
+together so a `TrackUsage` or a `Hold` that would exceed a blocking allowance is refused
 in the same transaction that records it. Counters are always reproduced by folding events, so
 they are a projection of the event log, not a second truth. `refs` is the only place a vendor
 identifier may live: keyed by provider, so a second provider is additive, and unread by `decide`.
@@ -208,7 +208,8 @@ state: {
   price?,                                   // what this account was sold at
   cancelAtPeriodEnd, credits,
   usage: { [feature]: number },             // billed, a fold of UsageRecorded
-  reserved: { [feature]: number },          // held, a fold of the reservation events
+  holds: { [holdId]: { feature, amount, dimension?, rate, cost, at, expiresAt, status } },
+  // reserved: { [feature]: number } and reservedCredits: number are folds of the open holds
   remaining: { [feature]: number | null },  // spendable now: included - usage - reserved; null when unbounded
   refs: { [provider]: { customer?, subscription?, checkout? } },  // opaque vendor ids
 }
@@ -225,9 +226,9 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
-| `ReserveUsage` | `UsageReserved` | `ReservationExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
-| `SettleUsage` | `UsageRecorded`, `UsageSettled` | `NoReservation`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
-| `ReleaseUsage` | `UsageReleased` | `NoReservation`, `FeatureNotMetered` | `Session` |
+| `Hold` | `UsageReserved` | `HoldExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `SettleHold` | `UsageRecorded`, `UsageSettled` | `HoldUnknown`, `HoldSettled`, `HoldExpired`, `HoldExceeded`, `StandingBlocksUsage` | `Session` |
+| `ReleaseHold` | `UsageReleased` | `HoldUnknown`, `HoldSettled` | `Session` |
 | `ConsumeCredits` | `CreditsConsumed` | `NotSubscribed`, `CreditExceedsBalance` | `Session` |
 | `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled`, `NotSubscribed` | `Session` |
 | `Resume` | `CancellationWithdrawn` | `NotScheduled`, `NotSubscribed` | `Session` |
@@ -441,7 +442,7 @@ Rules that keep the projections honest:
 - **The Api is the unit of authorization.** MCP tools run through the Api's middleware using the
   MCP request's own headers, so the tenant MCP server authenticates exactly as the tenant HTTP
   surface does. Serve the two Apis at two paths; never merge them.
-- **A tool is destructive unless it is a read.** `TrackUsage`, `ReserveUsage` and every other
+- **A tool is destructive unless it is a read.** `TrackUsage`, `Hold` and every other
   command is annotated `Destructive`; `Entitlements.get` is `Readonly`. A model that can write
   cannot be talked into thinking it is reading.
 - **Streams are not tools.** `watch` and `events` are not one result, so they stay on the Api's
@@ -539,14 +540,14 @@ Every one of these fails on purpose before it passes.
 2. Replay determinism: folding an account's events reproduces its stored state for any
    generated command sequence.
 3. Allowance: `used + reserved ≤ included` for `block`, never negative, and `remaining` is
-   monotone within a period except at `ClosePeriod`, `ReserveUsage` and `ReleaseUsage`.
+   monotone within a period except at `ClosePeriod`, `Hold` and `ReleaseHold`.
 4. Proration: parts sum to the full price within rounding; credit plus charge nets to zero.
 5. Idempotence: every command replayed with the same `commandId` produces no second event.
 6. Cancellation and resume are idempotent; `Expire` from any state is terminal or a no-op.
 7. Pricing: replaying the log reproduces every price the account was sold at, and a price change
    in the catalog never moves a standing that already exists.
-8. Reservation: settle plus release never exceeds what was held, and `used` after a settle
-   equals what was held — a hold is not billed twice.
+8. Hold: a settle bills no more than the hold holds and returns the rest, and `used` after a
+   settle equals what it billed — a hold is not billed twice.
 
 Gates: `Domain.verify(Model)` returns empty, `Story` tests for every command and rejection,
 the `Payments` conformance suite green for all implementations, money as `Schema.Int` minor
@@ -597,7 +598,7 @@ potion/                          # pnpm workspace root (private)
         Feature.ts  Allowance.ts  Tier.ts  Catalog.ts  CatalogService.ts
         BillingStack.resource.ts
         Check.ts                 # in-process, read-model and HTTP read paths
-        Track.ts  Hold.ts        # Reserve / Settle / Release
+        Track.ts  Hold.ts        # Hold / Settle / Release
         Subscribe.ts  Portal.ts  List.ts  Preview.ts  Verify.ts  Webhooks.ts
         Proration.ts  Doctor.ts
         Auth/
@@ -663,8 +664,8 @@ else. The root `pnpm typecheck` builds every package through project references,
   with its own name and its own users, and this one does not become it by accreting options.
 - **Events are the API.** Event names and their fields are public. Version from 0.1.0 and keep
   `Backfill`/`CatchUp` so a projection change is a rebuild, not a rewrite.
-- **A reservation that leaks shrinks an allowance.** `ReleaseUsage` refuses to release more than
-  is held rather than clamping, so a leak surfaces as a typed error. Watch `reserved` in
+- **A hold that leaks keeps capacity.** A hold is addressable and expires; until the sweep lands
+  (slice 2), a leaked one is visible in state rather than silent. Watch `reserved` in
   `BillingState` and alert on a hold older than its work.
 - **An MCP tool can spend money.** The tool list is derived from the Api, so an Api that serves a
   priced command publishes a destructive tool. Keep `GrantCredits` off the tenant Api, and

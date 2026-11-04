@@ -55,13 +55,33 @@ export type UsageCounts = typeof UsageCounts.Type;
 export const Remaining = Schema.Record(Schema.String, Schema.NullOr(Schema.Int));
 export type Remaining = typeof Remaining.Type;
 
+/** Where a hold is in its life. A closed hold stays only as an audit record. */
+export const HoldStatus = Schema.Literals(["open", "settled", "released"]);
+export type HoldStatus = typeof HoldStatus.Type;
+
 /**
- * Per-feature amount held by an open reservation, copied from the event that
- * changed it. A reserved unit is out of `remaining` but not yet `usage`: it is
- * neither spendable twice nor billed until `SettleUsage` confirms it.
+ * One hold: the units it keeps out of `remaining`, the dimension it was priced
+ * at, and the rate it was priced at, so a catalog change mid-flight does not
+ * reprice work already in flight.
  */
-export const Reserved = Schema.Record(Schema.String, Schema.Int);
-export type Reserved = typeof Reserved.Type;
+export const HoldRecord = Schema.Struct({
+  id: Schema.String,
+  feature: Schema.String,
+  amount: Schema.Int,
+  dimension: Schema.optionalKey(Schema.String),
+  /** Credits one unit cost when the hold was taken; `0` for a counted feature. */
+  rate: Schema.Int,
+  /** The credits this hold keeps out of the pool: `amount × rate`. */
+  cost: Schema.Int,
+  at: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtc,
+  status: HoldStatus,
+});
+export type HoldRecord = typeof HoldRecord.Type;
+
+/** Every hold this standing has taken, keyed by id. */
+export const Holds = Schema.Record(Schema.String, HoldRecord);
+export type Holds = typeof Holds.Type;
 
 /** What an account with no standing looks like: it may still hold checkout refs. */
 export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", { refs: Refs });
@@ -95,7 +115,8 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   currency: Schema.optional(Schema.String),
   usage: UsageCounts,
   remaining: Remaining,
-  reserved: Reserved,
+  /** Every hold, open or closed. `reserved` and `reservedCredits` fold this. */
+  holds: Holds,
   allowances: Allowances,
   refs: Refs,
   trialUsed: Schema.Boolean,
@@ -230,9 +251,42 @@ export const resetOf = (
 export const creditRateOf = (rates: CreditRates, dimension: string | undefined): number =>
   rates[dimension ?? "default"] ?? rates["default"] ?? 0;
 
-/** The amount currently held by open reservations for one feature. */
+/** The holds that are still waiting to settle or release. */
+export const openHoldsOf = (state: SubscribedState): ReadonlyArray<HoldRecord> =>
+  Object.values(state.holds).filter((hold) => hold.status === "open");
+
+/**
+ * The units open holds keep out of one feature's `remaining`. Derived from the
+ * holds themselves, so two concurrent holds on one feature stay addressable
+ * and a replay reproduces the number.
+ */
 export const reservedOf = (state: SubscribedState, feature: string): number =>
-  state.reserved[feature] ?? 0;
+  openHoldsOf(state)
+    .filter((hold) => hold.feature === feature)
+    .reduce((sum, hold) => sum + hold.amount, 0);
+
+/** The credits open holds keep out of the pool, across every credit feature. */
+export const reservedCreditsOf = (state: SubscribedState): number =>
+  openHoldsOf(state).reduce((sum, hold) => sum + hold.cost, 0);
+
+/**
+ * What a caller may spend of a feature right now: its counted `remaining`, or
+ * the pool minus what open holds have taken out of it.
+ */
+export const availableOf = (state: SubscribedState, feature: string): number | null =>
+  state.rates[feature] === undefined
+    ? remainingOf(state, feature)
+    : state.credits - reservedCreditsOf(state);
+
+/** A hold by id, or `null` when this standing never took one. */
+export const holdOf = (state: SubscribedState, holdId: string): HoldRecord | null =>
+  state.holds[holdId] ?? null;
+
+/** The same hold, no longer open. */
+export const closingHold = (hold: HoldRecord, status: HoldStatus): HoldRecord => ({
+  ...hold,
+  status,
+});
 
 /** The tick a money plane thinks in: integer minor units and a currency. */
 export const Money = Schema.Struct({

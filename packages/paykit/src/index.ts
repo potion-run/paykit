@@ -170,8 +170,15 @@ export {
 export type { PaymentsWebhook, WebhookError, WebhookRequest } from "./Webhooks.ts";
 export { Track } from "./Track.ts";
 export type { TrackInput } from "./Track.ts";
-export { Release, Reserve, Settle } from "./Hold.ts";
-export type { ReleaseInput, ReserveInput } from "./Hold.ts";
+export { Hold, Release, Settle } from "./Hold.ts";
+export type {
+  HoldInput,
+  HoldResult,
+  ReleaseInput,
+  ReleaseResult,
+  SettleInput,
+  SettleResult,
+} from "./Hold.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel as Model } from "./Paykit.model.ts";
@@ -252,13 +259,18 @@ export {
   UsageRecorded,
 } from "./Subscription/TrackUsage.command.ts";
 export {
-  CreditHoldUnsupported,
-  ReservationExceeded,
-  ReserveUsage,
+  HOLD_TTL_MINUTES,
+  // The command; the binding of the same name comes from `./Hold.ts`.
+  Hold as HoldCommand,
+  HoldExceeded,
+  HoldExpired,
+  HoldSettled,
+  HoldUnknown,
   UsageReserved,
-} from "./Subscription/ReserveUsage.command.ts";
-export { NoReservation, SettleUsage, UsageSettled } from "./Subscription/SettleUsage.command.ts";
-export { ReleaseUsage, UsageReleased } from "./Subscription/ReleaseUsage.command.ts";
+  defaultHoldExpiry,
+} from "./Subscription/Hold.command.ts";
+export { SettleHold, UsageSettled } from "./Subscription/SettleHold.command.ts";
+export { ReleaseHold, UsageReleased } from "./Subscription/ReleaseHold.command.ts";
 export { PaymentRecorded, RecordPayment } from "./Subscription/RecordPayment.command.ts";
 export {
   PaymentFailed,

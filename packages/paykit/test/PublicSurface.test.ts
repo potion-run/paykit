@@ -44,7 +44,7 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.Preview).toBe("function");
   expect(typeof Paykit.Verify).toBe("function");
   expect(typeof Paykit.List).toBe("function");
-  expect(typeof Paykit.Reserve).toBe("function");
+  expect(typeof Paykit.Hold).toBe("function");
   expect(typeof Paykit.Settle).toBe("function");
   expect(typeof Paykit.Release).toBe("function");
   // auth primitives

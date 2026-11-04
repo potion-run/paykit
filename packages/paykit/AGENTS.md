@@ -96,9 +96,15 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   have recorded it. Never check-then-write, and dedupe by `dedupeKey` so a retry records once.
 - `ChangeTier` ships next-period-only first. Mid-cycle proration is a second pass with its own
   properties in `src/Proration.ts`.
-- A reservation moves `remaining` and `reserved`, never `usage`. `SettleUsage` bills the held
-  units and `ReleaseUsage` returns them; settling or releasing more than is held is a typed
-  rejection, so a leak surfaces as an error rather than a shrinking allowance.
+- A hold is an entity with an id, and `reserved` / `reservedCredits` are folds of the open holds,
+  never counters a command writes. A hold moves `remaining` and `reserved`, never `usage`.
+  `SettleHold` bills what ran and returns the rest in the same command, so the common path is two
+  calls and there is no third one to forget. Settling a settled hold records nothing (a replay);
+  over-settling is `HoldExceeded`, releasing a settled hold is `HoldSettled`, an id nobody issued
+  is `HoldUnknown`, and a hold past `expiresAt` is `HoldExpired` — a release still returns the
+  units, because a late release is a cleanup and not a charge. A hold on a credit-priced feature
+  reserves `amount × rate` at the rate captured when it was placed, so a catalog change mid-flight
+  does not reprice work already priced.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
