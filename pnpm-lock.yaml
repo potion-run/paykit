@@ -173,6 +173,9 @@ catalogs:
     '@alchemy.run/sql':
       specifier: 2.0.0-beta.85
       version: 2.0.0-beta.85
+    '@alchemy.run/stripe':
+      specifier: 2.0.0-beta.85
+      version: 2.0.0-beta.85
     '@alchemy.run/test':
       specifier: 2.0.0-beta.85
       version: 2.0.0-beta.85
@@ -380,6 +383,9 @@ importers:
       '@alchemy.run/domain':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(foldkit@0.170.0(@effect/platform-browser@4.1.2(effect@4.1.2))(effect@4.1.2))
+      '@alchemy.run/stripe':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
       '@alchemy.run/test':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
@@ -504,6 +510,12 @@ packages:
         optional: true
       pg:
         optional: true
+
+  '@alchemy.run/stripe@2.0.0-beta.85':
+    resolution: {integrity: sha512-2r0HyBOJylK6Ixnjd4pM439TKQUWL06YGTcxP5HMKKjh7SskZFAn7Cd27395SnTbO0Y9Pocpy3pbXvtPhg0QQQ==}
+    peerDependencies:
+      alchemy: 2.0.0-beta.85
+      effect: ^4.1.0
 
   '@alchemy.run/test@2.0.0-beta.85':
     resolution: {integrity: sha512-/dwCV4a30g75dgasqLzOnSHKU3qGInmd87C9QZja8rhr7ooZNF8kl60W0JmPhZqotICzdt9R7bI35MsUFxlLGg==}
@@ -1805,6 +1817,13 @@ snapshots:
 
   '@alchemy.run/sql@2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)':
     dependencies:
+      alchemy: 2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1)
+      effect: 4.1.2
+
+  '@alchemy.run/stripe@2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)':
+    dependencies:
+      '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
+      '@distilled.cloud/stripe': 1.0.0-rc.18(effect@4.1.2)
       alchemy: 2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1)
       effect: 4.1.2
 

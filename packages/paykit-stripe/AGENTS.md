@@ -19,10 +19,13 @@ use. Do not grow this one into it.
 import { Stripe } from "@potion.run/paykit-stripe";
 import { Paykit } from "@potion.run/paykit";
 
+// The deploy creates the prices the catalog states and hands back the keys.
+const prices = yield* StripePrices("Prices", { tiers: { pro: proPrice } });
+
 const stripe = Stripe({
   secretKey: yield* Config.redacted("STRIPE_SECRET_KEY"),
   origin: "https://app.example.com",
-  tiers: { pro: { price: proPrice, priceId: "price_123" } },
+  tiers: { pro: { price: proPrice, lookupKey: prices.pro } },
 });
 ```
 
@@ -35,7 +38,9 @@ const stripe = Stripe({
 | `distilledStripeClient` | `@distilled.cloud/stripe` behind those calls |
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
-| `StripeSignatureInvalid` | the request did not come from Stripe, or did not come recently |
+| `StripePrices(id, { tiers })` | creates the products and prices the catalog states, and returns each tier's lookup key |
+| `priceDeclarations(tiers)` | the pure mapping: resource ids, lookup keys, amounts, intervals |
+| `lookupKeyOf(tier)` | `paykit:<tier>`, the only identity that survives a restore |
 
 `Stripe()` builds the distilled client from `secretKey` when no `client` is given, so a deployment
 wires nothing. It returns what the catalog needs and nothing else: `kind`, `capabilities`,
@@ -47,6 +52,27 @@ only moves when paykit applies the provider's event. The signature check is
 `WebhookEvent` `handleWebhook` already knows how to apply — `none` for a Stripe event paykit does
 not model, which the route answers 200 and ignores. The Stripe event id becomes the command id, so
 a redelivery replays instead of charging twice.
+
+## The deploy provisions the prices
+
+`StripePrices` yields one `@alchemy.run/stripe` `Product` and `Price` per priced tier — the vendor
+package's own resources, not a second implementation — and returns `Record<tier, lookupKey>`. Three
+rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
+
+- **A price is never deleted.** A tier that leaves the catalog is archived, because invoices
+  reference it. A changed amount creates a new price, moves the lookup key onto it
+  (`transfer_lookup_key`) and archives the old one, because Stripe prices are immutable and a live
+  subscription must not change what it is charged.
+- **The lookup key is the identity, the id is a cache.** `paykit:<tier>` is what a restored state
+  or a second stage reconciles to; a price id is an output of one run.
+- **The catalog stays provider-free.** `StripePrices` takes prices and returns keys. Nothing about
+  Stripe reaches the catalog, and a stack that runs two providers declares both from the same
+  prices.
+
+`Stripe({ tiers })` accepts either handle: a `priceId` pins one price object, a `lookupKey` resolves
+to whichever price currently answers for the tier (through `resolvePrice`, which the distilled
+client implements with `GetPrices`). With a key, changing a price in the catalog needs no config
+change.
 
 ## Rules
 

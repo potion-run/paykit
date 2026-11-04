@@ -50,6 +50,7 @@
   },
   "devDependencies": {
     "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/stripe": "catalog:",
     "@alchemy.run/test": "catalog:",
     "@potion.run/paykit": "workspace:*",
     "@types/bun": "catalog:",
@@ -59,6 +60,7 @@
     "typescript": "catalog:"
   },
   "peerDependencies": {
+    "@alchemy.run/stripe": "catalog:",
     "@potion.run/paykit": "workspace:*",
     "effect": "catalog:"
   }

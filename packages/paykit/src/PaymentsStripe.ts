@@ -23,6 +23,11 @@ export interface StripeBindings {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
   /**
+   * Optional: resolve a tier's `lookupKey` to the price that answers for it
+   * right now. Required to configure a tier by key instead of by id.
+   */
+  readonly resolvePrice?: (lookupKey: string) => Effect.Effect<string, PaymentError>;
+  /**
    * Optional: bill an amount on its own, which is how a mid-cycle proration is
    * collected. A caller that cannot bill an amount on its own declares no
    * `invoice` capability.
@@ -39,10 +44,19 @@ export interface StripeBindings {
   }) => Effect.Effect<{}, PaymentError>;
 }
 
-/** Where a tier lives in Stripe, and the same price the catalog states. */
+/**
+ * Where a tier lives in Stripe, and the same price the catalog states.
+ *
+ * A tier is configured by one of two handles. A `priceId` is what a dashboard
+ * gives you; a `lookupKey` is what this library creates and what survives a
+ * restore, because it names the tier rather than one price object. With a key,
+ * the provider resolves it to whichever price currently answers for that tier,
+ * so a catalog price change needs no config change.
+ */
 export interface StripeTier {
   readonly price: Price;
-  readonly priceId: string;
+  readonly priceId?: string;
+  readonly lookupKey?: string;
 }
 
 export interface StripeProps {
@@ -82,7 +96,23 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
           );
         }
-        return props.bindings.createCheckoutSession({ account, tier, priceId: mapped.priceId });
+        if (mapped.priceId !== undefined) {
+          return props.bindings.createCheckoutSession({ account, tier, priceId: mapped.priceId });
+        }
+        // Configured by key: ask Stripe which price answers for the tier now, so
+        // a replaced price needs no config change.
+        if (mapped.lookupKey !== undefined && props.bindings.resolvePrice !== undefined) {
+          return Effect.flatMap(props.bindings.resolvePrice(mapped.lookupKey), (priceId) =>
+            props.bindings.createCheckoutSession({ account, tier, priceId }),
+          );
+        }
+        return Effect.fail(
+          new PaymentDeclined({
+            provider: "stripe",
+            code: "price_not_configured",
+            message: `tier ${tier} has no priceId and no resolvable lookupKey`,
+          }),
+        );
       },
       createInvoice: ({
         account,

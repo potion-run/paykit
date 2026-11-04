@@ -1,6 +1,7 @@
 import * as Stripe from "@distilled.cloud/stripe";
 import {
   CreateBillingPortalSession,
+  GetPrices,
   CreateCheckoutSession,
   CreateInvoice,
   CreateInvoiceFinalize,
@@ -114,6 +115,23 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         }
         return { invoiceId: finalized.id };
       }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
+    resolvePrice: (lookupKey) =>
+      GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
+        Effect.flatMap((prices) => {
+          const price = prices.data[0];
+          return price?.id === undefined
+            ? Effect.fail(
+                new PaymentDeclined({
+                  provider: "stripe",
+                  code: "price_not_configured",
+                  message: `no active price for lookup key ${lookupKey}`,
+                }),
+              )
+            : Effect.succeed(price.id);
+        }),
+        Effect.mapError((cause) => declined("resolvePrice")(cause)),
+        Effect.provide(live),
+      ),
     createRefund: (request) =>
       CreateRefund({ charge: request.chargeId, amount: request.amount }).pipe(
         Effect.as({}),

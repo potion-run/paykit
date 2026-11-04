@@ -45,6 +45,12 @@ export interface StripeClient {
     readonly currency: string;
     readonly description: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentDeclined>;
+  /**
+   * Resolve a tier's lookup key to the price that answers for it now. A price is
+   * replaced when its amount changes, so the key is the stable handle and the id
+   * is not.
+   */
+  readonly resolvePrice?: (lookupKey: string) => Effect.Effect<string, PaymentDeclined>;
   /** Refund a charge, fully or partially. */
   readonly createRefund?: (request: {
     readonly chargeId: string;
@@ -145,6 +151,14 @@ export const stripeClientBindings = (
           Effect.mapError((cause) => declined("createInvoice", cause)),
           Effect.map((invoice) => ({ invoiceId: invoice.invoiceId })),
         ),
+    ...(client.resolvePrice === undefined
+      ? {}
+      : {
+          resolvePrice: (lookupKey: string) =>
+            client.resolvePrice!(lookupKey).pipe(
+              Effect.mapError((cause) => declined("resolvePrice", cause)),
+            ),
+        }),
     ...(client.createRefund === undefined
       ? {}
       : {
