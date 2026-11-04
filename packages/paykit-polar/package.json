@@ -2,6 +2,12 @@
   "name": "@potion.run/paykit-polar",
   "version": "0.1.0",
   "description": "Polar products, prices and webhooks for Alchemy.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "packages/paykit-polar"
+  },
   "files": [
     "lib",
     "src"

@@ -13,6 +13,15 @@
     },
     {
       "path": "./packages/paykit/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/billing"
+    },
+    {
+      "path": "./examples/billing/tsconfig.test.json"
+    },
+    {
+      "path": "./scripts/tsconfig.json"
     }
   ]
 }

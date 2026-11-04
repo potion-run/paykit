@@ -2,6 +2,12 @@
   "name": "@potion.run/paykit",
   "version": "0.1.0",
   "description": "Billing and entitlement for Alchemy.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "packages/paykit"
+  },
   "files": [
     "lib",
     "src"

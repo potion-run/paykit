@@ -11,6 +11,10 @@ beside its source.
 | `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
 | `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar provider for Alchemy, usable without paykit | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
 
+`examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
+it needs no database and no provider key. It is in the workspace, in the root `tsconfig.json` and in
+`pnpm test`, so an API change that breaks the advertised usage breaks a gate.
+
 A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
 carries rules a reader needs before touching it, and add it to the workspace globs and the root
 `tsconfig.json` project references in the same commit.
@@ -24,9 +28,10 @@ carries rules a reader needs before touching it, and add it to the workspace glo
   matching range, so two packages never drift.
 - **The root does not publish.** Root `package.json` holds scripts and dev dependencies;
   `packages/*` publishes, while `examples/*`, `website/*` and `docs/*` do not.
-- **Project references.** Each package owns a `tsconfig.json` and a `tsconfig.test.json`; the
-  root one references them all. `pnpm typecheck` is `tsrs -b` over that graph, so a change in one
-  package cannot land with a broken consumer.
+- **Project references.** Each package owns a `tsconfig.json` and a `tsconfig.test.json`, and
+  `scripts/` owns `scripts/tsconfig.json`; the root one references them all. `pnpm typecheck` is
+  `tsrs -b` over that graph, so a change in one package cannot land with a broken consumer, and a
+  tooling script is typechecked like any other source.
 - **Tests live with the package.** `pnpm test` fans out. A package with no tests is not done.
 
 ## Tooling
@@ -37,6 +42,15 @@ carries rules a reader needs before touching it, and add it to the workspace glo
   tsrs ships no binary. `scripts/build-package.ts` runs `tsrs -b --force` for `pnpm build`.
 - **oxlint** (`pnpm lint`) runs type-aware rules; **oxfmt** (`pnpm format`) formats source and
   `package.json`, and `pnpm format:check` is the gate. The pre-commit hook runs the formatter.
+- **effect-tsgo** (`pnpm prepare:patch`, run by `prepare`) patches the installed `oxlint` and
+  `oxlint-tsgolint` binaries so the `effecttsgo/*` rules in `oxlint.config.ts` run type-aware.
+  The patch lives in `node_modules`, so an install that skips `prepare` fails `pnpm lint` with
+  `Unknown plugin: 'effecttsgo'`. Bump `@effect/tsgo` only alongside `oxlint`,
+  `oxlint-tsgolint` and `tsrs`: its README names the versions each release supports.
+- **manifest gates** (`pnpm exports:check`, `pnpm validate:publish-packages`) read every
+  `package.json` through Effect's `FileSystem`/`Path`. The export map must match `src/` and the
+  form npm publishes, packages must share one version, and an internal dependency is
+  `workspace:*`.
 - **alchemy-test** (`@alchemy.run/test`) runs each package's `test/*.test.ts` under Bun.
 - **husky** owns the git hooks; `pnpm prepare` installs them on install.
 - **agent sources** (`pnpm vendor:agent-sources`) shallow-clones Effect, Alchemy and Foldkit
@@ -57,6 +71,10 @@ generator can call them a million times.
 | `Date.now()` | `Clock.currentTimeMillis` |
 | bare `crypto`, `Buffer`, `process.cwd()` | `Effect.sync(() => …)` |
 | `throw` | a typed error the caller can match |
+
+The `effecttsgo/*` rules in `oxlint.config.ts` encode most of this table and report from
+`pnpm lint`. A rule at `error` is a gate. A rule at `warn` has a finding outstanding: fix it, or
+raise the rule by fixing its last site — never by adding a disable comment.
 
 ## Alchemy API conventions
 
@@ -123,9 +141,11 @@ from typecheck, lint and format. Do not import from them and do not commit them.
 
 ## Gates
 
-Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. Formatting
-is fixable in place (`pnpm format`, `pnpm lint:fix`); the type check and tests are not. If a gate
-is missing, add it; if a gate fails, fix the code rather than the gate.
+Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`. Run
+`pnpm exports:check` and `pnpm validate:publish-packages` when you move a module out of `src/`,
+touch an export map, or bump a version. Formatting is fixable in place (`pnpm format`,
+`pnpm lint:fix`); the type check, the tests and the manifest gates are not. If a gate is missing,
+add it; if a gate fails, fix the code rather than the gate.
 
 ## Commits and PRs
 

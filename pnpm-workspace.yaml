@@ -19,6 +19,11 @@ catalog:
   "@distilled.cloud/core": "1.0.0-rc.18"
   "@distilled.cloud/polar": "1.0.0-rc.18"
   "@distilled.cloud/stripe": "1.0.0-rc.18"
+  "@effect/platform-node": "^4.1.2"
+  # The Effect LSP's Oxlint integration. Pinned exactly: `effect-tsgo patch`
+  # rewrites the installed `oxlint` and `oxlint-tsgolint` binaries, and a release
+  # only supports the tool versions its README table names.
+  "@effect/tsgo": "0.67.1"
   "@types/bun": "1.4.4"
   "@types/node": "26.6.6"
   alchemy: "2.0.0-beta.85"
@@ -82,6 +87,14 @@ minimumReleaseAgeExclude:
   - oxfmt@0.76.0
   - oxlint@1.91.0
   - tsrs@0.21.0-ts7.1.0-beta
+  - "@effect/tsgo-darwin-arm64@0.67.1"
+  - "@effect/tsgo-darwin-x64@0.67.1"
+  - "@effect/tsgo-linux-arm64@0.67.1"
+  - "@effect/tsgo-linux-arm@0.67.1"
+  - "@effect/tsgo-linux-x64@0.67.1"
+  - "@effect/tsgo-win32-arm64@0.67.1"
+  - "@effect/tsgo-win32-x64@0.67.1"
+  - "@effect/tsgo@0.67.1"
 
 permissions:
   "@alchemy.run/domain":
