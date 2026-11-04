@@ -13,6 +13,7 @@ import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { ReleaseUsage, UsageReleased } from "../../src/Subscription/ReleaseUsage.command.ts";
 import {
   ReservationExceeded,
+  ReservationExists,
   ReserveUsage,
   UsageReserved,
 } from "../../src/Subscription/ReserveUsage.command.ts";
@@ -82,6 +83,8 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         amount: 400,
         reservedAfter: 400,
         remainingAfter: 1600,
+        reservationId: "hold:1",
+        sequence: 1,
       }),
     ),
     Story.when(
@@ -104,6 +107,7 @@ it.effect("holds allowance, then bills exactly what it held", () =>
         amount: 400,
         reservedAfter: 0,
         remainingAfter: 1600,
+        reservationId: "hold:1",
       }),
     ),
     // A settle retried with its key is a replay even when the kernel assigns a
@@ -140,6 +144,8 @@ it.effect("refuses a reservation past the spendable amount, and holding twice", 
         amount: 1_800,
         reservedAfter: 1_800,
         remainingAfter: 200,
+        reservationId: "hold:1",
+        sequence: 1,
       }),
     ),
     // Only 200 are spendable now, so a second hold of 300 is refused.
@@ -193,6 +199,8 @@ it.effect("releases a hold without billing it, and refuses to settle past what i
         amount: 500,
         reservedAfter: 500,
         remainingAfter: 1500,
+        reservationId: "hold:1",
+        sequence: 1,
       }),
     ),
     Story.when(account, new ReleaseUsage({ feature: "messages", amount: 500 })),
@@ -203,10 +211,220 @@ it.effect("releases a hold without billing it, and refuses to settle past what i
         amount: 500,
         reservedAfter: 0,
         remainingAfter: 2000,
+        reservationId: "hold:1",
       }),
     ),
     Story.when(account, new SettleUsage({ feature: "messages", amount: 1 })),
     Story.rejected(new NoReservation({ feature: "messages", requested: 1, reserved: 0 })),
+  ),
+);
+
+it.effect("addresses one hold by id, leaving another open", () =>
+  story(
+    Story.provide(Actor, system("test")),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, activated),
+    Story.when(
+      account,
+      new ReserveUsage({ feature: "messages", amount: 300, reservationId: "turn-a" }),
+    ),
+    Story.then(
+      account,
+      new UsageReserved({
+        feature: "messages",
+        amount: 300,
+        reservedAfter: 300,
+        remainingAfter: 1700,
+        reservationId: "turn-a",
+        sequence: 1,
+      }),
+    ),
+    Story.replied({ reservationId: "turn-a" }),
+    Story.when(
+      account,
+      new ReserveUsage({ feature: "messages", amount: 200, reservationId: "turn-b" }),
+    ),
+    Story.then(
+      account,
+      new UsageReserved({
+        feature: "messages",
+        amount: 200,
+        reservedAfter: 500,
+        remainingAfter: 1500,
+        reservationId: "turn-b",
+        sequence: 2,
+      }),
+    ),
+    Story.replied({ reservationId: "turn-b" }),
+    // Settling one hold does not touch the other.
+    Story.when(
+      account,
+      new SettleUsage({ feature: "messages", amount: 300, reservationId: "turn-a" }),
+    ),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "messages",
+        amount: 300,
+        cost: 0,
+        creditsAfter: 0,
+        usedAfter: 300,
+        remainingAfter: 1500,
+      }),
+      new UsageSettled({
+        feature: "messages",
+        amount: 300,
+        reservedAfter: 200,
+        remainingAfter: 1500,
+        reservationId: "turn-a",
+      }),
+    ),
+    Story.state(account, {
+      reserved: { messages: 200 },
+      reservations: {
+        "turn-b": { id: "turn-b", feature: "messages", amount: 200, remaining: 200 },
+      },
+    }),
+    Story.when(
+      account,
+      new ReleaseUsage({ feature: "messages", amount: 200, reservationId: "turn-b" }),
+    ),
+    Story.then(
+      account,
+      new UsageReleased({
+        feature: "messages",
+        amount: 200,
+        reservedAfter: 0,
+        remainingAfter: 1700,
+        reservationId: "turn-b",
+      }),
+    ),
+    Story.state(account, { reserved: { messages: 0 }, reservations: {} }),
+  ),
+);
+
+it.effect("settling by amount consumes open holds first-in-first-out", () =>
+  story(
+    Story.provide(Actor, system("test")),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, activated),
+    Story.when(account, new ReserveUsage({ feature: "messages", amount: 200 })),
+    Story.then(
+      account,
+      new UsageReserved({
+        feature: "messages",
+        amount: 200,
+        reservedAfter: 200,
+        remainingAfter: 1800,
+        reservationId: "hold:1",
+        sequence: 1,
+      }),
+    ),
+    Story.when(account, new ReserveUsage({ feature: "messages", amount: 300 })),
+    Story.then(
+      account,
+      new UsageReserved({
+        feature: "messages",
+        amount: 300,
+        reservedAfter: 500,
+        remainingAfter: 1500,
+        reservationId: "hold:2",
+        sequence: 2,
+      }),
+    ),
+    Story.when(account, new SettleUsage({ feature: "messages", amount: 400 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "messages",
+        amount: 400,
+        cost: 0,
+        creditsAfter: 0,
+        usedAfter: 400,
+        remainingAfter: 1500,
+      }),
+      new UsageSettled({
+        feature: "messages",
+        amount: 200,
+        reservedAfter: 300,
+        remainingAfter: 1500,
+        reservationId: "hold:1",
+      }),
+      new UsageSettled({
+        feature: "messages",
+        amount: 200,
+        reservedAfter: 100,
+        remainingAfter: 1500,
+        reservationId: "hold:2",
+      }),
+    ),
+    Story.state(account, {
+      reserved: { messages: 100 },
+      reservations: {
+        "hold:2": { id: "hold:2", feature: "messages", amount: 300, remaining: 100 },
+      },
+    }),
+  ),
+);
+
+it.effect("refuses to reuse an open reservation id", () =>
+  story(
+    Story.provide(Actor, system("test")),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, activated),
+    Story.when(
+      account,
+      new ReserveUsage({ feature: "messages", amount: 100, reservationId: "turn-1" }),
+    ),
+    Story.then(
+      account,
+      new UsageReserved({
+        feature: "messages",
+        amount: 100,
+        reservedAfter: 100,
+        remainingAfter: 1900,
+        reservationId: "turn-1",
+        sequence: 1,
+      }),
+    ),
+    Story.when(
+      account,
+      new ReserveUsage({ feature: "messages", amount: 100, reservationId: "turn-1" }),
+    ),
+    Story.rejected(new ReservationExists({ reservationId: "turn-1" })),
   ),
 );
 

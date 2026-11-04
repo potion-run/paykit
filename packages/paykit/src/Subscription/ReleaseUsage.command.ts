@@ -6,12 +6,17 @@ import { NoReservation } from "./SettleUsage.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { FeatureNotMetered } from "./TrackUsage.command.ts";
 
-/** Held units came back, without recording usage. `remaining` grows again. */
+/**
+ * Held units came back, without recording usage. `remaining` grows again.
+ * `reservationId` names the hold this released; absent only on events recorded
+ * before holds had ids.
+ */
 export class UsageReleased extends Domain.Event("UsageReleased", {
   feature: Schema.String,
   amount: Schema.Int,
   reservedAfter: Schema.Int,
   remainingAfter: Schema.NullOr(Schema.Int),
+  reservationId: Schema.optionalKey(Schema.String),
 }) {}
 
 /**
@@ -19,12 +24,16 @@ export class UsageReleased extends Domain.Event("UsageReleased", {
  * cancelled, or cost less than it reserved. Releasing from an account that
  * holds nothing is refused rather than silently ignored, so a leaking
  * reservation shows up as an error instead of a shrinking allowance.
+ *
+ * `reservationId` releases exactly that hold. Without one, the amount returns
+ * open holds first-in-first-out.
  */
 export class ReleaseUsage extends Domain.Command("ReleaseUsage", {
   target: AccountId,
   input: {
     feature: Schema.String,
     amount: Schema.Int,
+    reservationId: Schema.optionalKey(Schema.String),
   },
   events: [UsageReleased],
   rejects: [NoReservation, FeatureNotMetered, CreditHoldUnsupported],

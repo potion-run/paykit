@@ -100,6 +100,9 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   units and `ReleaseUsage` returns them; settling or releasing more than is held is a typed
   rejection, so a leak surfaces as an error rather than a shrinking allowance. A settled retry
   with the same `dedupeKey` records once, even under a different command id.
+- Every open reservation has an id, generated as `hold:N` or supplied by the caller (a
+  `dedupeKey` is used as the id). Settle or release by id to address one hold; an amount without
+  an id consumes open holds first-in-first-out. A hold is removed when fully settled or released.
 - A period close resets every allowance except `resets: "never"`, which keeps its usage, open
   reservations and remaining count. A close that ends the standing (`canceled` or `expired`)
   opens no further period, and `EnterGrace` is refused once the standing is terminal.

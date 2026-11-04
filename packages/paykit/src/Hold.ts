@@ -6,11 +6,13 @@ import { ReserveUsage } from "./Subscription/ReserveUsage.command.ts";
 import { SettleUsage } from "./Subscription/SettleUsage.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 
-/** One reservation: what to hold, and the key a retry dedupes on. */
+/** One reservation: what to hold, the key a retry dedupes on, and its id. */
 export interface ReserveInput {
   readonly account: string;
   readonly feature: string;
   readonly amount: number;
+  /** The id a caller settles or releases; generated when omitted. */
+  readonly reservationId?: string;
   readonly dedupeKey?: string;
 }
 
@@ -19,6 +21,8 @@ export interface ReleaseInput {
   readonly account: string;
   readonly feature: string;
   readonly amount: number;
+  /** Release this hold by id instead of consuming the feature's holds in order. */
+  readonly reservationId?: string;
 }
 
 const deduped = (dedupeKey: string | undefined) =>
@@ -31,7 +35,9 @@ const deduped = (dedupeKey: string | undefined) =>
  * bills them until `Settle` confirms.
  *
  * A hold past a blocking allowance is refused in the same transaction, exactly
- * like `Track`. `dedupeKey` is also the command id, so a retry holds once.
+ * like `Track`. `dedupeKey` is also the command id, so a retry holds once. The
+ * receipt's `reply.reservationId` is what `Settle` or `Release` can name to
+ * address this hold specifically.
  *
  * Waits for the `Entitlements` read model, so a `Check` straight after a
  * `Reserve` sees the reduced remaining.
@@ -39,10 +45,10 @@ const deduped = (dedupeKey: string | undefined) =>
  * ### Reserving, then settling
  * **Example:** Hold the cost of a turn, bill only what it used
  * ```typescript
- * yield* Reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
+ * const { reply } = yield* Reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
  * const used = yield* runTheTurn();
- * yield* Release({ account, feature: "messages", amount: 10 - used });
- * yield* Settle({ account, feature: "messages", amount: used });
+ * yield* Release({ account, feature: "messages", amount: 10 - used, reservationId: reply.reservationId });
+ * yield* Settle({ account, feature: "messages", amount: used, reservationId: reply.reservationId });
  * ```
  *
  * @primitive
@@ -57,9 +63,10 @@ export const Reserve = Effect.fn("Paykit.Reserve")(function* () {
         new ReserveUsage({
           feature: input.feature,
           amount: input.amount,
+          ...(input.reservationId === undefined ? {} : { reservationId: input.reservationId }),
           ...(input.dedupeKey === undefined ? {} : { dedupeKey: input.dedupeKey }),
         }),
-        deduped(input.dedupeKey),
+        deduped(input.dedupeKey ?? input.reservationId),
       ),
     );
     yield* entitlements.query(Subscription.ref(input.account), { atLeast: receipt });
@@ -84,6 +91,7 @@ export const Settle = Effect.fn("Paykit.Settle")(function* () {
         new SettleUsage({
           feature: input.feature,
           amount: input.amount,
+          ...(input.reservationId === undefined ? {} : { reservationId: input.reservationId }),
           ...(input.dedupeKey === undefined ? {} : { dedupeKey: input.dedupeKey }),
         }),
         deduped(input.dedupeKey),
@@ -109,7 +117,11 @@ export const Release = Effect.fn("Paykit.Release")(function* () {
     const receipt = yield* asSystem(
       subscription.send(
         Subscription.ref(input.account),
-        new ReleaseUsage({ feature: input.feature, amount: input.amount }),
+        new ReleaseUsage({
+          feature: input.feature,
+          amount: input.amount,
+          ...(input.reservationId === undefined ? {} : { reservationId: input.reservationId }),
+        }),
       ),
     );
     yield* entitlements.query(Subscription.ref(input.account), { atLeast: receipt });

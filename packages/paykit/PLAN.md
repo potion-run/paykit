@@ -210,6 +210,8 @@ state: {
   cancelAtPeriodEnd, credits,
   usage: { [feature]: number },             // billed, a fold of UsageRecorded
   reserved: { [feature]: number },          // held, a fold of the reservation events
+  reservations: { [id]: { feature, amount, remaining } },  // open holds, addressable by id
+  reservationSequence,                      // the last generated `hold:N` id
   remaining: { [feature]: number | null },  // spendable now: included - usage - reserved; null when unbounded
   refs: { [provider]: { customer?, subscription?, checkout? } },  // opaque vendor ids
 }
@@ -217,6 +219,8 @@ state: {
 
 **`remaining` is the only number `check()` reads**, and it is already net of reservations. A
 hold therefore refuses a second caller the unit the first one holds, without a second read path.
+Each hold has an id: a caller may settle or release that id directly, or settle/release an
+amount, which consumes open holds first-in-first-out.
 
 ### Commands → events
 

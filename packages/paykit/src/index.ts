@@ -190,6 +190,8 @@ export {
   statusOf,
 } from "./Subscription/Subscription.state.ts";
 export type {
+  Reservation,
+  Reservations,
   SubscribedState,
   SubscriptionState,
   UnsubscribedState,
@@ -254,6 +256,7 @@ export {
 export {
   CreditHoldUnsupported,
   ReservationExceeded,
+  ReservationExists,
   ReserveUsage,
   UsageReserved,
 } from "./Subscription/ReserveUsage.command.ts";

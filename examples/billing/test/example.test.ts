@@ -36,6 +36,22 @@ const caughtUp = (receipt: { readonly stream: string; readonly version: number }
     yield* entitlements.query(account, { atLeast: receipt });
   });
 
+/**
+ * Wait until the cross-account projection lists the account. `BillingRead`
+ * consumes the view, so its row can trail the view a `caughtUp` awaited.
+ */
+const listed = (id: string) =>
+  Effect.gen(function* () {
+    const list = yield* Paykit.List();
+    return yield* list({ take: 10 }).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("10 millis"),
+        times: 200,
+        until: (page) => page.rows.some((row) => row.account === id),
+      }),
+    );
+  });
+
 describe("the example billing app", () => {
   it.live("sells a free tier and answers check from local state", () =>
     Effect.gen(function* () {
@@ -86,17 +102,29 @@ describe("the example billing app", () => {
       const release = yield* Paykit.Release();
       const check = yield* Paykit.Check();
 
-      yield* reserve({
+      const held = yield* reserve({
         account: account.id,
         feature: "messages",
         amount: 30,
         dedupeKey: "turn-1",
       });
+      // The hold's id is the key the caller can settle or release by name.
+      expect(held.reply).toEqual({ reservationId: "turn-1" });
       // The held units are out of `remaining`, and none of them is billed yet.
       expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(70);
 
-      yield* settle({ account: account.id, feature: "messages", amount: 20 });
-      yield* release({ account: account.id, feature: "messages", amount: 10 });
+      yield* settle({
+        account: account.id,
+        feature: "messages",
+        amount: 20,
+        reservationId: held.reply.reservationId,
+      });
+      yield* release({
+        account: account.id,
+        feature: "messages",
+        amount: 10,
+        reservationId: held.reply.reservationId,
+      });
       // 20 billed and 10 returned: 100 - 20 is spendable again, and nothing held.
       expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(80);
     }).pipe(run),
@@ -268,11 +296,10 @@ describe("the example billing app", () => {
       const tenant = yield* BillingApi.clientInProcess;
       const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
       yield* caughtUp(receipt);
-      // The projection consumes the view, so wait for it too.
+      // Wait for the view, then for the projection that consumes it.
       const check = yield* Paykit.Check();
       yield* check({ account: account.id, feature: "messages" });
-      const list = yield* Paykit.List();
-      const page = yield* list({ take: 10 });
+      const page = yield* listed(account.id);
       expect(page.rows.map((row) => row.account)).toContain(account.id);
       expect(page.rows[0]?.tier).toBe("free");
       expect(page.next).toBeNull();

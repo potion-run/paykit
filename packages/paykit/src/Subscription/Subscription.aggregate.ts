@@ -42,6 +42,7 @@ import { ReleaseUsage, UsageReleased } from "./ReleaseUsage.command.ts";
 import {
   CreditHoldUnsupported,
   ReservationExceeded,
+  ReservationExists,
   ReserveUsage,
   UsageReserved,
 } from "./ReserveUsage.command.ts";
@@ -62,6 +63,8 @@ import {
   remainingAfterRelease,
   remainingAfterSpending,
   remainingOf,
+  reservationSequenceOf,
+  reservationsOf,
   reservedOf,
   resetOf,
   standingOf,
@@ -130,6 +133,63 @@ const sameProration = (
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
+
+/** One hold the amount being settled or released, or the unnamed remainder. */
+type Allocation = { readonly reservationId: string | undefined; readonly amount: number };
+
+/** The open reservations for one feature, in the order they were taken. */
+const openReservationsOf = (state: SubscribedState, feature: string) =>
+  Object.values(reservationsOf(state)).filter(
+    (reservation) => reservation.feature === feature && reservation.remaining > 0,
+  );
+
+/**
+ * Split an amount across open holds. A named hold must cover the whole amount;
+ * an unnamed one consumes holds first-in-first-out and falls back to the
+ * per-feature total only for state written before holds had ids.
+ */
+const allocationsOf = (
+  state: SubscribedState,
+  feature: string,
+  amount: number,
+  reservationId: string | undefined,
+): { readonly allocations: ReadonlyArray<Allocation> } | { readonly rejection: NoReservation } => {
+  const reserved = reservedOf(state, feature);
+  const open = openReservationsOf(state, feature);
+  if (reservationId !== undefined) {
+    const reservation = open.find((candidate) => candidate.id === reservationId);
+    if (reservation === undefined) {
+      return {
+        rejection: new NoReservation({ feature, requested: amount, reserved, reservationId }),
+      };
+    }
+    if (amount > reservation.remaining) {
+      return {
+        rejection: new NoReservation({
+          feature,
+          requested: amount,
+          reserved: reservation.remaining,
+          reservationId,
+        }),
+      };
+    }
+    return { allocations: [{ reservationId, amount }] };
+  }
+  if (amount > reserved) {
+    return { rejection: new NoReservation({ feature, requested: amount, reserved }) };
+  }
+  const allocations: Array<Allocation> = [];
+  let left = amount;
+  for (const reservation of open) {
+    if (left === 0) break;
+    const take = Math.min(reservation.remaining, left);
+    allocations.push({ reservationId: reservation.id, amount: take });
+    left -= take;
+  }
+  // A hold recorded before this state carried ids: the total still covers it.
+  if (left > 0) allocations.push({ reservationId: undefined, amount: left });
+  return { allocations };
+};
 
 const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const nextPeriodStart = periodEnd;
@@ -495,12 +555,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining,
         });
       }
+      const open = reservationsOf(state);
+      let sequence = reservationSequenceOf(state) + 1;
+      let reservationId = command.reservationId ?? command.dedupeKey ?? `hold:${sequence}`;
+      if (command.reservationId !== undefined && open[reservationId] !== undefined) {
+        return new ReservationExists({ reservationId });
+      }
+      // A generated id never overwrites an id a caller chose earlier.
+      while (command.reservationId === undefined && open[reservationId] !== undefined) {
+        sequence += 1;
+        reservationId = `hold:${sequence}`;
+      }
       return [
         new UsageReserved({
           feature: command.feature,
           amount: command.amount,
           reservedAfter: reserved + command.amount,
           remainingAfter: remainingAfterSpending(remaining, command.amount),
+          reservationId,
+          sequence,
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -526,15 +599,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return [];
       }
       const reserved = reservedOf(state, command.feature);
-      if (command.amount > reserved) {
-        return new NoReservation({
-          feature: command.feature,
-          requested: command.amount,
-          reserved,
-        });
-      }
+      const allocation = allocationsOf(
+        state,
+        command.feature,
+        command.amount,
+        command.reservationId,
+      );
+      if ("rejection" in allocation) return allocation.rejection;
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
+      let reservedAfter = reserved;
       return [
         new UsageRecorded({
           feature: command.feature,
@@ -548,11 +622,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remainingAfter: remaining,
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
-        new UsageSettled({
-          feature: command.feature,
-          amount: command.amount,
-          reservedAfter: reserved - command.amount,
-          remainingAfter: remaining,
+        ...allocation.allocations.map((settled) => {
+          reservedAfter -= settled.amount;
+          return new UsageSettled({
+            feature: command.feature,
+            amount: settled.amount,
+            reservedAfter,
+            remainingAfter: remaining,
+            ...(settled.reservationId === undefined
+              ? {}
+              : { reservationId: settled.reservationId }),
+          });
         }),
       ];
     },
@@ -574,24 +654,28 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       if (command.amount <= 0) return [];
       const reserved = reservedOf(state, command.feature);
-      if (command.amount > reserved) {
-        return new NoReservation({
+      const allocation = allocationsOf(
+        state,
+        command.feature,
+        command.amount,
+        command.reservationId,
+      );
+      if ("rejection" in allocation) return allocation.rejection;
+      let reservedAfter = reserved;
+      let remainingAfter = remainingOf(state, command.feature);
+      return allocation.allocations.map((released) => {
+        reservedAfter -= released.amount;
+        remainingAfter = remainingAfterRelease(remainingAfter, released.amount);
+        return new UsageReleased({
           feature: command.feature,
-          requested: command.amount,
-          reserved,
+          amount: released.amount,
+          reservedAfter,
+          remainingAfter,
+          ...(released.reservationId === undefined
+            ? {}
+            : { reservationId: released.reservationId }),
         });
-      }
-      return [
-        new UsageReleased({
-          feature: command.feature,
-          amount: command.amount,
-          reservedAfter: reserved - command.amount,
-          remainingAfter: remainingAfterRelease(
-            remainingOf(state, command.feature),
-            command.amount,
-          ),
-        }),
-      ];
+      });
     },
     RecordProrationInvoice: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
@@ -712,6 +796,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       usage: {},
       remaining: event.remaining,
       reserved: {},
+      reservations: {},
+      reservationSequence: 0,
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: true,
@@ -737,6 +823,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       usage: {},
       remaining: event.remaining,
       reserved: {},
+      reservations: {},
+      reservationSequence: 0,
       allowances: event.allowances,
       refs: state.refs,
       trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
@@ -782,34 +870,68 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 : { ...state.dedupeKeys, [event.dedupeKey]: true },
           }
         : state,
-    UsageReserved: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
-            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
-            dedupeKeys:
-              event.dedupeKey === undefined
-                ? state.dedupeKeys
-                : { ...state.dedupeKeys, [event.dedupeKey]: true },
-          }
-        : state,
-    UsageSettled: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
-            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
-          }
-        : state,
-    UsageReleased: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
-            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
-          }
-        : state,
+    UsageReserved: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const reservations =
+        event.reservationId === undefined
+          ? reservationsOf(state)
+          : {
+              ...reservationsOf(state),
+              [event.reservationId]: {
+                id: event.reservationId,
+                feature: event.feature,
+                amount: event.amount,
+                remaining: event.amount,
+              },
+            };
+      return {
+        ...state,
+        reservations,
+        reservationSequence: event.sequence ?? state.reservationSequence ?? 0,
+        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+        dedupeKeys:
+          event.dedupeKey === undefined
+            ? state.dedupeKeys
+            : { ...state.dedupeKeys, [event.dedupeKey]: true },
+      };
+    },
+    UsageSettled: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const reservations = { ...reservationsOf(state) };
+      if (event.reservationId !== undefined) {
+        const reservation = reservations[event.reservationId];
+        if (reservation !== undefined) {
+          const remaining = reservation.remaining - event.amount;
+          if (remaining <= 0) delete reservations[event.reservationId];
+          else reservations[event.reservationId] = { ...reservation, remaining };
+        }
+      }
+      return {
+        ...state,
+        reservations,
+        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+      };
+    },
+    UsageReleased: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const reservations = { ...reservationsOf(state) };
+      if (event.reservationId !== undefined) {
+        const reservation = reservations[event.reservationId];
+        if (reservation !== undefined) {
+          const remaining = reservation.remaining - event.amount;
+          if (remaining <= 0) delete reservations[event.reservationId];
+          else reservations[event.reservationId] = { ...reservation, remaining };
+        }
+      }
+      return {
+        ...state,
+        reservations,
+        reserved: { ...state.reserved, [event.feature]: event.reservedAfter },
+        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+      };
+    },
     PaymentRecorded: (state, event) =>
       state._tag === "Subscribed"
         ? { ...state, status: event.statusAfter, graceUntil: undefined, dunningAttempts: 0 }
@@ -868,6 +990,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         reserved: Object.fromEntries(
           Object.entries(state.reserved).filter(([feature]) => kept[feature] === true),
         ),
+        reservations: Object.fromEntries(
+          Object.entries(reservationsOf(state)).filter(
+            ([, reservation]) => kept[reservation.feature] === true,
+          ),
+        ),
         remaining: event.remaining,
       };
     },
@@ -894,6 +1021,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
   reply: {
     GrantCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
     ConsumeCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
+    ReserveUsage: (_state, events) => {
+      const reserved = events.find((event) => event._tag === "UsageReserved");
+      return {
+        reservationId:
+          reserved?._tag === "UsageReserved" ? (reserved.reservationId ?? "hold:0") : "hold:0",
+      };
+    },
   },
   // The admin surface reads the aggregate whole. There is no tenant read here:
   // `Entitlements` is the boundary a customer sees. Guarded all the same, so a

@@ -63,6 +63,19 @@ export type Remaining = typeof Remaining.Type;
 export const Reserved = Schema.Record(Schema.String, Schema.Int);
 export type Reserved = typeof Reserved.Type;
 
+/** One open reservation: what it holds, and how much of it is still open. */
+export const Reservation = Schema.Struct({
+  id: Schema.String,
+  feature: Schema.String,
+  amount: Schema.Int,
+  remaining: Schema.Int,
+});
+export type Reservation = typeof Reservation.Type;
+
+/** Every open reservation, keyed by its id. Empty until a hold is taken. */
+export const Reservations = Schema.Record(Schema.String, Reservation);
+export type Reservations = typeof Reservations.Type;
+
 /** What an account with no standing looks like: it may still hold checkout refs. */
 export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", { refs: Refs });
 export type UnsubscribedState = typeof UnsubscribedState.Type;
@@ -96,6 +109,13 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   usage: UsageCounts,
   remaining: Remaining,
   reserved: Reserved,
+  /**
+   * Open reservations by id. Optional so state written before holds had ids
+   * still decodes; `reservationsOf` reads an absent map as empty.
+   */
+  reservations: Schema.optionalKey(Reservations),
+  /** The last generated hold id, so an anonymous hold still gets a stable id. */
+  reservationSequence: Schema.optionalKey(Schema.Int),
   allowances: Allowances,
   refs: Refs,
   trialUsed: Schema.Boolean,
@@ -252,6 +272,13 @@ export const creditRateOf = (rates: CreditRates, dimension: string | undefined):
 /** The amount currently held by open reservations for one feature. */
 export const reservedOf = (state: SubscribedState, feature: string): number =>
   state.reserved[feature] ?? 0;
+
+/** Every open reservation, or an empty map for state written before hold ids. */
+export const reservationsOf = (state: SubscribedState): Reservations => state.reservations ?? {};
+
+/** The last generated hold id; zero for state written before hold ids. */
+export const reservationSequenceOf = (state: SubscribedState): number =>
+  state.reservationSequence ?? 0;
 
 /** The tick a money plane thinks in: integer minor units and a currency. */
 export const Money = Schema.Struct({

@@ -15,6 +15,7 @@ import {
   UsageReset,
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
+import { ReserveUsage, UsageReserved } from "../../src/Subscription/ReserveUsage.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -148,4 +149,124 @@ it.effect("a never-reset allowance keeps its usage across a period close", () =>
       },
     }),
   ),
+);
+
+it.effect(
+  "a period close releases holds for resetting allowances and keeps them for never-reset ones",
+  () =>
+    story(
+      Story.provide(Actor, system("test")),
+      Story.clock(start),
+      Story.when(
+        account,
+        new Subscribe({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "team",
+          allowances: team,
+          price,
+        }),
+      ),
+      Story.then(
+        account,
+        new SubscriptionActivated({
+          tier: "team",
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          allowances: team,
+          remaining: { messages: 100, seats: 5 },
+          periodStart: start,
+          periodEnd: monthLater,
+          anchorTz: "UTC",
+          interval: "month",
+          currency: "usd",
+          price,
+          statusAfter: "active",
+        }),
+      ),
+      Story.when(
+        account,
+        new ReserveUsage({ feature: "messages", amount: 20, reservationId: "msg-hold" }),
+      ),
+      Story.then(
+        account,
+        new UsageReserved({
+          feature: "messages",
+          amount: 20,
+          reservedAfter: 20,
+          remainingAfter: 80,
+          reservationId: "msg-hold",
+          sequence: 1,
+        }),
+      ),
+      Story.when(
+        account,
+        new ReserveUsage({ feature: "seats", amount: 2, reservationId: "seat-hold" }),
+      ),
+      Story.then(
+        account,
+        new UsageReserved({
+          feature: "seats",
+          amount: 2,
+          reservedAfter: 2,
+          remainingAfter: 3,
+          reservationId: "seat-hold",
+          sequence: 2,
+        }),
+      ),
+      Story.clock(monthLater),
+      Story.then(
+        account,
+        new PeriodClosed({
+          periodStart: start,
+          periodEnd: monthLater,
+          nextPeriodStart: monthLater,
+          nextPeriodEnd: march,
+          statusAfter: "active",
+          standingAfter: "good",
+          cancelAtPeriodEndAfter: false,
+        }),
+        new UsageReset({
+          remaining: { messages: 100, seats: 3 },
+          carried: { messages: 0, seats: 0 },
+          kept: { seats: true },
+        }),
+        new CreditsExpired({ amount: 0, balanceAfter: 0 }),
+      ),
+      Story.state(account, {
+        reserved: { seats: 2 },
+        reservations: {
+          "seat-hold": { id: "seat-hold", feature: "seats", amount: 2, remaining: 2 },
+        },
+      }),
+      Story.view(Entitlements, account, {
+        periodEnd: march,
+        features: {
+          messages: {
+            included: 100,
+            used: 0,
+            reserved: 0,
+            remaining: 100,
+            carried: 0,
+            allowed: true,
+            overage: "block",
+            resets: "month",
+            resetsAt: march,
+          },
+          seats: {
+            included: 5,
+            used: 0,
+            reserved: 2,
+            remaining: 3,
+            carried: 0,
+            allowed: true,
+            overage: "block",
+            resets: "never",
+            resetsAt: null,
+          },
+        },
+      }),
+    ),
 );
