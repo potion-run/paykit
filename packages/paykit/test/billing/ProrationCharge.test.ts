@@ -163,9 +163,15 @@ describe("charging a proration", () => {
         });
         expect(page?.prorationInvoice).toBe("inv_1");
 
-        // And the cross-account row a dashboard reads, not just the page.
+        // And the cross-account row a dashboard reads, not just the page. The
+        // projection is a consumer of its own, so the row can trail the view:
+        // wait for it instead of assuming one delivery feeds both.
         const reads = yield* BillingReadStore;
-        const row = yield* reads.get(account);
+        let row = yield* reads.get(account);
+        for (let attempt = 0; attempt < 500 && row?.proration === undefined; attempt++) {
+          yield* Effect.sleep("10 millis");
+          row = yield* reads.get(account);
+        }
         expect(row?.proration?.due).toBe(8000);
         expect(row?.prorationInvoice).toBe("inv_1");
       }),
