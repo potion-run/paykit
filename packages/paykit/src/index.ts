@@ -120,6 +120,8 @@ export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 export { Preview } from "./Preview.ts";
 export { ChargeProration, ChargeProrationResult } from "./ChargeProration.ts";
 export type { ChargeProrationInput } from "./ChargeProration.ts";
+export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
+export type { Proration as ProrationValue } from "./Proration.ts";
 export type { PreviewCommand, PreviewEvent, PreviewInput, PreviewResult } from "./Preview.ts";
 export {
   MissingProviderRef,
@@ -278,7 +280,7 @@ export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 // ── 4. providers ────────────────────────────────────────────────────────────
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
-export { PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
+export { PaymentsStripe, PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
 export { stripeBindings } from "./PaymentsStripe.ts";
 export type {
   StripeBindingSource,

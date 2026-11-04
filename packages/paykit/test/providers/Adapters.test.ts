@@ -277,9 +277,77 @@ describe("the Stripe adapter", () => {
     }),
   );
 
-  it("the adapter is paykit's, not a vendor package's: no `paykit-stripe` exists", () => {
-    // `@alchemy.run/stripe` is the vendor package; the adapter lives here behind
-    // the optional peer. A second package would be a product with no user.
-    expect(typeof stripeBindings).toBe("function");
-  });
+  it.effect("an invoice binding is a capability, and the amount reaches the vendor", () =>
+    Effect.gen(function* () {
+      const asked: Array<{ account: string; amount: number; currency: string }> = [];
+      const provider = PaymentsStripe({
+        bindings: {
+          ...stripeFixture,
+          createInvoice: (args) =>
+            Effect.sync(() => {
+              asked.push(args);
+              return { invoiceId: "in_proration" };
+            }),
+        },
+        tiers: { pro: { price: proPrice, priceId: "price_1" } },
+      });
+      expect(provider.capabilities.has("invoice")).toBe(true);
+      const invoice = yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).createInvoice({
+            account: "acct_1",
+            amount: 8_000,
+            currency: "usd",
+          });
+        }),
+      );
+      expect(invoice.invoiceId).toBe("in_proration");
+      expect(asked).toEqual([{ account: "acct_1", amount: 8_000, currency: "usd" }]);
+    }),
+  );
+
+  it.effect("Polar declares an invoice only when its bindings carry one", () =>
+    Effect.gen(function* () {
+      const bare = PaymentsPolar({
+        bindings: polarBindings,
+        tiers: { pro: { price, productId: "prod_1" } },
+      });
+      expect(bare.capabilities.has("invoice")).toBe(false);
+
+      const billing = PaymentsPolar({
+        bindings: {
+          ...polarBindings,
+          createInvoice: () => Effect.succeed({ invoiceId: "ord_1" }),
+        },
+        tiers: { pro: { price, productId: "prod_1" } },
+      });
+      expect(billing.capabilities.has("invoice")).toBe(true);
+      const invoice = yield* withProvider(
+        billing,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).createInvoice({
+            account: "acct_1",
+            amount: 8_000,
+            currency: "usd",
+          });
+        }),
+      );
+      expect(invoice.invoiceId).toBe("ord_1");
+
+      const missing = yield* Effect.flip(
+        withProvider(
+          bare,
+          Effect.gen(function* () {
+            return yield* (yield* Payments).createInvoice({
+              account: "acct_1",
+              amount: 8_000,
+              currency: "usd",
+            });
+          }),
+        ),
+      );
+      expect(missing).toBeInstanceOf(ProviderCapabilityMissing);
+    }),
+  );
 });

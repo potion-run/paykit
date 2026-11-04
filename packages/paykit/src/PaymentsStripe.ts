@@ -21,6 +21,16 @@ export interface StripeBindings {
   readonly createCustomerSession: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  /**
+   * Optional: bill an amount on its own, which is how a mid-cycle proration is
+   * collected. `@alchemy.run/stripe` ships no invoice binding, so a caller that
+   * brings only those bindings declares no `invoice` capability.
+   */
+  readonly createInvoice?: (args: {
+    readonly account: string;
+    readonly amount: number;
+    readonly currency: string;
+  }) => Effect.Effect<{ readonly invoiceId: string }, PaymentError>;
   /** Optional: `@alchemy.run/stripe` ships no refund binding, so it is absent there. */
   readonly createRefund?: (args: {
     readonly chargeId: string;
@@ -88,14 +98,13 @@ const declined = (op: string, cause: unknown): PaymentDeclined =>
  * Map `@alchemy.run/stripe`'s bindings onto the `Payments` port, so a user
  * writes the account's two calls and paykit does the rest.
  *
- * There is no `@potion.run/paykit-stripe` and there should not be: Alchemy
- * already ships a Stripe provider, and a paykit-shaped wrapper around it would
- * be a second product with no user of its own. The adapter lives here, behind
- * the optional `@alchemy.run/stripe` peer, and the vendor package stays the
- * vendor's.
+ * `@alchemy.run/stripe` is the vendor package for a caller that already has it.
+ * `@potion.run/paykit-stripe` is the one-call path: it builds its client on
+ * `@distilled.cloud/stripe` and returns the provider, so nothing else has to be
+ * wired. This adapter is the port mapping under both.
  *
- * `refund` is absent because `@alchemy.run/stripe` exposes no refund binding, so
- * the provider does not declare the capability and asking for one fails with
+ * `refund` and `invoice` are absent from `@alchemy.run/stripe`, so a provider
+ * built from those bindings does not declare them, and asking for one fails with
  * `ProviderCapabilityMissing` rather than pretending to decline a card.
  *
  * ### Wiring the Worker's bindings
@@ -157,6 +166,7 @@ export const PaymentsStripe = (props: StripeProps): Provider<"processor"> => {
   const capabilities: ReadonlySet<PaymentCapability> = new Set<PaymentCapability>([
     "checkout",
     "portal",
+    ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
     ...(props.bindings.createRefund === undefined ? [] : (["refund"] as const)),
     ...(props.bindings.syncTier === undefined ? [] : (["syncTier"] as const)),
   ]);
@@ -178,7 +188,18 @@ export const PaymentsStripe = (props: StripeProps): Provider<"processor"> => {
         }
         return props.bindings.createCheckoutSession({ account, tier, priceId: mapped.priceId });
       },
-      createInvoice: () => missing("createInvoice"),
+      createInvoice: ({
+        account,
+        amount,
+        currency,
+      }: {
+        account: string;
+        amount: number;
+        currency: string;
+      }) =>
+        props.bindings.createInvoice === undefined
+          ? missing("createInvoice")
+          : props.bindings.createInvoice({ account, amount, currency }),
       refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
         props.bindings.createRefund === undefined
           ? missing("refund")

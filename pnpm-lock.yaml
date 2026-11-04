@@ -185,6 +185,9 @@ catalogs:
     '@distilled.cloud/polar':
       specifier: 1.0.0-rc.18
       version: 1.0.0-rc.18
+    '@distilled.cloud/stripe':
+      specifier: 1.0.0-rc.18
+      version: 1.0.0-rc.18
     '@effect/platform-node':
       specifier: ^4.1.2
       version: 4.1.2
@@ -343,6 +346,43 @@ importers:
         specifier: workspace:*
         version: link:../paykit
     devDependencies:
+      '@alchemy.run/domain':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(foldkit@0.170.0(@effect/platform-browser@4.1.2(effect@4.1.2))(effect@4.1.2))
+      '@alchemy.run/test':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.4.4
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      alchemy:
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1)
+      effect:
+        specifier: 'catalog:'
+        version: 4.1.2
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  packages/paykit-stripe:
+    dependencies:
+      '@distilled.cloud/core':
+        specifier: 'catalog:'
+        version: 1.0.0-rc.18(effect@4.1.2)
+      '@distilled.cloud/stripe':
+        specifier: 'catalog:'
+        version: 1.0.0-rc.18(effect@4.1.2)
+      '@potion.run/paykit':
+        specifier: workspace:*
+        version: link:../paykit
+    devDependencies:
+      '@alchemy.run/domain':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(foldkit@0.170.0(@effect/platform-browser@4.1.2(effect@4.1.2))(effect@4.1.2))
       '@alchemy.run/test':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(@effect/platform-node@4.1.2(effect@4.1.2)(redis@6.3.1))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)

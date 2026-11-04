@@ -5,63 +5,21 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 import { PolarSignatureInvalid, polarWebhook } from "../src/Webhooks.ts";
+import { request, secret, tiers } from "./support/Webhook.ts";
 
-const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
-const tiers = { pro: { price: proPrice, productId: "prod_123" } };
-const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
 const webhook = polarWebhook({ secret: Redacted.make(secret), tiers });
 
 /** The instant every test signs at, so a timestamp is a fixture. */
-const at = 1_700_000_000_000;
+export const at = 1_700_000_000_000;
 const atSeconds = String(at / 1000);
 
-/**
- * An independent HMAC: `Bun.CryptoHasher` is not the `effect/crypto` path the
- * decoder uses, so a signature that verifies here proves both agree.
- */
-const sign = (input: {
-  readonly id: string;
-  readonly timestamp: string;
-  readonly body: string;
-  readonly legacy?: boolean;
-}): string => {
-  const bytes =
-    input.legacy === true
-      ? new TextEncoder().encode(secret)
-      : Buffer.from(secret.slice("whsec_".length), "base64");
-  const tag = new Bun.CryptoHasher("sha256", bytes)
-    .update(`${input.id}.${input.timestamp}.${input.body}`)
-    .digest("base64");
-  return `v1,${tag}`;
-};
-
-const request = (input: {
-  readonly id?: string;
-  readonly body: unknown;
-  readonly timestamp?: string;
-  readonly signature?: string;
-  readonly legacy?: boolean;
-}) => {
-  const id = input.id ?? "msg_1";
-  const timestamp = input.timestamp ?? atSeconds;
-  const body = typeof input.body === "string" ? input.body : JSON.stringify(input.body);
-  return {
-    headers: {
-      "webhook-id": id,
-      "webhook-timestamp": timestamp,
-      "webhook-signature":
-        input.signature ??
-        sign({ id, timestamp, body, ...(input.legacy === true ? { legacy: true } : {}) }),
-    },
-    body,
-  };
-};
-
 /** Run the webhook at the instant the fixtures are signed at. */
-const translate = (input: Parameters<typeof request>[0]) =>
+const translate = (
+  input: Omit<Parameters<typeof request>[0], "timestamp"> & { readonly timestamp?: string },
+) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(at);
-    return yield* webhook(request(input));
+    return yield* webhook(request({ timestamp: atSeconds, ...input }));
   });
 
 const orderPaid = {
@@ -189,6 +147,21 @@ describe("Polar webhooks", () => {
     }),
   );
 
+  it.effect("leaves the tier off a product no tier maps, rather than inventing one", () =>
+    Effect.gen(function* () {
+      const event = Option.getOrThrow(
+        yield* translate({
+          body: {
+            ...orderPaid,
+            data: { ...orderPaid.data, product_id: "prod_unknown" },
+          },
+        }),
+      );
+      expect(event.kind).toBe("payment_succeeded");
+      expect(event.tier).toBe(undefined);
+    }),
+  );
+
   it.effect("verifies a legacy secret, whose key is the secret's own bytes", () =>
     Effect.gen(function* () {
       const event = Option.getOrThrow(yield* translate({ body: orderPaid, legacy: true }));
@@ -224,21 +197,6 @@ describe("Polar webhooks", () => {
         webhook({ headers: { "webhook-id": "msg_1" }, body: JSON.stringify(orderPaid) }),
       );
       expect(error).toBeInstanceOf(PolarSignatureInvalid);
-    }),
-  );
-
-  it.effect("leaves the tier off a product no tier maps, rather than inventing one", () =>
-    Effect.gen(function* () {
-      const event = Option.getOrThrow(
-        yield* translate({
-          body: {
-            ...orderPaid,
-            data: { ...orderPaid.data, product_id: "prod_unknown" },
-          },
-        }),
-      );
-      expect(event.kind).toBe("payment_succeeded");
-      expect(event.tier).toBe(undefined);
     }),
   );
 

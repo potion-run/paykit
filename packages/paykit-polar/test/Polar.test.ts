@@ -22,6 +22,11 @@ const recording = (asked: Array<Record<string, unknown>>): PolarClient => ({
       asked.push(request as never);
       return { url: "https://polar.sh/portal/cs_1" };
     }),
+  createInvoice: (request) =>
+    Effect.sync(() => {
+      asked.push(request as never);
+      return { invoiceId: "ord_proration_1" };
+    }),
   createRefund: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
@@ -167,6 +172,38 @@ describe("Polar as a paykit provider", () => {
     expect(typeof bindings.createCustomerSession).toBe("function");
   });
 
+  it.effect("bills a one-off order when an invoice product is configured", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const provider = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        tiers,
+        invoiceProductId: "prod_proration",
+        client: recording(asked),
+      });
+      expect(provider.capabilities.has("invoice")).toBe(true);
+      const invoice = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).createInvoice({
+            account: "acct_1",
+            amount: 8000,
+            currency: "usd",
+          });
+        }),
+      );
+      expect(invoice.invoiceId).toBe("ord_proration_1");
+      expect(asked[0]).toMatchObject({
+        customerExternalId: "acct_1",
+        productId: "prod_proration",
+        amount: 8000,
+        currency: "usd",
+        description: "Plan change",
+      });
+    }),
+  );
+
   it("declares no portal capability of its own beyond the session it has", () => {
     const provider = Polar({
       accessToken: "polar_t",
@@ -174,7 +211,7 @@ describe("Polar as a paykit provider", () => {
       tiers,
       client: recording([]),
     });
-    // A capability this adapter does not implement must not be advertised.
+    // A capability this deployment did not configure must not be advertised.
     expect(provider.capabilities.has("invoice")).toBe(false);
     expect(ProviderCapabilityMissing).toBeDefined();
     expect(Layer.empty).toBeDefined();

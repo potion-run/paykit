@@ -36,6 +36,18 @@ export interface PolarClient {
     readonly customerExternalId: string;
     readonly returnUrl: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
+  /**
+   * Bill one amount on its own: a one-off order on the configured product,
+   * finalized so Polar charges the customer's saved payment method. This is
+   * what collects a mid-cycle proration.
+   */
+  readonly createInvoice: (request: {
+    readonly customerExternalId: string;
+    readonly productId: string;
+    readonly amount: number;
+    readonly currency: string;
+    readonly description: string;
+  }) => Effect.Effect<{ readonly invoiceId: string }, PaymentDeclined>;
   /** Refund a Polar order. */
   readonly createRefund: (request: {
     readonly orderId: string;
@@ -55,6 +67,14 @@ export interface PolarProps {
   readonly origin: string;
   /** Tier → Polar product, and the price the catalog already states. */
   readonly tiers?: Readonly<Record<string, PolarTier>>;
+  /**
+   * The id of the one-time product a proration is billed as. Without it the
+   * provider declares no `invoice` capability, so `ChargeProration` fails with
+   * `ProviderCapabilityMissing` rather than silently collecting nothing.
+   */
+  readonly invoiceProductId?: string;
+  /** What the invoice line says. Defaults to `Plan change`. */
+  readonly invoiceDescription?: string;
   /** Where a completed checkout returns to. Defaults to `/welcome`. */
   readonly successPath?: string;
   /** Where the portal returns to. Defaults to `/billing`. */
@@ -76,7 +96,13 @@ const declined = (op: string, cause: unknown): PaymentDeclined =>
 /** Map the Polar client onto the `Payments` port's shape. */
 export const polarBindings = (
   client: PolarClient,
-  where: { readonly origin: string; readonly successPath?: string; readonly billingPath?: string },
+  where: {
+    readonly origin: string;
+    readonly successPath?: string;
+    readonly billingPath?: string;
+    readonly invoiceProductId?: string;
+    readonly invoiceDescription?: string;
+  },
 ): PolarBindings => {
   const success = `${where.origin}${where.successPath ?? "/welcome"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
@@ -98,6 +124,33 @@ export const polarBindings = (
         Effect.mapError((cause) => declined("createCustomerSession", cause)),
         Effect.map((session) => ({ url: session.url })),
       ),
+    // No invoice product, no invoice capability: a proration charge that
+    // silently collected nothing would be worse than a typed refusal.
+    ...(where.invoiceProductId === undefined
+      ? {}
+      : {
+          createInvoice: ({
+            account,
+            amount,
+            currency,
+          }: {
+            account: string;
+            amount: number;
+            currency: string;
+          }) =>
+            client
+              .createInvoice({
+                customerExternalId: account,
+                productId: where.invoiceProductId!,
+                amount,
+                currency,
+                description: where.invoiceDescription ?? "Plan change",
+              })
+              .pipe(
+                Effect.mapError((cause) => declined("createInvoice", cause)),
+                Effect.map((invoice) => ({ invoiceId: invoice.invoiceId })),
+              ),
+        }),
     createRefund: ({ chargeId, amount }) =>
       client.createRefund({ orderId: chargeId, amount }).pipe(
         Effect.mapError((cause) => declined("createRefund", cause)),

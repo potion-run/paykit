@@ -74,6 +74,26 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         Effect.mapError(declined("createCustomerSession")),
         Effect.provide(live),
       ),
+    // Polar bills an arbitrary amount as a one-off order: create it as a draft
+    // with the proration's amount, then finalize, which attempts the off-session
+    // charge against the customer's saved payment method. A decline leaves the
+    // order in `draft` and arrives here as a vendor error, which is what the
+    // model records as a failed charge.
+    createInvoice: (request) =>
+      Effect.gen(function* () {
+        const customer = yield* Polar.customersGetExternal({
+          external_id: request.customerExternalId,
+        });
+        const draft = yield* Polar.ordersCreate({
+          customer_id: customer.id,
+          product_id: request.productId,
+          amount: request.amount,
+          currency: request.currency,
+          description: request.description,
+        });
+        const paid = yield* Polar.ordersFinalize({ id: draft.id });
+        return { invoiceId: paid.id };
+      }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
     createRefund: (request) =>
       Polar.refundsCreate({
         order_id: request.orderId,

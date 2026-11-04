@@ -21,6 +21,17 @@ export interface PolarBindings {
   readonly createCustomerSession: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  /**
+   * Optional: bill an amount on its own, which is how a mid-cycle proration is
+   * collected. A merchant of record that can sell a tier can usually also open
+   * a one-off charge, but not always, so the adapter declares it only when it
+   * is supplied.
+   */
+  readonly createInvoice?: (args: {
+    readonly account: string;
+    readonly amount: number;
+    readonly currency: string;
+  }) => Effect.Effect<{ readonly invoiceId: string }, PaymentError>;
   readonly createRefund: (args: {
     readonly chargeId: string;
     readonly amount: number;
@@ -49,11 +60,13 @@ export interface PolarProps {
  * is a product, never a separate price.
  */
 export const PaymentsPolar = (props: PolarProps): Provider<"merchant_of_record"> => {
-  const capabilities: ReadonlySet<PaymentCapability> = new Set(
-    props.bindings.syncTier === undefined
-      ? ["checkout", "refund", "portal"]
-      : ["checkout", "refund", "portal", "syncTier"],
-  );
+  const capabilities: ReadonlySet<PaymentCapability> = new Set([
+    "checkout",
+    "refund",
+    "portal",
+    ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
+    ...(props.bindings.syncTier === undefined ? [] : (["syncTier"] as const)),
+  ]);
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "polar", op }));
 
@@ -76,7 +89,18 @@ export const PaymentsPolar = (props: PolarProps): Provider<"merchant_of_record">
           productId: mapped.productId,
         });
       },
-      createInvoice: () => missing("createInvoice"),
+      createInvoice: ({
+        account,
+        amount,
+        currency,
+      }: {
+        account: string;
+        amount: number;
+        currency: string;
+      }) =>
+        props.bindings.createInvoice === undefined
+          ? missing("createInvoice")
+          : props.bindings.createInvoice({ account, amount, currency }),
       refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
         props.bindings.createRefund({ chargeId, amount }),
       createPortal: ({ account }: { account: string }) =>
