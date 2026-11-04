@@ -6,6 +6,7 @@ import { Overage, Resets } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { Proration } from "../Proration.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import { SubscriptionStatus, Standing } from "./Subscription.state.ts";
 
@@ -40,6 +41,9 @@ export const EntitlementsState = Schema.Struct({
   credits: Schema.Int,
   /** Payment failures recorded for this standing; the retries are the provider's. */
   dunningAttempts: Schema.Int,
+  /** The money the last tier change moved, and the invoice it was billed on. */
+  proration: Schema.optionalKey(Proration),
+  prorationInvoice: Schema.optionalKey(Schema.String),
   currency: Schema.optionalKey(Schema.String),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
@@ -116,10 +120,13 @@ export class Entitlements extends Domain.View("Entitlements", {
         },
         context,
       ),
-    TierChanged: (view, event, context): EntitlementsState =>
-      withAccount(
+    TierChanged: (view, event, context): EntitlementsState => {
+      // A new tier change replaces what the old one owed and the invoice that
+      // settled it; carrying either forward would report stale money.
+      const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
+      return withAccount(
         {
-          ...view,
+          ...rest,
           tier: event.tier,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           features: featuresOf(
@@ -130,9 +137,11 @@ export class Entitlements extends Domain.View("Entitlements", {
             view.standing,
             true,
           ),
+          ...(event.proration === undefined ? {} : { proration: event.proration }),
         },
         context,
-      ),
+      );
+    },
     UsageRecorded: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
       if (feature === undefined) return withAccount(view, context);
@@ -296,7 +305,8 @@ export class Entitlements extends Domain.View("Entitlements", {
     ProviderRefAttached: (view, _event, context): EntitlementsState => withAccount(view, context),
     // Billing an upgrade moves money, not an entitlement; the view still emits
     // it so the read-model projection sees the whole log.
-    ProrationInvoiced: (view, _event, context): EntitlementsState => withAccount(view, context),
+    ProrationInvoiced: (view, event, context): EntitlementsState =>
+      withAccount({ ...view, prorationInvoice: event.invoiceId }, context),
   },
 }) {}
 

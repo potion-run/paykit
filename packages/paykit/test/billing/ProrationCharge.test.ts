@@ -3,9 +3,10 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { ChargeProration } from "../../src/ChargeProration.ts";
@@ -18,6 +19,7 @@ import {
   ProviderCapabilityMissing,
 } from "../../src/Payments.ts";
 import { prorate } from "../../src/Proration.ts";
+import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { NoProrationDue } from "../../src/Subscription/RecordProrationInvoice.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -82,8 +84,11 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
   );
 
 const world = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
+  // `provideMerge` so the projection's store is the one the test reads: a
+  // `provide` would give the handlers a private copy.
   PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
     Layer.provide(Domain.InMemory),
+    Layer.provideMerge(MemoryBillingReadStore),
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(Actor, system("test")),
@@ -130,6 +135,40 @@ describe("charging a proration", () => {
           currency: "usd",
         });
         expect(asked).toEqual([{ amount: 8000, currency: "usd" }]);
+      }),
+      asked,
+    );
+  });
+
+  it.live("shows the charge and its invoice on the billing page", () => {
+    const asked: Array<Invoice> = [];
+    return run(
+      Effect.gen(function* () {
+        yield* upgraded;
+        const charge = yield* ChargeProration();
+        yield* charge({ account });
+
+        const billing = yield* BillingState;
+        // A view is fed by deliveries, so the page catches up just after the
+        // command commits; wait for it rather than racing it.
+        let page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
+        for (let attempt = 0; attempt < 100 && page?.proration === undefined; attempt++) {
+          yield* Effect.sleep("10 millis");
+          page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
+        }
+        expect(page?.proration).toEqual({
+          currency: "usd",
+          credit: 1900,
+          charge: 9900,
+          due: 8000,
+        });
+        expect(page?.prorationInvoice).toBe("inv_1");
+
+        // And the cross-account row a dashboard reads, not just the page.
+        const reads = yield* BillingReadStore;
+        const row = yield* reads.get(account);
+        expect(row?.proration?.due).toBe(8000);
+        expect(row?.prorationInvoice).toBe("inv_1");
       }),
       asked,
     );

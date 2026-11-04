@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { Proration } from "../Proration.ts";
 import { Interval, Price } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import { SubscriptionStatus } from "./Subscription.state.ts";
@@ -29,6 +30,13 @@ export const BillingStateView = Schema.Struct({
   currency: Schema.optionalKey(Schema.String),
   /** What the account pays for the current tier. Absent on a free tier. */
   price: Schema.optionalKey(Price),
+  /**
+   * The money the last tier change moved. A positive `due` is what
+   * `ChargeProration` bills; a negative one is a credit the next period applies.
+   */
+  proration: Schema.optionalKey(Proration),
+  /** The invoice a positive proration was billed on, once it was. */
+  prorationInvoice: Schema.optionalKey(Schema.String),
   trialEndsAt: Schema.optionalKey(Schema.DateTimeUtc),
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
 });
@@ -111,7 +119,12 @@ export class BillingState extends Domain.View("BillingState", {
         context,
       ),
     TierChanged: (view, event, context): BillingStateView => {
-      const { price: _previousPrice, ...rest } = view;
+      const {
+        price: _previousPrice,
+        proration: _previous,
+        prorationInvoice: _invoiced,
+        ...rest
+      } = view;
       return withAccount(
         {
           ...rest,
@@ -119,10 +132,13 @@ export class BillingState extends Domain.View("BillingState", {
           interval: event.interval ?? view.interval,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
+          ...(event.proration === undefined ? {} : { proration: event.proration }),
         },
         context,
       );
     },
+    ProrationInvoiced: (view, event, context): BillingStateView =>
+      withAccount({ ...view, prorationInvoice: event.invoiceId }, context),
     PaymentRecorded: (view, _event, context): BillingStateView =>
       // A payment settles the dunning run; the count starts over at the next
       // failure rather than carrying last quarter's.
@@ -174,6 +190,5 @@ export class BillingState extends Domain.View("BillingState", {
     UsageReleased: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReset: (view, _event, context): BillingStateView => withAccount(view, context),
     ProviderRefAttached: (view, _event, context): BillingStateView => withAccount(view, context),
-    ProrationInvoiced: (view, _event, context): BillingStateView => withAccount(view, context),
   },
 }) {}

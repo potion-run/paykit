@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { Proration } from "./Proration.ts";
 import { FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
 
@@ -18,6 +19,9 @@ export const BillingReadRow = Schema.Struct({
   credits: Schema.Int,
   /** Payment failures recorded for this standing; the retries are the provider's. */
   dunningAttempts: Schema.Int,
+  /** The money the last tier change moved, and the invoice it was billed on. */
+  proration: Schema.optionalKey(Proration),
+  prorationInvoice: Schema.optionalKey(Schema.String),
   currency: Schema.optionalKey(Schema.String),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });

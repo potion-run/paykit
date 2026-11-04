@@ -31,6 +31,10 @@ export const BillingReadLive = BillingRead.toLayer(
           cancelAtPeriodEnd: input.state.cancelAtPeriodEnd,
           credits: input.state.credits,
           dunningAttempts: input.state.dunningAttempts,
+          ...(input.state.proration === undefined ? {} : { proration: input.state.proration }),
+          ...(input.state.prorationInvoice === undefined
+            ? {}
+            : { prorationInvoice: input.state.prorationInvoice }),
           ...(input.state.currency === undefined ? {} : { currency: input.state.currency }),
           features: input.state.features,
         };

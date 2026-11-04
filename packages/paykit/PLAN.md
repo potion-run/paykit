@@ -253,6 +253,9 @@ Three rules make that safe to retry:
   records the same invoice.
 - **The log carries the money.** A charge the events cannot reproduce is a charge nobody can audit,
   which is why it is a command with an event rather than a side effect of `changeTier`.
+- **The page shows it.** `proration` and `prorationInvoice` are on `BillingState` and on
+  `BillingReadRow`, so an operator sees what an upgrade cost and whether it was billed. A charge that
+  only exists in the event log is a charge the console cannot show.
 
 ### Proration is computed by the model, not sent by the caller
 
@@ -274,7 +277,7 @@ keeping the old one.
 | Kind | Name | Purpose |
 | --- | --- | --- |
 | View | `Entitlements` | per-feature `{ included, used, reserved, remaining, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes |
-| View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits |
+| View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits, `dunningAttempts`, and the last tier change's `proration` with the invoice it was billed on |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
 | Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |
 
@@ -344,7 +347,10 @@ Four rules keep the port from re-forming around whichever provider shipped first
    `Stack` refuses a mapping whose amount, currency or interval disagrees
    (`CatalogPriceMismatch`), so drift is a deploy error rather than a wrong invoice.
 
-`0.1` runs one provider per Stack, and `refs` is already keyed by provider, so two is additive.
+`0.1` runs one provider per Stack, and `refs` is already keyed by provider, so two is additive
+once the port dispatches. Until then a second provider is refused (`ProviderAmbiguous`): `Payments`
+is one service tag, so a second layer would win by merge order and the checkout the catalog
+validated would not be the one that ran.
 
 ### The vendor package
 

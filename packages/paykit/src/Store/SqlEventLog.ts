@@ -256,12 +256,12 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
       ),
 
     readModel: (account: string) =>
-      Effect.map(
+      Effect.flatMap(
         sql.get<ReadModelColumns>(
           `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} WHERE account = ?`,
           [account],
         ),
-        (row) => (row === undefined ? null : rowToReadModel(row)),
+        (row) => (row === undefined ? Effect.succeed(null) : rowToReadModel(row)),
       ),
 
     /**
@@ -291,35 +291,35 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         params.push(query.after);
       }
       const clause = where.length === 0 ? "" : ` WHERE ${where.join(" AND ")}`;
-      return Effect.map(
+      return Effect.flatMap(
         sql.query<ReadModelColumns>(
           `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels}${clause} ORDER BY account ${order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
           [...params, take + 1],
         ),
-        (found) => {
-          const rows = found.slice(0, take).map(rowToReadModel);
-          const last = rows[rows.length - 1];
-          return {
-            rows,
-            next: found.length > take && last !== undefined ? last.account : null,
-          };
-        },
+        (found) =>
+          Effect.map(Effect.forEach(found.slice(0, take), rowToReadModel), (rows) => {
+            const last = rows[rows.length - 1];
+            return {
+              rows,
+              next: found.length > take && last !== undefined ? last.account : null,
+            };
+          }),
       );
     },
 
     readModelList: () =>
-      Effect.map(
+      Effect.flatMap(
         sql.query<ReadModelColumns>(
           `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} ORDER BY account ASC`,
         ),
-        (rows) => rows.map(rowToReadModel),
+        (rows) => Effect.forEach(rows, rowToReadModel),
       ),
 
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         `INSERT INTO ${readModels}
-          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, currency, features)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, proration, proration_invoice, currency, features)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (account) DO UPDATE SET
            tier = excluded.tier,
            status = excluded.status,
@@ -329,6 +329,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
            cancel_at_period_end = excluded.cancel_at_period_end,
            credits = excluded.credits,
            dunning_attempts = excluded.dunning_attempts,
+           proration = excluded.proration,
+           proration_invoice = excluded.proration_invoice,
            currency = excluded.currency,
            features = excluded.features`,
         [
@@ -341,6 +343,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           row.cancelAtPeriodEnd ? 1 : 0,
           row.credits,
           row.dunningAttempts,
+          row.proration === undefined ? null : JSON.stringify(row.proration),
+          row.prorationInvoice ?? null,
           row.currency ?? null,
           featuresJson(row.features),
         ] satisfies ReadonlyArray<SqlValue>,
@@ -354,7 +358,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 export type SqlEventLog = ReturnType<typeof SqlEventLog>;
 
 const READ_MODEL_COLUMNS =
-  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, currency, features";
+  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, proration, proration_invoice, currency, features";
 
 interface ReadModelColumns {
   readonly account: string;
@@ -367,24 +371,34 @@ interface ReadModelColumns {
   readonly cancel_at_period_end: number | string;
   readonly credits: number | string;
   readonly dunning_attempts: number | string;
+  readonly proration: string | null;
+  readonly proration_invoice: string | null;
   readonly currency: string | null;
   readonly features: string;
 }
 
-const rowToReadModel = (row: ReadModelColumns): BillingReadRow =>
-  Schema.decodeUnknownSync(BillingReadRowSchema)({
-    account: row.account,
-    tier: row.tier,
-    status: row.status,
-    standing: row.standing,
-    periodStart: dateTimeFrom(numberFrom(row.period_start)),
-    periodEnd: dateTimeFrom(numberFrom(row.period_end)),
-    cancelAtPeriodEnd: numberFrom(row.cancel_at_period_end) === 1,
-    credits: numberFrom(row.credits),
-    dunningAttempts: numberFrom(row.dunning_attempts),
-    ...(row.currency === null ? {} : { currency: row.currency }),
-    features: decodeFeatures(row.features),
-  });
+const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
+  Effect.suspend(() =>
+    Schema.decodeUnknownEffect(BillingReadRowSchema)({
+      account: row.account,
+      tier: row.tier,
+      status: row.status,
+      standing: row.standing,
+      periodStart: dateTimeFrom(numberFrom(row.period_start)),
+      periodEnd: dateTimeFrom(numberFrom(row.period_end)),
+      cancelAtPeriodEnd: numberFrom(row.cancel_at_period_end) === 1,
+      credits: numberFrom(row.credits),
+      dunningAttempts: numberFrom(row.dunning_attempts),
+      ...(row.proration === null ? {} : { proration: JSON.parse(row.proration) as never }),
+      ...(row.proration_invoice === null ? {} : { prorationInvoice: row.proration_invoice }),
+      ...(row.currency === null ? {} : { currency: row.currency }),
+      features: decodeFeatures(row.features),
+    }),
+  ).pipe(
+    // A row this schema cannot read is a bug in the store, not a case a caller
+    // can handle: the read-model port has no failure channel.
+    Effect.orDie,
+  );
 
 const numberFrom = (value: number | string): number =>
   typeof value === "number" ? value : Number(value);
