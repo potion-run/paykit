@@ -146,6 +146,17 @@ export class CatalogCreditGrantInvalid extends Schema.TaggedError<CatalogCreditG
   { tier: Schema.String },
 ) {}
 
+/**
+ * A cap was stated where nothing is billed. On `"block"` an allowance already
+ * stops at `included`, and on `"allow"` past it is never billed, so a cap would
+ * be a number with no effect — including beside `"unlimited"`, which defaults
+ * to `"allow"`.
+ */
+export class CatalogCapWithoutBilling extends Schema.TaggedError<CatalogCapWithoutBilling>()(
+  "CatalogCapWithoutBilling",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -168,6 +179,7 @@ export const CatalogError = Schema.Union([
   CatalogCreditFeatureHasAllowance,
   CatalogCreditRatesOnFlag,
   CatalogCreditGrantInvalid,
+  CatalogCapWithoutBilling,
   CatalogInvalid,
 ]);
 export type CatalogError = typeof CatalogError.Type;
@@ -186,8 +198,8 @@ const duplicateOf = <A>(values: ReadonlyArray<A>, key: (value: A) => string): st
  * Validate a catalog: the schema first, then the references the schema cannot
  * see — duplicate declarations, a grant with no declared feature, a tier that
  * grants nothing, an unlimited allowance that claims an overage, a flag that
- * was given a count, a carry that cannot happen. Provider ids never appear
- * here, so the same catalog runs on every provider.
+ * was given a count, a carry that cannot happen, a cap where nothing is billed.
+ * Provider ids never appear here, so the same catalog runs on every provider.
  *
  * ### Validating a catalog
  * **Example:** A free and a priced tier, both quoting one declared feature
@@ -295,6 +307,11 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       // the setting would silently do nothing.
       if (grant.carryOver === true && flagFeature) {
         return Result.fail(new CatalogCarryOverOnFlag({ tier: tier.id, feature: grant.feature }));
+      }
+      // A cap limits what is billed past `included`, so an allowance that never
+      // bills past it cannot have one.
+      if (grant.cap !== undefined && grant.overage !== "bill") {
+        return Result.fail(new CatalogCapWithoutBilling({ tier: tier.id, feature: grant.feature }));
       }
       if (grant.carryOver === true && grant.resets === "never") {
         return Result.fail(
