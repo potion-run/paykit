@@ -9,7 +9,7 @@ import {
   messages,
   tier,
 } from "@potion.run/paykit";
-import { ChangeTierApplied, ChangeTierQuoted } from "@potion.run/paykit/Admin";
+import { AdminReadFailed, ChangeTierApplied, ChangeTierQuoted } from "@potion.run/paykit/Admin";
 import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -305,6 +305,49 @@ describe("the console model", () => {
     expect(Option.isNone(applied.account.value.change)).toBe(true);
     expect(Option.isNone(applied.account.value.draft)).toBe(true);
     expect(applied.account.value.pending[0]?.status).toBe("Accepted");
+  });
+
+  it("keeps an unknown tier-change outcome retryable with the same id", () => {
+    const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
+    if (Option.isNone(quotedRequest.model.account)) return;
+    const quoting = quotedRequest.model.account.value.change;
+    if (Option.isNone(quoting) || quoting.value._tag !== "Quoting") return;
+    const requestId = quoting.value.requestId;
+
+    const quoted = update(
+      quotedRequest.model,
+      Message.ReceivedAdminChange({
+        message: AdminChangeCommands.Message.SucceededChangeTier({
+          requestId,
+          answer: ChangeTierQuoted.make({
+            tier: "free",
+            proration: { currency: "usd", credit: 1900, charge: 0, due: -1900 },
+          }),
+        }),
+      }),
+    ).model;
+    const confirmed = update(quoted, Message.ClickedConfirmChangeTier());
+    if (Option.isNone(confirmed.model.account)) return;
+    const pending = confirmed.model.account.value.pending[0];
+    if (pending === undefined) return;
+
+    const unknown = update(
+      confirmed.model,
+      Message.ReceivedAdminChange({
+        message: AdminChangeCommands.Message.FailedChangeTier({
+          requestId,
+          error: new AdminReadFailed({ message: "offline" }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(unknown.account)) return;
+    expect(unknown.account.value.pending[0]?.status).toBe("Unknown");
+    expect(Option.isSome(unknown.account.value.change)).toBe(true);
+
+    const retried = update(unknown, Message.ClickedRetryPending({ commandId: pending.commandId }));
+    expect(retried.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+    if (Option.isNone(retried.model.account)) return;
+    expect(retried.model.account.value.pending[0]?.status).toBe("Sending");
   });
 
   it("closes the open account without touching the list", () => {

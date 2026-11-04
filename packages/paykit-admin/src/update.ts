@@ -600,7 +600,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                   : settle(model, commandId, "Unknown", Option.some(reason));
               return updateAccount(next, (value) =>
                 modifyFields(value, {
-                  change: () => Option.none(),
+                  ...(commandId === undefined ? { change: () => Option.none() } : {}),
                   notice: () => Option.some(reason),
                 }),
               );
@@ -621,7 +621,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               : settle(model, commandId, "Unknown", Option.some(error._tag));
           return updateAccount(next, (value) =>
             modifyFields(value, {
-              change: () => Option.none(),
+              ...(commandId === undefined ? { change: () => Option.none() } : {}),
               notice: () => Option.some(`Tier change failed: ${error._tag}`),
             }),
           );
