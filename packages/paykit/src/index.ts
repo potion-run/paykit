@@ -38,10 +38,12 @@ export {
 } from "./Stack.ts";
 export type { BillingStack, StackProps, Store } from "./Stack.ts";
 export {
+  BILLING_STACK_VERSION,
   BillingStack as BillingStackResource,
   BillingStackAttrs,
   BillingStackProps,
   BillingStackProvider,
+  BillingStackStateOutdated,
   BillingStore,
   providers,
   readBillingStack,
