@@ -66,12 +66,19 @@ export const testCatalog = Effect.runSync(
         credits: 5_000,
         grants: [allowance(messages, { included: 100, carryOver: true })],
       }),
+      tier({
+        id: "prepaid",
+        price: { amount: 4_900, currency: "usd", interval: "month" },
+        credits: 10_000,
+        creditsExpire: "never",
+        grants: [allowance(messages, { included: 100 })],
+      }),
     ],
   }),
 );
 
 /** The tiers a generated script may choose from. */
-export const TierName = Schema.Literals(["free", "pro", "scale", "unlimited", "carry"]);
+export const TierName = Schema.Literals(["free", "pro", "scale", "unlimited", "carry", "prepaid"]);
 export type TierName = typeof TierName.Type;
 
 /** The start of every generated script, so time is data, not the wall clock. */
