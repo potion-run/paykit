@@ -14,15 +14,15 @@ import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
 import { GraceElapsed } from "../../src/Subscription/GraceElapsed.command.ts";
 import { GrantCredits } from "../../src/Subscription/GrantCredits.command.ts";
+import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { PeriodEnded } from "../../src/Subscription/PeriodEnded.command.ts";
 import { RecordPayment } from "../../src/Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "../../src/Subscription/RecordPaymentFailure.command.ts";
 import { Recover } from "../../src/Subscription/Recover.command.ts";
-import { ReleaseUsage } from "../../src/Subscription/ReleaseUsage.command.ts";
-import { ReserveUsage } from "../../src/Subscription/ReserveUsage.command.ts";
+import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
-import { SettleUsage } from "../../src/Subscription/SettleUsage.command.ts";
+import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -90,6 +90,7 @@ export const TrialDays = Schema.Int.pipe(
   Schema.check(Schema.isBetween({ minimum: 1, maximum: 30 })),
 );
 export const DedupeKey = Schema.optionalKey(Schema.Literals(["req-a", "req-b", "req-c"]));
+export const HoldId = Schema.Literals(["hold-a", "hold-b", "hold-c"]);
 
 /**
  * One high-level command a script may ask for. A plan is converted to the real
@@ -105,9 +106,9 @@ export const CommandPlan = Schema.Union([
     amount: Amount,
     dimension: Schema.Literals(["default", "gpt-large"]),
   }),
-  Schema.TaggedStruct("ReserveUsage", { amount: Amount, dedupeKey: DedupeKey }),
-  Schema.TaggedStruct("SettleUsage", { amount: Amount }),
-  Schema.TaggedStruct("ReleaseUsage", { amount: Amount }),
+  Schema.TaggedStruct("Hold", { holdId: HoldId, amount: Amount, dedupeKey: DedupeKey }),
+  Schema.TaggedStruct("SettleHold", { holdId: HoldId, amount: Schema.optionalKey(Amount) }),
+  Schema.TaggedStruct("ReleaseHold", { holdId: HoldId }),
   Schema.TaggedStruct("GrantCredits", { amount: Amount }),
   Schema.TaggedStruct("ConsumeCredits", { amount: Amount }),
   Schema.TaggedStruct("RecordPayment", { amount: Amount }),
@@ -201,16 +202,21 @@ export const commandOf = (
         amount: plan.amount,
         dimension: plan.dimension,
       });
-    case "ReserveUsage":
-      return new ReserveUsage({
+    case "Hold":
+      return new Hold({
+        holdId: plan.holdId,
         feature: "messages",
         amount: plan.amount,
+        expiresAt: DateTime.add(now, { days: 365 }),
         ...(plan.dedupeKey === undefined ? {} : { dedupeKey: plan.dedupeKey }),
       });
-    case "SettleUsage":
-      return new SettleUsage({ feature: "messages", amount: plan.amount });
-    case "ReleaseUsage":
-      return new ReleaseUsage({ feature: "messages", amount: plan.amount });
+    case "SettleHold":
+      return new SettleHold({
+        holdId: plan.holdId,
+        ...(plan.amount === undefined ? {} : { amount: plan.amount }),
+      });
+    case "ReleaseHold":
+      return new ReleaseHold({ holdId: plan.holdId });
     case "GrantCredits":
       return new GrantCredits({ amount: plan.amount });
     case "ConsumeCredits":
