@@ -134,10 +134,19 @@ Two table classes, no more: `billing_event` (append-only, the only truth) and `b
 (rebuildable at any moment). A read model that becomes a source of truth is a bug.
 
 - Every table is `billing_`-prefixed, the schema is configurable, `public` is never touched.
-- Migrations are additive, forward-only `SqlFile`s; an applied file is never edited.
-  `paykit migrate --dry-run` prints the DDL before anyone runs it against a money table.
+- Migrations are additive, forward-only SQL records applied through
+  `@alchemy.run/sql/Migrations` — the same registry Alchemy uses. The registry owns the
+  bookkeeping table (`billing_schema_version`), is name-keyed with content hashes, and refuses a
+  rewritten or removed applied file. `migrate()` returns the ids it applied; a replay returns
+  none. `migrateDryRun()` prints the DDL before anyone runs it against a money table.
+- Postgres DDL qualifies every table with the configured schema; SQLite has no schemas. The
+  migration executor sets `search_path` for the registry's unqualified bookkeeping queries and
+  restores it afterwards, so it must be a dedicated session, not a pool that spreads statements.
 - `paykit doctor` rebuilds every read model into temp tables and prints the event ids that
   disagree. A store ships when `doctor` is clean.
+- Code or a test copied from Alchemy keeps a header with the upstream path and the
+  catalog-pinned ref. Keep the copied shape 1:1 where it is a compatibility check; the mirrors
+  under `.agent_sources/` and the catalog bump then make the next change a diff.
 
 ## Providers are ports
 

@@ -51,11 +51,26 @@ export type {
   AppendResult,
   PendingDelivery,
   ScheduledCommand,
+  SqlEventLogOptions,
   StoredEventRow,
 } from "./Store/SqlEventLog.ts";
-export type { SqlExecutor, SqlValue } from "./Store/Sql.ts";
-export { migrate, migrateDryRun, migrationFiles } from "./Migrations/index.ts";
-export type { SqlFile } from "./Migrations/index.ts";
+export type { SqlDialect, SqlExecutor, SqlValue } from "./Store/Sql.ts";
+export {
+  MigrationError,
+  MigrationHistoryConflictError,
+  RewrittenMigrationHistoryError,
+  migrate,
+  migrateDryRun,
+  migrationFiles,
+  readMigrationFiles,
+} from "./Migrations/index.ts";
+export type {
+  MigrationApplyError,
+  MigrationFile,
+  MigrationRecord,
+  MigrationScope,
+  MigrateOptions,
+} from "./Migrations/index.ts";
 
 // ── 2. runtime ──────────────────────────────────────────────────────────────
 export {

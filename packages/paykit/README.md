@@ -167,8 +167,9 @@ Implemented and tested:
 - M5 admin and reads: `BillingAdminApi`, the `AccountEvents` stream, the `BillingRead`
   projection, and the three `Check` read paths (in-process, read model, HTTP transport).
 - M1 first half: the SQL event log with receipts, outbox, schedule and per-account locking,
-  forward-only migrations, `migrateDryRun`, and `doctor` rebuilding the read model and naming
-  the event ids that disagree.
+  migrations through `@alchemy.run/sql/Migrations` (content hashes, drift detection, custom
+  schema, dry-run DDL), and `doctor` rebuilding the read model and naming the event ids that
+  disagree.
 
 Not shipped yet, and deliberately not faked:
 
@@ -189,6 +190,8 @@ Not shipped yet, and deliberately not faked:
 | `test/stories` | every command's happy path and every rejection |
 | `test/properties` | proration, allowances, replay and idempotence |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
+| `test/sql` | the event log's transaction, dedupe and read-model contract, plus migration apply, drift and dry-run |
+| `test/providers` | each adapter's own price mapping, optional capabilities and typed refusals |
 
 Run the gates from the repo root: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`.
 

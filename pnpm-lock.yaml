@@ -253,13 +253,13 @@ importers:
       '@alchemy.run/domain':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(foldkit@0.170.0(@effect/platform-browser@4.1.2(effect@4.1.2))(effect@4.1.2))
+      '@alchemy.run/sql':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
     devDependencies:
       '@alchemy.run/cloudflare':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(@alchemy.run/domain@2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(foldkit@0.170.0(@effect/platform-browser@4.1.2(effect@4.1.2))(effect@4.1.2)))(@effect/platform-bun@4.1.2(effect@4.1.2))(@types/node@26.6.6)(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)(typescript@7.0.2)
-      '@alchemy.run/sql':
-        specifier: 'catalog:'
-        version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)
       '@alchemy.run/stripe':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(alchemy@2.0.0-beta.85(@effect/platform-bun@4.1.2(effect@4.1.2))(effect@4.1.2)(ws@8.22.1))(effect@4.1.2)

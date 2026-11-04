@@ -36,11 +36,11 @@
     "typecheck": "tsrs -b"
   },
   "dependencies": {
-    "@alchemy.run/domain": "catalog:"
+    "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/sql": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
-    "@alchemy.run/sql": "catalog:",
     "@alchemy.run/stripe": "catalog:",
     "@alchemy.run/test": "catalog:",
     "@potion.run/paykit-polar": "workspace:*",
@@ -53,7 +53,6 @@
   },
   "peerDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
-    "@alchemy.run/sql": "catalog:",
     "@alchemy.run/stripe": "catalog:",
     "@potion.run/paykit-polar": "workspace:*",
     "alchemy": "catalog:",
@@ -62,9 +61,6 @@
   },
   "peerDependenciesMeta": {
     "@alchemy.run/cloudflare": {
-      "optional": true
-    },
-    "@alchemy.run/sql": {
       "optional": true
     },
     "@alchemy.run/stripe": {

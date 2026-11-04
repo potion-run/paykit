@@ -1,29 +1,82 @@
+// Adapted from Alchemy's SQLite migration suite, pinned by the workspace
+// catalog at v2.0.0-beta.85. The apply/idempotence, rewritten-history,
+// removed-file, failed-batch and lost-reply cases below are kept structurally
+// 1:1 with upstream so a catalog bump shows up as a diff; paykit additions
+// cover the schema option, dry run and the synchronous SqlExecutor adapter.
+// Source: https://github.com/alchemy-run/alchemy/blob/v2.0.0-beta.85/packages/integration-tests/test/SQL/Migrations/Formats.sqlite.test.ts
+// Mirrored locally at .agent_sources/github.com/alchemy-run/alchemy/.
+import { MigrationError, RewrittenMigrationHistoryError } from "@alchemy.run/sql/Migrations";
 import { describe, expect, it } from "@alchemy.run/test";
+import { sha256 } from "alchemy/Util/sha256";
 import * as Effect from "effect/Effect";
-import { migrate, migrateDryRun } from "../../src/Migrations/index.ts";
+import { migrate, migrateDryRun, readMigrationFiles } from "../../src/Migrations/index.ts";
+import type { SqlExecutor } from "../../src/Store/Sql.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
+
+const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
+  sql.all<{
+    hash: string;
+    created_at: number | null;
+    name: string;
+    applied_at: string | number | null;
+  }>(`SELECT hash, created_at, name, applied_at FROM ${table} ORDER BY id`);
+
+const tables = (sql: SqlExecutor) =>
+  sql
+    .all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'billing_%' ORDER BY name",
+    )
+    .map((row) => row.name);
+
+const store = () => sqliteExecutor();
 
 describe("migrations", () => {
   it("prints the DDL before anyone runs it", () => {
     const sql = migrateDryRun();
-    expect(sql).toContain("billing_schema_version");
+    expect(sql).toContain("-- 0001_init");
     expect(sql).toContain("billing_event");
+    expect(sql).toContain("billing_outbox");
     expect(sql).toContain("billing_rm_billing_read");
+    expect(sql).toContain("billing_schema_version");
+    expect(sql).toBe(migrateDryRun());
   });
 
-  it.effect("applies each file once and records its version", () =>
+  it("renders schema-qualified DDL for Postgres", () => {
+    const sql = migrateDryRun({ dialect: "postgres", schema: "billing" });
+    expect(sql).toContain('CREATE SCHEMA IF NOT EXISTS "billing"');
+    expect(sql).toContain('"billing"."billing_event"');
+    expect(sql).toContain("BIGINT");
+    expect(sql).not.toContain('"public"');
+  });
+
+  it("carries every migration as statements and a canonical SQL string", () =>
     Effect.gen(function* () {
-      const sql = sqliteExecutor();
-      expect(yield* migrate(sql, () => 1_000)).toEqual(["0001_init"]);
-      expect(yield* migrate(sql, () => 2_000)).toEqual([]);
-      const row = sql.get<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM billing_schema_version",
+      const records = yield* readMigrationFiles({ dialect: "sqlite" });
+      expect(records.length).toBe(1);
+      expect(records[0]!.name).toBe("0001_init");
+      expect(records[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(records[0]!.statements.length).toBeGreaterThan(5);
+      expect(records[0]!.statements.every((statement) => !statement.trim().endsWith(";"))).toBe(
+        true,
       );
-      expect(row?.count).toBe(1);
-      const tables = sql.all<{ name: string }>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'billing_%' ORDER BY name",
-      );
-      expect(tables.map((table) => table.name)).toEqual([
+      expect(records[0]!.statements[0]).toContain("CREATE TABLE IF NOT EXISTS");
+      expect(records[0]!.statements.join(";\n")).toContain("billing_rm_billing_read");
+    }));
+
+  it.effect("creates the table and applies migrations in order", () =>
+    Effect.gen(function* () {
+      const sql = store();
+      expect(yield* migrate(sql)).toEqual(["0001_init"]);
+      expect(yield* migrate(sql)).toEqual([]);
+
+      const rows = migrationRows(sql);
+      expect(rows.length).toBe(1);
+      expect(rows[0]!.name).toBe("0001_init");
+      expect(rows[0]!.hash).toBe((yield* readMigrationFiles())[0]!.hash);
+      expect(rows[0]!.created_at).toBe(null);
+      expect(rows[0]!.applied_at).not.toBe(null);
+
+      expect(tables(sql)).toEqual([
         "billing_event",
         "billing_outbox",
         "billing_receipt",
@@ -32,6 +85,189 @@ describe("migrations", () => {
         "billing_schema_version",
         "billing_state",
       ]);
+      expect(
+        sql
+          .all<{ name: string }>("PRAGMA table_info(billing_schema_version)")
+          .map((row) => row.name),
+      ).toEqual(["id", "hash", "created_at", "name", "applied_at"]);
+    }),
+  );
+
+  it.effect("records a content hash that changes with the SQL", () =>
+    Effect.gen(function* () {
+      const first = yield* readMigrationFiles();
+      const second = yield* readMigrationFiles();
+      expect(first[0]!.hash).toBe(second[0]!.hash);
+      expect(first[0]!.hash).toBe(yield* sha256(first[0]!.sql));
+    }),
+  );
+
+  it.effect("honours a custom applied-migrations table", () =>
+    Effect.gen(function* () {
+      const sql = store();
+      expect(yield* migrate(sql, { table: "paykit_migrations" })).toEqual(["0001_init"]);
+      expect(migrationRows(sql, "paykit_migrations").map((row) => row.name)).toEqual(["0001_init"]);
+      expect(tables(sql)).not.toContain("billing_schema_version");
+    }),
+  );
+
+  it.effect("refuses `public` without touching the database", () =>
+    Effect.gen(function* () {
+      const sql = {
+        dialect: "postgres",
+        run: () => {
+          throw new Error("must not run");
+        },
+        exec: () => {
+          throw new Error("must not exec");
+        },
+        get: () => {
+          throw new Error("must not get");
+        },
+        all: () => {
+          throw new Error("must not all");
+        },
+        transaction: () => {
+          throw new Error("must not transaction");
+        },
+        lock: () => {},
+      } satisfies SqlExecutor;
+      const error = yield* Effect.flip(migrate(sql, { schema: "public" }));
+      expect(error).toBeInstanceOf(MigrationError);
+      expect(error.message).toContain("public");
+    }),
+  );
+
+  it.effect("refuses an unsafe bookkeeping table name", () =>
+    Effect.gen(function* () {
+      const sql = store();
+      const error = yield* Effect.flip(
+        migrate(sql, { table: "billing; DROP TABLE billing_event" }),
+      );
+      expect(error).toBeInstanceOf(MigrationError);
+      expect(error.message).toContain("safe");
+    }),
+  );
+
+  it.effect("fails when an already-applied migration's contents changed", () =>
+    Effect.gen(function* () {
+      const sql = store();
+      yield* migrate(sql);
+      sql.run("UPDATE billing_schema_version SET hash = ? WHERE name = ?", [
+        "a".repeat(64),
+        "0001_init",
+      ]);
+      const error = yield* Effect.flip(migrate(sql));
+      expect(error).toBeInstanceOf(RewrittenMigrationHistoryError);
+      expect(error._tag).toBe("RewrittenMigrationHistoryError");
+      if (error._tag !== "RewrittenMigrationHistoryError") throw error;
+      expect(error.changed).toEqual(["0001_init"]);
+      expect(migrationRows(sql).length).toBe(1);
+    }),
+  );
+
+  it.effect("fails when an already-applied migration file is removed", () =>
+    Effect.gen(function* () {
+      const sql = store();
+      yield* migrate(sql);
+      sql.run("INSERT INTO billing_schema_version (hash, name, applied_at) VALUES (?, ?, ?)", [
+        "b".repeat(64),
+        "0002_gone",
+        "2030-01-01T00:00:00Z",
+      ]);
+      const error = yield* Effect.flip(migrate(sql));
+      expect(error).toBeInstanceOf(RewrittenMigrationHistoryError);
+      expect(error._tag).toBe("RewrittenMigrationHistoryError");
+      if (error._tag !== "RewrittenMigrationHistoryError") throw error;
+      expect(error.removed).toEqual(["0002_gone"]);
+    }),
+  );
+
+  it.effect("fails a non-transient batch failure without resending it", () =>
+    Effect.gen(function* () {
+      const base = store();
+      const failing: SqlExecutor = {
+        ...base,
+        batch: (statements: ReadonlyArray<string>) => {
+          if (statements.some((statement) => statement.includes('"billing_event"'))) {
+            throw new Error("disk full");
+          }
+          base.batch!(statements);
+        },
+      };
+      const error = yield* Effect.flip(migrate(failing));
+      expect(error).toBeInstanceOf(MigrationError);
+      expect(error.message).toContain("0001_init");
+      expect(migrationRows(base)).toEqual([]);
+      expect(tables(base)).not.toContain("billing_event");
+    }),
+  );
+
+  it.effect("applies through a transaction when the executor has no batch", () =>
+    Effect.gen(function* () {
+      const base = store();
+      const transactional: SqlExecutor = { ...base, batch: undefined };
+      expect(yield* migrate(transactional)).toEqual(["0001_init"]);
+      expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(tables(base)).toContain("billing_event");
+    }),
+  );
+
+  it.effect("applies the Postgres path with a schema-qualified registry", () =>
+    Effect.gen(function* () {
+      const db = sqliteExecutor();
+      // SQLite stands in for Postgres here: schema-qualified identifiers are
+      // stripped, schema/search_path statements are accepted as no-ops, and
+      // the catalog introspection answers "no foreign history". Everything
+      // else — the registry's bookkeeping queries and every migration
+      // statement — really runs.
+      const strip = (statement: string) =>
+        statement
+          .replaceAll('"billing".', "")
+          // The registry emits Postgres bookkeeping DDL; SQLite needs the
+          // two constructs it cannot parse rewritten (SERIAL, now() default).
+          .replace("id SERIAL PRIMARY KEY", "id INTEGER PRIMARY KEY AUTOINCREMENT")
+          .replace("applied_at timestamp with time zone DEFAULT now()", "applied_at TEXT");
+      const fakePostgres: SqlExecutor = {
+        dialect: "postgres",
+        run: (statement, params) => {
+          if (statement.includes("set_config")) return;
+          db.run(strip(statement), params);
+        },
+        exec: (statement) => {
+          if (statement.startsWith("CREATE SCHEMA")) return;
+          db.exec(strip(statement));
+        },
+        get: (statement, params) =>
+          statement === "SHOW search_path"
+            ? ({ search_path: '"/billing"' } as never)
+            : db.get(strip(statement), params),
+        all: (statement, params) =>
+          statement.includes("information_schema.columns") ? [] : db.all(strip(statement), params),
+        transaction: db.transaction,
+        batch: (statements) => db.batch!(statements.map(strip)),
+        lock: db.lock,
+      };
+      expect(yield* migrate(fakePostgres, { schema: "billing" })).toEqual(["0001_init"]);
+      expect(migrationRows(db).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(tables(db)).toContain("billing_event");
+    }),
+  );
+
+  it.effect("does not resend a batch that landed before its reply was lost", () =>
+    Effect.gen(function* () {
+      const base = store();
+      const flaky: SqlExecutor = {
+        ...base,
+        batch: (statements: ReadonlyArray<string>) => {
+          base.batch!(statements);
+          if (statements.some((statement) => statement.includes('"billing_event"'))) {
+            throw new Error("connection reset after commit");
+          }
+        },
+      };
+      expect(yield* migrate(flaky)).toEqual(["0001_init"]);
+      expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
     }),
   );
 });

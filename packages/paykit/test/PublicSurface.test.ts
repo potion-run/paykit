@@ -17,6 +17,13 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.CatalogError).toBeDefined();
   expect(Paykit.messages.id).toBe("messages");
   expect(Paykit.MemoryStore()._tag).toBe("MemoryStore");
+  expect(typeof Paykit.migrate).toBe("function");
+  expect(typeof Paykit.migrateDryRun).toBe("function");
+  expect(typeof Paykit.readMigrationFiles).toBe("function");
+  expect(typeof Paykit.SqlEventLog).toBe("function");
+  expect(Paykit.MigrationError).toBeDefined();
+  expect(Paykit.MigrationHistoryConflictError).toBeDefined();
+  expect(Paykit.RewrittenMigrationHistoryError).toBeDefined();
   // runtime
   expect(typeof Paykit.Check).toBe("function");
   expect(typeof Paykit.Track).toBe("function");

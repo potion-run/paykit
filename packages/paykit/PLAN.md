@@ -52,9 +52,11 @@ examples.
 export groups, the peers and the build output.
 
 - `alchemy` and `effect` are required peers.
-- `@alchemy.run/cloudflare`, `@alchemy.run/sql`, `@alchemy.run/stripe`,
-  `@potion.run/paykit-polar` and `foldkit` are optional peers plus dev dependencies, so a user
-  who never imports `Paykit.Polar()` never installs `@potion.run/paykit-polar`.
+- `@alchemy.run/sql` is a dependency: the SQL store's migrations are Alchemy's migration
+  registry (`@alchemy.run/sql/Migrations`), not a parallel implementation.
+- `@alchemy.run/cloudflare`, `@alchemy.run/stripe`, `@potion.run/paykit-polar` and `foldkit`
+  are optional peers plus dev dependencies, so a user who never imports `Paykit.Polar()` never
+  installs `@potion.run/paykit-polar`.
 - `@alchemy.run/domain` is a dependency: the model is the product.
 - Versions come from the workspace catalog in `pnpm-workspace.yaml`; a package that needs a
   different line pins it locally and says why.
@@ -291,9 +293,14 @@ they restore per-account serialization inside the user's own Postgres.
 - Exactly two table classes: `billing_event` (append-only, the only truth) and `billing_rm_*`
   (read models, rebuildable at any moment). A read model that becomes a source of truth is
   a bug, not a cache to invalidate.
-- Migrations are `SqlFile`s run through `@alchemy.run/sql/Migrations`, additive and
-  forward-only, with a `billing_schema_version` row. `paykit migrate --dry-run` prints the
-  SQL; nobody runs library DDL against a money table blind.
+- Migrations are additive SQL records applied through `@alchemy.run/sql/Migrations`, the same
+  registry Alchemy uses. The registry owns `billing_schema_version`, keys applied detection by
+  name plus content hash, upgrades legacy bookkeeping shapes, and refuses a rewritten or
+  removed applied file. `migrate()` returns the ids it applied; a replay returns none.
+  `migrateDryRun()` prints the DDL; nobody runs library DDL against a money table blind.
+- Postgres DDL qualifies every `billing_*` table with the configured schema and uses `BIGINT`
+  for epoch millis. SQLite has no schemas and ignores the field. The registry's unqualified
+  bookkeeping queries run under a scoped `search_path` that is restored afterwards.
 - `paykit doctor` rebuilds every read model into temp tables, diffs, and prints the event ids
   that disagree. That command is what earns the right to touch someone's database.
 
