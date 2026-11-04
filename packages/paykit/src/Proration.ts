@@ -57,3 +57,12 @@ export const prorate = (input: {
   const charge = to === undefined ? 0 : portion(to.amount, fraction);
   return { currency, credit, charge, due: charge - credit };
 };
+
+/** Two prorations are the same money, or both absent. */
+export const sameProration = (left: Proration | null, right: Proration | null): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.currency === right.currency &&
+      left.credit === right.credit &&
+      left.charge === right.charge &&
+      left.due === right.due;

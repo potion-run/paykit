@@ -9,7 +9,8 @@ import {
   messages,
   tier,
 } from "@potion.run/paykit";
-import { AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
+import { ChangeTierApplied, ChangeTierQuoted } from "@potion.run/paykit/Admin";
+import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -85,6 +86,12 @@ const withDraft = (amount: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "GrantCredits" })).model;
   return update(openedDraft, Message.UpdatedDraftField({ field: "amount", value: amount })).model;
+};
+
+const withChangeDraft = (tier: string): Model => {
+  const model = withBilling();
+  const openedDraft = update(model, Message.ClickedAction({ action: "ChangeTier" })).model;
+  return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
 };
 
 describe("the console model", () => {
@@ -235,10 +242,67 @@ describe("the console model", () => {
     ).toBe("Sending");
   });
 
-  it("covers every admin Api command, with ChangeTier the only explicit holdout", () => {
-    const covered = [...ConsoleAction, "ChangeTier"].sort();
+  it("covers every admin Api command", () => {
+    const covered = [...ConsoleAction].sort();
     const served = BillingAdminApi.commands.map((command) => command.tag).sort();
     expect(covered).toEqual(served);
+  });
+
+  it("quotes a tier change, then applies only the confirmed amount", () => {
+    const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
+    expect(quotedRequest.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+    if (Option.isNone(quotedRequest.model.account)) return;
+    const quoting = quotedRequest.model.account.value.change;
+    expect(Option.isSome(quoting)).toBe(true);
+    if (Option.isNone(quoting)) return;
+    expect(quoting.value._tag).toBe("Quoting");
+    if (quoting.value._tag !== "Quoting") return;
+    const requestId = quoting.value.requestId;
+
+    const quoted = update(
+      quotedRequest.model,
+      Message.ReceivedAdminChange({
+        message: AdminChangeCommands.Message.SucceededChangeTier({
+          requestId,
+          answer: ChangeTierQuoted.make({
+            tier: "free",
+            proration: { currency: "usd", credit: 1900, charge: 0, due: -1900 },
+          }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(quoted.account)) return;
+    expect(Option.isSome(quoted.account.value.change)).toBe(true);
+    if (Option.isSome(quoted.account.value.change)) {
+      expect(quoted.account.value.change.value._tag).toBe("Quoted");
+    }
+
+    const confirmed = update(quoted, Message.ClickedConfirmChangeTier());
+    expect(confirmed.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+    if (Option.isNone(confirmed.model.account)) return;
+    const pending = confirmed.model.account.value.pending[0];
+    expect(pending?.status).toBe("Sending");
+    if (pending === undefined) return;
+
+    const applied = update(
+      confirmed.model,
+      Message.ReceivedAdminChange({
+        message: AdminChangeCommands.Message.SucceededChangeTier({
+          requestId,
+          answer: ChangeTierApplied.make({
+            commandId: pending.commandId,
+            tier: "free",
+            proration: { currency: "usd", credit: 1900, charge: 0, due: -1900 },
+            stream: "Subscription/acct_a",
+            version: 2,
+          }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(applied.account)) return;
+    expect(Option.isNone(applied.account.value.change)).toBe(true);
+    expect(Option.isNone(applied.account.value.draft)).toBe(true);
+    expect(applied.account.value.pending[0]?.status).toBe("Accepted");
   });
 
   it("closes the open account without touching the list", () => {

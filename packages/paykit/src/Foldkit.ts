@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import { defineMessageUnion } from "foldkit/message";
+import { AdminChangeTier, ChangeTierAnswer, ChangeTierRequest } from "./Admin/ChangeTier.ts";
 import { AdminPreviewInput, AdminReadError, AdminReads, PreviewAnswer } from "./Admin/Reads.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingReadPage, BillingReadQuery } from "./BillingReadStore.ts";
@@ -115,6 +116,37 @@ export const GetCatalog = Command.define("GetCatalog", {
     );
   }),
 });
+
+export const AdminChangeMessage = defineMessageUnion({
+  SucceededChangeTier: { requestId: Schema.Int, answer: ChangeTierAnswer },
+  FailedChangeTier: { requestId: Schema.Int, error: AdminReadError },
+});
+export type AdminChangeMessage = typeof AdminChangeMessage.Type;
+
+/**
+ * The server-side quote/apply flow for a tier change. Call it with no
+ * `expected` to quote; call it with the quoted proration and a command id to
+ * apply. A stale quote comes back as `requote`, never as a different charge.
+ */
+export const ApplyChangeTier = Command.define("ApplyChangeTier", {
+  args: { requestId: Schema.Int, input: ChangeTierRequest },
+  messages: [AdminChangeMessage],
+  execute: Effect.fn(function* ({ requestId, input }) {
+    const change = yield* AdminChangeTier;
+    return yield* change.change(input).pipe(
+      Effect.match({
+        onSuccess: (answer) => AdminChangeMessage.SucceededChangeTier({ requestId, answer }),
+        onFailure: (error) => AdminChangeMessage.FailedChangeTier({ requestId, error }),
+      }),
+    );
+  }),
+});
+
+/** The write side of the console's server surface, separate from the query Commands. */
+export const AdminChangeCommands = {
+  Message: AdminChangeMessage,
+  ChangeTier: ApplyChangeTier,
+};
 
 /** Every query Command, in one place, next to the Api-derived `BillingAdmin`. */
 export const AdminQueries = {

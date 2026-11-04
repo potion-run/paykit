@@ -309,7 +309,6 @@ const actionButtons = (
     entitlements: Option.getOrUndefined(account.entitlements),
   });
   const enabled = descriptors.filter((descriptor) => ConsoleAction.includes(descriptor.action));
-  const changeTier = descriptors.find((descriptor) => descriptor.action === "ChangeTier");
 
   return h.section(
     [h.Class("pk-panel")],
@@ -323,20 +322,55 @@ const actionButtons = (
               button(descriptor.action, Message.ClickedAction({ action: descriptor.action }), h),
             ),
           ),
-      changeTier === undefined
-        ? h.empty
-        : h.p(
-            [h.Class("pk-muted")],
-            [
-              "Tier changes are not enabled here yet: they need a server-applied proration quote so the amount the operator confirms is the amount the log records.",
-            ],
-          ),
     ],
   );
 };
 
-const draftView = (draft: ActionDraft, h: HtmlBuilder<Message>): Html => {
+const prorationPanel = (
+  proration: {
+    readonly currency: string;
+    readonly credit: number;
+    readonly charge: number;
+    readonly due: number;
+  } | null,
+  h: HtmlBuilder<Message>,
+): Html =>
+  proration === null
+    ? h.p([h.Class("pk-muted")], ["No charge for this change."])
+    : h.div(
+        [h.Class("pk-quote")],
+        [
+          h.span([], [`Credit ${formatMoney(proration.credit, proration.currency)}`]),
+          h.span([], [`Charge ${formatMoney(proration.charge, proration.currency)}`]),
+          h.strong([], [`Due ${formatMoney(proration.due, proration.currency)}`]),
+        ],
+      );
+
+const draftView = (
+  model: Model,
+  account: AccountState,
+  draft: ActionDraft,
+  h: HtmlBuilder<Message>,
+): Html => {
   const updated = (field: string) => (value: string) => Message.UpdatedDraftField({ field, value });
+  const changeQuote =
+    draft.kind === "ChangeTier"
+      ? Option.match(account.change, {
+          onNone: () => Option.none(),
+          onSome: (value) =>
+            value.tier === draft.tier && value._tag !== "Quoting"
+              ? Option.some(value)
+              : Option.none(),
+        })
+      : Option.none();
+  const isQuoted = Option.match(changeQuote, {
+    onNone: () => false,
+    onSome: (value) => value._tag === "Quoted",
+  });
+  const isApplying = Option.match(changeQuote, {
+    onNone: () => false,
+    onSome: (value) => value._tag === "Applying",
+  });
 
   const controls = (): ReadonlyArray<Html> => {
     switch (draft.kind) {
@@ -379,6 +413,29 @@ const draftView = (draft: ActionDraft, h: HtmlBuilder<Message>): Html => {
       case "ScheduleCancellation":
       case "Resume":
         return [h.p([h.Class("pk-muted")], [`Send ${draft.kind} for this account?`])];
+      case "ChangeTier": {
+        const currentTier = Option.match(account.billing, {
+          onNone: () => undefined,
+          onSome: (billing) => billing.tier,
+        });
+        const options = Option.match(model.catalog, {
+          onNone: () => [],
+          onSome: (catalog) =>
+            catalog.tiers
+              .filter((tier) => tier.id !== currentTier)
+              .map((tier) => ({
+                value: tier.id,
+                label: tier.name === undefined ? tier.id : `${tier.name} (${tier.id})`,
+              })),
+        });
+        return [
+          field("New tier", select(draft.tier, options, updated("tier"), h), h),
+          ...Option.match(changeQuote, {
+            onNone: () => [],
+            onSome: (quote) => [prorationPanel(quote.proration, h)],
+          }),
+        ];
+      }
     }
   };
 
@@ -390,7 +447,17 @@ const draftView = (draft: ActionDraft, h: HtmlBuilder<Message>): Html => {
       h.div(
         [h.Class("pk-actions")],
         [
-          button("Send command", Message.ClickedSubmitAction(), h),
+          ...(isQuoted
+            ? [button("Confirm charge", Message.ClickedConfirmChangeTier(), h)]
+            : isApplying
+              ? [h.span([h.Class("pk-muted")], ["Applying…"])]
+              : [
+                  button(
+                    draft.kind === "ChangeTier" ? "Quote change" : "Send command",
+                    Message.ClickedSubmitAction(),
+                    h,
+                  ),
+                ]),
           button("Cancel", Message.ClickedCancelAction(), h),
         ],
       ),
@@ -493,7 +560,7 @@ const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
           ),
       Option.match(account.draft, {
         onNone: () => actionButtons(account, model.catalog, h),
-        onSome: (draft) => draftView(draft, h),
+        onSome: (draft) => draftView(model, account, draft, h),
       }),
       Option.match(account.billing, {
         onNone: () => h.p([h.Class("pk-muted")], ["Waiting for the billing snapshot…"]),

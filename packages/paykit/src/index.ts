@@ -154,6 +154,7 @@ export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";
 export { allowsOne } from "./Subscription/Entitlements.view.ts";
 export { ProrationMismatch } from "./Subscription/ProrationMismatch.rejection.ts";
+export { Proration, prorate, sameProration } from "./Proration.ts";
 export {
   Period,
   Standing,

@@ -94,8 +94,12 @@ export const filesUnder = Effect.fn("PackageManifest.files")(function* (director
   const path = yield* Path.Path;
   const files: Array<string> = [];
   const pending: Array<string> = [directory];
+  // A workspace cycle links node_modules back into a package; following it
+  // walks the same tree forever. Generated output is not source either.
+  const skip = new Set(["node_modules", ".git", "lib", "dist", ".alchemy"]);
   for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
     for (const entry of yield* fs.readDirectory(current)) {
+      if (skip.has(entry)) continue;
       const full = path.join(current, entry);
       if ((yield* fs.stat(full)).type === "Directory") pending.push(full);
       else files.push(path.relative(directory, full));

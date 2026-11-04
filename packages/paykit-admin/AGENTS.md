@@ -21,8 +21,11 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   `BillingRead` projection. Refresh it when the operator asks or after a write;
   do not turn it into a subscription or a fake view.
 - **Actions are intents.** A form produces an `AdminIntent` after parsing, and
-  only then becomes a command. `ChangeTier` stays disabled until a server-side
-  quote/apply path makes the confirmed amount the recorded amount.
+  only then becomes a command.
+- **A tier change is a quote, then an apply.** The server computes the
+  proration and applies only the amount the operator confirmed. A mismatch is
+  a requote, never a silently different charge. Do not send `BillingAdmin`'s
+  raw `ChangeTier` from the console.
 - **No generic schema forms.** Command payloads carry `allowances`, `price` and
   `proration` that an operator must never type. The catalog is the source for
   tier data; the server decides the rest.

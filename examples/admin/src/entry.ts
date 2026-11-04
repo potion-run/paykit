@@ -1,6 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import { Console } from "@potion.run/paykit-admin";
-import { AdminReadsClient } from "@potion.run/paykit/Admin";
+import { AdminChangeTierClient, AdminReadsClient } from "@potion.run/paykit/Admin";
 import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
 import { CommandHeaders } from "@potion.run/paykit/Foldkit";
 import "@potion.run/paykit-admin/styles.css";
@@ -31,6 +31,7 @@ const Connection = BillingAdminApi.layerClient.pipe(
 const resources = Layer.mergeAll(
   Connection,
   AdminReadsClient(`${location.origin}/console`, { headers }),
+  AdminChangeTierClient(`${location.origin}/console`, { headers }),
   Layer.succeed(CommandHeaders, {
     get: () => Effect.succeed(headers),
   }),

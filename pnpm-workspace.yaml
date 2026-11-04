@@ -1,3 +1,8 @@
+# paykit-polar depends on paykit at runtime, and paykit dev-depends on
+# paykit-polar for its adapter tests. The cycle is deliberate: each package
+# builds on its own, so arbitrary task order is correct.
+ignoreWorkspaceCycles: true
+
 packages:
   - packages/*
   - examples/*

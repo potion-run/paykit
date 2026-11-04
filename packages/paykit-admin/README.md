@@ -15,10 +15,14 @@ command id.
 
 The console's first release covers the account list, the standing and
 allowance panels, the account event feed, and these actions: `GrantCredits`,
-`ExtendTrial`, `EnterGrace`, `RecordPayment`, `RecordPaymentFailure`,
-`Recover`, `Expire`, `ScheduleCancellation` and `Resume`. `ChangeTier` is
-deliberately not enabled yet: it needs a server-applied proration quote so the
-amount the operator confirms is the amount the log records.
+`ExtendTrial`, `ChangeTier`, `EnterGrace`, `RecordPayment`,
+`RecordPaymentFailure`, `Recover`, `Expire`, `ScheduleCancellation` and
+`Resume`.
+
+`ChangeTier` is a two-step quote/apply: the server computes the proration with
+its own clock, the operator confirms that amount, and the server applies only
+if the recomputed amount still matches. A stale quote comes back as a requote,
+never as a different charge.
 
 The console shows account ids and billing state only. paykit stores no customer
 records, so there is no name, email or profile to show.
@@ -107,8 +111,10 @@ const reads = RpcServer.toHttpEffect(AdminReadsRpcs).pipe(
 ```
 
 A Worker then routes `/admin` to `BillingAdminApi` and `/console` to `reads`.
-Serve the app and both surfaces on one origin, so the session cookie reaches
-commands and WebSocket live reads.
+The console also needs `AdminChangeTierClient` and a server group that merges
+`AdminConsoleRpcs`, which adds the tier-change write beside the reads. Serve the
+app and both surfaces on one origin, so the session cookie reaches commands and
+WebSocket live reads.
 
 ## Deploy with Alchemy
 

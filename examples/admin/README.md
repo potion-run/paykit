@@ -23,5 +23,7 @@ Because a browser cannot set headers on a WebSocket, the example uses
 commands. A production app with a cookie session can switch to
 `Domain.protocolWebSocket` and get pushed reads.
 
-The console's `ChangeTier` action is deliberately not enabled. It needs a
-server-side proration quote so the amount confirmed is the amount recorded.
+`ChangeTier` quotes the proration on the server, asks the operator to confirm
+that number, and applies it with the same request. If the amount moved between
+quote and apply, the server returns a requote instead of charging a different
+number.

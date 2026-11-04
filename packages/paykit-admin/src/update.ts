@@ -1,5 +1,5 @@
 import type { BillingReadQuery } from "@potion.run/paykit/BillingReadStore";
-import { AdminQueries, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
+import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
 import {
   AccountId,
   Standing,
@@ -20,6 +20,10 @@ import {
   type ActionDraft,
   AccountState as AccountStateSchema,
   type AdminIntent,
+  ChangeTierApplying,
+  type ChangeTierQuote,
+  ChangeTierQuoted,
+  ChangeTierQuoting,
   type Model,
   type Pending,
   Pending as PendingSchema,
@@ -144,6 +148,8 @@ const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, string> => {
     case "ScheduleCancellation":
     case "Resume":
       return Result.succeed({ kind: draft.kind });
+    case "ChangeTier":
+      return Result.map(nonEmpty(draft.tier, "tier"), (tier) => ({ kind: "ChangeTier", tier }));
   }
 };
 
@@ -168,6 +174,8 @@ const draftFor = (kind: ActionDraft["kind"], billing: AccountState["billing"]): 
     case "ScheduleCancellation":
     case "Resume":
       return { kind };
+    case "ChangeTier":
+      return { kind, tier: "" };
   }
 };
 
@@ -196,6 +204,8 @@ const updatedDraft = (draft: ActionDraft, field: string, value: string): ActionD
     case "ScheduleCancellation":
     case "Resume":
       return draft;
+    case "ChangeTier":
+      return field === "tier" ? { kind: "ChangeTier", tier: value } : draft;
   }
 };
 
@@ -213,7 +223,9 @@ const failureReason = (failure: CommandFailure): string =>
     Match.exhaustive,
   );
 
-const send = (target: AccountId, intent: AdminIntent, commandId: string) => {
+type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" }>;
+
+const send = (target: AccountId, intent: BillingAdminIntent, commandId: string) => {
   const wrap = (message: typeof BillingAdmin.Message.Type) =>
     Message.ReceivedAdminResult({ message });
   switch (intent.kind) {
@@ -268,6 +280,79 @@ const send = (target: AccountId, intent: AdminIntent, commandId: string) => {
   }
 };
 
+type QuotedChange = Extract<ChangeTierQuote, { readonly _tag: "Quoted" }>;
+
+const quoteChangeTier = (model: Model, account: AccountState, tier: string): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            change: () => Option.some(ChangeTierQuoting.make({ requestId, tier })),
+            notice: () => Option.none(),
+          }),
+        ),
+    }),
+    commands: [
+      Command.mapMessage(
+        ApplyChangeTier({ requestId, input: { account: account.id, tier } }),
+        (message) => Message.ReceivedAdminChange({ message }),
+      ),
+    ],
+  };
+};
+
+const applyChangeTier = (
+  model: Model,
+  account: AccountState,
+  quote: QuotedChange,
+): UpdateReturn => {
+  const allocation = next(model.commandIds);
+  const pending = PendingSchema.make({
+    commandId: allocation.commandId,
+    intent: { kind: "ChangeTier", tier: quote.tier },
+    status: "Sending",
+    reason: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      commandIds: () => allocation.commandIds,
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            change: () =>
+              Option.some(
+                ChangeTierApplying.make({
+                  requestId: quote.requestId,
+                  tier: quote.tier,
+                  proration: quote.proration,
+                  commandId: allocation.commandId,
+                }),
+              ),
+            pending: () => [pending, ...account.pending],
+            notice: () => Option.none(),
+          }),
+        ),
+    }),
+    commands: [
+      Command.mapMessage(
+        ApplyChangeTier({
+          requestId: quote.requestId,
+          input: {
+            account: account.id,
+            tier: quote.tier,
+            expected: quote.proration,
+            commandId: allocation.commandId,
+          },
+        }),
+        (message) => Message.ReceivedAdminChange({ message }),
+      ),
+    ],
+  };
+};
+
 const submit = (model: Model, account: AccountState, draft: ActionDraft): UpdateReturn => {
   const parsed = parseDraft(draft);
   if (Result.isFailure(parsed)) {
@@ -277,6 +362,10 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
           Option.some(modifyFields(account, { notice: () => Option.some(parsed.failure) })),
       }),
     };
+  }
+
+  if (parsed.success.kind === "ChangeTier") {
+    return quoteChangeTier(model, account, parsed.success.tier);
   }
 
   const allocation = next(model.commandIds);
@@ -347,6 +436,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               feed: "CatchingUp",
               error: Option.none(),
               draft: Option.none(),
+              change: Option.none(),
               pending: [],
               notice: Option.none(),
             }),
@@ -433,6 +523,112 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         Match.orElse(() => ({ model })),
       ),
 
+    ReceivedAdminChange: ({ message: change }) =>
+      Match.value(change).pipe(
+        Match.withReturnType<UpdateReturn>(),
+        Match.tag("SucceededChangeTier", ({ requestId, answer }) => {
+          if (Option.isNone(model.account)) return { model };
+          const account = model.account.value;
+          return Match.value(answer).pipe(
+            Match.withReturnType<UpdateReturn>(),
+            Match.tag("quoted", ({ tier, proration }) => {
+              const current = account.change;
+              if (
+                Option.isNone(current) ||
+                current.value._tag !== "Quoting" ||
+                current.value.requestId !== requestId ||
+                current.value.tier !== tier
+              ) {
+                return { model };
+              }
+              return updateAccount(model, (value) =>
+                modifyFields(value, {
+                  change: () => Option.some(ChangeTierQuoted.make({ requestId, tier, proration })),
+                  notice: () => Option.none(),
+                }),
+              );
+            }),
+            Match.tag("requote", ({ tier, proration }) => {
+              const commandId = Option.match(account.change, {
+                onNone: () => undefined,
+                onSome: (value) =>
+                  value._tag === "Applying" && value.tier === tier ? value.commandId : undefined,
+              });
+              const next =
+                commandId === undefined
+                  ? model
+                  : settle(
+                      model,
+                      commandId,
+                      "Unknown",
+                      Option.some("The amount moved; confirm the new quote."),
+                    );
+              return updateAccount(next, (value) =>
+                modifyFields(value, {
+                  change: () => Option.some(ChangeTierQuoted.make({ requestId, tier, proration })),
+                  notice: () => Option.some("The amount moved; confirm the new quote."),
+                }),
+              );
+            }),
+            Match.tag("applied", ({ commandId, tier }) => {
+              const next = settle(model, commandId, "Accepted", Option.none());
+              return updateAccount(next, (value) =>
+                modifyFields(value, {
+                  draft: () => Option.none(),
+                  change: () => Option.none(),
+                  notice: () => Option.some(`Tier changed to ${tier}.`),
+                }),
+              );
+            }),
+            Match.tag("rejected", ({ commandId, rejection }) => {
+              const next =
+                commandId === undefined
+                  ? model
+                  : settle(model, commandId, "Rejected", Option.some(rejection._tag));
+              return updateAccount(next, (value) =>
+                modifyFields(value, {
+                  draft: () => Option.none(),
+                  change: () => Option.none(),
+                  notice: () => Option.some(`Rejected: ${rejection._tag}`),
+                }),
+              );
+            }),
+            Match.tag("failed", ({ commandId, reason }) => {
+              const next =
+                commandId === undefined
+                  ? model
+                  : settle(model, commandId, "Unknown", Option.some(reason));
+              return updateAccount(next, (value) =>
+                modifyFields(value, {
+                  change: () => Option.none(),
+                  notice: () => Option.some(reason),
+                }),
+              );
+            }),
+            Match.exhaustive,
+          );
+        }),
+        Match.tag("FailedChangeTier", ({ error }) => {
+          if (Option.isNone(model.account)) return { model };
+          const account = model.account.value;
+          const commandId = Option.match(account.change, {
+            onNone: () => undefined,
+            onSome: (value) => (value._tag === "Applying" ? value.commandId : undefined),
+          });
+          const next =
+            commandId === undefined
+              ? model
+              : settle(model, commandId, "Unknown", Option.some(error._tag));
+          return updateAccount(next, (value) =>
+            modifyFields(value, {
+              change: () => Option.none(),
+              notice: () => Option.some(`Tier change failed: ${error._tag}`),
+            }),
+          );
+        }),
+        Match.exhaustive,
+      ),
+
     ReceivedBilling: ({ state }) =>
       updateAccount(model, (account) =>
         Option.isSome(state) && state.value.account !== account.id
@@ -481,13 +677,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ),
 
     ClickedAction: ({ action }) =>
-      updateAccount(model, (account) => {
-        if (action === "ChangeTier") return account;
-        return modifyFields(account, {
+      updateAccount(model, (account) =>
+        modifyFields(account, {
           draft: () => Option.some(draftFor(action, account.billing)),
+          change: () => Option.none(),
           notice: () => Option.none(),
-        });
-      }),
+        }),
+      ),
 
     UpdatedDraftField: ({ field, value }) =>
       updateAccount(model, (account) =>
@@ -507,8 +703,22 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       });
     },
 
+    ClickedConfirmChangeTier: () => {
+      if (Option.isNone(model.account)) return { model };
+      const account = model.account.value;
+      if (Option.isNone(account.change) || Option.isNone(account.draft)) return { model };
+      const change = account.change.value;
+      const draft = account.draft.value;
+      if (change._tag !== "Quoted" || draft.kind !== "ChangeTier" || draft.tier !== change.tier) {
+        return { model };
+      }
+      return applyChangeTier(model, account, change);
+    },
+
     ClickedCancelAction: () =>
-      updateAccount(model, (account) => modifyFields(account, { draft: () => Option.none() })),
+      updateAccount(model, (account) =>
+        modifyFields(account, { draft: () => Option.none(), change: () => Option.none() }),
+      ),
 
     ClickedRetryPending: ({ commandId }) => {
       if (Option.isNone(model.account)) return { model };
@@ -518,23 +728,49 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         (candidate) => candidate.commandId === commandId && candidate.status === "Unknown",
       );
       if (Option.isNone(pending)) return { model };
-      return {
-        model: modifyFields(model, {
-          account: () =>
-            Option.some(
-              modifyFields(account, {
-                pending: () =>
-                  Array.map(account.pending, (candidate) =>
-                    candidate.commandId === commandId
-                      ? modifyFields(candidate, {
-                          status: () => "Sending",
-                          reason: () => Option.none(),
-                        })
-                      : candidate,
-                  ),
+
+      const retried = modifyFields(model, {
+        account: () =>
+          Option.some(
+            modifyFields(account, {
+              pending: () =>
+                Array.map(account.pending, (candidate) =>
+                  candidate.commandId === commandId
+                    ? modifyFields(candidate, {
+                        status: () => "Sending",
+                        reason: () => Option.none(),
+                      })
+                    : candidate,
+                ),
+            }),
+          ),
+      });
+
+      if (pending.value.intent.kind === "ChangeTier") {
+        if (Option.isNone(account.change)) return { model };
+        const change = account.change.value;
+        if (change._tag !== "Applying" || change.commandId !== commandId) return { model };
+        return {
+          model: retried,
+          commands: [
+            Command.mapMessage(
+              ApplyChangeTier({
+                requestId: change.requestId,
+                input: {
+                  account: account.id,
+                  tier: change.tier,
+                  expected: change.proration,
+                  commandId,
+                },
               }),
+              (message) => Message.ReceivedAdminChange({ message }),
             ),
-        }),
+          ],
+        };
+      }
+
+      return {
+        model: retried,
         commands: [send(account.id, pending.value.intent, commandId)],
       };
     },

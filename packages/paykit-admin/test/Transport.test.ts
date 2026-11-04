@@ -3,10 +3,13 @@ import { expect, it } from "@alchemy.run/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import { allowance, catalog, messages, tier } from "@potion.run/paykit";
 import {
+  AdminChangeTier,
+  AdminChangeTierClient,
+  AdminChangeTierHandlers,
+  AdminConsoleRpcs,
   AdminReads,
   AdminReadsClient,
   AdminReadsHandlers,
-  AdminReadsRpcs,
 } from "@potion.run/paykit/Admin";
 import { Actor, system } from "@potion.run/paykit/Auth/Actor";
 import { DevGuards } from "@potion.run/paykit/Auth/FromHeaders";
@@ -40,14 +43,17 @@ const tenant = {
   "x-paykit-actor": "acct_1",
 };
 
-const serverLayer = (handlers: Effect.Success<typeof AdminReadsHandlers>) =>
+const serverLayer = (handlers: {
+  readonly reads: Effect.Success<typeof AdminReadsHandlers>;
+  readonly changes: Effect.Success<typeof AdminChangeTierHandlers>;
+}) =>
   HttpRouter.serve(
     RpcServer.layerHttp({
-      group: AdminReadsRpcs,
+      group: AdminConsoleRpcs,
       path: "/console",
       protocol: "http",
     }).pipe(
-      Layer.provide(AdminReadsRpcs.toLayer(handlers)),
+      Layer.provide(AdminConsoleRpcs.toLayer({ ...handlers.reads, ...handlers.changes })),
       Layer.provide(RpcSerialization.layerNdjson),
       Layer.provide(DevGuards),
     ),
@@ -55,12 +61,16 @@ const serverLayer = (handlers: Effect.Success<typeof AdminReadsHandlers>) =>
 
 it.live("serves the admin reads over HTTP with the Admin guard", () =>
   Effect.gen(function* () {
-    const handlers = yield* AdminReadsHandlers;
+    const reads = yield* AdminReadsHandlers;
+    const changes = yield* AdminChangeTierHandlers;
     const client = AdminReadsClient("", {
       headers: admin,
       transformClient: (httpClient) =>
         HttpClient.mapRequest(httpClient, HttpClientRequest.appendUrl("/console")),
-    }).pipe(Layer.provideMerge(serverLayer(handlers)), Layer.provide(NodeHttpServer.layerTest));
+    }).pipe(
+      Layer.provideMerge(serverLayer({ reads, changes })),
+      Layer.provide(NodeHttpServer.layerTest),
+    );
 
     const catalog = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
@@ -73,12 +83,16 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
 
 it.live("refuses a tenant session on the console reads", () =>
   Effect.gen(function* () {
-    const handlers = yield* AdminReadsHandlers;
+    const reads = yield* AdminReadsHandlers;
+    const changes = yield* AdminChangeTierHandlers;
     const client = AdminReadsClient("", {
       headers: tenant,
       transformClient: (httpClient) =>
         HttpClient.mapRequest(httpClient, HttpClientRequest.appendUrl("/console")),
-    }).pipe(Layer.provideMerge(serverLayer(handlers)), Layer.provide(NodeHttpServer.layerTest));
+    }).pipe(
+      Layer.provideMerge(serverLayer({ reads, changes })),
+      Layer.provide(NodeHttpServer.layerTest),
+    );
 
     const exit = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
@@ -86,5 +100,28 @@ it.live("refuses a tenant session on the console reads", () =>
     }).pipe(Effect.provide(client));
 
     expect(String(exit)).toContain("Forbidden");
+  }).pipe(Effect.provide(World)),
+);
+
+it.live("routes the tier-change RPC through the same server group", () =>
+  Effect.gen(function* () {
+    const reads = yield* AdminReadsHandlers;
+    const changes = yield* AdminChangeTierHandlers;
+    const client = AdminChangeTierClient("", {
+      headers: admin,
+      transformClient: (httpClient) =>
+        HttpClient.mapRequest(httpClient, HttpClientRequest.appendUrl("/console")),
+    }).pipe(
+      Layer.provideMerge(serverLayer({ reads, changes })),
+      Layer.provide(NodeHttpServer.layerTest),
+    );
+
+    const answer = yield* Effect.gen(function* () {
+      const change = yield* AdminChangeTier;
+      return yield* change.change({ account: "acct_1", tier: "free" });
+    }).pipe(Effect.provide(client));
+
+    expect(answer._tag).toBe("rejected");
+    if (answer._tag === "rejected") expect(answer.rejection._tag).toBe("NotSubscribed");
   }).pipe(Effect.provide(World)),
 );

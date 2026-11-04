@@ -1,5 +1,5 @@
 import { AdminAction } from "@potion.run/paykit/Admin";
-import { AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
+import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
@@ -17,6 +17,7 @@ export const Message = defineMessageUnion({
 
   ReceivedAdminQuery: { message: AdminQueries.Message },
   ReceivedAdminResult: { message: BillingAdmin.Message },
+  ReceivedAdminChange: { message: AdminChangeCommands.Message },
 
   ReceivedBilling: { state: Schema.Option(BillingStateView) },
   ReceivedEntitlements: { state: Schema.Option(EntitlementsState) },
@@ -34,6 +35,7 @@ export const Message = defineMessageUnion({
   ClickedAction: { action: AdminAction },
   UpdatedDraftField: { field: Schema.String, value: Schema.String },
   ClickedSubmitAction: {},
+  ClickedConfirmChangeTier: {},
   ClickedCancelAction: {},
   ClickedRetryPending: { commandId: Schema.String },
   DismissedNotice: {},

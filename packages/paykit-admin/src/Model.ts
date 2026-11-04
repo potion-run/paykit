@@ -2,6 +2,7 @@ import type { AdminAction } from "@potion.run/paykit/Admin";
 import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import { Catalog } from "@potion.run/paykit/Catalog";
 import { CommandIds } from "@potion.run/paykit/Foldkit";
+import { Proration } from "@potion.run/paykit/Proration";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import {
@@ -53,6 +54,7 @@ export const AdminIntent = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Expire") }),
   Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
   Schema.Struct({ kind: Schema.Literal("Resume") }),
+  Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
 ]);
 export type AdminIntent = typeof AdminIntent.Type;
 
@@ -75,8 +77,35 @@ export const ActionDraft = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("Expire") }),
   Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
   Schema.Struct({ kind: Schema.Literal("Resume") }),
+  Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
 ]);
 export type ActionDraft = typeof ActionDraft.Type;
+
+/** One tier-change flow: quoting, quoted, or applying a quoted amount. */
+export const ChangeTierQuoting = Schema.TaggedStruct("Quoting", {
+  requestId: Schema.Int,
+  tier: Schema.String,
+});
+
+export const ChangeTierQuoted = Schema.TaggedStruct("Quoted", {
+  requestId: Schema.Int,
+  tier: Schema.String,
+  proration: Schema.NullOr(Proration),
+});
+
+export const ChangeTierApplying = Schema.TaggedStruct("Applying", {
+  requestId: Schema.Int,
+  tier: Schema.String,
+  proration: Schema.NullOr(Proration),
+  commandId: Schema.String,
+});
+
+export const ChangeTierQuote = Schema.Union([
+  ChangeTierQuoting,
+  ChangeTierQuoted,
+  ChangeTierApplying,
+]);
+export type ChangeTierQuote = typeof ChangeTierQuote.Type;
 
 export const PendingStatus = Schema.Literals([
   "Sending",
@@ -104,6 +133,7 @@ export const AccountState = Schema.Struct({
   feed: FeedState,
   error: Schema.Option(Schema.String),
   draft: Schema.Option(ActionDraft),
+  change: Schema.Option(ChangeTierQuote),
   pending: Schema.Array(Pending),
   notice: Schema.Option(Schema.String),
 });
@@ -135,6 +165,7 @@ export type Model = typeof Model.Type;
 export const ConsoleAction: ReadonlyArray<AdminAction> = [
   "GrantCredits",
   "ExtendTrial",
+  "ChangeTier",
   "EnterGrace",
   "RecordPayment",
   "RecordPaymentFailure",

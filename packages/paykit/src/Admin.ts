@@ -26,5 +26,23 @@ export {
   previewAnswerOf,
 } from "./Admin/Reads.ts";
 export type { AdminReadsShape } from "./Admin/Reads.ts";
+export {
+  AdminChangeTier,
+  AdminChangeTierClient,
+  AdminChangeTierHandlers,
+  AdminChangeTierLive,
+  ChangeTierRequote,
+  ChangeTierRejected,
+  AdminChangeTierRpcs,
+  ChangeTierApplied,
+  ChangeTierFailed,
+  ChangeTierQuoted,
+  ChangeTierAnswer,
+  ChangeTierRejection,
+  AdminConsoleRpcs,
+  ChangeTierRequest,
+  makeAdminChangeTier,
+} from "./Admin/ChangeTier.ts";
+export type { AdminChangeTierShape } from "./Admin/ChangeTier.ts";
 export { AdminAction, actionsFor } from "./AdminActions.ts";
 export type { AdminActionDescriptor } from "./AdminActions.ts";
