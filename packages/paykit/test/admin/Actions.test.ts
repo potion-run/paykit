@@ -53,6 +53,7 @@ const entitlements = (used: number): EntitlementsState =>
     periodEnd: 0,
     cancelAtPeriodEnd: false,
     credits: 0,
+    dunningAttempts: 0,
     features: {
       messages: {
         included: 2_000,

@@ -67,6 +67,7 @@ const row = (id: string, overrides: Partial<BillingReadRow> = {}): BillingReadRo
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
   features: {},
   ...overrides,
 });

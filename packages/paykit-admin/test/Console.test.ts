@@ -40,6 +40,7 @@ const row = {
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
   currency: "usd",
   features: {},
 };
@@ -75,6 +76,7 @@ const billing = {
   anchorTz: "UTC",
   cancelAtPeriodEnd: false,
   credits: 0,
+  dunningAttempts: 0,
   currency: "usd",
   price: { amount: 1900, currency: "usd", interval: "month" as const },
 };
