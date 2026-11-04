@@ -63,27 +63,27 @@ describe("the SQL aggregate store", () => {
   it.effect("dedupes by command id without deciding again", () =>
     Effect.gen(function* () {
       const { log } = yield* world;
-      appendOnce(log, "cmd-1");
+      yield* appendOnce(log, "cmd-1");
       // A second write of the same id is a duplicate: the log keeps the first
       // events, state and receipt, so a retried webhook is not a second charge.
-      const again = appendOnce(log, "cmd-1", 99);
+      const again = yield* appendOnce(log, "cmd-1", 99);
       expect(again.duplicate).toBe(true);
       expect(again.version).toBe(1);
-      expect(log.events("Subscription", account).length).toBe(1);
-      expect(JSON.parse(log.receipt("Subscription", account, "cmd-1")!).version).toBe(1);
+      expect((yield* log.events("Subscription", account)).length).toBe(1);
+      expect(JSON.parse((yield* log.receipt("Subscription", account, "cmd-1"))!).version).toBe(1);
     }),
   );
 
   it.effect("keeps the event log as the truth after a restart", () =>
     Effect.gen(function* () {
       const { database, log } = yield* world;
-      appendOnce(log, "cmd-1", 7);
+      yield* appendOnce(log, "cmd-1", 7);
       // A second connection to the same database sees the commit — which is
       // what a redeploy, a second isolate, or a kill -9 mid-command must see.
       const reopened = SqlEventLog(sqliteExecutor(database), { now: () => 2 });
-      expect(reopened.events("Subscription", account).length).toBe(1);
-      expect(reopened.state("Subscription", account)?.version).toBe(1);
-      expect(JSON.parse(reopened.receipt("Subscription", account, "cmd-1")!)).toEqual({
+      expect((yield* reopened.events("Subscription", account)).length).toBe(1);
+      expect((yield* reopened.state("Subscription", account))?.version).toBe(1);
+      expect(JSON.parse((yield* reopened.receipt("Subscription", account, "cmd-1"))!)).toEqual({
         stream: `Subscription/${account}`,
         version: 1,
         events: [],
@@ -95,17 +95,17 @@ describe("the SQL aggregate store", () => {
   it.effect("gives one writer per account, so a second commit takes the next sequence", () =>
     Effect.gen(function* () {
       const { log } = yield* world;
-      appendOnce(log, "a");
-      appendOnce(log, "b");
-      expect(log.events("Subscription", account).map((row) => row.seq)).toEqual([1, 2]);
-      expect(log.state("Subscription", account)?.version).toBe(2);
+      yield* appendOnce(log, "a");
+      yield* appendOnce(log, "b");
+      expect((yield* log.events("Subscription", account)).map((row) => row.seq)).toEqual([1, 2]);
+      expect((yield* log.state("Subscription", account))?.version).toBe(2);
     }),
   );
 
   it.effect("holds a delivery in the outbox until its target accepted it", () =>
     Effect.gen(function* () {
       const { log } = yield* world;
-      log.append({
+      yield* log.append({
         aggregate: "Subscription",
         account,
         commandId: "cmd-1",
@@ -118,12 +118,13 @@ describe("the SQL aggregate store", () => {
           { target: { kind: "view", name: "BillingState" }, key: account, seq: 1 },
         ],
       });
-      expect(log.pendingDeliveries().length).toBe(2);
+      expect((yield* log.pendingDeliveries()).length).toBe(2);
       // Marked only after the target accepted it: a crash before that replays
       // rather than dropping, which is what at-least-once means.
-      log.markDelivered(log.pendingDeliveries()[0]!.seq);
-      expect(log.pendingDeliveries().length).toBe(1);
-      expect(log.pendingDeliveries()[0]!.eventSeq).toBe(1);
+      const pending = yield* log.pendingDeliveries();
+      yield* log.markDelivered(pending[0]!.seq);
+      expect((yield* log.pendingDeliveries()).length).toBe(1);
+      expect((yield* log.pendingDeliveries())[0]!.eventSeq).toBe(1);
     }),
   );
 
@@ -131,7 +132,7 @@ describe("the SQL aggregate store", () => {
     Effect.gen(function* () {
       const { database, log, clock } = yield* world;
       const store = yield* storeOver(log);
-      log.schedule({
+      yield* log.schedule({
         aggregate: "Subscription",
         account,
         commandId: "close-period",
@@ -139,10 +140,12 @@ describe("the SQL aggregate store", () => {
         command: JSON.stringify({ command: { _tag: "PeriodEnded" }, meta: {} }),
       });
       const reopened = SqlEventLog(sqliteExecutor(database), { now: () => clock.now + 600 });
-      expect(reopened.due(clock.now + 600).map((row) => row.commandId)).toEqual(["close-period"]);
-      expect(log.pendingFor("Subscription", account, "close-period")).toBeDefined();
+      expect((yield* reopened.due(clock.now + 600)).map((row) => row.commandId)).toEqual([
+        "close-period",
+      ]);
+      expect(yield* log.pendingFor("Subscription", account, "close-period")).toBeDefined();
       yield* store.unschedule(account, "close-period");
-      expect(reopened.due(clock.now + 600)).toEqual([]);
+      expect(yield* reopened.due(clock.now + 600)).toEqual([]);
     }),
   );
 
@@ -150,7 +153,7 @@ describe("the SQL aggregate store", () => {
     Effect.gen(function* () {
       const { log } = yield* world;
       const store = yield* storeOver(log);
-      appendOnce(log, "cmd-1");
+      yield* appendOnce(log, "cmd-1");
       const exit = yield* Effect.exit(
         store.schedule(
           account,

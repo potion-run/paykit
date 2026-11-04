@@ -1,12 +1,21 @@
 # Billing example
 
 A Worker that sells three tiers, meters usage, holds allowance for work in flight, and serves the
-same model over HTTP and MCP. It runs with no database and no payment provider key: the store is
-`MemoryStore` and the provider is `Manual`, which sells through an invoice.
+same model over HTTP and MCP. The model runs on the D1 database declared beside it — the event log,
+every read model and the entitlement a `check()` answers from are rows in one schema — and the
+provider is `Manual`, which sells through an invoice and needs no key.
+
+The tables come from `migrations/0001_init.sql`, generated from paykit's own DDL:
+
+```sh
+pnpm --filter @potion.run/paykit schema > examples/billing/migrations/0001_init.sql
+```
+
+so the schema a release applies and the schema a test applies cannot drift.
 
 ```sh
 pnpm install
-pnpm --filter @potion.run/example-billing test   # the whole billing flow, no Cloudflare account
+pnpm --filter @potion.run/example-billing test   # the whole billing flow, no account needed
 pnpm --filter @potion.run/example-billing dev    # alchemy dev
 ```
 
@@ -15,10 +24,13 @@ pnpm --filter @potion.run/example-billing dev    # alchemy dev
 | File | What it declares |
 | --- | --- |
 | `src/catalog.ts` | Two features and three tiers. Plain data, no provider ids. |
-| `src/Billing.ts` | The model, the catalog, the provider and the guards, as one Layer. |
-| `src/Worker.ts` | `/api` for an account, `/admin` for an operator, both from one model. |
-| `alchemy.run.ts` | `Paykit.Stack` validates the catalog and records it; the Worker is deployed beside it. |
+| `src/Billing.ts` | The catalog, the provider and the guards, as one Layer on `Domain.InMemory`. |
+| `src/SqlBilling.ts` | The same model on SQL: `billingOnSql(d1)` is what the Worker and the SQL test both call. |
+| `src/Database.ts` | The D1 database, with the generated migration file. |
+| `src/Worker.ts` | `/api` for an account, `/admin` for an operator, `/mcp` for an agent — from one model. |
+| `alchemy.run.ts` | `Paykit.Stack` validates the catalog and records it; the Worker is released beside it. |
 | `test/example.test.ts` | Every claim below, run in `Domain.InMemory`. |
+| `test/sql.test.ts` | The same flow on a real database, through the generated migration file. |
 
 ## The catalog is deploy-time
 
@@ -122,6 +134,17 @@ tool call runs the Api's own middleware with the MCP request's headers, so an ag
 what the account it acts for can reach. There is no second tool list to keep in step.
 
 `BillingCli` is `DomainCli.toCli(BillingAdminApi)`: one subcommand per served entry.
+
+## Where the data lives
+
+`billingOnSql(d1)` is the whole wiring, and `d1` is the only platform-specific piece — which is why
+`test/sql.test.ts` can run the same function over SQLite. In the Worker it is
+`Cloudflare.D1.QueryDatabase(BillingDatabase)`; in a test it is a `D1Like` over `bun:sqlite`.
+
+A command writes its events, the state after them, its receipt and its outbox rows in one unit; the
+view that answers `check()` writes its snapshot, its entries and its input rows in one unit. On D1
+that unit is one atomic `batch`. A test asserts the event row and the `Entitlements` row are in the
+same database after a subscribe.
 
 ## Swapping in a real provider
 

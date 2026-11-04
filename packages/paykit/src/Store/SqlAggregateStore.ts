@@ -71,28 +71,27 @@ export const SqlAggregateStore = (
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
 
     /** The stored state and version, or the empty state of a new instance. */
-    const read = (id: string): { state: unknown; version: number } => {
-      const row = log.state(aggregate, id);
-      return row === undefined
-        ? { state: null, version: 0 }
-        : { state: parse(row.state) as never, version: Number(row.version) };
-    };
+    const read = (id: string) =>
+      Effect.map(log.state(aggregate, id), (row) =>
+        row === undefined
+          ? { state: null, version: 0 }
+          : { state: parse(row.state) as never, version: Number(row.version) },
+      );
 
     /** Deliver what this aggregate has in the outbox, in order, then mark it done. */
     const drain = (id: string) =>
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         const bound = kit;
-        if (bound === undefined) return Effect.void;
-        const pending = log
-          .pendingDeliveries()
-          .filter((row) => row.aggregate === aggregate && row.account === id);
-        if (pending.length === 0) return Effect.void;
-        return Effect.forEach(
+        if (bound === undefined) return;
+        const waiting = yield* log.pendingDeliveries();
+        const pending = waiting.filter((row) => row.aggregate === aggregate && row.account === id);
+        if (pending.length === 0) return;
+        yield* Effect.forEach(
           pending,
           (row) =>
             Effect.sync(() => JSON.parse(row.delivery) as Delivery).pipe(
               Effect.flatMap((delivery) => bound.deliver(delivery as never)),
-              Effect.andThen(Effect.sync(() => log.markDelivered(row.seq))),
+              Effect.andThen(log.markDelivered(row.seq)),
             ),
           { discard: true },
         );
@@ -112,12 +111,12 @@ export const SqlAggregateStore = (
           }
 
           // A receipt for this command id means the command already ran.
-          const stored = log.receipt(aggregate, id, meta.commandId);
+          const stored = yield* log.receipt(aggregate, id, meta.commandId);
           if (stored !== undefined) {
             return { _tag: "Accepted" as const, receipt: parse(stored) as never };
           }
 
-          const before = read(id);
+          const before = yield* read(id);
           const handled = yield* bound.handle({
             id,
             state: before.state as never,
@@ -140,7 +139,7 @@ export const SqlAggregateStore = (
             events: handled.events.map((event) => event.event),
             reply: handled.reply,
           };
-          const appended = log.append({
+          const appended = yield* log.append({
             aggregate,
             account: id,
             commandId: meta.commandId,
@@ -153,7 +152,7 @@ export const SqlAggregateStore = (
           // Another writer committed this command id in between; the log
           // deduped it, so its stored receipt is the answer, not ours.
           if (appended.duplicate) {
-            const raced = log.receipt(aggregate, id, meta.commandId);
+            const raced = yield* log.receipt(aggregate, id, meta.commandId);
             if (raced === undefined) {
               return yield* Effect.die("a duplicate append left no receipt");
             }
@@ -162,15 +161,15 @@ export const SqlAggregateStore = (
 
           yield* drain(id);
           return { _tag: "Accepted" as const, receipt: receipt as never };
-        })) as AggregateStore["send"],
+        }).pipe(Effect.orDie)) as AggregateStore["send"],
 
       schedule: ((id: string, command: unknown, meta: SendMeta, due: Due) =>
         Effect.gen(function* () {
-          if (log.receipt(aggregate, id, meta.commandId) !== undefined) {
+          if ((yield* log.receipt(aggregate, id, meta.commandId)) !== undefined) {
             return yield* new AlreadyExecuted({ aggregate, id, commandId: meta.commandId });
           }
           const at = "at" in due ? due.at : options.now() + due.afterMillis;
-          log.schedule({
+          yield* log.schedule({
             aggregate,
             account: id,
             commandId: meta.commandId,
@@ -178,49 +177,56 @@ export const SqlAggregateStore = (
             command: JSON.stringify({ command, meta }),
           });
           return at;
-        })) as AggregateStore["schedule"],
+        }).pipe(Effect.orDie)) as AggregateStore["schedule"],
 
       unschedule: ((id: string, commandId: string) =>
         Effect.gen(function* () {
-          if (log.receipt(aggregate, id, commandId) !== undefined) {
+          if ((yield* log.receipt(aggregate, id, commandId)) !== undefined) {
             return yield* new AlreadyExecuted({ aggregate, id, commandId });
           }
-          if (log.pendingFor(aggregate, id, commandId) === undefined) {
+          if ((yield* log.pendingFor(aggregate, id, commandId)) === undefined) {
             return yield* new NotScheduled({ aggregate, id, commandId });
           }
-          log.unschedule(aggregate, id, commandId);
-        })) as AggregateStore["unschedule"],
+          yield* log.unschedule(aggregate, id, commandId);
+        }).pipe(Effect.orDie)) as AggregateStore["unschedule"],
 
-      state: ((id: string) => Effect.sync(() => read(id) as never)) as AggregateStore["state"],
+      // An infrastructure failure is a defect, not a value: the kernel's
+      // interface declares no error channel here, so a broken store surfaces
+      // through the platform rather than as a rejection a caller could match.
+      state: ((id: string) =>
+        Effect.map(read(id), (current) => current as never).pipe(
+          Effect.orDie,
+        )) as AggregateStore["state"],
 
       events: ((id: string) =>
-        Effect.sync(() =>
-          log.events(aggregate, id).map((row) => storedEvent(id, row)),
-        )) as AggregateStore["events"],
+        Effect.map(log.events(aggregate, id), (rows) =>
+          rows.map((row) => storedEvent(id, row)),
+        ).pipe(Effect.orDie)) as AggregateStore["events"],
 
       // A poll is the correct mechanism here: another process may commit, so
       // there is nothing in this one to notify a subscriber. `changesWith`
       // drops an unchanged read, so a subscriber sees only commits.
       changes: (id) =>
         Stream.tick(Duration.millis(pollMillis)).pipe(
-          Stream.mapEffect(() => Effect.sync(() => read(id))),
+          Stream.mapEffect(() => read(id)),
           Stream.changesWith((left, right) => left.version === right.version),
           Stream.filter((entry) => entry.version > 0),
           Stream.map((entry) => entry as never),
+          Stream.orDie,
         ),
 
       tail: ((id: string, after: number) => {
         let seen = after;
         return Stream.tick(Duration.millis(pollMillis)).pipe(
           Stream.mapEffect(() =>
-            Effect.sync(() => {
-              const rows = log.events(aggregate, id, seen);
+            Effect.map(log.events(aggregate, id, seen), (rows) => {
               if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
               return rows;
             }),
           ),
           Stream.flatMap((rows) => Stream.fromIterable(rows)),
           Stream.map((row) => storedEvent(id, row)),
+          Stream.orDie,
         );
       }) as AggregateStore["tail"],
     };

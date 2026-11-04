@@ -60,6 +60,9 @@ export {
 } from "./Store/SqlConsumers.ts";
 export type { SqlConsumerOptions } from "./Store/SqlConsumers.ts";
 export { SqlPlatform, layerSqlPlatform } from "./Store/SqlPlatform.ts";
+export { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
+export { SqliteDriver, fromDatabase } from "./Store/SqliteDriver.ts";
+export type { ClosableSqlExecutor, SqliteDriverOptions } from "./Store/SqliteDriver.ts";
 export type { SqlModelHost, SqlPlatformOptions } from "./Store/SqlPlatform.ts";
 export type {
   AppendInput,
@@ -69,7 +72,16 @@ export type {
   SqlEventLogOptions,
   StoredEventRow,
 } from "./Store/SqlEventLog.ts";
-export type { SqlDialect, SqlExecutor, SqlValue } from "./Store/Sql.ts";
+export { SqlError, asyncOf } from "./Store/Sql.ts";
+export type {
+  SqlAsyncExecutor,
+  SqlDialect,
+  SqlExecutor,
+  SqlSyncExecutor,
+  SqlValue,
+} from "./Store/Sql.ts";
+export { d1Executor } from "./Store/D1.ts";
+export type { D1Like } from "./Store/D1.ts";
 export {
   MigrationError,
   MigrationHistoryConflictError,
@@ -261,8 +273,15 @@ export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
 export { PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
-export type { StripeBindings, StripeProps, StripeTier } from "./PaymentsStripe.ts";
-export { PaymentsPolar as Polar } from "./PaymentsPolar.ts";
+export { stripeBindings } from "./PaymentsStripe.ts";
+export type {
+  StripeBindingSource,
+  StripeBindings,
+  StripeOrigin,
+  StripeProps,
+  StripeTier,
+} from "./PaymentsStripe.ts";
+export { PaymentsPolar, PaymentsPolar as Polar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
   PaymentCapability,

@@ -40,7 +40,7 @@ const opened = (account = "acct_doctor") =>
     ) as ReadonlyArray<{ readonly _tag: string }>;
     for (const event of events) {
       const cls = Subscription.definition.events.find((candidate) => candidate.tag === event._tag)!;
-      log.append({
+      yield* log.append({
         aggregate: "Subscription",
         account,
         commandId: "evt_1",
@@ -58,7 +58,7 @@ describe("doctor", () => {
   it.effect("reports a missing read model and rebuilds the right row", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();
-      const mismatches = doctor(log);
+      const mismatches = yield* doctor(log);
       expect(mismatches.length).toBe(1);
       expect(mismatches[0]?.account).toBe("acct_doctor");
       expect(mismatches[0]?.stored).toBe(null);
@@ -71,19 +71,19 @@ describe("doctor", () => {
   it.effect("is clean when the read model matches the event log", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();
-      const rebuilt = doctor(log)[0]!.rebuilt;
-      log.upsertReadModel(rebuilt);
-      expect(doctor(log)).toEqual([]);
+      const rebuilt = (yield* doctor(log))[0]!.rebuilt;
+      yield* log.upsertReadModel(rebuilt);
+      expect(yield* doctor(log)).toEqual([]);
     }),
   );
 
   it.effect("prints the event ids that disagree with a tampered read model", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();
-      const rebuilt = doctor(log)[0]!.rebuilt;
-      log.upsertReadModel(rebuilt);
-      log.upsertReadModel({ ...rebuilt, credits: 99 });
-      const mismatches = doctor(log);
+      const rebuilt = (yield* doctor(log))[0]!.rebuilt;
+      yield* log.upsertReadModel(rebuilt);
+      yield* log.upsertReadModel({ ...rebuilt, credits: 99 });
+      const mismatches = yield* doctor(log);
       expect(mismatches.length).toBe(1);
       expect(mismatches[0]?.stored?.credits).toBe(99);
       expect(mismatches[0]?.commandIds).toEqual(["evt_1"]);
@@ -94,8 +94,8 @@ describe("doctor", () => {
     Effect.gen(function* () {
       const { log } = yield* opened("acct_a");
       const b = yield* opened("acct_b");
-      for (const row of b.log.events("Subscription", "acct_b")) {
-        log.append({
+      for (const row of yield* b.log.events("Subscription", "acct_b")) {
+        yield* log.append({
           aggregate: row.aggregate,
           account: "acct_b",
           commandId: row.commandId,
@@ -106,9 +106,9 @@ describe("doctor", () => {
           deliveries: [],
         });
       }
-      const first = doctor(log);
-      log.upsertReadModel(first.find((mismatch) => mismatch.account === "acct_a")!.rebuilt);
-      const mismatches = doctor(log);
+      const first = yield* doctor(log);
+      yield* log.upsertReadModel(first.find((mismatch) => mismatch.account === "acct_a")!.rebuilt);
+      const mismatches = yield* doctor(log);
       expect(mismatches.map((mismatch) => mismatch.account)).toEqual(["acct_b"]);
     }),
   );
@@ -116,7 +116,7 @@ describe("doctor", () => {
   it.effect("ignores an unknown event tag but still reports the command id", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();
-      log.append({
+      yield* log.append({
         aggregate: "Subscription",
         account: "acct_doctor",
         commandId: "evt_unknown",
@@ -126,7 +126,7 @@ describe("doctor", () => {
         receipt: {},
         deliveries: [],
       });
-      const mismatches = doctor(log);
+      const mismatches = yield* doctor(log);
       expect(mismatches.length).toBe(1);
       expect(mismatches[0]?.rebuilt.tier).toBe("free");
       expect(mismatches[0]?.commandIds).toEqual(["evt_1", "evt_unknown"]);
@@ -136,9 +136,9 @@ describe("doctor", () => {
   it.effect("reports a read model row with no events as a mismatch", () =>
     Effect.gen(function* () {
       const { log } = yield* opened();
-      const rebuilt = doctor(log)[0]!.rebuilt;
-      log.upsertReadModel({ ...rebuilt, account: "acct_ghost" });
-      const mismatches = doctor(log);
+      const rebuilt = (yield* doctor(log))[0]!.rebuilt;
+      yield* log.upsertReadModel({ ...rebuilt, account: "acct_ghost" });
+      const mismatches = yield* doctor(log);
       expect(mismatches.map((mismatch) => mismatch.account)).toEqual(["acct_doctor", "acct_ghost"]);
       expect(mismatches.find((mismatch) => mismatch.account === "acct_ghost")?.stored).not.toBe(
         null,

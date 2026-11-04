@@ -342,10 +342,10 @@ const migrationExecutor = (
   batch: (statements) =>
     Effect.try({
       try: () => {
-        if (sql.batch !== undefined) {
-          sql.batch(statements);
-          return;
-        }
+        // A migration's statements and its bookkeeping row commit together:
+        // one transaction where the target has one, which is what the store's
+        // executor gives. A target without transactions supplies its own
+        // atomic batch through the asynchronous port instead.
         sql.transaction(() => {
           for (const statement of statements) sql.exec(statement);
         });

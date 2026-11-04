@@ -1,7 +1,7 @@
 {
   "name": "@potion.run/paykit-polar",
   "version": "0.1.0",
-  "description": "Polar products, prices and webhooks for Alchemy.",
+  "description": "Polar for paykit: a merchant of record in one call.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -44,11 +44,11 @@
     "typecheck": "tsrs -b"
   },
   "dependencies": {
-    "@distilled.cloud/core": "catalog:",
-    "@distilled.cloud/polar": "catalog:"
+    "@potion.run/paykit": "workspace:*"
   },
   "devDependencies": {
     "@alchemy.run/test": "catalog:",
+    "@potion.run/paykit": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",
@@ -56,7 +56,7 @@
     "typescript": "catalog:"
   },
   "peerDependencies": {
-    "alchemy": "catalog:",
+    "@potion.run/paykit": "workspace:*",
     "effect": "catalog:"
   }
 }

@@ -17,7 +17,10 @@ import { PaymentsStripe } from "./PaymentsStripe.ts";
 import { Portal } from "./Portal.ts";
 import { Preview } from "./Preview.ts";
 import { MemoryStore, Postgres, Sqlite, Stack } from "./Stack.ts";
+import { d1Executor } from "./Store/D1.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
+import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
+import { SqliteDriver } from "./Store/SqliteDriver.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { Subscribe } from "./Subscribe.ts";
 import { tier } from "./Tier.ts";
@@ -72,6 +75,9 @@ export const Paykit = {
   SqlAggregateStore,
   SqlPlatform,
   layerSqlPlatform,
+  SqlBillingReadStore,
+  SqliteDriver,
+  d1Executor,
   // runtime
   Check,
   CheckInProcess,

@@ -172,6 +172,12 @@ weakest guard it needs; the Api's composition of commands is the blast radius.
 sagas are identical on Postgres, SQLite/D1 and `Domain.InMemory`. `Domain.InMemory` stays green
 as the others land — it is the proof the seam holds.
 
+Every store takes the **asynchronous** executor and wraps a multi-row write in `sql.atomic`: a
+view's snapshot, entries and input rows; a projection's cursor and processed rows; a stream's
+entries and meta. Nothing writes two rows outside a unit and nothing reads synchronously. The schema
+a hosted database applies is generated — `scripts/schema.ts` renders `migrationFiles` — so the file
+a release runs and the DDL a test runs come from one source; regenerate it rather than editing it.
+
 A store keeps all five `AggregateStore` guarantees or it is not a store: one writer per account
 id, dedupe by `commandId`, atomic commit of events + state + receipt + deliveries, at-least-once
 delivery in order, `schedule`/`tail` by notify or poll. [PLAN.md](./PLAN.md#storage) gives each
@@ -230,18 +236,22 @@ resources and expose checkout/portal/refund as bindings over their distilled SDK
 `Payments<V>` adapter delegates to them — if an op is missing, add it to the vendor package, not
 to the adapter.
 
-`@potion.run/paykit-polar` is a general Polar provider for Alchemy. Despite the name, it is not a
-paykit SDK: a Worker that sells a product with no paykit import is its README, and its live
-tests run without paykit. A paykit-shaped helper in it is a leak in the wrong direction. Keep it
-a separate package: a `@potion.run/paykit/adapter/polar` subpath would force paykit and its peers
-on every Polar user and remove the optional-peer isolation.
+`@potion.run/paykit-polar` is a **paykit package**, not a general Alchemy provider: it imports
+`@potion.run/paykit` and exports the one call that stands Polar up as a merchant of record. That is a
+maintenance decision, not a coupling accident — a general provider would need its own users, docs and
+release train, and we would carry all of it to serve one adapter. If someone needs Polar without
+paykit, that is a different package with a different name.
+
+Stripe needs no such package: `@alchemy.run/stripe` exists, so paykit's adapter lives in
+`PaymentsStripe.ts` behind the optional peer and `stripeBindings(...)` maps that package's bindings
+onto the port.
 
 Adding a provider touches the same places every time:
 
 1. **The vendor package** — `@alchemy.run/<vendor>` when one exists, else
-   `@potion.run/paykit-<vendor>`: products, prices and webhook endpoint as resources,
-   checkout/portal/refund as bindings. Publish one only when none exists, general-purpose and
-   never paykit-shaped.
+   `@potion.run/paykit-<vendor>`, which is then paykit-shaped on purpose: products, prices and webhook
+   endpoint as resources, checkout/portal/refund as bindings, and a single call that returns the
+   `Provider` the catalog needs.
 2. **The adapter** — `Payments<V>.ts`: delegate to those bindings; required ops, plus the
    optional ops it declares.
 3. **The translation** — its webhooks into our commands, provider event id as `commandId`.

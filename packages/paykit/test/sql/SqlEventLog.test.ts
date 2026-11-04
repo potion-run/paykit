@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { migrate } from "../../src/Migrations/index.ts";
-import type { SqlExecutor } from "../../src/Store/Sql.ts";
+import { SqlError, type SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlEventLog, type AppendInput } from "../../src/Store/SqlEventLog.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
@@ -30,17 +31,56 @@ const append = (log: Log, overrides: Partial<AppendInput> = {}) =>
     ...overrides,
   });
 
+const count = (sql: SqlExecutor, table: string) =>
+  Effect.map(
+    sql.query!<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`),
+    (rows) => rows[0]?.count,
+  );
+
+const readModelRow = {
+  account: "acct_1",
+  tier: "free",
+  status: "active" as const,
+  standing: "good" as const,
+  periodStart: at,
+  periodEnd: later,
+  cancelAtPeriodEnd: false,
+  credits: 0,
+  features: {
+    messages: {
+      included: 100,
+      used: 0,
+      reserved: 0,
+      allowed: true,
+      remaining: 100,
+      overage: "block" as const,
+      resets: "month" as const,
+      resetsAt: later,
+    },
+    seats: {
+      included: 5,
+      used: 1,
+      reserved: 0,
+      allowed: true,
+      remaining: 4,
+      overage: "allow" as const,
+      resets: "never" as const,
+      resetsAt: null,
+    },
+  },
+};
+
 describe("SqlEventLog", () => {
   it.effect("appends events, state and receipt atomically, then dedupes the command", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;
-      expect(append(log)).toEqual({ version: 1, duplicate: false });
-      expect(append(log)).toEqual({ version: 1, duplicate: true });
-      expect(log.events("Subscription", "acct_1").length).toBe(1);
-      expect(log.pendingDeliveries().length).toBe(1);
+      expect(yield* append(log)).toEqual({ version: 1, duplicate: false });
+      expect(yield* append(log)).toEqual({ version: 1, duplicate: true });
+      expect((yield* log.events("Subscription", "acct_1")).length).toBe(1);
+      expect((yield* log.pendingDeliveries()).length).toBe(1);
 
       expect(
-        append(log, {
+        yield* append(log, {
           commandId: "cmd_2",
           at: 200,
           events: [
@@ -51,14 +91,14 @@ describe("SqlEventLog", () => {
           receipt: { version: 3 },
         }),
       ).toEqual({ version: 3, duplicate: false });
-      expect(log.events("Subscription", "acct_1").map((row) => row.seq)).toEqual([1, 2, 3]);
-      expect(JSON.parse(log.state("Subscription", "acct_1")!.state)).toEqual({
+      expect((yield* log.events("Subscription", "acct_1")).map((row) => row.seq)).toEqual([
+        1, 2, 3,
+      ]);
+      expect(JSON.parse((yield* log.state("Subscription", "acct_1"))!.state)).toEqual({
         _tag: "Used",
         n: 3,
       });
-      expect(
-        sql.get<{ count: number }>("SELECT COUNT(*) AS count FROM billing_outbox")?.count,
-      ).toBe(3);
+      expect(yield* count(sql, "billing_outbox")).toBe(3);
     }),
   );
 
@@ -68,91 +108,84 @@ describe("SqlEventLog", () => {
       yield* migrate(base);
       const failing: SqlExecutor = {
         ...base,
-        run: (statement, params) => {
-          if (statement.includes('INSERT INTO "billing_receipt"')) {
-            throw new Error("disk full");
-          }
-          base.run(statement, params);
-        },
+        write: (statement, params) =>
+          statement.includes("billing_receipt")
+            ? Effect.fail(new SqlError({ message: "disk full", statement }))
+            : base.write!(statement, params),
       };
       const log = SqlEventLog(failing, { now: () => 1_000 });
-      expect(() => append(log)).toThrow("disk full");
-      expect(
-        base.get<{ count: number }>("SELECT COUNT(*) AS count FROM billing_event")?.count,
-      ).toBe(0);
-      expect(
-        base.get<{ count: number }>("SELECT COUNT(*) AS count FROM billing_receipt")?.count,
-      ).toBe(0);
-      expect(
-        base.get<{ count: number }>("SELECT COUNT(*) AS count FROM billing_outbox")?.count,
-      ).toBe(0);
-      expect(base.get("SELECT * FROM billing_state")).toBeUndefined();
+      const exit = yield* Effect.exit(append(log));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* count(base, "billing_event")).toBe(0);
+      expect(yield* count(base, "billing_receipt")).toBe(0);
+      expect(yield* count(base, "billing_outbox")).toBe(0);
+      expect((yield* base.query!("SELECT * FROM billing_state")).length).toBe(0);
     }),
   );
 
   it.effect("derives the next version from the event log, not a stale state row", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;
-      append(log);
+      yield* append(log);
       sql.run("DELETE FROM billing_state");
-      expect(append(log, { commandId: "cmd_2", events: [{ _tag: "Used" }] })).toEqual({
+      expect(yield* append(log, { commandId: "cmd_2", events: [{ _tag: "Used" }] })).toEqual({
         version: 2,
         duplicate: false,
       });
-      expect(log.events("Subscription", "acct_1").map((row) => row.seq)).toEqual([1, 2]);
+      expect((yield* log.events("Subscription", "acct_1")).map((row) => row.seq)).toEqual([1, 2]);
     }),
   );
 
   it.effect("keeps each account's sequence and dedupe scope separate", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
-      append(log, { account: "acct_a", commandId: "shared" });
-      append(log, { account: "acct_b", commandId: "shared" });
-      append(log, { account: "acct_b", events: [{ _tag: "Used" }] });
-      expect(log.events("Subscription", "acct_a").map((row) => row.seq)).toEqual([1]);
-      expect(log.events("Subscription", "acct_b").map((row) => row.seq)).toEqual([1, 2]);
+      yield* append(log, { account: "acct_a", commandId: "shared" });
+      yield* append(log, { account: "acct_b", commandId: "shared" });
+      yield* append(log, { account: "acct_b", events: [{ _tag: "Used" }] });
+      expect((yield* log.events("Subscription", "acct_a")).map((row) => row.seq)).toEqual([1]);
+      expect((yield* log.events("Subscription", "acct_b")).map((row) => row.seq)).toEqual([1, 2]);
     }),
   );
 
   it.effect("drains the outbox in order, one delivery per event, bounded by the limit", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
-      append(log, {
+      yield* append(log, {
         events: [{ _tag: "Opened" }, { _tag: "Used" }],
         deliveries: [{ target: "Entitlements" }, { target: "BillingRead" }],
       });
-      const pending = log.pendingDeliveries();
+      const pending = yield* log.pendingDeliveries();
       expect(pending.map((delivery) => delivery.seq)).toEqual([1, 2, 3, 4]);
       expect(pending.map((delivery) => delivery.eventSeq)).toEqual([1, 1, 2, 2]);
-      expect(log.pendingDeliveries(2).map((delivery) => delivery.seq)).toEqual([1, 2]);
-      for (const delivery of pending) log.markDelivered(delivery.seq);
-      expect(log.pendingDeliveries().length).toBe(0);
+      expect((yield* log.pendingDeliveries(2)).map((delivery) => delivery.seq)).toEqual([1, 2]);
+      for (const delivery of pending) yield* log.markDelivered(delivery.seq);
+      expect((yield* log.pendingDeliveries()).length).toBe(0);
     }),
   );
 
   it.effect("schedules commands durably and reports the ones due", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
-      log.schedule({
+      yield* log.schedule({
         aggregate: "Subscription",
         account: "acct_1",
         commandId: "period-ended:1",
         dueAt: 10,
         command: "{}",
       });
-      log.schedule({
+      yield* log.schedule({
         aggregate: "Subscription",
         account: "acct_2",
         commandId: "period-ended:2",
         dueAt: 20,
         command: "{}",
       });
-      expect(log.due(15).map((row) => row.commandId)).toEqual(["period-ended:1"]);
-      log.markScheduledDelivered("Subscription", "acct_1", "period-ended:1");
-      expect(log.due(15)).toEqual([]);
-      expect(log.due(30).map((row) => row.commandId)).toEqual(["period-ended:2"]);
-      log.unschedule("Subscription", "acct_2", "period-ended:2");
-      expect(log.due(30)).toEqual([]);
+      expect((yield* log.due(15)).map((row) => row.commandId)).toEqual(["period-ended:1"]);
+      yield* log.markScheduledDelivered("Subscription", "acct_1", "period-ended:1");
+      expect(yield* log.due(15)).toEqual([]);
+      expect((yield* log.due(30)).map((row) => row.commandId)).toEqual(["period-ended:2"]);
+      yield* log.unschedule("Subscription", "acct_2", "period-ended:2");
+      expect(yield* log.due(30)).toEqual([]);
     }),
   );
 
@@ -166,58 +199,29 @@ describe("SqlEventLog", () => {
         dueAt: 10,
         command: "{}",
       };
-      log.schedule(command);
-      log.markScheduledDelivered(command.aggregate, command.account, command.commandId);
-      expect(log.due(30)).toEqual([]);
-      log.schedule({ ...command, dueAt: 20 });
-      expect(log.due(30).map((row) => row.commandId)).toEqual(["period-ended:1"]);
+      yield* log.schedule(command);
+      yield* log.markScheduledDelivered(command.aggregate, command.account, command.commandId);
+      expect(yield* log.due(30)).toEqual([]);
+      yield* log.schedule({ ...command, dueAt: 20 });
+      expect((yield* log.due(30)).map((row) => row.commandId)).toEqual(["period-ended:1"]);
     }),
   );
 
   it.effect("upserts one read model row per account and lists it in order", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
-      const row = {
-        account: "acct_1",
-        tier: "free",
-        status: "active" as const,
-        standing: "good" as const,
-        periodStart: at,
-        periodEnd: later,
-        cancelAtPeriodEnd: false,
-        credits: 0,
-        features: {
-          messages: {
-            included: 100,
-            used: 0,
-            reserved: 0,
-            allowed: true,
-            remaining: 100,
-            overage: "block" as const,
-            resets: "month" as const,
-            resetsAt: later,
-          },
-          seats: {
-            included: 5,
-            used: 1,
-            reserved: 0,
-            allowed: true,
-            remaining: 4,
-            overage: "allow" as const,
-            resets: "never" as const,
-            resetsAt: null,
-          },
-        },
-      };
-      log.upsertReadModel(row);
-      expect(log.readModel("acct_1")).toEqual(row);
-      log.upsertReadModel({ ...row, credits: 50 });
-      expect(log.readModel("acct_1")?.credits).toBe(50);
-      log.upsertReadModel({ ...row, account: "acct_0", currency: "usd" });
-      expect(log.readModelList().map((entry) => entry.account)).toEqual(["acct_0", "acct_1"]);
-      expect(log.readModel("acct_0")?.currency).toBe("usd");
-      expect(log.readModel("acct_1")?.currency).toBeUndefined();
-      expect(log.readModel("missing")).toBe(null);
+      yield* log.upsertReadModel(readModelRow);
+      expect(yield* log.readModel("acct_1")).toEqual(readModelRow);
+      yield* log.upsertReadModel({ ...readModelRow, credits: 50 });
+      expect((yield* log.readModel("acct_1"))?.credits).toBe(50);
+      yield* log.upsertReadModel({ ...readModelRow, account: "acct_0", currency: "usd" });
+      expect((yield* log.readModelList()).map((entry) => entry.account)).toEqual([
+        "acct_0",
+        "acct_1",
+      ]);
+      expect((yield* log.readModel("acct_0"))?.currency).toBe("usd");
+      expect((yield* log.readModel("acct_1"))?.currency).toBeUndefined();
+      expect(yield* log.readModel("missing")).toBe(null);
     }),
   );
 
@@ -228,14 +232,15 @@ describe("SqlEventLog", () => {
         "INSERT INTO billing_rm_billing_read (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, features) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ["acct_bad", "free", "active", "good", 0, 1, 0, 0, '{"messages":{"included":"lots"}}'],
       );
-      expect(() => log.readModel("acct_bad")).toThrow();
+      const exit = yield* Effect.exit(log.readModel("acct_bad"));
+      expect(Exit.isFailure(exit)).toBe(true);
     }),
   );
 
   it.effect("normalizes numeric columns a driver returns as text", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;
-      append(log);
+      yield* append(log);
       const numeric = new Set([
         "seq",
         "event_seq",
@@ -256,43 +261,22 @@ describe("SqlEventLog", () => {
         );
       // `pg` returns BIGINT columns as strings; the store must not hand those
       // to DateTime or arithmetic.
+      const query = sql.query!;
       const stringy: SqlExecutor = {
         ...sql,
-        get: (statement, params) => {
-          const row = sql.get<Record<string, unknown>>(statement, params);
-          return row === undefined ? undefined : (asText(row) as never);
-        },
-        all: (statement, params) =>
-          sql.all<Record<string, unknown>>(statement, params).map(asText) as never,
+        query: (statement, params) =>
+          Effect.map(query(statement, params), (rows) => rows.map(asText) as never),
       };
       const adapted = SqlEventLog(stringy, { now: () => 1_000 });
-      expect(adapted.events("Subscription", "acct_1").map((row) => row.at)).toEqual([100]);
-      expect(adapted.pendingDeliveries().map((row) => row.seq)).toEqual([1]);
-      expect(append(adapted)).toEqual({ version: 1, duplicate: true });
+      expect((yield* adapted.events("Subscription", "acct_1")).map((row) => row.at)).toEqual([100]);
+      expect((yield* adapted.pendingDeliveries()).map((row) => row.seq)).toEqual([1]);
+      expect(yield* append(adapted)).toEqual({ version: 1, duplicate: true });
 
-      log.upsertReadModel({
-        account: "acct_1",
-        tier: "free",
-        status: "active",
-        standing: "good",
-        periodStart: at,
-        periodEnd: later,
-        cancelAtPeriodEnd: false,
-        credits: 0,
-        features: {
-          messages: {
-            included: 100,
-            used: 0,
-            reserved: 0,
-            allowed: true,
-            remaining: 100,
-            overage: "block",
-            resets: "month",
-            resetsAt: later,
-          },
-        },
+      yield* log.upsertReadModel({
+        ...readModelRow,
+        features: { messages: readModelRow.features.messages },
       });
-      expect(adapted.readModel("acct_1")?.periodEnd).toEqual(later);
+      expect((yield* adapted.readModel("acct_1"))?.periodEnd).toEqual(later);
     }),
   );
 
@@ -300,9 +284,9 @@ describe("SqlEventLog", () => {
     Effect.gen(function* () {
       const { log } = yield* store;
       for (const [index, account] of ["acct_b", "acct_a", "acct_a"].entries()) {
-        append(log, { account, commandId: `cmd_${account}_${index}` });
+        yield* append(log, { account, commandId: `cmd_${account}_${index}` });
       }
-      expect(log.accounts("Subscription")).toEqual(["acct_a", "acct_b"]);
+      expect(yield* log.accounts("Subscription")).toEqual(["acct_a", "acct_b"]);
     }),
   );
 });

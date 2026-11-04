@@ -1,38 +1,49 @@
 # @potion.run/paykit-polar
 
-Polar for Alchemy: products, prices and webhook endpoints as resources, checkout, customer
-session and refund as bindings, over `@distilled.cloud/polar`.
+Polar for paykit: one call that returns a `Payments` provider, and the Polar-shaped pieces it
+needs to do that. Over `@distilled.cloud/polar`.
 
-A general Alchemy provider. Despite the name, it never imports `@potion.run/paykit`, and
-paykit-specific helpers do not land here — its README is a Worker that sells a product with no
-paykit import, and its tests run without paykit installed.
+**This is a paykit package, not a general Alchemy provider.** It imports `@potion.run/paykit`,
+because its whole job is to be the shortest path from a catalog to a working Polar merchant of
+record. That is a deliberate maintenance choice: a general provider would need its own users, docs,
+release train and a stable general-purpose surface, and we would carry all of it to serve one
+adapter.
+
+If someone later needs Polar without paykit, that is a *different* package with a different name,
+written for those users. Do not grow this one into it.
 
 ## Surface
 
-| Kind | Exports |
-| --- | --- |
-| Resources | `Product` with its prices, `WebhookEndpoint` |
-| Bindings | `CreateCheckoutSession`, `CreateCustomerSession`, `CreateRefund`, `ConsumeEvents` |
+```ts
+import { Polar } from "@potion.run/paykit-polar";
+import { Paykit } from "@potion.run/paykit";
 
-Polar embeds prices in the product, so `Product` is the reconciliation unit. Do not copy Stripe's
-split `Product` / `Price` shape onto it.
+const polar = Polar({
+  accessToken: Config.redacted("POLAR_ACCESS_TOKEN"),
+  server: "production",           // or "sandbox"
+  origin: "https://app.example.com",
+  tiers: { pro: { price: proPrice, productId: "prod_123" } },
+});
+```
+
+| Export | What it is |
+| --- | --- |
+| `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.Stack` |
+| `PolarTier` | where a tier lives in Polar, and the price the catalog states |
+| `PolarProps` | token, server, origin and the tier mapping |
+
+`Polar()` returns what the catalog needs and nothing else: `kind`, `capabilities`, `payments` and
+`prices`, so `Stack` can check the mapping against the catalog at deploy time.
 
 ## Rules
 
-- The engine, reconciler and binding conventions are Alchemy's:
-  [AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md). Read the Reconciler
-  doctrine before writing `Diff` / `Read` / `Reconcile` / `Delete`.
-- One file per resource or capability, contract and provider co-located, an `*Http` implementation
-  per binding.
-- Typed errors come from `@distilled.cloud/polar`. Matching a status code or a bare `_tag` string
-  means the patch is missing upstream — fix it there, not with a cast here.
-- Live tests: create, update, replace, delete against the real API, deterministic names, verify
-  through a distilled read, destroy at the end. A suite that leaks a product is failing.
-- `alchemy` and `effect` are peers; `@distilled.cloud/polar` is a dependency. The package
-  publishes on the repo's version line, and paykit takes it as an optional peer.
-
-## Further reading
-
-- [Root AGENTS.md](../../AGENTS.md) — workspace, versioning, Effect discipline, gates.
-- [@alchemy.run/stripe](https://github.com/alchemy-run/alchemy/tree/main/packages/stripe) — the
-  package this one mirrors.
+- **The catalog never carries a Polar id.** A tier maps to a `productId` here, in provider config.
+  `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
+- **A missing capability is `ProviderCapabilityMissing`.** Polar ships no customer portal through
+  this adapter yet, so it declares no `portal`; a binding that needs one fails with a typed error
+  rather than silently doing nothing.
+- **A vendor failure is `PaymentDeclined`**, never a defect. The model must be able to record a
+  failed charge.
+- **Typed errors come from `@distilled.cloud/polar`.** Matching a status code or a bare `_tag`
+  string means the patch is missing upstream — fix it there, not with a cast here.
+- **`@potion.run/paykit` is a peer**, so a user who installs this gets one paykit, not two.

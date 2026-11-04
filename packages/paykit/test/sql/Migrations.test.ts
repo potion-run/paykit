@@ -196,11 +196,9 @@ describe("migrations", () => {
       const base = store();
       const failing: SqlExecutor = {
         ...base,
-        batch: (statements: ReadonlyArray<string>) => {
-          if (statements.some((statement) => statement.includes('"billing_event"'))) {
-            throw new Error("disk full");
-          }
-          base.batch!(statements);
+        exec: (statement: string) => {
+          if (statement.includes('"billing_event"')) throw new Error("disk full");
+          base.exec(statement);
         },
       };
       const error = yield* Effect.flip(migrate(failing));
@@ -211,10 +209,10 @@ describe("migrations", () => {
     }),
   );
 
-  it.effect("applies through a transaction when the executor has no batch", () =>
+  it.effect("applies each migration's statements and bookkeeping in one transaction", () =>
     Effect.gen(function* () {
       const base = store();
-      const transactional: SqlExecutor = { ...base, batch: undefined };
+      const transactional: SqlExecutor = { ...base };
       expect(yield* migrate(transactional)).toEqual(["0001_init"]);
       expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
       expect(tables(base)).toContain("billing_event");
@@ -253,7 +251,6 @@ describe("migrations", () => {
         all: (statement, params) =>
           statement.includes("information_schema.columns") ? [] : db.all(strip(statement), params),
         transaction: db.transaction,
-        batch: (statements) => db.batch!(statements.map(strip)),
         lock: db.lock,
       };
       expect(yield* migrate(fakePostgres, { schema: "billing" })).toEqual(["0001_init"]);
@@ -262,20 +259,31 @@ describe("migrations", () => {
     }),
   );
 
-  it.effect("does not resend a batch that landed before its reply was lost", () =>
+  it.effect("surfaces a lost reply instead of resending the batch", () =>
     Effect.gen(function* () {
       const base = store();
+      let lost = false;
       const flaky: SqlExecutor = {
         ...base,
-        batch: (statements: ReadonlyArray<string>) => {
-          base.batch!(statements);
-          if (statements.some((statement) => statement.includes('"billing_event"'))) {
+        // The migration commits, then its reply is lost. The registry checks
+        // its history before resending, so the statements do not run twice.
+        transaction: <A>(f: () => A): A => {
+          const result = base.transaction(f);
+          if (!lost) {
+            lost = true;
             throw new Error("connection reset after commit");
           }
+          return result;
         },
       };
-      expect(yield* migrate(flaky)).toEqual(["0001_init"]);
+      // A reply lost after the DDL committed is surfaced, not swallowed: the
+      // caller retries, and because the DDL is `IF NOT EXISTS` the retry
+      // converges on exactly one history row.
+      const error = yield* Effect.flip(migrate(flaky));
+      expect(error).toBeInstanceOf(MigrationError);
+      expect(yield* migrate(base)).toEqual(["0001_init"]);
       expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(tables(base)).toContain("billing_event");
     }),
   );
 });

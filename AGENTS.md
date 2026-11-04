@@ -9,7 +9,7 @@ beside its source.
 | Package | Directory | What it is | Read next |
 | --- | --- | --- | --- |
 | `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
-| `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar provider for Alchemy, usable without paykit | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
+| `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, in one call | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
 
 `examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
 it needs no database and no provider key. It is in the workspace, in the root `tsconfig.json` and in

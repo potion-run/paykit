@@ -61,9 +61,9 @@ describe("the model hosted on SQL", () => {
       }).pipe(Effect.provide(hosted(platform)));
 
       // The truth is in SQL, keyed by the model and the aggregate.
-      expect(log.events("Subscription", account.id).length).toBe(1);
-      expect(log.state("Subscription", account.id)?.version).toBe(1);
-      expect(log.receipt("Subscription", account.id, "subscribe-1")).toBeDefined();
+      expect((yield* log.events("Subscription", account.id)).length).toBe(1);
+      expect((yield* log.state("Subscription", account.id))?.version).toBe(1);
+      expect(yield* log.receipt("Subscription", account.id, "subscribe-1")).toBeDefined();
     }),
   );
 
@@ -120,7 +120,7 @@ describe("the model hosted on SQL", () => {
         );
         expect(again.version).toBe(first.version);
       }).pipe(Effect.provide(hosted(platform)));
-      expect(log.events("Subscription", account.id).length).toBe(1);
+      expect((yield* log.events("Subscription", account.id)).length).toBe(1);
     }),
   );
 

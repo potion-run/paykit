@@ -1,10 +1,17 @@
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { BillingReadRow } from "../BillingReadStore.ts";
-import type { SqlExecutor } from "./Sql.ts";
+import {
+  DEFAULT_PAGE,
+  MAX_PAGE,
+  type BillingReadQuery,
+  type BillingReadRow,
+} from "../BillingReadStore.ts";
+import { BillingReadRow as BillingReadRowSchema } from "../BillingReadStore.ts";
+import { asyncOf, type SqlDialect, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
 
-/** One committed event, as the log stores it. `event` is JSON. */
+/** One committed event, as a row. */
 export interface StoredEventRow {
   readonly aggregate: string;
   readonly account: string;
@@ -14,7 +21,7 @@ export interface StoredEventRow {
   readonly event: string;
 }
 
-/** What one accepted command writes, atomically. */
+/** What one append writes: the events, the state after them, and the receipt. */
 export interface AppendInput {
   readonly aggregate: string;
   readonly account: string;
@@ -31,6 +38,7 @@ export interface AppendResult {
   readonly duplicate: boolean;
 }
 
+/** A delivery the outbox is still carrying. */
 export interface PendingDelivery {
   readonly seq: number;
   readonly aggregate: string;
@@ -39,6 +47,7 @@ export interface PendingDelivery {
   readonly delivery: string;
 }
 
+/** A scheduled command that has not fired. */
 export interface ScheduledCommand {
   readonly aggregate: string;
   readonly account: string;
@@ -64,8 +73,13 @@ export interface SqlEventLogOptions {
 /**
  * The durable half of the store: events are the truth, receipts dedupe by
  * command id, the outbox carries deliveries, and the read model is
- * rebuildable. Every write for one account happens under its lock in one
- * transaction.
+ * rebuildable.
+ *
+ * Every method is an `Effect`: a statement's answer arrives asynchronously on
+ * every target worth supporting (D1 over HTTP, a `pg` client), and a store that
+ * pretends otherwise cannot reach one. `append` runs as one `atomic` unit, so
+ * the events, the state, the receipt and the deliveries land together or not
+ * at all.
  *
  * @primitive
  * @example
@@ -73,46 +87,48 @@ export interface SqlEventLogOptions {
  * import { SqlEventLog } from "@potion.run/paykit"
  *
  * const log = SqlEventLog(sql, { now: () => 1_700_000_000_000, schema: "billing" })
- * const { version } = log.append({ ... })
+ * const { version } = yield* log.append({ ... })
  * ```
  */
-export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
+export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) => {
+  const sql = asyncOf(executor);
   const scope: TableScope = {
-    dialect: sql.dialect,
+    dialect: executor.dialect,
     schema: options.schema ?? DEFAULT_SCHEMA,
   };
   const event = tableName(BILLING_TABLES.event, scope);
-  const receiptTable = tableName(BILLING_TABLES.receipt, scope);
+  const receipt = tableName(BILLING_TABLES.receipt, scope);
   const state = tableName(BILLING_TABLES.state, scope);
   const outbox = tableName(BILLING_TABLES.outbox, scope);
   const schedule = tableName(BILLING_TABLES.schedule, scope);
   const readModels = tableName(BILLING_TABLES.readModel, scope);
 
-  return {
-    append: (input: AppendInput): AppendResult =>
-      sql.transaction(() => {
-        sql.lock(input.account);
-        const seen = sql.get<{ version: number | string }>(
-          `SELECT version FROM ${receiptTable} WHERE aggregate = ? AND account = ? AND command_id = ?`,
+  const append = (input: AppendInput) =>
+    sql.atomic(
+      Effect.gen(function* () {
+        const seen = yield* sql.get<{ version: number | string }>(
+          `SELECT version FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
           [input.aggregate, input.account, input.commandId],
         );
-        if (seen !== undefined) return { version: numberFrom(seen.version), duplicate: true };
+        if (seen !== undefined) {
+          return { version: numberFrom(seen.version), duplicate: true };
+        }
 
         // The event log is the truth: the next sequence comes from it, not
         // from a cached counter that a crash could leave stale.
-        const current = sql.get<{ version: number | string }>(
+        const current = yield* sql.get<{ version: number | string }>(
           `SELECT COALESCE(MAX(seq), 0) AS version FROM ${event} WHERE aggregate = ? AND account = ?`,
           [input.aggregate, input.account],
         );
         let version = numberFrom(current?.version ?? 0);
-        let outboxSeq = numberFrom(
-          sql.get<{ seq: number | string }>(`SELECT COALESCE(MAX(seq), 0) AS seq FROM ${outbox}`)
-            ?.seq ?? 0,
+        const lastOutbox = yield* sql.get<{ seq: number | string }>(
+          `SELECT COALESCE(MAX(seq), 0) AS seq FROM ${outbox}`,
         );
+        let outboxSeq = numberFrom(lastOutbox?.seq ?? 0);
 
         for (const record of input.events) {
           version += 1;
-          sql.run(
+          yield* sql.write(
             `INSERT INTO ${event} (aggregate, account, seq, command_id, at, event) VALUES (?, ?, ?, ?, ?, ?)`,
             [
               input.aggregate,
@@ -125,52 +141,58 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
           );
           for (const delivery of input.deliveries) {
             outboxSeq += 1;
-            sql.run(
+            yield* sql.write(
               `INSERT INTO ${outbox} (seq, aggregate, account, event_seq, delivery) VALUES (?, ?, ?, ?, ?)`,
               [outboxSeq, input.aggregate, input.account, version, JSON.stringify(delivery)],
             );
           }
         }
 
-        sql.run(
+        yield* sql.write(
           `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, ?, ?)
            ON CONFLICT (aggregate, account) DO UPDATE SET version = excluded.version, state = excluded.state`,
           [input.aggregate, input.account, version, JSON.stringify(input.state)],
         );
-        sql.run(
-          `INSERT INTO ${receiptTable} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
+        yield* sql.write(
+          `INSERT INTO ${receipt} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
           [input.aggregate, input.account, input.commandId, version, JSON.stringify(input.receipt)],
         );
         return { version, duplicate: false };
       }),
+    );
 
-    events: (aggregate: string, account: string, after = 0): ReadonlyArray<StoredEventRow> =>
-      sql
-        .all<StoredEventRow>(
+  return {
+    append,
+
+    events: (aggregate: string, account: string, after = 0) =>
+      Effect.map(
+        sql.query<StoredEventRow>(
           `SELECT aggregate, account, seq, command_id AS commandId, at, event FROM ${event} WHERE aggregate = ? AND account = ? AND seq > ? ORDER BY seq ASC`,
           [aggregate, account, after],
-        )
-        .map((row) => ({ ...row, seq: numberFrom(row.seq), at: numberFrom(row.at) })),
+        ),
+        (rows) => rows.map((row) => ({ ...row, seq: numberFrom(row.seq), at: numberFrom(row.at) })),
+      ),
 
     /** The receipt a command id already produced, as JSON, if it ran. */
-    receipt: (aggregate: string, account: string, commandId: string): string | undefined =>
-      sql.get<{ receipt: string }>(
-        `SELECT receipt FROM ${receiptTable} WHERE aggregate = ? AND account = ? AND command_id = ?`,
-        [aggregate, account, commandId],
-      )?.receipt,
+    receipt: (aggregate: string, account: string, commandId: string) =>
+      Effect.map(
+        sql.get<{ receipt: string }>(
+          `SELECT receipt FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
+          [aggregate, account, commandId],
+        ),
+        (row) => row?.receipt,
+      ),
 
     /** A pending scheduled command, if one is waiting under this command id. */
-    pendingFor: (
-      aggregate: string,
-      account: string,
-      commandId: string,
-    ): { readonly dueAt: number; readonly command: string } | undefined => {
-      const row = sql.get<{ dueAt: number | string; command: string }>(
-        `SELECT due_at AS dueAt, command FROM ${schedule} WHERE aggregate = ? AND account = ? AND command_id = ? AND delivered_at IS NULL`,
-        [aggregate, account, commandId],
-      );
-      return row === undefined ? undefined : { dueAt: numberFrom(row.dueAt), command: row.command };
-    },
+    pendingFor: (aggregate: string, account: string, commandId: string) =>
+      Effect.map(
+        sql.get<{ dueAt: number | string; command: string }>(
+          `SELECT due_at AS dueAt, command FROM ${schedule} WHERE aggregate = ? AND account = ? AND command_id = ? AND delivered_at IS NULL`,
+          [aggregate, account, commandId],
+        ),
+        (row) =>
+          row === undefined ? undefined : { dueAt: numberFrom(row.dueAt), command: row.command },
+      ),
 
     state: (aggregate: string, account: string) =>
       sql.get<{ version: number; state: string }>(
@@ -178,74 +200,123 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
         [aggregate, account],
       ),
 
-    accounts: (aggregate: string): ReadonlyArray<string> =>
-      sql
-        .all<{ account: string }>(
+    accounts: (aggregate: string) =>
+      Effect.map(
+        sql.query<{ account: string }>(
           `SELECT DISTINCT account FROM ${event} WHERE aggregate = ? ORDER BY account ASC`,
           [aggregate],
-        )
-        .map((row) => row.account),
+        ),
+        (rows) => rows.map((row) => row.account),
+      ),
 
-    pendingDeliveries: (limit = 100): ReadonlyArray<PendingDelivery> =>
-      sql
-        .all<PendingDelivery>(
+    pendingDeliveries: (limit = 100) =>
+      Effect.map(
+        sql.query<PendingDelivery>(
           `SELECT seq, aggregate, account, event_seq AS eventSeq, delivery FROM ${outbox} WHERE delivered_at IS NULL ORDER BY seq ASC LIMIT ?`,
           [limit],
-        )
-        .map((row) => ({ ...row, seq: numberFrom(row.seq), eventSeq: numberFrom(row.eventSeq) })),
+        ),
+        (rows) =>
+          rows.map((row) => ({
+            ...row,
+            seq: numberFrom(row.seq),
+            eventSeq: numberFrom(row.eventSeq),
+          })),
+      ),
 
-    markDelivered: (seq: number): void => {
-      sql.run(`UPDATE ${outbox} SET delivered_at = ? WHERE seq = ?`, [options.now(), seq]);
-    },
+    markDelivered: (seq: number) =>
+      sql.write(`UPDATE ${outbox} SET delivered_at = ? WHERE seq = ?`, [options.now(), seq]),
 
-    schedule: (input: ScheduledCommand): void => {
-      sql.run(
+    schedule: (input: ScheduledCommand) =>
+      sql.write(
         `INSERT INTO ${schedule} (aggregate, account, command_id, due_at, command) VALUES (?, ?, ?, ?, ?)
          ON CONFLICT (aggregate, account, command_id) DO UPDATE SET due_at = excluded.due_at, command = excluded.command, delivered_at = NULL`,
         [input.aggregate, input.account, input.commandId, input.dueAt, input.command],
-      );
-    },
+      ),
 
-    unschedule: (aggregate: string, account: string, commandId: string): void => {
-      sql.run(`DELETE FROM ${schedule} WHERE aggregate = ? AND account = ? AND command_id = ?`, [
+    unschedule: (aggregate: string, account: string, commandId: string) =>
+      sql.write(`DELETE FROM ${schedule} WHERE aggregate = ? AND account = ? AND command_id = ?`, [
         aggregate,
         account,
         commandId,
-      ]);
-    },
+      ]),
 
-    due: (now: number): ReadonlyArray<ScheduledCommand> =>
-      sql
-        .all<ScheduledCommand>(
+    due: (now: number) =>
+      Effect.map(
+        sql.query<ScheduledCommand>(
           `SELECT aggregate, account, command_id AS commandId, due_at AS dueAt, command FROM ${schedule} WHERE delivered_at IS NULL AND due_at <= ? ORDER BY due_at ASC`,
           [now],
-        )
-        .map((row) => ({ ...row, dueAt: numberFrom(row.dueAt) })),
+        ),
+        (rows) => rows.map((row) => ({ ...row, dueAt: numberFrom(row.dueAt) })),
+      ),
 
-    markScheduledDelivered: (aggregate: string, account: string, commandId: string): void => {
-      sql.run(
+    markScheduledDelivered: (aggregate: string, account: string, commandId: string) =>
+      sql.write(
         `UPDATE ${schedule} SET delivered_at = ? WHERE aggregate = ? AND account = ? AND command_id = ?`,
         [options.now(), aggregate, account, commandId],
+      ),
+
+    readModel: (account: string) =>
+      Effect.map(
+        sql.get<ReadModelColumns>(
+          `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} WHERE account = ?`,
+          [account],
+        ),
+        (row) => (row === undefined ? null : rowToReadModel(row)),
+      ),
+
+    /**
+     * One page of accounts, pushed down to SQL: the filter, the cursor and the
+     * limit are the query, so a dashboard does not read the whole projection to
+     * show fifty rows.
+     */
+    readModelPage: (query: BillingReadQuery = {}) => {
+      const order = query.order ?? "asc";
+      const take = Math.min(MAX_PAGE, Math.max(1, query.take ?? DEFAULT_PAGE));
+      const where: Array<string> = [];
+      const params: Array<SqlValue> = [];
+      if (query.standing !== undefined) {
+        where.push("standing = ?");
+        params.push(query.standing);
+      }
+      if (query.tier !== undefined) {
+        where.push("tier = ?");
+        params.push(query.tier);
+      }
+      if (query.status !== undefined) {
+        where.push("status = ?");
+        params.push(query.status);
+      }
+      if (query.after !== undefined) {
+        where.push(order === "asc" ? "account > ?" : "account < ?");
+        params.push(query.after);
+      }
+      const clause = where.length === 0 ? "" : ` WHERE ${where.join(" AND ")}`;
+      return Effect.map(
+        sql.query<ReadModelColumns>(
+          `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels}${clause} ORDER BY account ${order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
+          [...params, take + 1],
+        ),
+        (found) => {
+          const rows = found.slice(0, take).map(rowToReadModel);
+          const last = rows[rows.length - 1];
+          return {
+            rows,
+            next: found.length > take && last !== undefined ? last.account : null,
+          };
+        },
       );
     },
 
-    readModel: (account: string): BillingReadRow | null => {
-      const row = sql.get<ReadModelColumns>(
-        `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} WHERE account = ?`,
-        [account],
-      );
-      return row === undefined ? null : rowToReadModel(row);
-    },
-
-    readModelList: (): ReadonlyArray<BillingReadRow> =>
-      sql
-        .all<ReadModelColumns>(
+    readModelList: () =>
+      Effect.map(
+        sql.query<ReadModelColumns>(
           `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} ORDER BY account ASC`,
-        )
-        .map(rowToReadModel),
+        ),
+        (rows) => rows.map(rowToReadModel),
+      ),
 
-    upsertReadModel: (row: BillingReadRow): void => {
-      sql.run(
+    upsertReadModel: (row: BillingReadRow) =>
+      sql.write(
         `INSERT INTO ${readModels}
           (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, currency, features)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -270,9 +341,11 @@ export const SqlEventLog = (sql: SqlExecutor, options: SqlEventLogOptions) => {
           row.credits,
           row.currency ?? null,
           featuresJson(row.features),
-        ],
-      );
-    },
+        ] satisfies ReadonlyArray<SqlValue>,
+      ),
+
+    /** The dialect this log speaks, so a caller can render DDL for it. */
+    dialect: executor.dialect satisfies SqlDialect,
   };
 };
 
@@ -296,7 +369,7 @@ interface ReadModelColumns {
 }
 
 const rowToReadModel = (row: ReadModelColumns): BillingReadRow =>
-  Schema.decodeUnknownSync(BillingReadRow)({
+  Schema.decodeUnknownSync(BillingReadRowSchema)({
     account: row.account,
     tier: row.tier,
     status: row.status,

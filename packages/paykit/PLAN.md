@@ -327,7 +327,8 @@ over its distilled SDK. paykit's adapter is a thin translation over those bindin
 auth and signature verification live in the vendor package, and the model imports neither.
 
 Stripe uses Alchemy's `@alchemy.run/stripe`. Polar has no such package, so we publish
-`@potion.run/paykit-polar` — a general Polar provider for Alchemy, not a paykit SDK. It lives at
+`@potion.run/paykit-polar` — a paykit provider, not a general Alchemy one: it imports paykit and
+exports the single call that stands Polar up. It lives at
 `packages/paykit-polar/` in this workspace, versioned and published on its own, and paykit takes
 it as an optional peer plus a `workspace:*` dev dependency. Its `package.json` mirrors Alchemy's
 `packages/stripe`: `alchemy` and `effect` as peers, `@distilled.cloud/polar` as a dependency.
@@ -341,10 +342,11 @@ The minimum surface paykit consumes:
 
 Stripe models a price as its own resource; Polar embeds prices in the product. That difference
 stops at the vendor package — paykit's config maps a tier to a price handle, whatever the vendor
-calls it. `@potion.run/paykit-polar` must be usable with no paykit import: its README is a Worker
-that sells a product, its tests are live Polar tests, and paykit-specific helpers never land in
-it. If the package slips, `PaymentsPolar` calls `@distilled.cloud/polar` directly; no model or
-port change.
+calls it. It is paykit-shaped on purpose — a general provider would need its own users, docs and
+release train to justify the same maintenance, so `Polar(props)` in that package returns the
+`Provider` the catalog needs and no bindings to wire. If the package slips, `PaymentsPolar` still
+takes injected bindings, so a user can call `@distilled.cloud/polar` directly; no model or port
+change.
 
 ## Surfaces
 
@@ -596,10 +598,10 @@ else. The root `pnpm typecheck` builds every package through project references,
   entitlements; both look like the read model this library exists to own. Reading either back
   makes the provider the truth and reintroduces the round trip. They are written outputs, never
   inputs.
-- **The vendor package is a second product.** `@potion.run/paykit-polar` has its own users, docs
-  and release train, and we maintain it. It must stand alone — the moment a paykit-shaped helper
-  lands in it, the port has leaked backwards. The conformance suite is still the drift alarm
-  between the two version lines.
+- **The Polar package is not a second product.** `@potion.run/paykit-polar` exists only to be
+  paykit's Polar adapter, and it is allowed to import paykit for exactly that reason. Do not grow it
+  a general-purpose surface: a Worker that sells a product without paykit is a *different* package,
+  with its own name and its own users, and this one does not become it by accreting options.
 - **Events are the API.** Event names and their fields are public. Version from 0.1.0 and keep
   `Backfill`/`CatchUp` so a projection change is a rebuild, not a rewrite.
 - **A reservation that leaks shrinks an allowance.** `ReleaseUsage` refuses to release more than
@@ -608,17 +610,39 @@ else. The root `pnpm typecheck` builds every package through project references,
 - **An MCP tool can spend money.** The tool list is derived from the Api, so an Api that serves a
   priced command publishes a destructive tool. Keep `GrantCredits` off the tenant Api, and
   require a preview and a `commandId` before any write an agent may retry.
-- **The SQL store has an aggregate store, not yet a platform.** `SqlAggregateStore` implements
-  `Domain.AggregateStore` over `SqlEventLog`, and a test proves each of the five guarantees on real
-  SQLite: dedupe by `commandId`, a restart sees only committed truth, one writer per account, a
-  delivery stays in the outbox until accepted, and a scheduled command survives a restart. `0002`
-  ships the tables the other four `ModelHost` stores need (`billing_rm_view_*`,
-  `billing_rm_projection_*`, `billing_rm_policy_seen`, `billing_rm_stream_*`), but those stores are
-  not written, so the model still runs on `Domain.InMemory`: the aggregate's truth can be SQL while
-  its reads are not. Closing that split is what M1 means.
-- **No provider moves real money.** `PaymentsStripe` and `PaymentsPolar` accept a `Bindings`
-  interface; nothing adapts a vendor package to it, and `@potion.run/paykit-polar` is still a stub.
-  The conformance suite currently proves the fakes.
+- **The SQL platform hosts the whole model on a real database.** All five `ModelHost` stores take
+  the asynchronous executor — `SqlAggregateStore`, `SqlViewStore`, `SqlProjectionStore`,
+  `SqlPolicyStore`, `SqlStreamStore` — and `test/sql/ModelOnSql.test.ts` hosts the real
+  `PaykitModel` on SQLite, commits through the guarded path and reads `Entitlements` back out of
+  `billing_rm_view_state`. Each of the five log guarantees has a test: dedupe by `commandId`, a
+  restart sees only committed truth, one writer per account, a delivery stays in the outbox until
+  accepted, a scheduled command survives a restart.
+
+  An atomic unit is a port method, `atomic(effect)`, so both kinds of target are first class: SQLite
+  holds one `BEGIN IMMEDIATE` open across the unit's reads and writes (`serializable`); D1 collects
+  the unit's writes and commits them in one `batch` (`deferred`). `test/sql/Atomic.test.ts` proves
+  both, including that a failed unit commits nothing.
+
+  What is missing is the vendor side of the money plane, not the store. The example's Worker runs on
+  a hosted database: `billingOnSql(d1)` builds the platform from the binding, `SqlBillingReadStore`
+  puts the read models in the same schema, and `migrations/0001_init.sql` — generated from
+  `migrationFiles` — is the DDL. `examples/billing/test/sql.test.ts` runs that same wiring over SQLite
+  and asserts the event, the view row and the read-model page are rows in one database.
+- **Stripe is adapted, not repackaged.** `stripeBindings(bindings, where)` maps `@alchemy.run/stripe`'s
+  `CreateCheckoutSession` and `CreateBillingPortalSession` onto the `Payments` port, and a test
+  proves the mapping and that a vendor failure becomes a typed `PaymentDeclined`. There is no
+  `@potion.run/paykit-stripe` and there should not be: Alchemy ships the vendor package, and a
+  paykit-shaped wrapper around it would be a second product with no user of its own.
+- **Polar has no Alchemy package, so paykit publishes one — and it is paykit-shaped.**
+  `Polar(props)` in `@potion.run/paykit-polar` returns the `Provider` the catalog needs, so a user
+  writes one call and no bindings. It imports `@potion.run/paykit` on purpose: a general Alchemy
+  provider would need its own users, docs and release train, and we would carry all of it to serve
+  one adapter. Polar without paykit, if anyone wants it, is a different package with a different
+  name. Stripe needs no such package: `@alchemy.run/stripe` exists, so the adapter is
+  `stripeBindings(...)` in `PaymentsStripe.ts` behind the optional peer.
+- **A missing capability is not a fabricated decline.** `stripeBindings` omits `createRefund`
+  because `@alchemy.run/stripe` has no refund binding, so Stripe declares no `refund` capability and
+  asking for one fails with `ProviderCapabilityMissing`. Nothing pretends a card was declined.
 - **A catalog-derived command needs the catalog.** `Subscribe`, `ChangeTier` and `StartTrial` carry
   their own allowances and price. `CatalogGuard` refuses a mismatch, but it cannot invent a missing
   price, so an Api client must send the fields the catalog implies. `tierCommand()` in the example is
