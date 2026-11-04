@@ -24,6 +24,7 @@ catalog:
   # rewrites the installed `oxlint` and `oxlint-tsgolint` binaries, and a release
   # only supports the tool versions its README table names.
   "@effect/tsgo": "0.67.1"
+  "@foldkit/vite-plugin": "^0.29.0"
   "@types/bun": "1.4.4"
   "@types/node": "26.6.6"
   alchemy: "2.0.0-beta.85"
@@ -35,6 +36,7 @@ catalog:
   oxlint-tsgolint: "7.0.2005"
   tsrs: "0.21.0-ts7.1.0-beta"
   typescript: "^7.0.2"
+  vite: "^8.3.1"
 
 # Packages published inside pnpm's release-age window, recorded by pnpm.
 # Managed by pnpm — do not hand-edit.

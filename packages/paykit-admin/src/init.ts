@@ -1,4 +1,5 @@
-import { BillingReadPage, Catalog } from "@potion.run/paykit";
+import { BillingReadPage } from "@potion.run/paykit/BillingReadStore";
+import { Catalog } from "@potion.run/paykit/Catalog";
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

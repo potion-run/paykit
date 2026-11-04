@@ -1,8 +1,8 @@
-import { AccountId } from "@potion.run/paykit";
 import { AdminAction } from "@potion.run/paykit/Admin";
 import { AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
+import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 

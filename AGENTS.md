@@ -13,8 +13,10 @@ beside its source.
 | `@potion.run/paykit-admin` | `packages/paykit-admin` | Foldkit ops console for a paykit deployment | [AGENTS.md](./packages/paykit-admin/AGENTS.md) · [README.md](./packages/paykit-admin/README.md) |
 
 `examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
-it needs no database and no provider key. It is in the workspace, in the root `tsconfig.json` and in
-`pnpm test`, so an API change that breaks the advertised usage breaks a gate.
+it needs no database and no provider key. `examples/admin` mounts the Foldkit console against the
+same kind of stack and forwards `/admin` and `/console` to its Worker. Both are in the workspace,
+in the root `tsconfig.json` and in `pnpm test`, so an API change that breaks the advertised usage
+breaks a gate.
 
 A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
 carries rules a reader needs before touching it, and add it to the workspace globs and the root
