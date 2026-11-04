@@ -13,8 +13,12 @@ coverage/
 .husky/_
 !.husky/pre-commit
 
-# Agent skills installed by pnpm.
-.agents/
+# Agent skills installed by pnpm. The directory itself is checked in so a
+# fresh checkout has somewhere to link the approved skills into.
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/.gitignore
 
 # Shallow source mirrors (populate via ./scripts/vendor-agent-sources.sh).
 # The README beside them is ours; the clones are not.
