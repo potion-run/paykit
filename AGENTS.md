@@ -167,6 +167,8 @@ add it; if a gate fails, fix the code rather than the gate.
 
 ## Further reading
 
+- [What to build next](./docs/NEXT.md) — the state of the work, the queue, the traps, and the
+  invariants a next slice must not break.
 - [ADRs](./docs/adr/) — decisions that shaped the model, oldest first. Read
   [0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
   express: it is the record that says pricing is catalog data and the deploy provisions the vendor.

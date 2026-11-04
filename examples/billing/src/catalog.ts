@@ -40,7 +40,9 @@ export const pro = Paykit.tier({
   grants: [
     // Rollover: what the month did not spend carries into the next one, at most
     // one month's worth. `check()` reports the carried amount as `remaining`.
-    Paykit.allowance(messages, { included: 2_000, overage: "bill", carryOver: true }),
+    // A cap, in messages, stops the billing at 2,000 included plus 10,000 more
+    // this month: past that `check()` says no until the period resets.
+    Paykit.allowance(messages, { included: 2_000, overage: "bill", carryOver: true, cap: 10_000 }),
     Paykit.allowance(seats, { included: 5, resets: "never" }),
   ],
 });

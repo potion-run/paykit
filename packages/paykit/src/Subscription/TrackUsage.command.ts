@@ -38,6 +38,21 @@ export class CreditExceeded extends Domain.Rejection("CreditExceeded", {
 }) {}
 
 /**
+ * The usage would pass the period's ceiling: `included + cap` units billed and
+ * held. The account is not in trouble — it has used what it bought — so this is
+ * a refusal about quantity, not about standing.
+ */
+export class SpendCapExceeded extends Domain.Rejection("SpendCapExceeded", {
+  feature: Schema.String,
+  /** The units this period may bill past `included`. */
+  cap: Schema.Int,
+  used: Schema.Int,
+  /** Held by open holds, which count against the ceiling too. */
+  reserved: Schema.Int,
+  requested: Schema.Int,
+}) {}
+
+/**
  * One usage fact. `remainingAfter` is the outcome `decide` worked out, and is
  * `null` when there is no count: an allowance that never runs out, or a
  * credit-priced feature whose count is the shared pool. `cost` is the credits
@@ -69,6 +84,12 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded],
-  rejects: [AllowanceExceeded, StandingBlocksUsage, FeatureNotMetered, CreditExceeded],
+  rejects: [
+    AllowanceExceeded,
+    StandingBlocksUsage,
+    FeatureNotMetered,
+    CreditExceeded,
+    SpendCapExceeded,
+  ],
   middleware: [Session],
 }) {}
