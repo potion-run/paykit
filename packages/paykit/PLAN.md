@@ -46,7 +46,7 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | --- | --- | --- |
 | `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
 | `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
-| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — and what happens past it | `Limit` — a limit is one field of an allowance |
+| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, and whether what is unspent rolls over | `Limit` — a limit is one field of an allowance |
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
@@ -57,7 +57,9 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 `Allowance.included` is a non-negative count or `"unlimited"`. `Allowance.overage` is one of
 `"block"`, `"bill"`, `"allow"`, and is only meaningful for a count: an unlimited allowance
 defaults it to `"allow"` and the catalog refuses any other value beside `"unlimited"`
-(`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`.
+(`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`, and
+`Allowance.carryOver` says whether what a period did not spend rolls into the next one (at most
+`included`); it is refused on a flag and on `resets: "never"`.
 
 ## Package
 
@@ -156,18 +158,22 @@ A catalog is three plain declarations, and every value it holds is serializable:
 - `feature({ id, name, kind })` declares a meter once. Its id is branded, so the id an allowance
   carries cannot be confused with an arbitrary string. `kind` is `"metered"` (the default) or
   `"flag"`, an on/off capability with no counter.
-- `allowance(feature, { included, overage, resets })` quotes a declared feature in a tier, with
-  `overage` defaulting to `block` for a count (and to `allow` for `"unlimited"`) and `resets` to
-  `month`.
-- `grant(feature)` grants a `"flag"` in a tier: `{ included: 1, overage: "allow", resets:
-  "never" }`, which is how `decide` recognizes a flag from state alone. A flag granted any other
-  way is refused.
+- `allowance(feature, { included, overage, resets, carryOver })` quotes a declared feature in a
+  tier, with `overage` defaulting to `block` for a count (and to `allow` for `"unlimited"`),
+  `resets` to `month`, and `carryOver` to `false`. `carryOver: true` closes a period at
+  `included + clamp(unspent, 0, included)` — one extra period's worth at most — and records the
+  carried amount on `UsageReset`, so the read model can show it.
+- `grant(feature)` grants a `"flag"` in a tier: `{ kind: "flag", included: 1, overage: "allow",
+  resets: "never" }`. `kind` lives on the allowance because `decide` is pure and never sees the
+  catalog, so the allowance has to say what kind of thing it is. A flag granted any other way — or
+  a flag grant on a metered feature — is refused.
 - `tier({ id, name, price, grants })` bundles allowances. A tier with no `price` is free; a tier
   must grant at least one allowance, because one that grants nothing could never activate.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
   `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
-  or `CatalogInvalid` for a schema failure.
+  `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`, or
+  `CatalogInvalid` for a schema failure.
 
 Constructors stay pure and total. Validation happens at `catalog()`, which is where a deploy
 can refuse a catalog before it reaches money. `defineCatalog()` is the synchronous `Result`
@@ -284,7 +290,7 @@ keeping the old one.
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
-| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes |
+| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, carried, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes, `carried` being how much of `remaining` rolled over |
 | View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits, `dunningAttempts`, and the last tier change's `proration` with the invoice it was billed on |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
 | Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |

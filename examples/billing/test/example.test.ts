@@ -6,7 +6,10 @@ import {
   Paykit,
   Subscription,
 } from "@potion.run/paykit";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import { BillingTestLive, Catalog, tierCommand } from "../src/Billing.ts";
 
 /** The aggregate key and the Api target are the same branded id. */
@@ -137,6 +140,44 @@ describe("the example billing app", () => {
       const refused = yield* Effect.exit(track({ account: account.id, feature: "sso", amount: 1 }));
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("FeatureNotMetered");
+    }).pipe(run),
+  );
+
+  it.live("rolls what a period did not spend into the next one", () =>
+    Effect.gen(function* () {
+      const tenant = yield* BillingApi.clientInProcess;
+      const entitlements = yield* Entitlements;
+
+      // A trial whose period ended a second ago, so the rollover policy closes
+      // it on its own and opens a period that is still in the future.
+      const ended = DateTime.makeUnsafe(Date.now() - 1_000);
+      yield* tenant.StartTrial(account.id, { ...pro, trialEndsAt: ended }, asAccount);
+
+      const track = yield* Paykit.Track();
+      yield* track({ account: account.id, feature: "messages", amount: 520 });
+
+      // The rollover is the model's, not the test's: wait for the closed period
+      // to be replaced before reading the answer.
+      yield* entitlements.query(account).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("10 millis"),
+          times: 200,
+          until: (queried) =>
+            Option.match(queried, {
+              onNone: () => false,
+              onSome: (state) =>
+                DateTime.toEpochMillis(state.periodEnd) > DateTime.toEpochMillis(ended),
+            }),
+        }),
+      );
+
+      const check = yield* Paykit.Check();
+      const answer = yield* check({ account: account.id, feature: "messages", amount: 1 });
+      // 1,480 unspent rolled over, so 3,480 is available — more than the 2,000
+      // the tier includes. Whether the 520 was recorded before or after the
+      // close, the answer is the same.
+      expect(answer.remaining).toBe(3_480);
+      expect(answer.allowed).toBe(true);
     }).pipe(run),
   );
 

@@ -56,6 +56,7 @@ import {
   remainingAfterSpending,
   remainingOf,
   reservedOf,
+  resetOf,
   standingOf,
   statusOf,
   SubscriptionState,
@@ -130,6 +131,11 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     : state.status === "trialing"
       ? "active"
       : state.status;
+  // One reset per allowance, so `remaining` and `carried` cannot disagree about
+  // what the closing period left behind.
+  const resets = Object.entries(state.allowances).map(
+    ([feature, allowance]) => [feature, resetOf(state, feature, allowance)] as const,
+  );
   return [
     new PeriodClosed({
       periodStart: state.period.start,
@@ -141,12 +147,8 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       cancelAtPeriodEndAfter: state.cancelAtPeriodEnd,
     }),
     new UsageReset({
-      remaining: Object.fromEntries(
-        Object.entries(state.allowances).map(([feature, allowance]) => [
-          feature,
-          includedRemainingOf(allowance),
-        ]),
-      ),
+      remaining: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.remaining])),
+      carried: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.carried])),
     }),
     new CreditsExpired({ amount: state.credits, balanceAfter: 0 }),
   ];

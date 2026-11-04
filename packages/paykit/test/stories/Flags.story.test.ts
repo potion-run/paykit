@@ -4,6 +4,7 @@ import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance, grant } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
@@ -30,6 +31,7 @@ import {
 } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 import { Track } from "../../src/Track.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
 const enterpriseTier = tier({
@@ -79,6 +81,7 @@ const flagFeature = {
   included: 1,
   used: 0,
   reserved: 0,
+  carried: 0,
   remaining: null,
   allowed: true,
   overage: "allow" as const,
@@ -127,7 +130,10 @@ it.effect("closes the period with nothing to reset for the flag", () =>
         standingAfter: "good",
         cancelAtPeriodEndAfter: false,
       }),
-      new UsageReset({ remaining: { sso: null, messages: 50_000 } }),
+      new UsageReset({
+        remaining: { sso: null, messages: 50_000 },
+        carried: { sso: 0, messages: 0 },
+      }),
       new CreditsExpired({ amount: 0, balanceAfter: 0 }),
     ),
     // The flag keeps no counter across the boundary: nothing was spent, and
@@ -182,7 +188,11 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
 
     // The row carries the flag's judgement, not a count it invented.
     const store = yield* BillingReadStore;
-    const row = yield* store.get(account.id);
+    const row = yield* waitForProjection(
+      store,
+      account.id,
+      Option.getOrNull(yield* entitlements.query(Subscription.ref(account.id))),
+    );
     expect(row?.features.sso?.allowed).toBe(true);
     expect(row?.features.sso?.remaining).toBeNull();
     expect(row?.features.sso?.used).toBe(0);

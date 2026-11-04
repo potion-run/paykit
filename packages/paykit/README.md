@@ -88,7 +88,9 @@ const team = Paykit.tier({
   name: "Team",
   price: { amount: 4900, currency: "usd", interval: "month" },
   grants: [
-    Paykit.allowance(Paykit.messages, { included: 10_000, overage: "bill" }),
+    // Rollover: what the month did not spend carries into the next one, at
+    // most one month's worth, so `remaining` can pass `included`.
+    Paykit.allowance(Paykit.messages, { included: 10_000, overage: "bill", carryOver: true }),
     Paykit.allowance(seats, { included: 10, overage: "block", resets: "never" }),
   ],
 });
@@ -120,11 +122,17 @@ A feature is declared once and quoted by identity, so a tier cannot grant a feat
 never declared. `catalog()` refuses duplicate feature ids, duplicate tier ids, a tier that grants
 the same feature twice, a tier with no grants, an unlimited allowance that also names a `block` or
 `bill` overage (`CatalogUnlimitedOverage`), a `kind: "flag"` feature granted a count
-(`CatalogFlagNotGranted`), and a price that is not positive whole minor units.
+(`CatalogFlagNotGranted`), `carryOver` on a flag (`CatalogCarryOverOnFlag`) or beside
+`resets: "never"` (`CatalogCarryOverNeverResets`), and a price that is not positive whole minor
+units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
 `{ allowed, remaining: null, resetsAt: null, standing }`, and `Track`, `Reserve`, `Settle` and
 `Release` refuse it with `FeatureNotMetered` because there is no counter behind it.
+
+`carryOver: true` rolls what a period did not spend into the next one, at most `included`: the new
+period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`, and the read model
+carries the rolled-over amount so a console can show it.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no

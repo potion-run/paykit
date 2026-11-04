@@ -86,6 +86,25 @@ export class CatalogFlagOnMetered extends Schema.TaggedError<CatalogFlagOnMetere
   { tier: Schema.String, feature: Schema.String },
 ) {}
 
+/**
+ * A flag was told to carry its unspent allowance. A flag has no counter, so
+ * there is nothing to carry: the setting would be a silent no-op.
+ */
+export class CatalogCarryOverOnFlag extends Schema.TaggedError<CatalogCarryOverOnFlag>()(
+  "CatalogCarryOverOnFlag",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/**
+ * `carryOver` on an allowance that never resets. There is no boundary for the
+ * carry to happen at, so the setting would be a silent no-op; the deploy
+ * refuses it instead of recording a field that does nothing.
+ */
+export class CatalogCarryOverNeverResets extends Schema.TaggedError<CatalogCarryOverNeverResets>()(
+  "CatalogCarryOverNeverResets",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -101,6 +120,8 @@ export const CatalogError = Schema.Union([
   CatalogUnlimitedOverage,
   CatalogFlagNotGranted,
   CatalogFlagOnMetered,
+  CatalogCarryOverOnFlag,
+  CatalogCarryOverNeverResets,
   CatalogInvalid,
 ]);
 export type CatalogError = typeof CatalogError.Type;
@@ -119,8 +140,8 @@ const duplicateOf = <A>(values: ReadonlyArray<A>, key: (value: A) => string): st
  * Validate a catalog: the schema first, then the references the schema cannot
  * see — duplicate declarations, a grant with no declared feature, a tier that
  * grants nothing, an unlimited allowance that claims an overage, a flag that
- * was given a count. Provider ids never appear here, so the same catalog runs
- * on every provider.
+ * was given a count, a carry that cannot happen. Provider ids never appear
+ * here, so the same catalog runs on every provider.
  *
  * ### Validating a catalog
  * **Example:** A free and a priced tier, both quoting one declared feature
@@ -190,6 +211,17 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       }
       if (!flagFeature && isFlagGrant(grant)) {
         return Result.fail(new CatalogFlagOnMetered({ tier: tier.id, feature: grant.feature }));
+      }
+      // A carry needs something to carry and a boundary to carry it over. A
+      // flag has neither; an allowance that never resets has no boundary, so
+      // the setting would silently do nothing.
+      if (grant.carryOver === true && flagFeature) {
+        return Result.fail(new CatalogCarryOverOnFlag({ tier: tier.id, feature: grant.feature }));
+      }
+      if (grant.carryOver === true && grant.resets === "never") {
+        return Result.fail(
+          new CatalogCarryOverNeverResets({ tier: tier.id, feature: grant.feature }),
+        );
       }
     }
   }

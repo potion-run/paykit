@@ -30,6 +30,13 @@ export const FeatureEntitlement = Schema.Struct({
   /** Spendable now. `null` means there is no count: an unlimited allowance or a flag. */
   remaining: Schema.NullOr(Schema.Int),
   /**
+   * How much of `remaining` rolled over from the period that just closed, at
+   * most `included`. `0` when this period is the first or the allowance does
+   * not carry — so a console can say "1,480 of 2,000 included, 700 rolled
+   * over".
+   */
+  carried: Schema.Int,
+  /**
    * Whether the account may use one more unit right now: the same judgement
    * `check({ amount: 1 })` makes, carried in the read model so an agent reading
    * this view gets the answer without doing the arithmetic.
@@ -282,6 +289,7 @@ export class Entitlements extends Domain.View("Entitlements", {
                   used: 0,
                   reserved: 0,
                   remaining: spendable,
+                  carried: event.carried[feature] ?? 0,
                   allowed: allowsOne(view.standing, value.overage, spendable),
                 },
               ];
@@ -378,6 +386,8 @@ const featuresOf = (
           used,
           reserved,
           remaining: spendable,
+          // A period starts with no rollover; only `UsageReset` carries one in.
+          carried: 0,
           allowed: allowsOne(standing, allowance.overage, spendable),
           overage: allowance.overage,
           resets: allowance.resets,

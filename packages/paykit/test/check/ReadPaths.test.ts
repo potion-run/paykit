@@ -22,6 +22,7 @@ import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
 import { Track } from "../../src/Track.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 const freeTier = tier({
   id: "free",
@@ -47,12 +48,16 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.prov
 const subscribeFree = Effect.gen(function* () {
   const subscription = yield* Subscription;
   const entitlements = yield* Entitlements;
+  const store = yield* BillingReadStore;
   const receipt = yield* subscription.send(
     Subscription.ref(account),
     new Subscribe({ tier: "free", allowances: free }),
   );
-  yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
+  const view = Option.getOrNull(
+    yield* entitlements.query(Subscription.ref(account), { atLeast: receipt }),
+  );
   yield* BillingRead.caughtUp(receipt);
+  yield* waitForProjection(store, account, view);
   return receipt;
 });
 
@@ -76,6 +81,14 @@ describe("Check read paths", () => {
       const track = yield* Track();
       const receipt = yield* track({ account, feature: "messages", amount: 40 });
       yield* BillingRead.caughtUp(receipt);
+      // The row is the projection's, so wait for it to catch up with the view.
+      const entitlements = yield* Entitlements;
+      const store = yield* BillingReadStore;
+      yield* waitForProjection(
+        store,
+        account,
+        Option.getOrNull(yield* entitlements.query(Subscription.ref(account))),
+      );
       const inProcess = yield* CheckInProcess();
       const readModel = yield* CheckReadModel();
       expect(yield* readModel({ account, feature: "messages", amount: 1 })).toEqual(

@@ -21,6 +21,8 @@ export {
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
+  CatalogCarryOverNeverResets,
+  CatalogCarryOverOnFlag,
   CatalogEmptyTier,
   CatalogError,
   CatalogFlagNotGranted,

@@ -23,11 +23,14 @@ export class PeriodClosed extends Domain.Event("PeriodClosed", {
 }) {}
 
 /**
- * Usage counters returned to zero. `remaining` is the outcome after reset, and
- * is `null` for a feature whose allowance never runs out.
+ * Usage counters returned to zero, and the allowance the next period starts
+ * with. `remaining` is the outcome after reset, and is `null` for a feature
+ * with no count. `carried` is how much of that rolled over from the period that
+ * just closed — `0` for a feature that carried nothing.
  */
 export class UsageReset extends Domain.Event("UsageReset", {
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
+  carried: Schema.Record(Schema.String, Schema.Int),
 }) {}
 
 /** Credits do not survive a period boundary. */

@@ -4,6 +4,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { allowance, grant } from "../src/Allowance.ts";
 import {
+  CatalogCarryOverNeverResets,
+  CatalogCarryOverOnFlag,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
@@ -51,6 +53,7 @@ describe("catalog", () => {
       included: 100,
       overage: "block",
       resets: "month",
+      carryOver: false,
     });
   });
 
@@ -74,6 +77,7 @@ describe("catalog", () => {
           included: 2000,
           overage: "bill",
           resets: "month",
+          carryOver: false,
         },
         seats: {
           feature: "seats",
@@ -81,6 +85,7 @@ describe("catalog", () => {
           included: 5,
           overage: "block",
           resets: "never",
+          carryOver: false,
         },
       });
     }),
@@ -103,7 +108,49 @@ describe("catalog", () => {
     expect(Schema.is(CatalogError)(new CatalogFlagNotGranted({ tier: "pro", feature: "x" }))).toBe(
       true,
     );
+    expect(Schema.is(CatalogError)(new CatalogCarryOverOnFlag({ tier: "pro", feature: "x" }))).toBe(
+      true,
+    );
+    expect(
+      Schema.is(CatalogError)(new CatalogCarryOverNeverResets({ tier: "pro", feature: "x" })),
+    ).toBe(true);
     expect(Schema.is(CatalogError)(new Error("not a catalog error"))).toBe(false);
+  });
+
+  it("accepts a carrying allowance, and refuses a carry that cannot happen", () => {
+    const carrying = tier({
+      id: "carrying",
+      grants: [allowance(messages, { included: 2_000, carryOver: true })],
+    });
+    const accepted = defineCatalog({ features: [messages], tiers: [carrying] });
+    expect(Result.isSuccess(accepted)).toBe(true);
+    if (Result.isSuccess(accepted)) {
+      expect(allowancesOf(accepted.success, "carrying")?.messages?.carryOver).toBe(true);
+    }
+
+    const onFlag = tier({ id: "on_flag", grants: [{ ...grant(sso), carryOver: true }] });
+    const refusedFlag = defineCatalog({ features: [messages, sso], tiers: [onFlag] });
+    expect(Result.isFailure(refusedFlag)).toBe(true);
+    if (Result.isFailure(refusedFlag)) {
+      expect(Schema.is(CatalogCarryOverOnFlag)(refusedFlag.failure)).toBe(true);
+      if (!Schema.is(CatalogCarryOverOnFlag)(refusedFlag.failure)) return;
+      // Every refusal names the tier and the feature that caused it.
+      expect(refusedFlag.failure.tier).toBe("on_flag");
+      expect(refusedFlag.failure.feature).toBe("sso");
+    }
+
+    const never = tier({
+      id: "never_resets",
+      grants: [allowance(messages, { included: 10, resets: "never", carryOver: true })],
+    });
+    const refusedNever = defineCatalog({ features: [messages], tiers: [never] });
+    expect(Result.isFailure(refusedNever)).toBe(true);
+    if (Result.isFailure(refusedNever)) {
+      expect(Schema.is(CatalogCarryOverNeverResets)(refusedNever.failure)).toBe(true);
+      if (!Schema.is(CatalogCarryOverNeverResets)(refusedNever.failure)) return;
+      expect(refusedNever.failure.tier).toBe("never_resets");
+      expect(refusedNever.failure.feature).toBe("messages");
+    }
   });
 
   it("declares a flag, and defaults every other feature to metered", () => {
@@ -159,6 +206,7 @@ describe("catalog", () => {
       included: "unlimited",
       overage: "allow",
       resets: "month",
+      carryOver: false,
     });
     const unlimited = tier({
       id: "unlimited",

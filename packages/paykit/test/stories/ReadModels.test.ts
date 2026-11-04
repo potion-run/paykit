@@ -4,6 +4,7 @@ import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
@@ -17,6 +18,7 @@ import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscri
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 const freeTier = tier({
   id: "free",
@@ -98,8 +100,12 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
       new Subscribe({ tier: "free", allowances: free }),
     );
     // BillingRead consumes Entitlements, so wait for the view before the projection.
-    yield* state.query(ref, { atLeast: receipt });
+    const view = Option.getOrNull(yield* state.query(ref, { atLeast: receipt }));
     yield* BillingRead.caughtUp(receipt);
+    // The row can still trail the progress report under a loaded suite, so wait
+    // for it to say what the view says rather than assuming one delivery feeds
+    // both consumers.
+    yield* waitForProjection(store, "acct_read_live", view);
     const page = yield* store.list();
     expect(page.rows.length).toBe(1);
     expect(page.next).toBeNull();

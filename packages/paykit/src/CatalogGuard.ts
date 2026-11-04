@@ -14,8 +14,13 @@ interface CatalogCarried {
   readonly price?: Price;
 }
 
+/**
+ * A stable key for everything an allowance says. Every field is here on
+ * purpose: a command that carries a different `kind` or `carryOver` than the
+ * catalog states would record a standing the deploy never sold.
+ */
 const allowanceKey = (allowance: Allowance): string =>
-  `${allowance.feature}:${allowance.included}:${allowance.overage}:${allowance.resets}`;
+  `${allowance.feature}:${allowance.kind ?? "metered"}:${allowance.included}:${allowance.overage}:${allowance.resets}:${allowance.carryOver === true}`;
 
 const allowancesKey = (allowances: Readonly<Record<string, Allowance>>): string =>
   Object.keys(allowances)

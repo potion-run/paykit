@@ -4,6 +4,7 @@ import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
@@ -26,6 +27,7 @@ import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 import { Track } from "../../src/Track.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 const unlimitedTier = tier({
   id: "unlimited",
@@ -70,6 +72,7 @@ const unlimitedFeature = (resetsAt: DateTime.Utc) => ({
   included: "unlimited" as const,
   used: 0,
   reserved: 0,
+  carried: 0,
   allowed: true,
   remaining: null,
   overage: "allow" as const,
@@ -179,7 +182,7 @@ it.effect("closes the period: usage resets, the count stays absent, the period s
         standingAfter: "good",
         cancelAtPeriodEndAfter: false,
       }),
-      new UsageReset({ remaining: { messages: null } }),
+      new UsageReset({ remaining: { messages: null }, carried: { messages: 0 } }),
       new CreditsExpired({ amount: 0, balanceAfter: 0 }),
     ),
     Story.view(Entitlements, account, {
@@ -224,7 +227,11 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
 
     // The row round-trips the absence of a count, not a zero.
     const store = yield* BillingReadStore;
-    const row = yield* store.get(account.id);
+    const row = yield* waitForProjection(
+      store,
+      account.id,
+      Option.getOrNull(yield* entitlements.query(Subscription.ref(account.id))),
+    );
     expect(row?.features.messages?.included).toBe("unlimited");
     expect(row?.features.messages?.remaining).toBeNull();
     expect(row?.features.messages?.used).toBe(1_000_000);

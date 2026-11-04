@@ -27,7 +27,9 @@ export const pro = Paykit.tier({
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [
-    Paykit.allowance(messages, { included: 2_000, overage: "bill" }),
+    // Rollover: what the month did not spend carries into the next one, at most
+    // one month's worth. `check()` reports the carried amount as `remaining`.
+    Paykit.allowance(messages, { included: 2_000, overage: "bill", carryOver: true }),
     Paykit.allowance(seats, { included: 5, resets: "never" }),
   ],
 });

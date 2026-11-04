@@ -193,6 +193,26 @@ export const remainingOf = (state: SubscribedState, feature: string): number | n
   return allowance === undefined ? 0 : includedRemainingOf(allowance);
 };
 
+/**
+ * What an allowance's next period starts with, and how much of that carried.
+ * A period starts at `included` plus what the closing one did not spend,
+ * clamped to `[0, included]` so a period never holds more than two periods'
+ * worth and an overdrawn allowance never deducts from the next one. An
+ * allowance that does not carry starts at `included`; one with no count — an
+ * unlimited allowance, or a flag — has nothing to carry.
+ */
+export const resetOf = (
+  state: SubscribedState,
+  feature: string,
+  allowance: Allowance,
+): { readonly remaining: number | null; readonly carried: number } => {
+  const start = includedRemainingOf(allowance);
+  if (start === null) return { remaining: null, carried: 0 };
+  if (allowance.carryOver !== true) return { remaining: start, carried: 0 };
+  const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), start);
+  return { remaining: start + carried, carried };
+};
+
 /** The amount currently held by open reservations for one feature. */
 export const reservedOf = (state: SubscribedState, feature: string): number =>
   state.reserved[feature] ?? 0;

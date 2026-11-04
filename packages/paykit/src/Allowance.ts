@@ -33,7 +33,8 @@ export type AllowanceKind = typeof AllowanceKind.Type;
 /**
  * What a tier grants of one feature, and what happens past it. `included`
  * is a count, never money: money on a feature lives in the provider's price
- * mapping, never in the catalog.
+ * mapping, never in the catalog. `carryOver` says what happens to the part a
+ * period did not spend.
  */
 export const Allowance = Schema.Struct({
   feature: FeatureId,
@@ -45,6 +46,11 @@ export const Allowance = Schema.Struct({
   included: Included,
   overage: Overage,
   resets: Resets,
+  /**
+   * Whether the part a period did not spend carries into the next one, capped
+   * at `included`. Absent means `false`: the next period starts at `included`.
+   */
+  carryOver: Schema.optionalKey(Schema.Boolean),
 });
 export type Allowance = typeof Allowance.Type;
 
@@ -62,6 +68,12 @@ export interface AllowanceInput {
   readonly overage?: Overage;
   /** @default "month" */
   readonly resets?: Resets;
+  /**
+   * Carry what a period did not spend into the next one, at most `included`.
+   * Refused on a `"flag"` and on `resets: "never"`.
+   * @default false
+   */
+  readonly carryOver?: boolean;
 }
 
 /**
@@ -72,15 +84,19 @@ export interface AllowanceInput {
  * **Example:** Defaults, then an explicit overage and reset
  * ```typescript
  * allowance(messages, { included: 100 });
- * // { feature: "messages", included: 100, overage: "block", resets: "month" }
+ * // { feature: "messages", kind: "metered", included: 100, overage: "block", resets: "month", carryOver: false }
  *
  * allowance(messages, { included: 2_000, overage: "bill" });
  * allowance(seats, { included: 5, resets: "never" });
  *
+ * // Rollover: what this period did not spend carries into the next one, at
+ * // most one period's worth.
+ * allowance(messages, { included: 2_000, carryOver: true });
+ *
  * // Unlimited: past the end of an allowance that never runs out there is
  * // nothing to block or to bill, so `overage` defaults to "allow".
  * allowance(messages, { included: "unlimited" });
- * // { feature: "messages", included: "unlimited", overage: "allow", resets: "month" }
+ * // { feature: "messages", kind: "metered", included: "unlimited", overage: "allow", resets: "month", carryOver: false }
  * ```
  */
 export const allowance = (feature: Feature, input: AllowanceInput): Allowance => ({
@@ -89,6 +105,7 @@ export const allowance = (feature: Feature, input: AllowanceInput): Allowance =>
   included: input.included,
   overage: input.overage ?? (input.included === "unlimited" ? "allow" : "block"),
   resets: input.resets ?? "month",
+  carryOver: input.carryOver ?? false,
 });
 
 /**

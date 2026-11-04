@@ -69,7 +69,7 @@ const closed = (periodStart: DateTime.Utc, periodEnd: DateTime.Utc, nextEnd: Dat
       standingAfter: "good",
       cancelAtPeriodEndAfter: false,
     }),
-    new UsageReset({ remaining: { messages: 2000 } }),
+    new UsageReset({ remaining: { messages: 2000 }, carried: { messages: 0 } }),
     new CreditsExpired({ amount: 0, balanceAfter: 0 }),
   ] as const;
 
