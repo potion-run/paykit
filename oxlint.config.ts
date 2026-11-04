@@ -13,6 +13,8 @@ export default defineConfig({
     "**/node_modules/**",
     "**/fixtures/**",
     "**/.agents/**",
+    "**/.agent_sources/**",
+    "**/.agent-sources/**",
   ],
   rules: {
     "no-irregular-whitespace": "off",

@@ -1,11 +1,11 @@
-# @potion.run/polar
+# @potion.run/paykit-polar
 
 Polar for Alchemy: products, prices and webhook endpoints as resources, checkout, customer
 session and refund as bindings, over `@distilled.cloud/polar`.
 
-A general Alchemy provider. It never imports `@potion.run/paykit`, and paykit-specific helpers do
-not land here — its README is a Worker that sells a product with no paykit import, and its tests
-run without paykit installed.
+A general Alchemy provider. Despite the name, it never imports `@potion.run/paykit`, and
+paykit-specific helpers do not land here — its README is a Worker that sells a product with no
+paykit import, and its tests run without paykit installed.
 
 ## Surface
 

@@ -9,7 +9,7 @@
   },
   "references": [
     {
-      "path": "../polar"
+      "path": "../paykit-polar"
     }
   ]
 }

@@ -32,6 +32,45 @@ renaming one is a breaking change. Before naming a type, a file or an export, re
 [vocabulary table](./PLAN.md#vocabulary) — its "Not to be called" column is the collision you
 are about to hit.
 
+## Catalog authoring
+
+The catalog is plain data that `BillingStack` validates and records. `Feature`, `Tier` and
+`Catalog` are not Alchemy resources: no `Diff` / `Read` / `Reconcile` / `Delete`, no `Type`, no
+`FQN`. `BillingStack` is the resource; the catalog is its desired state. The root
+[Alchemy API conventions](../../AGENTS.md#alchemy-api-conventions) are the general rule.
+
+```ts
+const messages = Paykit.feature({ id: "messages", name: "Messages" });
+
+const free = Paykit.tier({
+  id: "free",
+  name: "Free",
+  grants: [Paykit.allowance(messages, { included: 100 })],
+});
+
+const pro = Paykit.tier({
+  id: "pro",
+  name: "Pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+});
+
+Paykit.catalog({ features: [messages], tiers: [free, pro] });
+```
+
+- `feature()` declares a meter once. `FeatureId` and `TierId` are branded; a tier quotes a
+  feature by value through `allowance()`, never by a bare string.
+- `tier()` bundles at least one allowance. A missing `price` is free; prices are integer minor
+  units plus a currency.
+- `catalog()` / `defineCatalog()` validate the graph and refuse with `CatalogError`, a
+  `Schema.Union` with one tag per refusal. A new semantic rule gets a new tag carrying its
+  evidence and a test; `CatalogInvalid` is only for a schema failure.
+- Constructors stay pure; `catalog()` is the only effectful step. Lookups are `tierOf`,
+  `featureOf` and `allowancesOf`.
+- No provider ids in the catalog. The tier → vendor price mapping lives in provider config;
+  `CatalogPriceMismatch` in `Stack` is the backstop.
+- A public catalog function carries a JSDoc example, like an Alchemy primitive.
+
 ## Model rules
 
 - `decide` is pure: state and command in, events or a rejection out. No I/O, no clock, no
@@ -125,20 +164,24 @@ per Stack; `refs` is keyed by provider, so a second one is additive.
   op. The console hides the action; nothing degrades silently.
 
 A **vendor package** owns the vendor's plumbing: `@alchemy.run/stripe` for Stripe, and
-`@potion.run/polar` for Polar (ours, [its own package](../polar/AGENTS.md), published
-separately). They declare products, prices and the webhook endpoint as Alchemy resources and
-expose checkout/portal/refund as bindings over their distilled SDK. The `Payments<V>` adapter
-delegates to them — if an op is missing, add it to the vendor package, not to the adapter.
+`@potion.run/paykit-polar` for Polar (ours, [its own package](../paykit-polar/AGENTS.md),
+published separately). They declare products, prices and the webhook endpoint as Alchemy
+resources and expose checkout/portal/refund as bindings over their distilled SDK. The
+`Payments<V>` adapter delegates to them — if an op is missing, add it to the vendor package, not
+to the adapter.
 
-`@potion.run/polar` is a general Polar provider for Alchemy: a Worker that sells a product with
-no paykit import is its README, and its live tests run without paykit. A paykit-shaped helper in
-it is a leak in the wrong direction.
+`@potion.run/paykit-polar` is a general Polar provider for Alchemy. Despite the name, it is not a
+paykit SDK: a Worker that sells a product with no paykit import is its README, and its live
+tests run without paykit. A paykit-shaped helper in it is a leak in the wrong direction. Keep it
+a separate package: a `@potion.run/paykit/adapter/polar` subpath would force paykit and its peers
+on every Polar user and remove the optional-peer isolation.
 
 Adding a provider touches the same places every time:
 
-1. **The vendor package** — `@alchemy.run/<vendor>` or `@potion.run/<vendor>`: products, prices
-   and webhook endpoint as resources, checkout/portal/refund as bindings. Publish one only when
-   none exists, general-purpose and never paykit-shaped.
+1. **The vendor package** — `@alchemy.run/<vendor>` when one exists, else
+   `@potion.run/paykit-<vendor>`: products, prices and webhook endpoint as resources,
+   checkout/portal/refund as bindings. Publish one only when none exists, general-purpose and
+   never paykit-shaped.
 2. **The adapter** — `Payments<V>.ts`: delegate to those bindings; required ops, plus the
    optional ops it declares.
 3. **The translation** — its webhooks into our commands, provider event id as `commandId`.
@@ -164,10 +207,10 @@ Four export groups and nothing else: deploy-time resources, runtime bindings, mo
 internal, whatever it is.
 
 - Opt-in integrations are an optional peer plus a dev dependency, so a user who never imports
-  `Paykit.Polar()` never installs `@potion.run/polar`.
+  `Paykit.Polar()` never installs `@potion.run/paykit-polar`.
 - Model files under `src/` are `<Noun>.<kind>.ts` (`.aggregate`, `.command`, `.rejection`,
   `.view`, `.stream`, `.projection`, `.saga`); runtime files use Alchemy's resource/binding
-  pairing.
+  pairing. Plain values keep plain names (`Feature.ts`, `Allowance.ts`, `Tier.ts`, `Catalog.ts`).
 
 ## Tests are the spec
 
@@ -208,3 +251,7 @@ without a story is unimplemented.
 - [Alchemy AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) — engine
   concepts, the Reconciler doctrine and binding conventions. Read the Reconciler doctrine before
   writing `Diff` / `Read` / `Reconcile` / `Delete` for a store.
+- [Alchemy source mirror](../../.agent_sources/github.com/alchemy-run/alchemy/) — once vendored,
+  the pinned source for the API rules above:
+  `packages/alchemy/src/{Resource,Input,Contributions}.ts` and
+  `packages/domain/src/{Command,Event,Rejection}.ts`.

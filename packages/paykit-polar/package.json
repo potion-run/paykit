@@ -1,5 +1,5 @@
 {
-  "name": "@potion.run/polar",
+  "name": "@potion.run/paykit-polar",
   "version": "0.1.0",
   "description": "Polar products, prices and webhooks for Alchemy.",
   "files": [

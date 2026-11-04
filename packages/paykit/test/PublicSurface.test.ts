@@ -1,0 +1,63 @@
+import { expect, it } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
+import * as Paykit from "../src/index.ts";
+
+it("exports the four groups from the package root", () => {
+  // deploy-time
+  expect(typeof Paykit.Stack).toBe("function");
+  expect(typeof Paykit.tier).toBe("function");
+  expect(typeof Paykit.feature).toBe("function");
+  expect(typeof Paykit.allowance).toBe("function");
+  expect(typeof Paykit.catalog).toBe("function");
+  expect(typeof Paykit.defineCatalog).toBe("function");
+  expect(typeof Paykit.allowancesOf).toBe("function");
+  expect(typeof Paykit.featureOf).toBe("function");
+  expect(Paykit.FeatureId).toBeDefined();
+  expect(Paykit.TierId).toBeDefined();
+  expect(Paykit.CatalogError).toBeDefined();
+  expect(Paykit.messages.id).toBe("messages");
+  expect(Paykit.MemoryStore()._tag).toBe("MemoryStore");
+  // runtime
+  expect(typeof Paykit.Check).toBe("function");
+  expect(typeof Paykit.Track).toBe("function");
+  expect(typeof Paykit.Subscribe).toBe("function");
+  expect(typeof Paykit.Portal).toBe("function");
+  // model
+  expect(Paykit.Model.modelName).toBe("Paykit");
+  expect(Paykit.BillingAdminApi.name).toContain("BillingAdminApi");
+  // providers
+  expect(Paykit.Memory().kind).toBe("memory");
+  expect(Paykit.Manual().kind).toBe("manual");
+});
+
+it.effect("a catalog built through the public helpers is the same one Stack validates", () =>
+  Effect.gen(function* () {
+    const free = Paykit.tier({
+      id: "free",
+      grants: [Paykit.allowance(Paykit.messages, { included: 100 })],
+    });
+    const pro = Paykit.tier({
+      id: "pro",
+      price: { amount: 1900, currency: "usd", interval: "month" },
+      grants: [Paykit.allowance(Paykit.messages, { included: 2000, overage: "bill" })],
+    });
+    const billing = yield* Paykit.Stack("Billing", {
+      catalog: { features: [Paykit.messages], tiers: [free, pro] },
+      providers: [Paykit.Memory()],
+    });
+    expect(billing.catalog.features.map((feature) => feature.id)).toEqual(["messages"]);
+    expect(billing.catalog.tiers.map((tier) => tier.id)).toEqual(["free", "pro"]);
+    expect(billing.providers[0]?.kind).toBe("memory");
+  }),
+);
+
+it("vocabulary is exported as API", () => {
+  expect(Paykit.SubscriptionStatus.literals).toEqual([
+    "trialing",
+    "active",
+    "grace",
+    "canceled",
+    "expired",
+  ]);
+  expect(Paykit.Standing.literals).toEqual(["good", "grace", "blocked"]);
+});

@@ -20,6 +20,8 @@ export default defineConfig({
     "**/lib/**",
     "**/node_modules/**",
     "**/.agents/**",
+    "**/.agent_sources/**",
+    "**/.agent-sources/**",
     "**/*.md",
     "**/*.mdx",
   ],

@@ -13,7 +13,8 @@
     "lint:fix": "oxlint -c oxlint.config.ts --fix",
     "prepare": "husky",
     "test": "pnpm -r --filter \"./packages/*\" run test",
-    "typecheck": "tsrs -b"
+    "typecheck": "tsrs -b",
+    "vendor:agent-sources": "./scripts/vendor-agent-sources.sh"
   },
   "devDependencies": {
     "@types/bun": "catalog:",

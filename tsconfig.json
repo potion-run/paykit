@@ -1,12 +1,12 @@
 {
   "files": [],
-  "exclude": ["node_modules", "dist", "lib"],
+  "exclude": ["node_modules", "dist", "lib", ".agent_sources", ".agent-sources"],
   "references": [
     {
-      "path": "./packages/polar"
+      "path": "./packages/paykit-polar"
     },
     {
-      "path": "./packages/polar/tsconfig.test.json"
+      "path": "./packages/paykit-polar/tsconfig.test.json"
     },
     {
       "path": "./packages/paykit"

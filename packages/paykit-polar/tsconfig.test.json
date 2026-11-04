@@ -6,7 +6,8 @@
     "noEmit": true,
     "outDir": "./lib",
     "rootDir": ".",
-    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.test.tsbuildinfo"
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.test.tsbuildinfo",
+    "rewriteRelativeImportExtensions": false
   },
   "references": [
     {

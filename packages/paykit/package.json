@@ -43,7 +43,7 @@
     "@alchemy.run/sql": "catalog:",
     "@alchemy.run/stripe": "catalog:",
     "@alchemy.run/test": "catalog:",
-    "@potion.run/polar": "workspace:*",
+    "@potion.run/paykit-polar": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",
@@ -55,7 +55,7 @@
     "@alchemy.run/cloudflare": "catalog:",
     "@alchemy.run/sql": "catalog:",
     "@alchemy.run/stripe": "catalog:",
-    "@potion.run/polar": "workspace:*",
+    "@potion.run/paykit-polar": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "foldkit": "catalog:"
@@ -70,7 +70,7 @@
     "@alchemy.run/stripe": {
       "optional": true
     },
-    "@potion.run/polar": {
+    "@potion.run/paykit-polar": {
       "optional": true
     },
     "foldkit": {
