@@ -43,21 +43,29 @@ yield* Paykit.Stack("Billing", {
 });
 ```
 
-**2. Identity is the tier id, carried in the vendor's own field.** A Stripe price is found by
-`lookup_key = "paykit:<tier>"`; a Polar product carries `metadata.paykit_tier = "<tier>"`. The vendor
-id is a cache of that, never the identity, so a database restored from a backup or a second stage
-reconciles to the same vendor objects instead of duplicating them.
+**2. Identity is the stage and the tier, carried in the vendor's own field.** A Stripe price is
+found by `lookup_key = "paykit:<stage>:<tier>"`; a Polar product carries
+`metadata.paykit_tier = "<tier>"`. The vendor id is a cache of that, never the identity, so a
+database restored from a backup reconciles to the same vendor objects instead of duplicating them.
+
+The stage is part of the key because shares are not isolated by the vendor: every stage on one key
+pair shares one Stripe account, and `transfer_lookup_key` would let a `preview` price take the
+lookup key from `prod`'s — a production checkout charging the preview amount.
 
 **3. A price is financial history, so it is never deleted.** Three rules:
 
 - **Create** when no price carries the tier's lookup key.
-- **Replace** when the amount, currency or interval changes: create the new price, move the lookup
-  key to it (`transfer_lookup_key`), archive the old one. Stripe prices are immutable, so "update"
-  is always a replace, and the old price stays readable for every invoice that used it.
-- **Retire** when a tier leaves the catalog or stops being priced: archive it, never delete it. A
-  standing sold at that price is the reason.
+- **Replace** when the amount, currency or interval changes: Alchemy creates the new price and
+  moves the lookup key onto it (`transfer_lookup_key`), because Stripe prices are immutable and a
+  live subscription must not change what it is charged.
+- **Retire** when a tier leaves the catalog or stops being priced: the resources are declared with
+  `RemovalPolicy.retain`, so the Stripe object is left alone and only the state row goes away.
 
-Archiving is the only destructive-looking operation, and it is reversible by an operator.
+**Retention is not archival.** A retired price is left active, not archived: archiving is a vendor
+write against a resource the stack no longer tracks, so it needs its own mechanism (a sweep by
+lookup-key prefix, or a provider `delete` that archives instead of destroying). Until then the rule
+is "never deleted", and `StripePrices` says exactly that rather than claiming a state it does not
+produce.
 
 **4. Reuse the vendor package that exists; write the one that does not.** For Stripe, `StripePrices`
 yields `@alchemy.run/stripe`'s `Product` and `Price` resources — they already tag ownership, adopt

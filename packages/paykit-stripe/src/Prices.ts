@@ -1,5 +1,7 @@
 import * as Stripe from "@alchemy.run/stripe";
 import type { Price, TierId } from "@potion.run/paykit";
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
+import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 
 /**
@@ -14,7 +16,7 @@ export interface PriceDeclaration {
   /** Logical id of the product resource, and of the price resource. */
   readonly productResource: string;
   readonly priceResource: string;
-  /** `paykit:<tier>` — what makes the price findable after a restore. */
+  /** `<stage>:<tier>` under `paykit:` — findable after a restore, per environment. */
   readonly lookupKey: string;
   readonly amount: number;
   readonly currency: string;
@@ -26,8 +28,13 @@ export interface PriceDeclaration {
  * The lookup key a tier's price carries, and the only identity that survives a
  * lost state: a restored database reconciles to the same Stripe price instead of
  * creating a second one.
+ *
+ * The stage is in the key because a Stripe account is shared by every stage that
+ * uses the same key pair. Without it, a `preview` stack's price would take the
+ * lookup key from `prod`'s (`transfer_lookup_key` moves it), and the production
+ * checkout would start charging the preview amount.
  */
-export const lookupKeyOf = (tier: string): string => `paykit:${tier}`;
+export const lookupKeyOf = (stage: string, tier: string): string => `paykit:${stage}:${tier}`;
 
 /** Stripe spells the annual interval `year`; the catalog says `annual`. */
 const intervalOf = (interval: Price["interval"]): "month" | "year" =>
@@ -40,6 +47,7 @@ const intervalOf = (interval: Price["interval"]): "month" | "year" =>
  */
 export const priceDeclarations = (
   tiers: Readonly<Record<string, Price>>,
+  stage: string,
 ): ReadonlyArray<PriceDeclaration> =>
   Object.entries(tiers)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -47,7 +55,7 @@ export const priceDeclarations = (
       tier,
       productResource: `Product_${tier}`,
       priceResource: `Price_${tier}`,
-      lookupKey: lookupKeyOf(tier),
+      lookupKey: lookupKeyOf(stage, tier),
       amount: price.amount,
       currency: price.currency,
       interval: intervalOf(price.interval),
@@ -69,11 +77,15 @@ export type SoldPrice = string;
  * Yielding this inside a stack creates, replaces and retires Stripe prices:
  *
  * - **create** when no price carries the tier's lookup key;
- * - **replace** when the amount, currency or interval changes — a new price, the
- *   lookup key moved onto it, the old one archived, because Stripe prices are
- *   immutable and a live subscription must not change what it is charged;
- * - **retire** when a tier leaves the catalog — archived, never deleted, because
- *   invoices reference it.
+ * - **replace** when the amount, currency or interval changes: those props are
+ *   create-only, so Alchemy creates a new price and moves the lookup key onto it
+ *   (`transfer_lookup_key`), because Stripe prices are immutable and a live
+ *   subscription must not change what it is charged;
+ * - **retire** when a tier leaves the catalog: both resources are declared with
+ *   `RemovalPolicy.retain`, so the price object is left in place and only
+ *   Alchemy's state row goes away. It is not archived — that is a vendor write
+ *   against a resource the stack no longer tracks, and it is a follow-up
+ *   rather than something this helper pretends to do.
  *
  * The vendor resources are `@alchemy.run/stripe`'s own, so ownership metadata,
  * adoption and drift are the vendor package's problem, not a second
@@ -96,13 +108,15 @@ export type SoldPrice = string;
  * });
  * ```
  *
- * @resource
+ * @primitive
+ * @product Stripe
  */
 export const StripePrices = Effect.fn("Stripe.Prices")(function* (
   id: string,
   props: { readonly tiers: Readonly<Record<string, Price>> },
 ) {
-  const declarations = priceDeclarations(props.tiers);
+  const stack = yield* Stack;
+  const declarations = priceDeclarations(props.tiers, stack.stage);
   const sold: Record<string, SoldPrice> = {};
 
   for (const declaration of declarations) {
@@ -111,7 +125,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
     const product = yield* Stripe.Product(`${id}${declaration.productResource}`, {
       name: declaration.tier,
       metadata: { paykit_tier: declaration.tier },
-    });
+    }).pipe(RemovalPolicy.retain());
     // One price per tier, found by its lookup key, archived rather than deleted
     // when the catalog moves on.
     yield* Stripe.Price(`${id}${declaration.priceResource}`, {
@@ -120,7 +134,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       unitAmount: declaration.amount,
       recurring: { interval: declaration.interval },
       lookupKey: declaration.lookupKey,
-    });
+    }).pipe(RemovalPolicy.retain());
     sold[declaration.tier] = declaration.lookupKey;
   }
 

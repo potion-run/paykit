@@ -40,7 +40,7 @@ const stripe = Stripe({
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
 | `StripePrices(id, { tiers })` | creates the products and prices the catalog states, and returns each tier's lookup key |
 | `priceDeclarations(tiers)` | the pure mapping: resource ids, lookup keys, amounts, intervals |
-| `lookupKeyOf(tier)` | `paykit:<tier>`, the only identity that survives a restore |
+| `lookupKeyOf(stage, tier)` | `paykit:<stage>:<tier>`, the only identity that survives a restore |
 
 `Stripe()` builds the distilled client from `secretKey` when no `client` is given, so a deployment
 wires nothing. It returns what the catalog needs and nothing else: `kind`, `capabilities`,
@@ -63,8 +63,10 @@ rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provision
   reference it. A changed amount creates a new price, moves the lookup key onto it
   (`transfer_lookup_key`) and archives the old one, because Stripe prices are immutable and a live
   subscription must not change what it is charged.
-- **The lookup key is the identity, the id is a cache.** `paykit:<tier>` is what a restored state
-  or a second stage reconciles to; a price id is an output of one run.
+- **The lookup key is the identity, the id is a cache.** `paykit:<stage>:<tier>` is what a restored
+  state reconciles to; a price id is an output of one run. The stage is in the key because every
+  stage that shares a key pair shares the Stripe account, and `transfer_lookup_key` would otherwise
+  let a preview price take the key from production's.
 - **The catalog stays provider-free.** `StripePrices` takes prices and returns keys. Nothing about
   Stripe reaches the catalog, and a stack that runs two providers declares both from the same
   prices.
