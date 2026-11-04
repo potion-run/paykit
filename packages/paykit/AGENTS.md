@@ -329,6 +329,10 @@ internal, whatever it is.
 Write the property red first. A property that has never failed proves nothing, and a rejection
 without a story is unimplemented.
 
+- Properties are generated with `effect/Arbitrary` through `test/support/Property.ts`;
+  `test/properties/Arbitraries.ts` holds the command and script generators. A falsification prints
+  its shrunk input and a replay token, which goes back into `replay` to reproduce it. A fixed loop
+  over hand-picked inputs is an example, not a property.
 - `TestClock` everywhere. A billing test that waits in real time will flake.
 - Deterministic data: account ids are constants or derived from the test name. No `Math.random()`
   and no `Date.now()` for identity.
