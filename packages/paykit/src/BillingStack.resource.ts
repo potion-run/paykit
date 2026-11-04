@@ -7,7 +7,7 @@ import { catalog, Catalog, type CatalogError } from "./Catalog.ts";
 import {
   CatalogPriceMismatch,
   NoPurchasePath,
-  ProviderAmbiguous,
+  ProviderDuplicate,
   ProviderDescriptor,
   validateProviderMappings,
 } from "./Stack.ts";
@@ -64,7 +64,7 @@ export const reconcileBillingStack = (
   props: BillingStackProps | undefined,
 ): Effect.Effect<
   BillingStackAttrs,
-  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous
+  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate
 > =>
   Effect.gen(function* () {
     // A reconcile without props is a delete, and delete never reaches here.

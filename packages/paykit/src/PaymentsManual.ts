@@ -34,5 +34,5 @@ export const PaymentsManual = (): Provider<"manual"> => {
     Layer.succeed(PaymentsProvider, { name: "manual", capabilities }),
   );
 
-  return { kind: "manual", capabilities, payments };
+  return { name: "manual", kind: "manual", capabilities, payments };
 };

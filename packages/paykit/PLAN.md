@@ -347,10 +347,10 @@ Four rules keep the port from re-forming around whichever provider shipped first
    `Stack` refuses a mapping whose amount, currency or interval disagrees
    (`CatalogPriceMismatch`), so drift is a deploy error rather than a wrong invoice.
 
-`0.1` runs one provider per Stack, and `refs` is already keyed by provider, so two is additive
-once the port dispatches. Until then a second provider is refused (`ProviderAmbiguous`): `Payments`
-is one service tag, so a second layer would win by merge order and the checkout the catalog
-validated would not be the one that ran.
+A Stack runs one or more providers: `paymentsRouter(...)` holds them in preference order, `refs`
+stays keyed by provider, and a binding resolves the account's own provider before the fallback and
+provides only that provider's layer. Two providers sharing a name are refused
+(`ProviderDuplicate`), because `refs` could not tell them apart.
 
 ### The vendor package
 

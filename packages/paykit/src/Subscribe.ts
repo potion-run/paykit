@@ -7,8 +7,10 @@ import {
   type PaymentError,
   Payments,
   PaymentsProvider,
+  PaymentsRouter,
   ProviderCapabilityMissing,
   type PaymentsService,
+  providerFor,
 } from "./Payments.ts";
 import { AttachProviderRef } from "./Subscription/AttachProviderRef.command.ts";
 import { Entitlements } from "./Subscription/Entitlements.view.ts";
@@ -90,8 +92,7 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
   const catalog = yield* CatalogService;
   const subscription = yield* Subscription;
   const entitlements = yield* Entitlements;
-  const payments = yield* Effect.serviceOption(Payments);
-  const provider = yield* Effect.serviceOption(PaymentsProvider);
+  const router = yield* Effect.serviceOption(PaymentsRouter);
 
   return Effect.fn("Paykit.Subscribe.start")(function* (input: SubscribeInput) {
     const tier = tierOf(catalog, input.tier);
@@ -110,30 +111,45 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
       return { activated: true } as const satisfies SubscribeResult;
     }
 
-    if (Option.isNone(payments)) {
-      return yield* new ProviderCapabilityMissing({ provider: "none", op: "createCheckout" });
-    }
-    const service = Option.getOrThrow(payments);
-    const providerName = Option.match(provider, {
-      onNone: () => "provider",
-      onSome: (found) => found.name,
+    // Bound here: narrowing a property does not survive into the generator.
+    const price = tier.price;
+    // The standing says which provider this account already belongs to; a new
+    // account starts on the router's fallback. One provider's layer is provided
+    // for this call, because two providers are two services.
+    const standing = yield* subscription.state(ref);
+    const chosen = Option.match(router, {
+      onNone: () => null,
+      onSome: (set) => providerFor(set, standing.refs),
     });
-    const purchase = yield* purchasePath(
-      service,
-      Option.getOrNull(provider),
-      input.account,
-      tier.id,
-      tier.price.amount,
-      tier.price.currency,
-    );
-    // The reference is stored before any standing exists, so a webhook that
-    // activates the account can find the purchase it belongs to.
-    const reference = "url" in purchase ? purchase.url : purchase.invoiceId;
-    yield* subscription.send(
-      ref,
-      new AttachProviderRef({ provider: providerName, refs: { checkout: reference } }),
-      { commandId: `checkout:${input.account}:${tier.id}:${reference}` },
-    );
-    return purchase as SubscribeResult;
+    const attempt = Effect.gen(function* () {
+      const payments = yield* Effect.serviceOption(Payments);
+      const provider = yield* Effect.serviceOption(PaymentsProvider);
+      if (Option.isNone(payments)) {
+        return yield* new ProviderCapabilityMissing({
+          provider: chosen?.name ?? "none",
+          op: "createCheckout",
+        });
+      }
+      const service = Option.getOrThrow(payments);
+      const providerName = chosen?.name ?? Option.getOrNull(provider)?.name ?? "provider";
+      const purchase = yield* purchasePath(
+        service,
+        Option.getOrNull(provider),
+        input.account,
+        tier.id,
+        price.amount,
+        price.currency,
+      );
+      // The reference is stored before any standing exists, so a webhook that
+      // activates the account can find the purchase it belongs to.
+      const reference = "url" in purchase ? purchase.url : purchase.invoiceId;
+      yield* subscription.send(
+        ref,
+        new AttachProviderRef({ provider: providerName, refs: { checkout: reference } }),
+        { commandId: `checkout:${input.account}:${tier.id}:${reference}` },
+      );
+      return purchase as SubscribeResult;
+    });
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
   });
 });

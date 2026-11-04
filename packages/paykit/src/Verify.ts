@@ -3,7 +3,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type Catalog, tierOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
-import { PaymentCapability, PaymentsProvider } from "./Payments.ts";
+import { PaymentCapability, PaymentsProvider, PaymentsRouter, providerFor } from "./Payments.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
 
@@ -126,13 +126,17 @@ export const verifyState = (
 export const Verify = Effect.fn("Paykit.Verify")(function* () {
   const catalog = yield* CatalogService;
   const subscription = yield* Subscription;
-  const provider = yield* Effect.serviceOption(PaymentsProvider);
+  const router = yield* Effect.serviceOption(PaymentsRouter);
 
   return Effect.fn("Paykit.Verify.account")(function* (input: { readonly account: string }) {
     const state = yield* subscription.state(Subscription.ref(input.account));
-    return verifyState(input.account, state, {
-      catalog,
-      provider: Option.getOrNull(provider),
+    // With a router, the account's own provider is the one that could sell its
+    // tier; without one, the single layer in context is.
+    const routed = Option.match(router, {
+      onNone: () => null,
+      onSome: (set) => providerFor(set, state.refs),
     });
+    const provider = routed ?? Option.getOrNull(yield* Effect.serviceOption(PaymentsProvider));
+    return verifyState(input.account, state, { catalog, provider });
   });
 });

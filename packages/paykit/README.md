@@ -129,7 +129,9 @@ implement an optional op fails with `ProviderCapabilityMissing`; nothing degrade
 `Stripe`'s is [`@potion.run/paykit-stripe`](../paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
 here are the port mappings those packages wrap, for a caller who brings its own bindings.
 
-One provider per Stack. `Payments` is a single service, so a second provider would answer the same port and win by layer order, silently; `Stack` refuses it with `ProviderAmbiguous` instead.
+A Stack can run several providers. `Paykit.paymentsRouter(...)` holds them by name, and each call
+resolves the provider the account's `refs` already name — falling back to the first — so an account
+sold through one provider never gets upgraded through another. Names must be distinct.
 
 `Manual` is the reference: if the port only fits Stripe, it is not a port. Every provider runs
 the same conformance suite in [`test/conformance`](./test/conformance), parameterized by the

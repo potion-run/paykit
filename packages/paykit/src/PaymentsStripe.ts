@@ -222,6 +222,7 @@ export const PaymentsStripe = (props: StripeProps): Provider<"processor"> => {
   );
 
   return {
+    name: "stripe",
     kind: "processor",
     capabilities,
     payments,

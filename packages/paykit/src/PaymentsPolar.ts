@@ -121,6 +121,7 @@ export const PaymentsPolar = (props: PolarProps): Provider<"merchant_of_record">
   );
 
   return {
+    name: "polar",
     kind: "merchant_of_record",
     capabilities,
     payments,

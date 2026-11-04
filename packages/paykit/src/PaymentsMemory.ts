@@ -83,5 +83,5 @@ export const PaymentsMemory = (): Provider<"memory"> => {
     Layer.succeed(PaymentsProvider, { name: "memory", capabilities }),
   );
 
-  return { kind: "memory", capabilities, payments };
+  return { name: "memory", kind: "memory", capabilities, payments };
 };

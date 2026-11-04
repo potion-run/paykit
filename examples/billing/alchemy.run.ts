@@ -40,6 +40,7 @@ export default Alchemy.Stack(
     const recorded = yield* BillingStackResource("Billing", {
       catalog: billing.catalog,
       providers: billing.providers.map((provider) => ({
+        name: provider.name,
         kind: provider.kind,
         capabilities: [...provider.capabilities],
         ...(provider.prices === undefined ? {} : { prices: provider.prices }),

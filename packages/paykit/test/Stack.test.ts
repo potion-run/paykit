@@ -13,7 +13,7 @@ import {
   MemoryStore,
   NoPurchasePath,
   Postgres,
-  ProviderAmbiguous,
+  ProviderDuplicate,
   Stack,
   providerDescriptor,
   validateProviderMappings,
@@ -121,18 +121,26 @@ describe("Stack", () => {
     }),
   );
 
-  it.effect("refuses a second provider rather than letting it shadow the first", () =>
+  it.effect("keeps two providers apart, so an account stays on the one it paid through", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(
+      const billing = yield* Stack("Billing", {
+        catalog: proCatalog,
+        providers: [PaymentsMemory(), PaymentsManual()],
+      });
+      expect(billing.providers.map((provider) => provider.name)).toEqual(["memory", "manual"]);
+    }),
+  );
+
+  it.effect("refuses two providers that share a name, which `refs` cannot tell apart", () =>
+    Effect.gen(function* () {
+      const error = yield* Effect.flip(
         Stack("Billing", {
           catalog: proCatalog,
-          providers: [PaymentsMemory(), PaymentsManual()],
+          providers: [PaymentsMemory(), PaymentsMemory()],
         }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("ProviderAmbiguous");
-      const ambiguous = new ProviderAmbiguous({ count: 2, kinds: ["memory", "manual"] });
-      expect(ambiguous.count).toBe(2);
+      expect(error._tag).toBe("ProviderDuplicate");
+      if (error._tag === "ProviderDuplicate") expect(error.provider).toBe("memory");
     }),
   );
 
@@ -154,6 +162,7 @@ describe("Stack", () => {
     expect(
       validateProviderMappings(parsed.catalog, [
         {
+          name: "memory",
           kind: "memory",
           capabilities: ["checkout"],
           prices: { pro: { amount: 1, currency: "usd", interval: "month" } },
@@ -161,14 +170,16 @@ describe("Stack", () => {
       ]),
     ).toBeInstanceOf(CatalogPriceMismatch);
     expect(
-      validateProviderMappings(parsed.catalog, [{ kind: "manual", capabilities: ["refund"] }]),
+      validateProviderMappings(parsed.catalog, [
+        { name: "manual", kind: "manual", capabilities: ["refund"] },
+      ]),
     ).toBeInstanceOf(NoPurchasePath);
     expect(
       validateProviderMappings(parsed.catalog, [
-        { kind: "memory", capabilities: ["checkout"] },
-        { kind: "manual", capabilities: ["invoice"] },
+        { name: "memory", kind: "memory", capabilities: ["checkout"] },
+        { name: "memory", kind: "manual", capabilities: ["invoice"] },
       ]),
-    ).toBeInstanceOf(ProviderAmbiguous);
+    ).toBeInstanceOf(ProviderDuplicate);
   });
 
   it("the BillingStack resource declares serializable attributes", () => {
@@ -176,7 +187,7 @@ describe("Stack", () => {
     const attrs = Schema.encodeSync(BillingStackAttrs)({
       catalog: proCatalog,
       tiers: ["pro"],
-      providers: [{ kind: "memory", capabilities: ["checkout"] }],
+      providers: [{ name: "memory", kind: "memory", capabilities: ["checkout"] }],
       store: { _tag: "MemoryStore" },
     });
     expect(attrs.tiers).toEqual(["pro"]);

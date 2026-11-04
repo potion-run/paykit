@@ -2,7 +2,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
-import { Payments, PaymentsProvider, ProviderCapabilityMissing } from "./Payments.ts";
+import {
+  Payments,
+  PaymentsProvider,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  providerFor,
+} from "./Payments.ts";
 import { NoProrationDue } from "./Subscription/RecordProrationInvoice.command.ts";
 import { RecordProrationInvoice } from "./Subscription/RecordProrationInvoice.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
@@ -57,8 +63,7 @@ export type ChargeProrationResult = typeof ChargeProrationResult.Type;
  */
 export const ChargeProration = Effect.fn("Paykit.ChargeProration")(function* () {
   const subscription = yield* Subscription;
-  const payments = yield* Effect.serviceOption(Payments);
-  const provider = yield* Effect.serviceOption(PaymentsProvider);
+  const router = yield* Effect.serviceOption(PaymentsRouter);
 
   return Effect.fn("Paykit.ChargeProration.account")(function* (input: ChargeProrationInput) {
     const ref = Subscription.ref(input.account);
@@ -73,37 +78,46 @@ export const ChargeProration = Effect.fn("Paykit.ChargeProration")(function* () 
     if (state.prorationInvoice !== undefined) {
       return yield* new NoProrationDue({ account: input.account, reason: "billed" });
     }
-    if (Option.isNone(payments)) {
-      return yield* new ProviderCapabilityMissing({ provider: "none", op: "createInvoice" });
-    }
-
-    const providerName = Option.match(provider, {
-      onNone: () => "provider",
-      onSome: (found) => found.name,
+    // The invoice is collected by the provider the standing already belongs to.
+    const chosen = Option.match(router, {
+      onNone: () => null,
+      onSome: (set) => providerFor(set, state.refs),
     });
-    const { invoiceId } = yield* Option.getOrThrow(payments).createInvoice({
-      account: input.account,
-      amount: proration.due,
-      currency: proration.currency,
+    const attempt = Effect.gen(function* () {
+      const payments = yield* Effect.serviceOption(Payments);
+      const provider = yield* Effect.serviceOption(PaymentsProvider);
+      if (Option.isNone(payments)) {
+        return yield* new ProviderCapabilityMissing({
+          provider: chosen?.name ?? "none",
+          op: "createInvoice",
+        });
+      }
+      const providerName = chosen?.name ?? Option.getOrNull(provider)?.name ?? "provider";
+      const { invoiceId } = yield* Option.getOrThrow(payments).createInvoice({
+        account: input.account,
+        amount: proration.due,
+        currency: proration.currency,
+      });
+      // The command id is the change itself, so a retry after a crash records
+      // the same invoice rather than a second one.
+      yield* asSystem(
+        subscription.send(
+          ref,
+          new RecordProrationInvoice({
+            invoiceId,
+            amount: proration.due,
+            currency: proration.currency,
+          }),
+          { commandId: `proration:${input.account}:${providerName}:${invoiceId}` },
+        ),
+      );
+      return {
+        outcome: "charged",
+        invoiceId,
+        amount: proration.due,
+        currency: proration.currency,
+      } as const satisfies ChargeProrationResult;
     });
-    // The command id is the change itself, so a retry after a crash records
-    // the same invoice rather than a second one.
-    yield* asSystem(
-      subscription.send(
-        ref,
-        new RecordProrationInvoice({
-          invoiceId,
-          amount: proration.due,
-          currency: proration.currency,
-        }),
-        { commandId: `proration:${input.account}:${providerName}:${invoiceId}` },
-      ),
-    );
-    return {
-      outcome: "charged",
-      invoiceId,
-      amount: proration.due,
-      currency: proration.currency,
-    } as const satisfies ChargeProrationResult;
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
   });
 });

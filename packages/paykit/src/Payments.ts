@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { Price } from "./Tier.ts";
 
@@ -118,11 +119,59 @@ export type ProviderKind = typeof ProviderKind.Type;
  */
 export type PaymentsLayer = ReturnType<typeof Payments.toLayer<never, never>>;
 
-/** What `Paykit.<Provider>()` returns: a kind, its ops, and the `Payments` adapter. */
+/** What `Paykit.<Provider>()` returns: a name, a kind, its ops, and the adapter. */
 export interface Provider<Kind extends ProviderKind = ProviderKind> {
+  /**
+   * What this provider is called in `refs`, and how a router finds it. Stable:
+   * an account's vendor references are keyed by it, so renaming one orphans
+   * every standing it described.
+   */
+  readonly name: string;
   readonly kind: Kind;
   readonly capabilities: ReadonlySet<PaymentCapability>;
   readonly payments: PaymentsLayer;
   /** The provider's price handle per tier. The catalog stays provider-free. */
   readonly prices?: Readonly<Record<string, Price>>;
 }
+
+/** The providers a deployment runs, and the one that serves a new account. */
+export interface ProviderSet {
+  readonly all: ReadonlyArray<Provider>;
+  readonly byName: ReadonlyMap<string, Provider>;
+  /** The provider a purchase starts on while the account holds no refs. */
+  readonly fallback: Provider | null;
+}
+
+/**
+ * Every provider a deployment runs, in preference order. Provide this instead
+ * of merging provider layers — merging two would leave one `Payments` in
+ * context and the other shadowed by merge order.
+ */
+export class PaymentsRouter extends Context.Service<PaymentsRouter, ProviderSet>()(
+  "paykit/PaymentsRouter",
+) {}
+
+/** One layer holding every provider a deployment runs, first one preferred. */
+export const paymentsRouter = (
+  ...providers: ReadonlyArray<Provider>
+): Layer.Layer<PaymentsRouter> =>
+  Layer.succeed(PaymentsRouter, {
+    all: providers,
+    byName: new Map(providers.map((provider) => [provider.name, provider])),
+    fallback: providers[0] ?? null,
+  });
+
+/**
+ * The provider that serves an account: the one its `refs` name, else the
+ * fallback. Pure, so a binding resolves and then provides exactly one layer.
+ */
+export const providerFor = (
+  set: ProviderSet,
+  refs: Readonly<Record<string, unknown>>,
+): Provider | null => {
+  for (const name of Object.keys(refs)) {
+    const found = set.byName.get(name);
+    if (found !== undefined) return found;
+  }
+  return set.fallback;
+};

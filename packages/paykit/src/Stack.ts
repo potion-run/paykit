@@ -23,20 +23,21 @@ export class NoPurchasePath extends Schema.TaggedError<NoPurchasePath>()("NoPurc
 }) {}
 
 /**
- * A Stack was given more than one provider. Every provider answers the same
- * `Payments` port, so a second one would silently shadow the first: the
- * checkout the catalog validated would not be the checkout that ran.
+ * Two providers in one Stack share a name. `refs` is keyed by that name, so a
+ * duplicate makes an account's vendor references ambiguous: a standing sold
+ * through one would be upgraded through the other.
  */
-export class ProviderAmbiguous extends Schema.TaggedError<ProviderAmbiguous>()(
-  "ProviderAmbiguous",
+export class ProviderDuplicate extends Schema.TaggedError<ProviderDuplicate>()(
+  "ProviderDuplicate",
   {
-    count: Schema.Int,
-    kinds: Schema.Array(Schema.String),
+    provider: Schema.String,
   },
 ) {}
 
 /** A provider as deploy state can hold it: no layer, no HTTP. */
 export const ProviderDescriptor = Schema.Struct({
+  /** The name `refs` are keyed by, and the router's key. */
+  name: Schema.String,
   kind: Schema.String,
   capabilities: Schema.Array(PaymentCapability),
   prices: Schema.optional(Schema.Record(Schema.String, Price)),
@@ -45,6 +46,7 @@ export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
 /** Drop the runtime layer; keep what a deploy needs to validate and record. */
 export const providerDescriptor = (provider: Provider): ProviderDescriptor => ({
+  name: provider.name,
   kind: provider.kind,
   capabilities: [...provider.capabilities],
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
@@ -92,9 +94,9 @@ export interface StackProps {
   /** Plain catalog data; provider ids belong in provider config, never here. */
   readonly catalog: CatalogInput;
   /**
-   * The money plane. Exactly one in `0.1`: every provider answers the same
-   * `Payments` port, so a second is refused by `ProviderAmbiguous` rather than
-   * merged into whichever layer was provided last.
+   * The money plane, in preference order. The first is what a new account
+   * starts on; an account that already holds a vendor reference stays on the
+   * provider that reference names. Every name must be distinct.
    */
   readonly providers?: ReadonlyArray<Provider>;
   readonly store?: Store;
@@ -114,14 +116,14 @@ const priceField = (price: Price, field: keyof Price): string => String(price[fi
 export const validateProviderMappings = (
   parsed: Catalog,
   providers: ReadonlyArray<ProviderDescriptor>,
-): CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous | null => {
-  // One provider, because the port is one service: `Payments` is a single tag,
-  // so a second layer would win by merge order and never say so.
-  if (providers.length > 1) {
-    return new ProviderAmbiguous({
-      count: providers.length,
-      kinds: providers.map((provider) => provider.kind),
-    });
+): CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate | null => {
+  // Several providers are fine — `paymentsRouter` keys them by name and the
+  // account's `refs` pick one — but two with the same name make that choice
+  // ambiguous.
+  const seen = new Set<string>();
+  for (const provider of providers) {
+    if (seen.has(provider.name)) return new ProviderDuplicate({ provider: provider.name });
+    seen.add(provider.name);
   }
   for (const provider of providers) {
     for (const [tierId, mapped] of Object.entries(provider.prices ?? {})) {
@@ -174,16 +176,16 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
 
 /**
  * Declare the billing stack: validate the catalog, refuse a provider price
- * that disagrees with it, refuse a second provider that would shadow the
- * first, and refuse a priced tier nothing can sell. The provider's own price
- * ids never reach the catalog.
+ * that disagrees with it, refuse two providers that share a name, and refuse a
+ * priced tier nothing can sell. The provider's own price ids never reach the
+ * catalog.
  */
 export const Stack = (
   id: string,
   props: StackProps,
 ): Effect.Effect<
   BillingStack,
-  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderAmbiguous
+  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate
 > =>
   Effect.gen(function* () {
     const parsed = yield* catalog(props.catalog);

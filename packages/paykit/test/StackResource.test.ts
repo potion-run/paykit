@@ -12,7 +12,7 @@ import {
 import { providers } from "../src/BillingStack.resource.ts";
 import { catalog } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
-import { CatalogPriceMismatch, NoPurchasePath, ProviderAmbiguous } from "../src/Stack.ts";
+import { CatalogPriceMismatch, NoPurchasePath, ProviderDuplicate } from "../src/Stack.ts";
 import { tier } from "../src/Tier.ts";
 
 const pro = tier({
@@ -25,7 +25,7 @@ const parsed = Effect.runSync(catalog({ features: [messages], tiers: [free, pro]
 
 const props = {
   catalog: parsed,
-  providers: [{ kind: "memory", capabilities: ["checkout" as const] }],
+  providers: [{ name: "memory", kind: "memory", capabilities: ["checkout" as const] }],
   store: { _tag: "MemoryStore" as const },
 };
 
@@ -72,7 +72,8 @@ describe("the BillingStack resource", () => {
         ...props,
         providers: [
           {
-            kind: "stripe",
+            name: "stripe",
+            kind: "processor",
             capabilities: ["checkout"],
             prices: { pro: { amount: 100, currency: "usd", interval: "month" } },
           },
@@ -88,7 +89,7 @@ describe("the BillingStack resource", () => {
     const unpurchasable = run(
       reconcileBillingStack({
         ...props,
-        providers: [{ kind: "manual", capabilities: ["refund"] }],
+        providers: [{ name: "manual", kind: "manual", capabilities: ["refund"] }],
       }),
     );
     expect(unpurchasable._tag).toBe("Failure");
@@ -96,19 +97,19 @@ describe("the BillingStack resource", () => {
     expect(unpurchasable.failure).toBeInstanceOf(NoPurchasePath);
   });
 
-  it("refuses a second provider, which the runtime could only serve by merge order", () => {
-    const ambiguous = run(
+  it("refuses two providers that share a name", () => {
+    const duplicate = run(
       reconcileBillingStack({
         ...props,
         providers: [
-          { kind: "memory", capabilities: ["checkout"] },
-          { kind: "manual", capabilities: ["invoice"] },
+          { name: "memory", kind: "memory", capabilities: ["checkout"] },
+          { name: "memory", kind: "manual", capabilities: ["invoice"] },
         ],
       }),
     );
-    expect(ambiguous._tag).toBe("Failure");
-    if (ambiguous._tag !== "Failure") return;
-    expect(ambiguous.failure).toBeInstanceOf(ProviderAmbiguous);
+    expect(duplicate._tag).toBe("Failure");
+    if (duplicate._tag !== "Failure") return;
+    expect(duplicate.failure).toBeInstanceOf(ProviderDuplicate);
   });
 
   it("read returns state as recorded, and dies when there is none", () => {

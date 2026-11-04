@@ -29,7 +29,7 @@ export {
   MemoryStore,
   NoPurchasePath,
   Postgres,
-  ProviderAmbiguous,
+  ProviderDuplicate,
   ProviderDescriptor,
   Sqlite,
   Stack,
@@ -295,9 +295,13 @@ export {
   PaymentCapability,
   PaymentCapabilities,
   PaymentDeclined,
+  Payments,
   PaymentsProvider,
+  PaymentsRouter,
   ProviderCapabilityMissing,
   ProviderKind,
-  Payments,
+  paymentsRouter,
+  providerFor,
 } from "./Payments.ts";
+export type { ProviderSet } from "./Payments.ts";
 export type { PaymentError, PaymentsService, Provider } from "./Payments.ts";

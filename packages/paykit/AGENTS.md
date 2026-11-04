@@ -214,10 +214,20 @@ reference: if the port only fits Stripe, it is not a port.
 
 Processors (Stripe) move money; merchants of record (Polar) also own tax, receipts and the
 customer portal. The port is what they share, and a provider declares the rest. The model never
-imports a provider — the adapter is wired by the user, behind the port. `0.1` runs one provider
-per Stack: `Payments` is one service tag, so a second provider would be a layer that wins by merge
-order, and `Stack` refuses it with `ProviderAmbiguous`. `refs` is keyed by provider, so lifting
-that limit is additive when the port learns to dispatch.
+imports a provider — the adapter is wired by the user, behind the port.
+
+A deployment can run several providers: `paymentsRouter(Primary(), Secondary())` holds them by name,
+and `Subscribe`, `ChargeProration` and `Portal` each resolve *one* for the call — the provider the
+account's `refs` already name, else the first in the list — and provide only that provider's layer.
+Merging provider layers instead would leave one `Payments` in context and the other shadowed.
+`Stack` refuses two providers that share a name, because `refs` is keyed by it.
+
+```ts
+const world = Layer.mergeAll(
+  Paykit.Model.layer(Paykit.ModelHandlers),
+  Paykit.paymentsRouter(Paykit.Stripe({ ... }), Paykit.Polar({ ... })),
+);
+```
 
 - **The catalog carries no provider ids.** Tier → price mapping lives in the provider config,
   so the same catalog runs on every provider.
