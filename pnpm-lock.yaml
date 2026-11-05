@@ -224,6 +224,9 @@ catalogs:
     oxlint-tsgolint:
       specifier: 7.0.2005
       version: 7.0.2005
+    tla-ts:
+      specifier: 0.0.8
+      version: 0.0.8
     tsrs:
       specifier: 0.21.0-ts7.1.0-beta
       version: 0.21.0-ts7.1.0-beta
@@ -265,6 +268,9 @@ importers:
       oxlint-tsgolint:
         specifier: 'catalog:'
         version: 7.0.2005
+      tla-ts:
+        specifier: 'catalog:'
+        version: 0.0.8
       tsrs:
         specifier: 'catalog:'
         version: 0.21.0-ts7.1.0-beta
@@ -1951,6 +1957,10 @@ packages:
     resolution: {integrity: sha512-jBrmx4lYmaC9k/mgPbylxs7kBUxHtD8256up+HjLaDFfXScKJQyil+SWXSvhAtT7XHo+yTVlpB81PGmHP8oLSQ==}
     engines: {node: ^20.0.0 || >=22.0.0}
 
+  tla-ts@0.0.8:
+    resolution: {integrity: sha512-o6l6mvlV+o81B6ZRN/k1Jb4De788F4584vzm13U+EBgEIqifeyHjBNvCiUJtZFFM/GV3LugdKhhnCS/cAbA3qg==}
+    hasBin: true
+
   tslib@2.9.1:
     resolution: {integrity: sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA==}
 
@@ -3110,6 +3120,10 @@ snapshots:
       picomatch: 4.0.7
 
   tinypool@2.2.0: {}
+
+  tla-ts@0.0.8:
+    dependencies:
+      fflate: 0.8.3
 
   tslib@2.9.1:
     optional: true

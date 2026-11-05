@@ -31,11 +31,20 @@ export interface AppendInput {
   readonly state: unknown;
   readonly receipt: unknown;
   readonly deliveries: ReadonlyArray<unknown>;
+  /**
+   * The version the caller decided on. When present, an append whose instance
+   * has moved past it writes nothing and reports `conflict`, so a decision
+   * taken on a snapshot another writer already spent cannot land. Omit it only
+   * for a write that needs no such check — a seed, a fixture, a migration.
+   */
+  readonly expectedVersion?: number;
 }
 
 export interface AppendResult {
   readonly version: number;
   readonly duplicate: boolean;
+  /** The instance moved past `expectedVersion`; nothing was written. */
+  readonly conflict: boolean;
 }
 
 /** A delivery the outbox is still carrying. */
@@ -111,16 +120,23 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           [input.aggregate, input.account, input.commandId],
         );
         if (seen !== undefined) {
-          return { version: numberFrom(seen.version), duplicate: true };
+          return { version: numberFrom(seen.version), duplicate: true, conflict: false };
         }
 
         // The event log is the truth: the next sequence comes from it, not
-        // from a cached counter that a crash could leave stale.
+        // from a cached counter that a crash could leave stale. Reading it is
+        // also where a decision taken on a snapshot another writer spent is
+        // caught: the log has moved, so this decision is about a state that is
+        // no longer the instance's, and writing it would publish a number the
+        // events do not add up to.
         const current = yield* sql.get<{ version: number | string }>(
           `SELECT COALESCE(MAX(seq), 0) AS version FROM ${event} WHERE aggregate = ? AND account = ?`,
           [input.aggregate, input.account],
         );
         let version = numberFrom(current?.version ?? 0);
+        if (input.expectedVersion !== undefined && version !== input.expectedVersion) {
+          return { version, duplicate: false, conflict: true };
+        }
         const lastOutbox = yield* sql.get<{ seq: number | string }>(
           `SELECT COALESCE(MAX(seq), 0) AS seq FROM ${outbox}`,
         );
@@ -157,7 +173,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           `INSERT INTO ${receipt} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
           [input.aggregate, input.account, input.commandId, version, JSON.stringify(input.receipt)],
         );
-        return { version, duplicate: false };
+        return { version, duplicate: false, conflict: false };
       }),
     );
 
