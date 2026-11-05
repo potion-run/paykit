@@ -114,20 +114,26 @@ const rowFromState = (account: string, state: EntitlementsState): BillingReadRow
   features: state.features,
 });
 
-const sameRow = (stored: BillingReadRow | null, rebuilt: BillingReadRow): boolean => {
-  if (stored === null) return false;
-  return (
-    stored.account === rebuilt.account &&
-    stored.tier === rebuilt.tier &&
-    stored.status === rebuilt.status &&
-    stored.standing === rebuilt.standing &&
-    stored.periodStart.epochMilliseconds === rebuilt.periodStart.epochMilliseconds &&
-    stored.periodEnd.epochMilliseconds === rebuilt.periodEnd.epochMilliseconds &&
-    stored.cancelAtPeriodEnd === rebuilt.cancelAtPeriodEnd &&
-    stored.credits === rebuilt.credits &&
-    stored.currency === rebuilt.currency &&
-    JSON.stringify(stored.features) === JSON.stringify(rebuilt.features)
-  );
+/**
+ * JSON with object keys sorted. `doctor` compares a rebuild to a stored row,
+ * and a rebuild that assembles a feature's fields in a different order than the
+ * row a previous rebuild wrote is not a drift: the two agree on every value.
+ * Comparing the text `JSON.stringify` produces would report one.
+ */
+const canonicalJson = (value: unknown): string => {
+  if (value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Readonly<Record<string, unknown>>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 };
+
+const sameRow = (stored: BillingReadRow | null, rebuilt: BillingReadRow): boolean =>
+  stored !== null && canonicalJson(stored) === canonicalJson(rebuilt);
 
 const dateTimeFrom = (millis: number): DateTime.Utc => DateTime.makeUnsafe(millis);
