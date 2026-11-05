@@ -173,6 +173,10 @@ around it.
 - `Paykit.Preview` runs the same pure `decide` and reports the events and proration a command
   would produce. Show the charge before applying it; a write an agent may retry carries a
   `commandId`.
+- Outbound events are a policy over a port. `OutboundEvents` signs every committed subscription
+  event and hands it to the `Outbound` transport; the idempotency key is `<account>:<seq>`. A
+  deployment without an `Outbound` layer pays nothing for it, and the app owns HTTP, queues and
+  retries at the edge.
 
 ## Auth
 
