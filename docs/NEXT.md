@@ -56,6 +56,11 @@ standing no command could leave until the period reset.
 
 ### 1. The remaining surfaces
 
+- **Scheduled tier changes**: `ScheduleTierChange` landed
+  ([ADR 0012](./adr/0012-a-tier-change-can-be-scheduled-for-the-boundary.md)) — the standing carries
+  `pendingTier`, and the close applies it before the reset so the smaller allowance starts on a clean
+  period. What is missing is the withdrawal command beside `Resume`, and the admin/preview surfaces that
+  would offer it.
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):

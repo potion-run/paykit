@@ -249,6 +249,11 @@ export {
   periodUsageCommandId,
 } from "./Subscription/PeriodCloseUsage.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
+export {
+  ScheduleTierChange,
+  TierChangeScheduled,
+} from "./Subscription/ScheduleTierChange.command.ts";
+export type { PendingTier } from "./Subscription/Subscription.state.ts";
 export { Dunning } from "./Subscription/Dunning.policy.ts";
 export {
   AccountOrder,

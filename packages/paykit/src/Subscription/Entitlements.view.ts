@@ -494,6 +494,10 @@ export class Entitlements extends Domain.View("Entitlements", {
         },
         context,
       ),
+    // A scheduled change is a fact about the next period, so it moves nothing
+    // now: the counters and `remaining` stay the current tier's until the close
+    // applies the change and resets them onto the new allowances.
+    TierChangeScheduled: (view, _event, context): EntitlementsState => withAccount(view, context),
     CancellationScheduled: (view, _event, context): EntitlementsState =>
       withAccount({ ...view, cancelAtPeriodEnd: true }, context),
     CancellationWithdrawn: (view, _event, context): EntitlementsState =>
