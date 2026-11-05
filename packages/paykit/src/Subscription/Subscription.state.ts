@@ -86,6 +86,25 @@ export const HoldRecord = Schema.Struct({
 });
 export type HoldRecord = typeof HoldRecord.Type;
 
+/**
+ * The tier the standing moves to when the current period closes, with the terms
+ * it carries. The event records them because the close runs without a catalog:
+ * the standing has to hold everything the boundary needs, the same way
+ * `SubscriptionActivated` does.
+ */
+export const PendingTier = Schema.Struct({
+  tier: Schema.String,
+  allowances: Allowances,
+  price: Schema.optionalKey(Price),
+  /** The pool the standing keeps; a change is not a grant. */
+  credits: Schema.Int,
+  creditsExpire: CreditsExpire,
+  rates: CreditRateCards,
+  currency: Schema.optionalKey(Schema.String),
+  interval: Schema.optionalKey(Interval),
+});
+export type PendingTier = typeof PendingTier.Type;
+
 /** Every hold this standing has taken, keyed by id. */
 export const Holds = Schema.Record(Schema.String, HoldRecord);
 export type Holds = typeof Holds.Type;
@@ -153,6 +172,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   /** Every hold, open or closed. `reserved` and `reservedCredits` fold this. */
   holds: Holds,
   allowances: Allowances,
+  /**
+   * The tier the standing moves to when this period closes, if one was
+   * scheduled. A close applies it before the counters reset, so the next period
+   * starts on the new tier's allowances.
+   */
+  pendingTier: Schema.optionalKey(PendingTier),
   refs: Refs,
   trialUsed: Schema.Boolean,
   dedupeKeys: Schema.Record(Schema.String, Schema.Boolean),

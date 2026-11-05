@@ -64,6 +64,7 @@ import { Recover, Recovered } from "./Recover.command.ts";
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
+import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
 import { StartTrial, TrialStarted } from "./StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
@@ -99,6 +100,7 @@ import {
   usedOf,
   type HoldRecord,
   type SubscribedState,
+  type PendingTier,
   type SubscriptionStatus,
 } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -190,6 +192,31 @@ const releaseEvent = (state: SubscribedState, hold: HoldRecord): UsageReleased =
 };
 
 const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
+  // A scheduled change lands first: `UsageReset` reads the allowances in state,
+  // so the new tier has to be in the log before the counters reset onto it.
+  const pending: PendingTier | undefined = state.pendingTier;
+  const moved =
+    pending === undefined
+      ? []
+      : [
+          new TierChanged({
+            tier: pending.tier,
+            allowances: pending.allowances,
+            remaining: Object.fromEntries(
+              Object.entries(pending.allowances).map(([feature, allowance]) => [
+                feature,
+                includedRemainingOf(allowance),
+              ]),
+            ),
+            credits: pending.credits,
+            creditsExpire: pending.creditsExpire,
+            rates: pending.rates,
+            ...(pending.currency === undefined ? {} : { currency: pending.currency }),
+            ...(pending.interval === undefined ? {} : { interval: pending.interval }),
+            ...(pending.price === undefined ? {} : { priceAfter: pending.price }),
+          }),
+        ];
+  const allowances = pending?.allowances ?? state.allowances;
   const nextPeriodStart = periodEnd;
   const nextPeriodEnd = addInterval(nextPeriodStart, state.interval);
   const statusAfter: SubscriptionStatus = state.cancelAtPeriodEnd
@@ -199,7 +226,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       : state.status;
   // One reset per allowance, so `remaining` and `carried` cannot disagree about
   // what the closing period left behind.
-  const resets = Object.entries(state.allowances).map(
+  const resets = Object.entries(allowances).map(
     ([feature, allowance]) => [feature, resetOf(state, feature, allowance)] as const,
   );
   // A `resets: "never"` feature keeps its usage, holds and remainder, so the
@@ -211,6 +238,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // own credits go back.
   const expiring = expiringCreditsOf(state);
   return [
+    ...moved,
     new PeriodClosed({
       periodStart: state.period.start,
       periodEnd: state.period.end,
@@ -265,6 +293,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     PurchaseCredits,
     ConsumeCredits,
     ScheduleCancellation,
+    ScheduleTierChange,
     Resume,
     ClosePeriod,
     Expire,
@@ -972,6 +1001,21 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    ScheduleTierChange: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      return [
+        new TierChangeScheduled({
+          tier: command.tier,
+          allowances: command.allowances,
+          ...(command.price === undefined ? {} : { price: command.price }),
+          credits: command.credits,
+          creditsExpire: command.creditsExpire,
+          rates: command.rates,
+          ...(state.currency === undefined ? {} : { currency: state.currency }),
+          interval: state.interval,
+        }),
+      ];
+    },
     ScheduleCancellation: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
       if (state.status === "canceled" || state.status === "expired" || state.cancelAtPeriodEnd) {
@@ -1090,6 +1134,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         price: _previousPrice,
         proration: _previousProration,
         prorationInvoice: _previousInvoice,
+        pendingTier: _cancelled,
         ...rest
       } = state;
       return {
@@ -1230,6 +1275,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ...state,
             credits: event.balanceAfter,
             prepaidCredits: protectedAfterSpending(state, event.balanceAfter),
+          }
+        : state,
+    TierChangeScheduled: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            pendingTier: {
+              tier: event.tier,
+              allowances: event.allowances,
+              ...(event.price === undefined ? {} : { price: event.price }),
+              credits: event.credits,
+              creditsExpire: event.creditsExpire,
+              rates: event.rates,
+              ...(event.currency === undefined ? {} : { currency: event.currency }),
+              ...(event.interval === undefined ? {} : { interval: event.interval }),
+            },
           }
         : state,
     CancellationScheduled: (state, event) =>
