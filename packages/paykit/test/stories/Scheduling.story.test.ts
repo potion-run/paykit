@@ -329,6 +329,7 @@ it.effect("a trial of an annual tier opens an annual period", () =>
         anchorTz: "UTC",
         trialEndsAt: at("2030-01-15T00:00:00Z"),
         price: annualPrice,
+        currency: "usd",
         statusAfter: "trialing",
       }),
     ),

@@ -45,6 +45,9 @@ const start = at("2030-01-01T00:00:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
 const march = at("2030-03-01T00:00:00Z");
 const holdExpiry = DateTime.add(start, { minutes: 15 });
+// The seat hold outlives the period on purpose: `resets: "never"` keeps an
+// open hold across the close, and HoldSweep must not have released it first.
+const seatHoldExpiry = DateTime.add(start, { days: 90 });
 
 it.effect("a never-reset allowance keeps its usage across a period close", () =>
   story(
@@ -201,7 +204,15 @@ it.effect(
           remainingAfter: 80,
         }),
       ),
-      Story.when(account, new Hold({ holdId: "seat-hold", feature: "seats", amount: 2 })),
+      Story.when(
+        account,
+        new Hold({
+          holdId: "seat-hold",
+          feature: "seats",
+          amount: 2,
+          expiresAt: seatHoldExpiry,
+        }),
+      ),
       Story.then(
         account,
         new UsageReserved({
@@ -211,7 +222,7 @@ it.effect(
           rate: 0,
           cost: 0,
           at: start,
-          expiresAt: holdExpiry,
+          expiresAt: seatHoldExpiry,
           remainingAfter: 3,
         }),
       ),
@@ -244,7 +255,7 @@ it.effect(
             rate: 0,
             cost: 0,
             at: start,
-            expiresAt: holdExpiry,
+            expiresAt: seatHoldExpiry,
             status: "open",
           },
         },

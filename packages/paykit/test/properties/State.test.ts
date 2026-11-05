@@ -63,9 +63,9 @@ describe("allowance algebra", () => {
           ]),
         }),
       ),
-      ({ allowance: spec, current }) => {
+      ({ allowance: spec, current: script }) => {
         const built = buildAllowance(spec);
-        const state = stateAt(built, current === "fallback" ? undefined : current);
+        const state = stateAt(built, script === "fallback" ? undefined : script);
         const reset = resetOf(state, "messages", built);
         const included = includedRemainingOf(built);
 
@@ -73,14 +73,21 @@ describe("allowance algebra", () => {
         if (included === null) {
           return reset.remaining === null && reset.carried === 0;
         }
+        // A `resets: "never"` feature keeps its usage and remainder across
+        // the boundary; the close is a no-op for it.
+        if (built.resets === "never") {
+          const current = script === "fallback" ? included : script;
+          return reset.kept === true && reset.carried === 0 && reset.remaining === current;
+        }
         // A period that does not carry starts exactly at what it includes.
         if (built.carryOver !== true) {
-          return reset.remaining === included && reset.carried === 0;
+          return reset.kept === false && reset.remaining === included && reset.carried === 0;
         }
 
-        const spendable = current === "fallback" ? included : current;
+        const spendable = script === "fallback" ? included : script;
         const expected = Math.min(Math.max(spendable, 0), included);
         return (
+          reset.kept === false &&
           reset.carried === expected &&
           reset.remaining === included + expected &&
           reset.carried >= 0 &&
