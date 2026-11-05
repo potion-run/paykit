@@ -75,12 +75,73 @@ export const testCatalog = Effect.runSync(
         creditsExpire: "never",
         grants: [allowance(messages, { included: 100 })],
       }),
+      // The money tiers. Their allowances are sized against `Amount` (1..500)
+      // so a generated script actually bills: a tier whose ceiling sits below a
+      // single generated request would be refused on its first step and the
+      // money path would never run. `metered` reaches its money ceiling first,
+      // `capped` its unit ceiling, and `recurring` bills past a free grant it
+      // never resets.
+      tier({
+        id: "metered",
+        price: { amount: 2_900, currency: "usd", interval: "month" },
+        credits: 10_000,
+        grants: [
+          allowance(messages, {
+            included: 100,
+            overage: "bill",
+            cap: 2_000,
+            unitPrice: { amount: 5, currency: "usd" },
+            moneyCap: 4_000,
+          }),
+        ],
+      }),
+      tier({
+        id: "capped",
+        price: { amount: 3_900, currency: "usd", interval: "month" },
+        credits: 5_000,
+        grants: [
+          allowance(messages, {
+            included: 50,
+            overage: "bill",
+            cap: 200,
+            unitPrice: { amount: 1, currency: "usd" },
+            moneyCap: 100_000,
+          }),
+        ],
+      }),
+      // A `resets: "never"` postpaid allowance keeps its use, holds and billed
+      // money across a period boundary, so a close must not reset what the
+      // standing is still accounting for.
+      tier({
+        id: "recurring",
+        price: { amount: 5_900, currency: "usd", interval: "month" },
+        credits: 0,
+        grants: [
+          allowance(messages, {
+            included: 10,
+            overage: "bill",
+            resets: "never",
+            unitPrice: { amount: 2, currency: "usd" },
+            moneyCap: 20_000,
+          }),
+        ],
+      }),
     ],
   }),
 );
 
 /** The tiers a generated script may choose from. */
-export const TierName = Schema.Literals(["free", "pro", "scale", "unlimited", "carry", "prepaid"]);
+export const TierName = Schema.Literals([
+  "free",
+  "pro",
+  "scale",
+  "unlimited",
+  "carry",
+  "prepaid",
+  "metered",
+  "capped",
+  "recurring",
+]);
 export type TierName = typeof TierName.Type;
 
 /** The start of every generated script, so time is data, not the wall clock. */

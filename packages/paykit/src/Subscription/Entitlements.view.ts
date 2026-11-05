@@ -469,6 +469,12 @@ export class Entitlements extends Domain.View("Entitlements", {
               const recorded = recordedCount(event.remaining, feature);
               const spendable = recorded === undefined ? includedRemainingOf(value) : recorded;
               const { priced: recordedPrices, ...carried } = value;
+              // A boundary resets the money a feature billed; `resets: "never"`
+              // keeps it, exactly as it keeps `used` and the `priced` split.
+              // The feature is still accounting for the period that did not end
+              // for it, so a zero here would report a cap the account has head
+              // room under after it has already spent it.
+              const billed = value.unitPrice === undefined || kept ? undefined : 0;
               return [
                 feature,
                 {
@@ -478,14 +484,17 @@ export class Entitlements extends Domain.View("Entitlements", {
                   reserved: kept ? value.reserved : 0,
                   remaining: spendable,
                   carried: event.carried[feature] ?? 0,
-                  ...(value.unitPrice === undefined ? {} : { billed: 0 }),
+                  ...(billed === undefined ? {} : { billed }),
                   allowed: allowsOne(
                     view.standing,
                     value.overage,
                     spendable,
                     value.cap,
                     event.carried[feature] ?? 0,
-                    moneyOf(value, { billed: 0, used: 0 }),
+                    moneyOf(value, {
+                      billed: billed ?? value.billed ?? 0,
+                      used: kept ? value.used : 0,
+                    }),
                   ),
                 },
               ];

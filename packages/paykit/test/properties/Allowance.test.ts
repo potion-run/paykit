@@ -56,21 +56,30 @@ describe("allowance", () => {
     assertProperty(
       Arbitrary.schema(UsageScript),
       (script) => {
-        const unlimited = script.tier === "unlimited";
-        const bill = script.tier === "pro";
         let state = activated(script.tier);
-        const included = state.allowances.messages?.included;
-        if (included === undefined) return false;
-        const limit = included === "unlimited" ? null : included;
-        if (!unlimited && limit === null) return false;
+        const allowance = state.allowances.messages;
+        if (allowance === undefined) return false;
+        // Read the shape off the generated allowance rather than off the tier
+        // name: any tier may bill past `included`, and any tier may stop at a
+        // ceiling. The subject here is the count, so a ceiling that refuses is
+        // where the script stops, not a failure of this property.
+        const unlimited = allowance.included === "unlimited";
+        const bill = allowance.overage === "bill";
+        const limit = unlimited ? null : allowance.included;
         let remaining = state.remaining.messages;
         let used = state.usage.messages ?? 0;
 
         for (const step of script.steps) {
           const decision = decideAt(state, track(step.amount, step.dedupeKey), start, account);
           if (!isAccepted(decision)) {
-            // Only a block can refuse the generated tiers: every request is
-            // positive and the feature exists in the tier.
+            // A unit cap or a money cap is a ceiling on what the period may
+            // bill, not a count the allowance overspent. Both have their own
+            // suite; here they end the script.
+            if (decision._tag === "SpendCapExceeded" || decision._tag === "MoneyCapExceeded") {
+              break;
+            }
+            // Otherwise only a block can refuse: every request is positive and
+            // the feature exists in the tier.
             if (decision._tag !== "AllowanceExceeded") return false;
             if (unlimited || bill) return false;
             // The refusal carries the count the model held before it.

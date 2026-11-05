@@ -17,6 +17,7 @@ import {
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
   initialSubscriptionState,
+  billedOf,
   remainingOf,
   reservedCreditsOf,
   reservedOf,
@@ -157,6 +158,9 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     if (isFlagGrant(allowance)) {
       if (entry.remaining !== null) return false;
     } else if (entry.remaining !== remainingOf(state, feature)) return false;
+    // Money is part of the standing: a read model that reports a bill the state
+    // does not hold lets `check()` spend a cap the account already reached.
+    if ((entry.billed ?? 0) !== billedOf(state, feature)) return false;
   }
 
   // A credit-priced feature shares one pool: its `remaining` is the pool less

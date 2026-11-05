@@ -355,7 +355,7 @@ internal, whatever it is.
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, read/write agreement, the catalog and guard contract, and delivery dedupe |
+| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, money as a fold of the log, read/write agreement, the catalog and guard contract, and delivery dedupe |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
 | `test/surfaces` | the MCP tool list and the CLI are derived from the Apis, not written twice |
 | `test/Api.test.ts` | each guard refuses what it should: no caller, another account, an operator command |
