@@ -28,6 +28,18 @@
     },
     {
       "path": "./scripts/tsconfig.json"
+    },
+    {
+      "path": "./packages/paykit-admin"
+    },
+    {
+      "path": "./packages/paykit-admin/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/admin"
+    },
+    {
+      "path": "./examples/admin/tsconfig.test.json"
     }
   ]
 }

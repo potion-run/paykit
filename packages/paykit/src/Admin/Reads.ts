@@ -1,0 +1,301 @@
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import type * as Headers from "effect/http/Headers";
+import type * as HttpClient from "effect/http/HttpClient";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import type * as RpcClientError from "effect/rpc/RpcClientError";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Schema from "effect/Schema";
+import { Forbidden } from "../Auth/Forbidden.rejection.ts";
+import { Admin } from "../Auth/Guards.ts";
+import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { BillingReadPage, BillingReadQuery } from "../BillingReadStore.ts";
+import { Catalog } from "../Catalog.ts";
+import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
+import { CatalogService } from "../CatalogService.ts";
+import { List } from "../List.ts";
+import { Preview, type PreviewResult } from "../Preview.ts";
+import { Proration } from "../Proration.ts";
+import { AlreadyCanceled } from "../Subscription/AlreadyCanceled.rejection.ts";
+import { TierChanged } from "../Subscription/ChangeTier.command.ts";
+import { DowngradeBelowUsage } from "../Subscription/ChangeTier.command.ts";
+import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
+import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
+import { CancellationScheduled } from "../Subscription/ScheduleCancellation.command.ts";
+import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
+import { SubscriptionState } from "../Subscription/Subscription.state.ts";
+import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { Verify, VerifyMismatch } from "../Verify.ts";
+
+/** A preview that could not be turned into a wire value. */
+export class AdminReadFailed extends Schema.TaggedError<AdminReadFailed>()("AdminReadFailed", {
+  /** The transport failure as a tag: offline, timeout, protocol mismatch, … */
+  reason: Schema.String,
+  message: Schema.String,
+}) {}
+
+/** Every way an admin read can fail before it returns a domain answer. */
+export const AdminReadError = Schema.Union([Unauthenticated, Forbidden, AdminReadFailed]);
+export type AdminReadError = typeof AdminReadError.Type;
+
+/** The events a preview can report. */
+export const PreviewEvents = Schema.Union([
+  SubscriptionActivated,
+  TierChanged,
+  CancellationScheduled,
+]);
+export type PreviewEvents = typeof PreviewEvents.Type;
+
+/** The rejections a preview can report as data rather than a transport failure. */
+export const PreviewRejection = Schema.Union([
+  TierNotInCatalog,
+  NotSubscribed,
+  CurrencyMismatch,
+  DowngradeBelowUsage,
+  AlreadyCanceled,
+  ProrationMismatch,
+  CatalogMismatch,
+]);
+export type PreviewRejection = typeof PreviewRejection.Type;
+
+/** What `decide` would record, in a form that can cross a wire. */
+export const PreviewAccepted = Schema.TaggedStruct("accepted", {
+  state: SubscriptionState,
+  events: Schema.Array(PreviewEvents),
+  proration: Schema.optionalKey(Proration),
+});
+
+export const PreviewRejected = Schema.TaggedStruct("rejected", {
+  rejection: PreviewRejection,
+});
+
+/**
+ * The model could not decide the command. A cause is not serialized: a
+ * console only needs to know that the answer is unavailable and must ask the
+ * server to apply the command.
+ */
+export const PreviewUnpredictable = Schema.TaggedStruct("unpredictable", {
+  reason: Schema.String,
+});
+
+/** The wire form of `PreviewResult`. */
+export const PreviewAnswer = Schema.Union([PreviewAccepted, PreviewRejected, PreviewUnpredictable]);
+export type PreviewAnswer = typeof PreviewAnswer.Type;
+
+/** The preview request schema, matching `PreviewInput`'s `kind` discriminant. */
+export const PreviewCommandSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("subscribe"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("changeTier"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("cancel") }),
+]);
+
+export const AdminPreviewInput = Schema.Struct({
+  account: Schema.String,
+  command: PreviewCommandSchema,
+});
+export type AdminPreviewInput = typeof AdminPreviewInput.Type;
+
+const previewRejectionOf = (value: unknown): PreviewRejection | null =>
+  Option.getOrNull(Schema.decodeUnknownOption(PreviewRejection)(value));
+
+/**
+ * Turn the in-process preview result into its wire form. A recognized
+ * rejection stays data; an unrecognized one becomes `unpredictable` rather
+ * than being cast.
+ */
+export const previewAnswerOf = (result: PreviewResult): PreviewAnswer => {
+  if (result._tag === "accepted") {
+    const events: Array<PreviewEvents> = [];
+    for (const event of result.events) {
+      const decoded = Schema.decodeUnknownOption(PreviewEvents)(event);
+      if (Option.isNone(decoded)) {
+        return PreviewUnpredictable.make({
+          reason: "the model produced a preview event the console cannot display",
+        });
+      }
+      events.push(decoded.value);
+    }
+    return PreviewAccepted.make({
+      state: result.state,
+      events,
+      ...(result.proration === undefined ? {} : { proration: result.proration }),
+    });
+  }
+
+  if (result._tag === "rejected") {
+    const rejection = previewRejectionOf(result.rejection);
+    return rejection === null
+      ? PreviewUnpredictable.make({ reason: "the model returned an unrecognized rejection" })
+      : PreviewRejected.make({ rejection });
+  }
+
+  return PreviewUnpredictable.make({ reason: "the model could not decide this command" });
+};
+
+/** The read surface an ops console needs, over the model's own bindings. */
+export interface AdminReadsShape {
+  /** One page of accounts, from the `BillingRead` projection. */
+  readonly list: (query?: BillingReadQuery) => Effect.Effect<BillingReadPage, AdminReadError>;
+  /** What `decide` would do, without recording it. */
+  readonly preview: (input: AdminPreviewInput) => Effect.Effect<PreviewAnswer, AdminReadError>;
+  /** An account's standing against the deploy's catalog and provider. */
+  readonly verify: (input: {
+    readonly account: string;
+  }) => Effect.Effect<ReadonlyArray<VerifyMismatch>, AdminReadError>;
+  /** The catalog the deployment validated, for tier choices and prices. */
+  readonly catalog: () => Effect.Effect<Catalog, AdminReadError>;
+}
+
+/**
+ * The console's read port. It is deliberately separate from `BillingAdminApi`:
+ * a Domain Api serves keyed reads, while an account list spans keys and
+ * `Preview`/`Verify` are bindings over the pure model. A console needs both,
+ * and this service is the one it depends on.
+ *
+ * @primitive
+ */
+export class AdminReads extends Context.Service<AdminReads, AdminReadsShape>()(
+  "paykit/AdminReads",
+) {}
+
+/**
+ * Build the read port from the in-process bindings. Provide the hosted model,
+ * its `BillingReadStore` and the catalog; the same layer serves a test, an
+ * `alchemy dev` console and a Worker that hosts the console beside the model.
+ *
+ * @layer
+ */
+export const makeAdminReads = Effect.gen(function* () {
+  const list = yield* List();
+  const preview = yield* Preview();
+  const verify = yield* Verify();
+  const catalog = yield* CatalogService;
+
+  return {
+    list: (query) => list(query),
+    preview: (input) =>
+      preview(input).pipe(
+        Effect.map(previewAnswerOf),
+        Effect.catchTag("TierNotInCatalog", (rejection) =>
+          Effect.succeed(PreviewRejected.make({ rejection })),
+        ),
+      ),
+    verify: ({ account }) => verify({ account }),
+    catalog: () => Effect.succeed(catalog),
+  } satisfies AdminReadsShape;
+});
+
+/** The in-process console read port, as one Layer. */
+export const AdminReadsLive = Layer.effect(AdminReads, makeAdminReads);
+
+const VerifyInput = Schema.Struct({ account: Schema.String });
+
+/**
+ * The admin read contract as Effect RPC. Every call runs through the same
+ * `Admin` middleware as the admin commands, so a tenant session cannot list
+ * every account even if it reaches the endpoint.
+ */
+export const AdminReadsRpcs = RpcGroup.make(
+  Rpc.make("ListAccounts", {
+    payload: BillingReadQuery,
+    success: BillingReadPage,
+    error: AdminReadError,
+  }),
+  Rpc.make("Preview", {
+    payload: AdminPreviewInput,
+    success: PreviewAnswer,
+    error: AdminReadError,
+  }),
+  Rpc.make("Verify", {
+    payload: VerifyInput,
+    success: Schema.Array(VerifyMismatch),
+    error: AdminReadError,
+  }),
+  Rpc.make("Catalog", {
+    success: Catalog,
+    error: AdminReadError,
+  }),
+).middleware(Admin);
+
+/**
+ * The RPC handlers, built from the hosted model. Serve them beside the
+ * `BillingAdminApi`; the `Admin` middleware is part of `AdminReadsRpcs`.
+ *
+ * ### Serving the console reads beside the admin Api
+ * **Example:** One Worker, two admin surfaces
+ * ```typescript
+ * const handlers = yield* AdminReadsHandlers;
+ * const reads = RpcServer.toHttpEffect(AdminReadsRpcs).pipe(
+ *   Effect.flatten,
+ *   Effect.provide(
+ *     Layer.mergeAll(
+ *       AdminReadsRpcs.toLayer(handlers),
+ *       RpcSerialization.layerNdjson,
+ *       AdminFromHeaders,
+ *     ),
+ *   ),
+ * );
+ * ```
+ */
+export const AdminReadsHandlers = Effect.map(makeAdminReads, (reads) =>
+  AdminReadsRpcs.of({
+    ListAccounts: (query: BillingReadQuery) => reads.list(query),
+    Preview: (input: AdminPreviewInput) => reads.preview(input),
+    Verify: ({ account }: { readonly account: string }) => reads.verify({ account }),
+    Catalog: () => reads.catalog(),
+  }),
+);
+
+const transportFailure = (error: RpcClientError.RpcClientError): AdminReadFailed =>
+  new AdminReadFailed({ reason: error.reason._tag, message: error.message });
+
+/**
+ * The browser/Worker client for `AdminReadsRpcs`, over Effect RPC's HTTP
+ * protocol. Provide an `HttpClient` (for a browser, `FetchHttpClient.layer`);
+ * the session cookie on the same origin authenticates every call.
+ *
+ * @layer
+ */
+export const AdminReadsClient = (
+  url: string,
+  options: {
+    readonly headers?: Headers.Input;
+    readonly transformClient?: <E, R>(
+      client: HttpClient.HttpClient.With<E, R>,
+    ) => HttpClient.HttpClient.With<E, R>;
+  } = {},
+): Layer.Layer<AdminReads, never, HttpClient.HttpClient> =>
+  Layer.effect(
+    AdminReads,
+    Effect.gen(function* () {
+      const client = yield* RpcClient.make(AdminReadsRpcs);
+      const call = <A>(
+        effect: Effect.Effect<A, AdminReadError | RpcClientError.RpcClientError>,
+      ): Effect.Effect<A, AdminReadError> =>
+        (options.headers === undefined
+          ? effect
+          : RpcClient.withHeaders(effect, options.headers)
+        ).pipe(Effect.catchTag("RpcClientError", (error) => Effect.fail(transportFailure(error))));
+
+      return {
+        list: (query) => call(client.ListAccounts(query ?? {})),
+        preview: (input) => call(client.Preview(input)),
+        verify: ({ account }) => call(client.Verify({ account })),
+        catalog: () => call(client.Catalog()),
+      } satisfies AdminReadsShape;
+    }),
+  ).pipe(
+    Layer.provide(
+      RpcClient.layerProtocolHttp({
+        url,
+        ...(options.transformClient === undefined
+          ? {}
+          : { transformClient: options.transformClient }),
+      }).pipe(Layer.provide(RpcSerialization.layerNdjson)),
+    ),
+  );

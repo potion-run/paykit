@@ -12,7 +12,7 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { prorate } from "../Proration.ts";
+import { prorate, sameProration } from "../Proration.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
 import { ChangeTier, DowngradeBelowUsage, TierChanged } from "./ChangeTier.command.ts";
@@ -151,15 +151,6 @@ const remainingAfterChange = (
 
 const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean =>
   Object.keys(allowances).length === 0;
-
-/** Two prorations are the same money, or both absent. */
-const sameProration = (
-  left: { readonly credit: number; readonly charge: number; readonly due: number } | null,
-  right: { readonly credit: number; readonly charge: number; readonly due: number } | null,
-): boolean =>
-  left === null || right === null
-    ? left === right
-    : left.credit === right.credit && left.charge === right.charge && left.due === right.due;
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });

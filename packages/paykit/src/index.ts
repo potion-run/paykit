@@ -261,9 +261,10 @@ export {
   queryRows,
 } from "./BillingReadStore.ts";
 export { BillingState } from "./Subscription/BillingState.view.ts";
-export type { BillingStateView } from "./Subscription/BillingState.view.ts";
+export { BillingStateView } from "./Subscription/BillingState.view.ts";
 export { Entitlements } from "./Subscription/Entitlements.view.ts";
-export type { EntitlementsState, FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
+export { EntitlementsState } from "./Subscription/Entitlements.view.ts";
+export type { FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 
 // Events are public API: their names and fields are the contract.
 export {

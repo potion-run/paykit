@@ -1,0 +1,37 @@
+{
+  "name": "@potion.run/example-admin",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/admin"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/domain": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "@potion.run/paykit-admin": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "foldkit": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@foldkit/vite-plugin": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}
