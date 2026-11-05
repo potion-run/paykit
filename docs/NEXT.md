@@ -67,6 +67,13 @@ Both provisioning packages carry a live test that is gated on a vendor key and r
 every other run. They are the only proof each helper works against a real API, and the only place
 the "replace keeps the old one" claim is actually tested.
 
+**Stripe ran green on 2026-11-05**, from `main`, on a test-mode account — [run
+41971381878](https://github.com/potion-run/paykit/actions/runs/41971381878), 48 passed and none
+skipped. So the price the catalog states is created, replaced on a change, and the replaced one is
+retained and still retrievable; the meter and the metered price are created from the same unit price.
+**Polar has not run.** It waits on `POLAR_ACCESS_TOKEN`, and its guard fails rather than skips until
+the secret exists.
+
 They run from `.github/workflows/live.yml` — a manual dispatch, from `main`, with a `vendor` input of
 `both`, `stripe` or `polar`. It is separate from `check.yml` for two reasons: the cases mutate a real
 test account, and a secret must not be in the path of a pull request from a fork. A missing secret
