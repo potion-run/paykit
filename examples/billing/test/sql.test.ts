@@ -86,8 +86,8 @@ describe("the example on a SQL database", () => {
         return receipt;
       }).pipe(Effect.provide(world));
 
-      const check = yield* Check().pipe(Effect.provide(world));
-      const answer = yield* check({ account: account.id, feature: "messages", amount: 1 });
+      const check = yield* Check(account.id).pipe(Effect.provide(world));
+      const answer = yield* check({ feature: "messages", amount: 1 });
       expect(answer.allowed).toBe(true);
       expect(answer.remaining).toBe(100);
 
@@ -119,8 +119,8 @@ describe("the example on a SQL database", () => {
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(world));
 
-      const check = yield* Check().pipe(Effect.provide(world));
-      expect((yield* check({ account: account.id, feature: "messages" })).remaining).toBe(70);
+      const check = yield* Check(account.id).pipe(Effect.provide(world));
+      expect((yield* check({ feature: "messages" })).remaining).toBe(70);
     }),
   );
 

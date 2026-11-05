@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Paykit from "@potion.run/paykit";
 import { Check, Subscription } from "@potion.run/paykit";
 import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
@@ -34,8 +35,12 @@ const polar = (asked: Array<Record<string, unknown>> = []) =>
     client: recording(asked),
   });
 
-const world = (provider: ReturnType<typeof polar> | typeof Provider) =>
-  Layer.provide(billingLayers(provider), Domain.InMemory);
+const world = (provider: ReturnType<typeof polar> | typeof Provider) => {
+  const base = Layer.provide(billingLayers(provider), Domain.InMemory);
+  // The bindings resolve the model, the catalog and the provider router, so they
+  // are provided by the world rather than merged beside it.
+  return Layer.mergeAll(base, Paykit.BillingInProcess.pipe(Layer.provide(base)));
+};
 
 /** An independent HMAC over Polar's signed string, as a delivery would carry. */
 const signed = (body: unknown): { headers: Record<string, string>; body: string } => {
@@ -95,13 +100,13 @@ describe("the example's money routes", () => {
       expect(applied.eventId).toBe("msg_example");
 
       // 3. The entitlement answers from local state, no provider in the read.
-      const check = yield* Check();
-      let answer = yield* check({ account, feature: "messages", amount: 1 });
+      const check = yield* Check(account as never);
+      let answer = yield* check({ feature: "messages", amount: 1 });
       // A view is fed by deliveries, so the read catches up just after the
       // command commits.
       for (let attempt = 0; attempt < 500 && !answer.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
-        answer = yield* check({ account, feature: "messages", amount: 1 });
+        answer = yield* check({ feature: "messages", amount: 1 });
       }
       expect(answer.allowed).toBe(true);
       expect(answer.remaining).toBe(2_000);

@@ -1447,6 +1447,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     }),
   },
   reply: {
+    SettleHold: (_state, events) => {
+      const settled = events.find((event) => event._tag === "UsageSettled");
+      return settled?._tag === "UsageSettled"
+        ? { billed: settled.amount, released: settled.released }
+        : { billed: 0, released: 0 };
+    },
+    ReleaseHold: (_state, events) => {
+      const released = events.find((event) => event._tag === "UsageReleased");
+      return released?._tag === "UsageReleased" ? { released: released.amount } : { released: 0 };
+    },
     GrantCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
     ConsumeCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
   },

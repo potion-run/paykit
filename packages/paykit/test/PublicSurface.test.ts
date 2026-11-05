@@ -24,11 +24,33 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.MigrationError).toBeDefined();
   expect(Paykit.MigrationHistoryConflictError).toBeDefined();
   expect(Paykit.RewrittenMigrationHistoryError).toBeDefined();
-  // runtime
-  expect(typeof Paykit.Check).toBe("function");
-  expect(typeof Paykit.Track).toBe("function");
-  expect(typeof Paykit.Subscribe).toBe("function");
-  expect(typeof Paykit.Portal).toBe("function");
+  // runtime — the binding surface, under its own namespace
+  const Billing = Paykit.Billing;
+  expect(Billing.TrackUsage.key).toBe("Paykit.TrackUsage");
+  expect(Billing.SettleHold.key).toBe("Paykit.SettleHold");
+  expect(Billing.ChangeTier.key).toBe("Paykit.ChangeTier");
+  expect(Billing.GrantCredits.key).toBe("Paykit.GrantCredits");
+  expect(Billing.BillingInProcess).toBeDefined();
+  expect(Billing.BillingApiLayer).toBeDefined();
+  expect(Billing.BillingAdminInProcess).toBeDefined();
+  expect(Billing.BillingAdminApiLayer).toBeDefined();
+  expect(Paykit.Paykit.Billing).toBe(Billing);
+  // runtime — the retiring names, still flat until the migration slice
+  // one binding per command, named for the command — no aliases
+  expect(Paykit.Check.key).toBe("Paykit.Check");
+  expect(Paykit.TrackUsage.key).toBe("Paykit.TrackUsage");
+  expect(Paykit.SettleHold.key).toBe("Paykit.SettleHold");
+  expect(Paykit.ReleaseHold.key).toBe("Paykit.ReleaseHold");
+  expect(Paykit.ChangeTier.key).toBe("Paykit.ChangeTier");
+  expect(Paykit.Subscribe.key).toBe("Paykit.Subscribe");
+  expect(Paykit.Portal.key).toBe("Paykit.Portal");
+  expect(Paykit.Webhook.key).toBe("Paykit.Webhook");
+  // the retiring names are gone: one spelling, not two
+  expect((Paykit as Record<string, unknown>).Track).toBeUndefined();
+  expect((Paykit as Record<string, unknown>).Settle).toBeUndefined();
+  expect((Paykit as Record<string, unknown>).Release).toBeUndefined();
+  expect((Paykit as Record<string, unknown>).CheckInProcess).toBeUndefined();
+  expect((Paykit as Record<string, unknown>).CheckHttp).toBeUndefined();
   // model
   expect(Paykit.Model.modelName).toBe("Paykit");
   expect(Paykit.BillingAdminApi.name).toContain("BillingAdminApi");
@@ -53,13 +75,13 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.topUpCommandId).toBe("function");
   expect(Paykit.CreditsPurchased).toBeDefined();
   expect(typeof Paykit.Paykit.CatalogGuard).toBe("object");
-  // preview, verify and list are runtime bindings
-  expect(typeof Paykit.Preview).toBe("function");
+  // preview, verify and list are runtime bindings too
+  expect(Paykit.Preview.key).toBe("Paykit.Preview");
   expect(typeof Paykit.Verify).toBe("function");
-  expect(typeof Paykit.List).toBe("function");
-  expect(typeof Paykit.Hold).toBe("function");
-  expect(typeof Paykit.Settle).toBe("function");
-  expect(typeof Paykit.Release).toBe("function");
+  expect(Paykit.List.key).toBe("Paykit.List");
+  expect(Paykit.Hold.key).toBe("Paykit.Hold");
+  expect(Paykit.SettleHold.key).toBe("Paykit.SettleHold");
+  expect(Paykit.ReleaseHold.key).toBe("Paykit.ReleaseHold");
   // auth primitives
   expect(Paykit.Actor).toBeDefined();
   expect(Paykit.Session).toBeDefined();

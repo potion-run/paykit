@@ -30,5 +30,7 @@ export class ReleaseHold extends Domain.Command("ReleaseHold", {
   input: { holdId: Schema.String },
   events: [UsageReleased],
   rejects: [HoldUnknown, HoldSettled],
+  // The units this release returned, from the event it committed.
+  reply: { released: Schema.Int },
   middleware: [Session],
 }) {}

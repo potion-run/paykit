@@ -57,8 +57,9 @@ export const Provider: MoneyProvider = Manual();
  * `Layer.orDie` turns a layer-construction failure into a defect: a billing
  * stack that cannot build must crash at boot, never serve a degraded model.
  */
-export const billingLayers = (provider: MoneyProvider) =>
-  Layer.mergeAll(
+export const billingLayers = (provider: MoneyProvider) => {
+  const Providers = Paykit.paymentsRouter(provider);
+  const World = Layer.mergeAll(
     // The guard needs the catalog, so it is provided to it rather than merged
     // beside it: a guard that cannot read the catalog must not run at all.
     Paykit.CatalogGuard.pipe(Layer.provideMerge(catalogLayer(Catalog))),
@@ -78,7 +79,22 @@ export const billingLayers = (provider: MoneyProvider) =>
       ),
     ),
     Layer.provideMerge(MemoryBillingReadStore),
+    Layer.provideMerge(catalogLayer(Catalog)),
   );
+
+  // The bindings resolve the model, the catalog and the provider router when the
+  // layer is built, so they are provided rather than merged beside it.
+  return Layer.mergeAll(
+    World,
+    Paykit.BillingInProcess.pipe(
+      Layer.provide(World),
+      Layer.provide(Providers),
+      Layer.provide(catalogLayer(Catalog)),
+    ),
+    Providers,
+    catalogLayer(Catalog),
+  );
+};
 
 /** The layers the tests run, over an in-memory platform. */
 export const BillingLayers = billingLayers(Provider);
@@ -91,7 +107,6 @@ export const BillingLayers = billingLayers(Provider);
  */
 export const moneyRoutes = (provider: MoneyProvider) =>
   Effect.gen(function* () {
-    const subscribe = yield* Paykit.Subscribe();
     const applyWebhook = yield* Paykit.Webhook();
 
     return {
@@ -100,7 +115,11 @@ export const moneyRoutes = (provider: MoneyProvider) =>
        * provider's checkout URL (or an invoice id, when that is all it has); a
        * free tier activates and returns `{ activated: true }`.
        */
-      purchase: (account: string, tier: string) => subscribe({ account, tier }),
+      purchase: (account: string, tier: string) =>
+        Effect.gen(function* () {
+          const subscribe = yield* Paykit.Subscribe(account as never);
+          return yield* subscribe({ tier: tier as never });
+        }),
 
       /**
        * Verify one provider delivery and apply it. `none` from the decoder is a
@@ -126,8 +145,12 @@ export const moneyRoutes = (provider: MoneyProvider) =>
 
 /** Write one usage fact for an account, as the app does after serving a request. */
 export const track = Effect.fn("Example.track")(function* (account: string, feature: string) {
-  const trackUsage = yield* Paykit.Track();
-  return yield* trackUsage({ account, feature, amount: 1 });
+  const trackUsage = yield* Paykit.TrackUsage(account as never);
+  return yield* trackUsage({
+    feature,
+    amount: 1,
+    dedupeKey: `${account}:${feature}:${Date.now()}`,
+  });
 });
 
 /**

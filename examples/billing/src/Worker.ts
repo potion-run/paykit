@@ -67,6 +67,7 @@ const serve = (billing: BillingOnSql) =>
       { disableLogger: true },
     );
     yield* Effect.addFinalizer(() => Effect.promise(mcp.dispose));
+    const world = Layer.mergeAll(billing.world, Provider.payments);
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
@@ -120,7 +121,7 @@ const serve = (billing: BillingOnSql) =>
         }
 
         return HttpServerResponse.text("Not Found", { status: 404 });
-      }),
+      }).pipe(Effect.provide(world)),
     };
   }).pipe(Effect.provide(Layer.mergeAll(billing.world, Provider.payments)));
 

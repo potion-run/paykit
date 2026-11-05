@@ -48,5 +48,8 @@ export class SettleHold extends Domain.Command("SettleHold", {
     StandingBlocksUsage,
     MoneyCapExceeded,
   ],
+  // What this command billed and returned. A caller reading it over a transport
+  // gets the money the event recorded, not a second guess from the read model.
+  reply: { billed: Schema.Int, released: Schema.Int },
   middleware: [Session],
 }) {}

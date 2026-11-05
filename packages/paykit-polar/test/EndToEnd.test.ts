@@ -2,24 +2,27 @@ import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import {
   Actor,
-  ChargeProration,
-  ChangeTier,
-  Check,
   MemoryBillingReadStore,
   Model as PaykitModel,
   PaykitHandlers,
-  Subscribe,
   Subscription,
   allowance,
   allowancesOf,
   catalog,
   catalogLayer,
-  handleWebhook,
   messages,
   prorate,
   system,
   tier,
 } from "@potion.run/paykit";
+import { ChargeProration } from "@potion.run/paykit/ChargeProration";
+// These suites drive the implementation modules the binding layers delegate to:
+// the public surface names the tags (`Paykit.Webhook(account)`), and the vendor
+// end-to-end path is about the provider, not about the binding shape.
+import { CheckInProcess as Check } from "@potion.run/paykit/Check";
+import { Subscribe } from "@potion.run/paykit/Subscribe";
+import { ChangeTier } from "@potion.run/paykit/Subscription/ChangeTier.command";
+import { handleWebhook } from "@potion.run/paykit/Webhooks";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

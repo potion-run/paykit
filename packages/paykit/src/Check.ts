@@ -169,7 +169,8 @@ export const CheckHttp = Effect.fn("Paykit.Check.http")(function* () {
 /** The default read path: in-process, same host as the model. */
 export const Check = CheckInProcess;
 
-const rowToState = (row: BillingReadRow): EntitlementsState => ({
+/** The read model's row as the state `evaluateCheck` reads. */
+export const rowToState = (row: BillingReadRow): EntitlementsState => ({
   account: row.account,
   tier: row.tier,
   status: row.status,

@@ -202,6 +202,55 @@ around it.
   deployment without an `Outbound` layer pays nothing for it, and the app owns HTTP, queues and
   retries at the edge.
 
+### Bindings
+
+The runtime surface is a `Binding.Service` per command, shaped like Alchemy's: `Paykit.TrackUsage(account)`
+returns the verb, and the verb takes the rest. [ADR 0015](../../docs/adr/0015-a-runtime-binding-names-a-command.md)
+is the record; these are the rules a new one follows.
+
+- **Named for the command.** `TrackUsage`, `SettleHold`, `ChangeTier` — the same string as the command,
+  the MCP tool and the CLI subcommand. No alias layer, no `use()`, no `for(account)` handle.
+- **The account is the bind; the request is the rest.** The bound id is struck from the request type,
+  like `RetrievePriceRequest` omitting `price`, so a second account is not representable. Configuration
+  — catalog, store, providers, credentials — rides the layer, never a verb argument.
+- **One file per binding** under `src/Billing/<Command>.binding.ts`: the request, the result, the
+  refusal list (one list yielding both `type Refusal = InstanceType<(typeof refusals)[number]>` and the
+  guard), the error union, `Binding.Service`, and a JSDoc block with `###` operations, an
+  `**Example:**` per intent, and `@binding @product … @provides …` last.
+- **A binding is a command binding or an operation binding.** A command binding builds its request
+  from the caller's fields plus the catalog, so both layers serve it. An operation binding needs
+  something only the model's process has — a standing to compute a proration from, a provider, a
+  signature — so it has an in-process layer only and the Api does not serve it. `ChangeTier` is the
+  case to remember: a mid-cycle upgrade has a proration, a client has no standing, and a payload
+  without one is `ProrationMismatch`. Do not paper over that with a call that only works locally.
+- **An operation layer delegates; it does not re-implement.** `Subscribe` and `Preview` wrap the
+  binding that already walks the provider path (`subscribeOf()`, `previewOf()`), so there is one
+  purchase path and one quote. A second implementation is a second answer to "what did we charge".
+- **Four layers, one clearance each.** `BillingInProcess` closes over the model; `BillingApiLayer`
+  closes over `BillingApi.Client` and is protocol-agnostic, so the deployment picks
+  `layerClientInProcess` or `layerClientHttp(url)`. `BillingAdminInProcess` and `BillingAdminApiLayer`
+  are the operator pair over `BillingAdminApi`. Both tenants implement every tenant verb, so a caller
+  cannot tell which one it got; the admin verbs exist only on the admin layers, and the layer a
+  deployment provides is the authorization. `test/bindings/AdminBindings.test.ts` asserts the
+  negative — a tenant layer provides none of the seven — so a widened layer fails a test.
+- **Every verb waits for the read it just wrote.** Read-your-write is a property of the binding, not
+  of `TrackUsage`: after the command, `Entitlements` is read with `atLeast` the receipt. A verb that
+  skips it hands the next `Check` a stale number. `Webhook` is the one exception and says so in its
+  doc: it has no receipt of its own, and a provider wants an answer, not a snapshot.
+- **A write requires a `dedupeKey`, and it is the command id.** A transport may redeliver, so the
+  key is required rather than optional; a hold's id defaults to it, so a retry addresses the same
+  entity. The exception is an operation whose identity is the provider's — `Subscribe` derives
+  `checkout:<account>:<tier>:<reference>` — and the binding's doc says so instead of accepting a key
+  it would ignore.
+- **Three failure kinds, never folded.** A rejection is the model refusing (the write did not
+  happen), `Domain.ConsistencyTimeout` is the write committed and the read late, `BindingFailed` is
+  the transport or the decode. Only the first may be read as "no charge".
+- **A command's own numbers travel as its `reply`.** `SettleHold` answers `{ billed, released }` from
+  the event it committed, because the Api client returns no events. A verb whose result is "what is
+  left" reads the view instead; a verb whose result is "what this command recorded" needs a reply.
+- Every test body runs against both layers, once — `test/bindings` proves the transport is an
+  implementation detail, not a second API.
+
 ## Auth
 
 `Session` and `Admin` are the two `RpcMiddleware` services in `src/Auth/`. A command declares the

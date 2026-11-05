@@ -1,41 +1,37 @@
 import { allowance, grant } from "./Allowance.ts";
+import * as Billing from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
-import { ChargeProration } from "./ChargeProration.ts";
-import { Check, CheckHttp, CheckInProcess, CheckReadModel, evaluateCheck } from "./Check.ts";
+import { evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
-import { Hold, Release, Settle } from "./Hold.ts";
-import { List } from "./List.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { paymentsRouter } from "./Payments.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
-import { Portal } from "./Portal.ts";
-import { Preview } from "./Preview.ts";
 import { MemoryStore, Postgres, Sqlite, Stack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
-import { Subscribe } from "./Subscribe.ts";
 import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
 import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
-import { Track } from "./Track.ts";
 import { Verify, verifyState } from "./Verify.ts";
-import { Webhook, completeCheckout, handleWebhook } from "./Webhooks.ts";
 
 /**
  * The four export groups as one namespace, so the docs' `Paykit.feature(...)`
  * and the flat named exports are the same functions. Nothing here is a second
  * implementation; it is a reading order.
+ *
+ * Every runtime verb is a binding named for its command: `Paykit.TrackUsage(account)`
+ * returns the verb, and the verb takes the rest.
  *
  * ### Declaring and selling
  * **Example:** A catalog, a Stack, and a purchase
@@ -57,8 +53,8 @@ import { Webhook, completeCheckout, handleWebhook } from "./Webhooks.ts";
  *   catalog: { features: [messages], tiers: [free, pro] },
  * });
  *
- * const subscribe = yield* Paykit.Subscribe();
- * yield* subscribe({ account, tier: "pro" });
+ * const subscribe = yield* Paykit.Subscribe(account);
+ * yield* subscribe({ tier: "pro" as Paykit.TierId });
  * ```
  *
  * @primitive
@@ -82,30 +78,49 @@ export const Paykit = {
   layerSqlPlatform,
   SqlBillingReadStore,
   d1Executor,
-  // runtime
-  Check,
-  CheckInProcess,
-  CheckReadModel,
-  CheckHttp,
+  // runtime — the tenant surface, one binding per command
+  Check: Billing.Check,
+  CheckReadModel: Billing.CheckReadModel,
+  CheckOverTransport: Billing.CheckOverTransport,
+  TrackUsage: Billing.TrackUsage,
+  Hold: Billing.Hold,
+  SettleHold: Billing.SettleHold,
+  ReleaseHold: Billing.ReleaseHold,
+  ConsumeCredits: Billing.ConsumeCredits,
+  Subscribe: Billing.Subscribe,
+  ChangeTier: Billing.ChangeTier,
+  ScheduleTierChange: Billing.ScheduleTierChange,
+  WithdrawTierChange: Billing.WithdrawTierChange,
+  ScheduleCancellation: Billing.ScheduleCancellation,
+  Resume: Billing.Resume,
+  StartTrial: Billing.StartTrial,
+  Preview: Billing.Preview,
+  Portal: Billing.Portal,
+  ChargeProration: Billing.ChargeProration,
+  List: Billing.List,
+  Webhook: Billing.Webhook,
   evaluateCheck,
-  Track,
-  Hold,
-  Settle,
-  Release,
-  Subscribe,
-  Portal,
-  List,
-  Preview,
   timelineOf,
   appendTimeline,
   initialTimeline,
-  ChargeProration,
   Verify,
   verifyState,
   doctor,
-  Webhook,
-  handleWebhook,
-  completeCheckout,
+  // runtime — the four layers
+  BillingInProcess: Billing.BillingInProcess,
+  BillingApiLayer: Billing.BillingApiLayer,
+  BillingAdminInProcess: Billing.BillingAdminInProcess,
+  BillingAdminApiLayer: Billing.BillingAdminApiLayer,
+  // runtime — the operator surface
+  GrantCredits: Billing.GrantCredits,
+  ExtendTrial: Billing.ExtendTrial,
+  EnterGrace: Billing.EnterGrace,
+  Recover: Billing.Recover,
+  Expire: Billing.Expire,
+  RecordPayment: Billing.RecordPayment,
+  RecordPaymentFailure: Billing.RecordPaymentFailure,
+  // the whole binding surface under one key, for a reader who wants it grouped
+  Billing,
   // model
   Model: PaykitModel,
   ModelHandlers: PaykitHandlers,

@@ -1,4 +1,5 @@
 import * as Domain from "@alchemy.run/domain";
+import * as Paykit from "@potion.run/paykit";
 import { Model, PaykitHandlers } from "@potion.run/paykit";
 import { CatalogGuardLive, catalogLayer, DevGuards } from "@potion.run/paykit";
 import { d1Executor, type D1Like } from "@potion.run/paykit";
@@ -41,13 +42,23 @@ export const billingOnSql = (
   const reads = SqlBillingReadStore(log);
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50 });
 
-  const world = Layer.mergeAll(
+  const model = Layer.mergeAll(
     DevGuards,
     CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(Catalog))),
   ).pipe(
     Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(reads)))),
     Layer.provideMerge(reads),
     Layer.provideMerge(Layer.succeed(Domain.Platform, platform)),
+    Layer.provideMerge(catalogLayer(Catalog)),
+  );
+
+  // The bindings resolve the model, the catalog and the provider router when the
+  // layer is built, so they are provided by the world rather than merged beside
+  // it — one world for the Worker, its routes and the tests.
+  const world = Layer.mergeAll(
+    model,
+    Paykit.BillingInProcess.pipe(Layer.provide(model)),
+    catalogLayer(Catalog),
   );
 
   return { log, world: Layer.orDie(world) as Layer.Layer<any, never, never> };
