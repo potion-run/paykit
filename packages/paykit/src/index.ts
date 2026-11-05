@@ -84,11 +84,13 @@ export {
   BillingStackAttrs,
   BillingStackProps,
   BillingStackProvider,
-  BillingStackStateOutdated,
+  BillingStackStateTooNew,
+  diffBillingStack,
   BillingStore,
   providers,
   readBillingStack,
   reconcileBillingStack,
+  billingStackVersionOf,
 } from "./BillingStack.resource.ts";
 export { doctor } from "./Doctor.ts";
 export { Paykit } from "./Paykit.ts";

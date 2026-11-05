@@ -7,7 +7,8 @@ import {
   BillingStack,
   BillingStackAttrs,
   BillingStackProvider,
-  BillingStackStateOutdated,
+  BillingStackStateTooNew,
+  diffBillingStack,
   readBillingStack,
   reconcileBillingStack,
 } from "../src/BillingStack.resource.ts";
@@ -117,11 +118,13 @@ describe("the BillingStack resource", () => {
     expect(duplicate.failure).toBeInstanceOf(ProviderDuplicate);
   });
 
-  it("read returns state as recorded, and dies when there is none", () => {
+  it("read returns state as recorded, and reports no state as missing", () => {
     const recorded = run(reconcileBillingStack(props));
     if (recorded._tag !== "Success") return;
     expect(Effect.runSync(readBillingStack(recorded.success))).toEqual(recorded.success);
-    expect(Effect.runSyncExit(readBillingStack(undefined))._tag).toBe("Failure");
+    // No state is a resource that does not exist yet, not a crash: Alchemy's
+    // plan calls `read` with `output: undefined` before the first reconcile.
+    expect(Effect.runSync(readBillingStack(undefined))).toBeUndefined();
   });
 
   it("records the shape version it wrote", () => {
@@ -131,25 +134,38 @@ describe("the BillingStack resource", () => {
     expect(recorded.success.version).toBe(BILLING_STACK_VERSION);
   });
 
-  it("refuses state written by a shape it cannot read", () => {
+  it("upgrades state written by an older shape, and refuses a newer one", () => {
     const recorded = run(reconcileBillingStack(props));
     if (recorded._tag !== "Success") return;
     // State from before the field existed: no `version` at all, which is 0.
+    // It is readable: the next reconcile rewrites it in the current shape.
     const { version: _version, ...legacy } = recorded.success;
-    const refused = run(readBillingStack(legacy as unknown as BillingStackAttrs));
-    expect(refused._tag).toBe("Failure");
-    if (refused._tag !== "Failure") return;
-    expect(refused.failure).toBeInstanceOf(BillingStackStateOutdated);
-    if (refused.failure._tag !== "BillingStackStateOutdated") return;
-    expect(refused.failure.found).toBe(0);
-    expect(refused.failure.expected).toBe(BILLING_STACK_VERSION);
+    const older = run(readBillingStack(legacy as unknown as BillingStackAttrs));
+    expect(older._tag).toBe("Success");
+    if (older._tag === "Success") expect(older.success).toEqual(legacy);
 
+    // A newer shape is a refusal: an older build must not move that state back.
     const future = run(
       readBillingStack({ ...recorded.success, version: BILLING_STACK_VERSION + 1 }),
     );
     expect(future._tag).toBe("Failure");
     if (future._tag !== "Failure") return;
-    expect(future.failure).toBeInstanceOf(BillingStackStateOutdated);
+    expect(future.failure).toBeInstanceOf(BillingStackStateTooNew);
+    if (future.failure._tag !== "BillingStackStateTooNew") return;
+    expect(future.failure.found).toBe(BILLING_STACK_VERSION + 1);
+    expect(future.failure.expected).toBe(BILLING_STACK_VERSION);
+  });
+
+  it("forces an update when the recorded shape is older", () => {
+    const recorded = run(reconcileBillingStack(props));
+    if (recorded._tag !== "Success") return;
+    const { version: _version, ...legacy } = recorded.success;
+    expect(diffBillingStack(legacy as unknown as BillingStackAttrs)).toEqual({
+      action: "update",
+    });
+    // The current shape diffs to the engine's default, so an unchanged deploy
+    // stays a no-op.
+    expect(diffBillingStack(recorded.success)).toBeUndefined();
   });
 
   it("keeps the stack when it is removed", () => {
