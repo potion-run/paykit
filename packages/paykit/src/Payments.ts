@@ -64,7 +64,18 @@ export const Payments = Domain.ExternalSystem("Payments", {
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
   createInvoice: {
-    args: { account: Schema.String, amount: Schema.Int, currency: Schema.String },
+    args: {
+      account: Schema.String,
+      amount: Schema.Int,
+      currency: Schema.String,
+      /**
+       * Idempotency key for the charge. A provider that supports one returns the
+       * invoice it already opened when the same key is sent again, so a retry
+       * after a crash is not a second invoice. Optional because a manual invoice
+       * or a vendor with no idempotency contract cannot honor one.
+       */
+      commandId: Schema.optionalKey(Schema.String),
+    },
     success: { invoiceId: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
@@ -106,6 +117,8 @@ export interface PaymentsService {
     readonly account: string;
     readonly amount: number;
     readonly currency: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentError>;
   readonly refund: (args: {
     readonly chargeId: string;

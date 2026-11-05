@@ -1149,9 +1149,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         price: _previousPrice,
         proration: _previousProration,
         prorationInvoice: _previousInvoice,
+        prorationId: _previousProrationId,
         pendingTier: _cancelled,
         ...rest
       } = state;
+      // Every prorated change takes the next id, including an identical change
+      // in the same period: the seq is what makes a second charge a second
+      // charge rather than a retry of the first.
+      const prorationSeq =
+        event.proration === undefined ? (state.prorationSeq ?? 0) : (state.prorationSeq ?? 0) + 1;
       return {
         ...rest,
         tier: event.tier,
@@ -1169,6 +1175,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         // A new tier change replaces what the old one owed; it does not add to
         // it, and an invoice for the old amount no longer applies.
         ...(event.proration === undefined ? {} : { proration: event.proration }),
+        ...(event.proration === undefined ? {} : { prorationId: String(prorationSeq) }),
+        ...(prorationSeq === 0 ? {} : { prorationSeq }),
       };
     },
     UsageRecorded: (state, event) =>

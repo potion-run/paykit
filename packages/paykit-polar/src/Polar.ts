@@ -55,6 +55,8 @@ export interface PolarClient {
     readonly amount: number;
     readonly currency: string;
     readonly description: string;
+    /** Stable across retries. Polar has no idempotency key; a client may dedupe. */
+    readonly commandId?: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentDeclined>;
   /** Refund a Polar order. */
   readonly createRefund: (request: {
@@ -167,10 +169,12 @@ export const polarBindings = (
             account,
             amount,
             currency,
+            commandId,
           }: {
             account: string;
             amount: number;
             currency: string;
+            commandId?: string;
           }) =>
             client
               .createInvoice({
@@ -179,6 +183,7 @@ export const polarBindings = (
                 amount,
                 currency,
                 description: where.invoiceDescription ?? "Plan change",
+                ...(commandId === undefined ? {} : { commandId }),
               })
               .pipe(
                 Effect.mapError((cause) => declined("createInvoice", cause)),

@@ -37,6 +37,8 @@ export interface PolarBindings {
     readonly account: string;
     readonly amount: number;
     readonly currency: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentError>;
   readonly createRefund: (args: {
     readonly chargeId: string;
@@ -125,14 +127,21 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
         account,
         amount,
         currency,
+        commandId,
       }: {
         account: string;
         amount: number;
         currency: string;
+        commandId?: string;
       }) =>
         props.bindings.createInvoice === undefined
           ? missing("createInvoice")
-          : props.bindings.createInvoice({ account, amount, currency }),
+          : props.bindings.createInvoice({
+              account,
+              amount,
+              currency,
+              ...(commandId === undefined ? {} : { commandId }),
+            }),
       refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
         props.bindings.createRefund({ chargeId, amount }),
       createPortal: ({ account }: { account: string }) =>

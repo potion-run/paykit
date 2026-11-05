@@ -52,6 +52,8 @@ export interface StripeClient {
     readonly amount: number;
     readonly currency: string;
     readonly description: string;
+    /** Stable across retries, for the vendor's idempotency key. */
+    readonly commandId?: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentDeclined>;
   /**
    * Resolve a tier's lookup key to the price that answers for it now. A price is
@@ -167,13 +169,14 @@ export const stripeClientBindings = (
         Effect.mapError((cause) => declined("createBillingPortalSession", cause)),
         Effect.map((session) => ({ url: session.url })),
       ),
-    createInvoice: ({ account, amount, currency }) =>
+    createInvoice: ({ account, amount, currency, commandId }) =>
       client
         .createInvoice({
           customerExternalId: account,
           amount,
           currency,
           description: where.invoiceDescription ?? "Plan change",
+          ...(commandId === undefined ? {} : { commandId }),
         })
         .pipe(
           Effect.mapError((cause) => declined("createInvoice", cause)),
