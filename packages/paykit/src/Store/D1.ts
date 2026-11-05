@@ -1,3 +1,4 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type { SqlAsync, SqlError, SqlExecutor, SqlValue } from "./Sql.ts";
 
@@ -38,6 +39,16 @@ interface BufferedWrite {
 }
 
 /**
+ * The writes a fiber's open unit has collected, or `undefined` outside one.
+ * A `Context` reference rather than a module variable because D1 has one
+ * writer but a Worker can serve many requests: a write from another fiber must
+ * commit on its own, never join this unit's batch.
+ */
+const InUnit = Context.Reference<Array<BufferedWrite> | undefined>("paykit/D1/InUnit", {
+  defaultValue: () => undefined,
+});
+
+/**
  * A `SqlExecutor` over Cloudflare's D1, implementing the asynchronous half of
  * the port that Alchemy's D1 executor implements
  * (`@alchemy.run/cloudflare/D1/ApplyMigrations`, `makeD1MigrationExecutor`):
@@ -67,10 +78,6 @@ interface BufferedWrite {
  * @primitive
  */
 export const d1Executor = (d1: D1Like): SqlExecutor => {
-  // A unit's writes, until it commits. D1 has one writer, so one slot is
-  // enough; a nested unit is a defect rather than a queued write.
-  let pending: Array<BufferedWrite> | undefined;
-
   const prepared = (write: BufferedWrite): D1Prepared =>
     write.params.length === 0 ? d1.prepare(write.sql) : d1.prepare(write.sql).bind(...write.params);
 
@@ -78,24 +85,15 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
     writes.length === 0
       ? Effect.void
       : Effect.tryPromise({
-          try: async () => {
-            await d1.batch(writes.map(prepared));
-          },
+          try: () => d1.batch(writes.map(prepared)).then(() => undefined),
           catch: (cause) => fail(`${writes.length} statements`, cause),
-        });
-
-  const bufferOrCommit = (write: BufferedWrite) =>
-    pending === undefined
-      ? commit([write])
-      : Effect.sync(() => {
-          pending!.push(write);
         });
 
   const read = <A>(sql: string, params: ReadonlyArray<SqlValue>) =>
     Effect.tryPromise({
-      try: async () => {
+      try: () => {
         const statement = params.length === 0 ? d1.prepare(sql) : d1.prepare(sql).bind(...params);
-        return (await statement.all<A>()).results ?? [];
+        return statement.all<A>().then((result) => result.results ?? []);
       },
       catch: (cause) => fail(sql, cause),
     });
@@ -105,35 +103,43 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
     isolation: "deferred",
 
     atomic: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      Effect.gen(function* () {
-        if (pending !== undefined) {
-          return yield* Effect.die("D1 atomic unit is not re-entrant");
-        }
-        pending = [];
-        const outcome = yield* Effect.exit(effect);
-        const writes = pending;
-        pending = undefined;
-        if (outcome._tag === "Failure") {
-          // Nothing commits: the failed unit's writes are dropped.
-          return yield* Effect.failCause(outcome.cause);
-        }
-        yield* commit(writes);
-        return outcome.value;
-      }),
+      Effect.flatMap(Effect.service(InUnit), (current) =>
+        current !== undefined
+          ? Effect.die("D1 atomic unit is not re-entrant")
+          : Effect.gen(function* () {
+              const writes: Array<BufferedWrite> = [];
+              const outcome = yield* Effect.exit(Effect.provideService(effect, InUnit, writes));
+              if (outcome._tag === "Failure") {
+                // Nothing commits: the failed unit's writes are dropped.
+                return yield* Effect.failCause(outcome.cause);
+              }
+              yield* commit(writes);
+              return outcome.value;
+            }),
+      ),
 
     query: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) => read<A>(sql, params),
 
     get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
       Effect.map(read<A>(sql, params), (rows) => rows[0]),
 
-    write: (sql: string, params: ReadonlyArray<SqlValue> = []) => bufferOrCommit({ sql, params }),
+    write: (sql: string, params: ReadonlyArray<SqlValue> = []) =>
+      Effect.flatMap(Effect.service(InUnit), (writes) =>
+        writes === undefined
+          ? commit([{ sql, params }])
+          : Effect.sync(() => {
+              writes.push({ sql, params });
+            }),
+      ),
 
     batch: (statements: ReadonlyArray<string>) =>
-      pending === undefined
-        ? commit(statements.map((sql) => ({ sql, params: [] })))
-        : Effect.sync(() => {
-            for (const sql of statements) pending!.push({ sql, params: [] });
-          }),
+      Effect.flatMap(Effect.service(InUnit), (writes) =>
+        writes === undefined
+          ? commit(statements.map((sql) => ({ sql, params: [] })))
+          : Effect.sync(() => {
+              for (const sql of statements) writes.push({ sql, params: [] });
+            }),
+      ),
   };
 
   return {

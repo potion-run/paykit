@@ -1,7 +1,9 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import { d1Executor, type D1Like } from "../../src/Store/D1.ts";
 import { asyncOf } from "../../src/Store/Sql.ts";
 import { fromDatabase } from "../../src/Store/SqliteDriver.ts";
@@ -77,6 +79,43 @@ describe("an atomic unit", () => {
     }),
   );
 
+  it.effect("SQLite keeps a write outside a unit out of that unit's transaction", () =>
+    Effect.gen(function* () {
+      const sql = fromDatabase(new Database(":memory:"));
+      const async = asyncOf(sql);
+      yield* async.batch(["CREATE TABLE t (n INTEGER NOT NULL)"]);
+
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      // A unit that holds the writer and then fails. A batch started meanwhile
+      // belongs to its caller, not to this transaction: with a shared
+      // connection and a plain depth counter it would join the unit and roll
+      // back with it.
+      const unit = yield* Effect.forkChild(
+        Effect.exit(
+          async.atomic(
+            Effect.gen(function* () {
+              yield* async.batch(["INSERT INTO t (n) VALUES (1)"]);
+              yield* Deferred.succeed(started, void 0);
+              yield* Deferred.await(release);
+              return yield* Effect.fail("rollback");
+            }),
+          ),
+        ),
+      );
+      yield* Deferred.await(started);
+      const outside = yield* Effect.forkChild(async.batch(["INSERT INTO t (n) VALUES (2)"]));
+      yield* Deferred.succeed(release, void 0);
+
+      expect(Exit.isFailure(yield* Fiber.join(unit))).toBe(true);
+      yield* Fiber.join(outside);
+      expect(
+        (yield* async.query<{ n: number }>("SELECT n FROM t ORDER BY n")).map((row) => row.n),
+      ).toEqual([2]);
+      sql.close();
+    }),
+  );
+
   it.effect("D1 collects a unit's writes and commits them in one batch", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<string>> = [];
@@ -103,6 +142,44 @@ describe("an atomic unit", () => {
       );
       // One call, both statements: the closest D1 has to a transaction.
       expect(batches).toEqual([["INSERT INTO t (n) VALUES (1)", "INSERT INTO t (n) VALUES (2)"]]);
+    }),
+  );
+
+  it.effect("D1 commits a write from another fiber outside the open unit", () =>
+    Effect.gen(function* () {
+      const batches: Array<ReadonlyArray<string>> = [];
+      const d1: D1Like = {
+        prepare: (sql: string) => ({
+          sql,
+          bind: () => ({ sql, all: () => Promise.resolve({ results: [] }) }),
+          all: () => Promise.resolve({ results: [] }),
+        }),
+        batch: (statements) => {
+          batches.push(statements.map((statement) => String(statement.sql)));
+          return Promise.resolve();
+        },
+      };
+      const async = asyncOf(d1Executor(d1));
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+
+      const unit = yield* Effect.forkChild(
+        async.atomic(
+          Effect.gen(function* () {
+            yield* async.write("INSERT INTO t (n) VALUES (1)");
+            yield* Deferred.succeed(started, void 0);
+            yield* Deferred.await(release);
+          }),
+        ),
+      );
+      yield* Deferred.await(started);
+      // Another request's write must not join this unit's batch: it commits on
+      // its own, before the unit does.
+      yield* async.write("INSERT INTO t (n) VALUES (2)");
+      expect(batches).toEqual([["INSERT INTO t (n) VALUES (2)"]]);
+      yield* Deferred.succeed(release, void 0);
+      yield* Fiber.join(unit);
+      expect(batches).toEqual([["INSERT INTO t (n) VALUES (2)"], ["INSERT INTO t (n) VALUES (1)"]]);
     }),
   );
 
