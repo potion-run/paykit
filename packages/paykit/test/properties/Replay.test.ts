@@ -17,13 +17,17 @@ describe("replay", () => {
 
         // A counter is a fold of the events since the last reset, not a number
         // the state remembered independently. Activation and trial start also
-        // begin a fresh period, so they are reset points too.
-        const tags = events.map((event) => event._tag);
-        const lastReset = Math.max(
-          tags.lastIndexOf("UsageReset"),
-          tags.lastIndexOf("SubscriptionActivated"),
-          tags.lastIndexOf("TrialStarted"),
-        );
+        // begin a fresh period. A `UsageReset` is a reset point for this
+        // feature only when it did not keep it: `resets: "never"` carries the
+        // count across the boundary.
+        const lastReset = events.reduce((latest, event, index) => {
+          if (event._tag === "SubscriptionActivated" || event._tag === "TrialStarted") {
+            return index;
+          }
+          if (event._tag !== "UsageReset") return latest;
+          const kept = (event as unknown as { readonly kept?: Record<string, boolean> }).kept;
+          return kept?.messages === true ? latest : index;
+        }, -1);
         const recorded = events
           .slice(lastReset + 1)
           .filter(

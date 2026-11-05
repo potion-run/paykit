@@ -16,8 +16,10 @@ import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import {
   billedOf,
   chargeOf,
+  holdOf,
   initialSubscriptionState,
   remainingOf,
+  reservedOf,
   usedOf,
   type SubscribedState,
   type SubscriptionState,
@@ -259,7 +261,7 @@ const HoldCase = Schema.Struct({
   settled: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 500 }))),
 });
 
-describe("a kept allowance's money", () => {
+describe("money across a period close", () => {
   /**
    * The smallest history the randomized property above shrank to: a close on a
    * `resets: "never"` postpaid allowance. The write path keeps `billed` (the
@@ -267,7 +269,7 @@ describe("a kept allowance's money", () => {
    * `check()` offered money the standing had already spent. Pinned here as a
    * case of its own: a generated script reaches this shape only sometimes.
    */
-  it("survives the close, in the aggregate and in the read model", () => {
+  it("keeps a bill the boundary does not reset, in the aggregate and the row", () => {
     let state: SubscriptionState = initialSubscriptionState;
     let view = initialEntitlements;
     let now = start;
@@ -278,13 +280,13 @@ describe("a kept allowance's money", () => {
       view = foldView(view, decided);
       return decided;
     };
-
-    run(commandOf({ _tag: "Subscribe", tier: "recurring" }, state, now), "open");
-    run(new TrackUsage({ feature: "messages", amount: 25 }), "track");
     const active = (): SubscribedState => {
       if (state._tag !== "Subscribed") throw new Error("the standing never activated");
       return state;
     };
+
+    run(commandOf({ _tag: "Subscribe", tier: "recurring" }, state, now), "open");
+    run(new TrackUsage({ feature: "messages", amount: 25 }), "track");
 
     // 25 units, 10 of them included, at 2 minor units each.
     const billed = 30;
@@ -305,6 +307,137 @@ describe("a kept allowance's money", () => {
     // feature's to report when the standing next closes.
     if (entry.priced?.["usd:2"]?.quantity !== 15) throw new Error("the read model lost the split");
   });
+
+  /**
+   * The second counterexample the property found. A tier change can move a
+   * feature that billed this period onto an allowance that states no
+   * `unitPrice`. The counter belongs to the period, so the close still clears
+   * it — keying the reset off the allowance in force left the read model
+   * reporting a bill the aggregate had already dropped.
+   */
+  it("clears a bill even when the tier change left the feature unpriced", () => {
+    let state: SubscriptionState = initialSubscriptionState;
+    let view = initialEntitlements;
+    let now = start;
+    const run = (command: { readonly _tag: string }, name: string) => {
+      const decided = decideAt(state, command, now, name);
+      if (!isAccepted(decided)) throw new Error(`${name} was refused: ${decided._tag}`);
+      state = evolveAt(state, decided, now, name);
+      view = foldView(view, decided);
+      return decided;
+    };
+    const active = (): SubscribedState => {
+      if (state._tag !== "Subscribed") throw new Error("the standing never activated");
+      return state;
+    };
+
+    run(commandOf({ _tag: "Subscribe", tier: "recurring" }, state, now), "open");
+    // 11 units, 10 of them included, at 2 minor units each.
+    run(new TrackUsage({ feature: "messages", amount: 11 }), "track");
+    if (billedOf(active(), "messages") !== 2) throw new Error("the track did not bill");
+    // `pro` grants `messages` without a `unitPrice`, so the new allowance says
+    // nothing about the bill the period already holds.
+    run(commandOf({ _tag: "ChangeTier", tier: "pro" }, state, now), "change");
+    const changed = active().allowances["messages"];
+    if (changed?.unitPrice !== undefined) throw new Error("the fixture tier is priced");
+
+    now = active().period.end;
+    const closed = run(commandOf({ _tag: "ClosePeriod" }, state, now), "close");
+    const reset = closed.find((event) => event._tag === "UsageReset") as
+      | { readonly kept?: Readonly<Record<string, boolean>> }
+      | undefined;
+    if (reset?.kept?.messages === true) throw new Error("a monthly allowance was kept");
+
+    if (billedOf(active(), "messages") !== 0) throw new Error("the close kept the bill");
+    const entry = view.features["messages"];
+    if (entry === undefined) throw new Error("the read model lost the feature");
+    if ((entry.billed ?? 0) !== 0) throw new Error("the read model kept a bill the state dropped");
+  });
+});
+
+describe("a refused settle", () => {
+  /**
+   * A settle can be refused by the money ceiling when other usage billed the
+   * period after the hold was placed. The refusal has to leave everything
+   * where it was: the hold still open, its units still reserved, and `billed`
+   * still the total the log recorded. A settle that closed the hold on its way
+   * to a rejection would lose the units — unbilled, and no longer held — and a
+   * caller retrying the same call would find no hold at all.
+   */
+  it.effect("changes nothing, so the caller can retry it", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          held: Amount,
+          /** Usage recorded after the hold, which is what can spend the ceiling. */
+          tracked: Amount,
+        }),
+      ),
+      ({ held, tracked }) => {
+        const base = subscribedIn(meteredCatalog, "metered");
+        const reserved = decideAt(
+          base,
+          new Hold({
+            holdId: "refused-settle",
+            feature: "messages",
+            amount: held,
+            expiresAt: DateTime.add(start, { days: 1 }),
+          }),
+          start,
+          "hold",
+        );
+        if (!isAccepted(reserved)) return true;
+        const holding = evolveAt(base, reserved, start, "hold") as SubscribedState;
+
+        // Spend the period's room after the promise was made, so the settle is
+        // judged against a ceiling the hold was never sized for.
+        const track = decideAt(
+          holding,
+          new TrackUsage({ feature: "messages", amount: tracked }),
+          start,
+          "track",
+        );
+        const before =
+          isAccepted(track) && track.length > 0
+            ? (evolveAt(holding, track, start, "track") as SubscribedState)
+            : holding;
+
+        const settle = decideAt(
+          before,
+          new SettleHold({ holdId: "refused-settle", amount: held }),
+          start,
+          "settle",
+        );
+        if (!isAccepted(settle)) {
+          if (settle._tag !== "MoneyCapExceeded") return false;
+          const after = evolveAt(before, [], start, "settle");
+          if (billedOf(after as SubscribedState, "messages") !== billedOf(before, "messages")) {
+            return false;
+          }
+          if (holdOf(after as SubscribedState, "refused-settle")?.status !== "open") return false;
+          if (reservedOf(after as SubscribedState, "messages") !== held) return false;
+          if (usedOf(after as SubscribedState, "messages") !== usedOf(before, "messages")) {
+            return false;
+          }
+          // A retry says the same thing, because nothing moved between them.
+          const again = decideAt(
+            after,
+            new SettleHold({ holdId: "refused-settle", amount: held }),
+            start,
+            "settle-again",
+          );
+          return !isAccepted(again) && again._tag === "MoneyCapExceeded";
+        }
+
+        // Accepted: the hold closed and billed no more than it held.
+        const after = evolveAt(before, settle, start, "settle") as SubscribedState;
+        if (holdOf(after, "refused-settle")?.status !== "settled") return false;
+        if (billedOf(after, "messages") > 1_500) return false;
+        return billedOf(after, "messages") >= billedOf(before, "messages");
+      },
+      { runs: 120, size: 40 },
+    ),
+  );
 });
 
 describe("holds and money", () => {
