@@ -48,8 +48,11 @@ The rule that made the split observable landed too
 ([ADR 0009](./adr/0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md)): only a blocking
 allowance refuses a move below its usage, because only a blocking one can be oversubscribed. A billed
 or allowed feature may change its unit price mid-period, and the close reports the units at both
-prices. What is still open there is a money ceiling already passed by `billed` — a change to a lower
-`moneyCap` is not refused — which is ADR 0005's question, not this one.
+prices. The money ceiling closed too ([ADR
+0011](./adr/0011-a-tier-change-cannot-move-into-a-ceiling-already-passed.md)): a change into a cap the
+period has already billed past is refused with `DowngradeBelowSpend`, and a change into a unit ceiling
+it has already passed with `DowngradeBelowCeiling`. Both were previously reachable, and both produced a
+standing no command could leave until the period reset.
 
 ### 1. The remaining surfaces
 
@@ -57,9 +60,30 @@ prices. What is still open there is a money ceiling already passed by `billed` �
   open holds with their age, manual grant, refund.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
-  purchasable. The decision and the deterministic half landed — `retiredPrices` says which of the
-  stage's prices the catalog no longer declares. What is left is the write: a `RetiredPrices` resource
-  that lists, sweeps and deactivates, with a live test as the authority, and the Polar half beside it.
+  purchasable. Both halves landed for Stripe — `retiredPrices` decides, `RetiredPrices` lists and
+  deactivates, and the live case proves a price is archived rather than deleted. What is left is the
+  Polar half, which waits on its sandbox token.
+
+### 2. Worth building next
+
+Three things the model is one step away from, and why they belong in a library rather than in a
+hosted service. A console is not one of them: what a library owes is the read model a console renders,
+and `Preview`, `List`, `BillingRead` and `AccountEvents` are that. The screens themselves are the
+example's job.
+
+- **Auto top-up.** When a pool falls below a threshold, buy a pack — a policy over `CreditsConsumed`
+  sending `PurchaseCredits`, the same shape `Dunning` and `PeriodRollover` already have. The decisions
+  are the threshold, the pack, a cooldown, and one command per crossing rather than one per event. It
+  turns "the hold failed" into "the account refilled", which is the difference between billing users
+  notice and billing they do not.
+- **A usage timeline projection.** Not a log database: `AccountEvents` is already the log, so a
+  timeline is a projection over it — per feature, per period, with the holds opened and settled and the
+  money each recorded. It is the screen people open when a bill looks wrong, and it is the half of
+  `Preview` that answers "what changed" rather than "why".
+- **Per-customer custom plans.** A `TierChanged` already carries the allowances it granted, so history
+  stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
+  whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
+  is a decision, not code, and it is the one thing here a host cannot do for itself.
 
 ## The live cases
 
