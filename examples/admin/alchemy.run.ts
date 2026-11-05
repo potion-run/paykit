@@ -46,7 +46,7 @@ export default Alchemy.Stack(
       main: "src/AppWorker.ts",
       env: { BILLING: worker },
       assets: {
-        runWorkerFirst: ["/admin", "/admin/*", "/console", "/console/*"],
+        runWorkerFirst: ["/session", "/admin", "/admin/*", "/console", "/console/*"],
       },
     });
 

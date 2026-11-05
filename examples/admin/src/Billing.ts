@@ -2,7 +2,6 @@ import * as Domain from "@alchemy.run/domain";
 import {
   catalog,
   catalogLayer,
-  DevGuards,
   Manual,
   MemoryBillingReadStore,
   Model,
@@ -12,6 +11,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { adminCatalog } from "./catalog.ts";
+import { CookieGuards } from "./Session.ts";
 
 /** The catalog the deploy validates. */
 export const Catalog = Effect.runSync(catalog(adminCatalog));
@@ -20,15 +20,17 @@ export const Catalog = Effect.runSync(catalog(adminCatalog));
 export const Provider = Manual();
 
 /**
- * The model, catalog, provider and development guards the admin Worker
- * serves. The test swaps `DomainCloudflare.layerDurableObjects()` for
- * `Domain.InMemory`; nothing else changes.
+ * The model, catalog, provider and cookie guards the admin Worker serves. The
+ * guards read the same-origin session cookie, so the browser's live reads can
+ * be pushed over a WebSocket. The test swaps
+ * `DomainCloudflare.layerDurableObjects()` for `Domain.InMemory`; nothing else
+ * changes.
  */
 export const BillingLayers = Layer.mergeAll(
   Paykit.CatalogGuard.pipe(Layer.provideMerge(catalogLayer(Catalog))),
   Provider.payments,
 ).pipe(
-  Layer.provideMerge(DevGuards),
+  Layer.provideMerge(CookieGuards),
   Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),
   Layer.provideMerge(MemoryBillingReadStore),
 );
