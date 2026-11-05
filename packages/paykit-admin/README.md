@@ -11,11 +11,13 @@ command id.
 | --- | --- |
 | `@potion.run/paykit-admin` | The `Console` program: `Flags`, `Model`, `init`, `update`, `subscriptions`, `routing`, `view` |
 | `@potion.run/paykit-admin/Console` | The same program from its own module |
+| `@potion.run/paykit-admin/ui` | The shadcn component kit: Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty and Tabs |
+| `@potion.run/paykit-admin/DevTools` | The event table, tab list, `DevToolsState` schema and seed helpers behind the floating **Paykit dev tools** panel |
 | `@potion.run/paykit-admin/styles.css` | Optional default styles, scoped to `.pk-admin` |
 
 The console covers the account list, the standing and allowance panels, the
-period's priced usage, open holds with their deadlines, the account event feed,
-and these actions: `GrantCredits`, `ExtendTrial`, `ChangeTier`, `EnterGrace`,
+period's priced usage, open holds with their deadlines, the billing timeline
+folded from the event feed, the account event feed, and these actions: `GrantCredits`, `ExtendTrial`, `ChangeTier`, `EnterGrace`,
 `RecordPayment`, `RecordPaymentFailure`, `Recover`, `Expire`,
 `ScheduleCancellation` and `Resume`.
 
@@ -126,6 +128,71 @@ host buys a first paint. A server-rendered first paint would need the host's
 own entry beside `Cloudflare.Website.Foldkit`'s generated one, which is out of
 scope for this package.
 
+## Test it without a server
+
+The console can carry its own event lab. Set `Flags.devTools` and a floating
+trigger appears in the bottom-right corner, shaped like rat-stack's devtools.
+The panel has three tabs:
+
+- **Events** — a table of every event the `Subscription` aggregate can record.
+  Click a row to load its payload, then **Emit selected** or **Emit every
+event**. The payload is display-only; the console never decodes it.
+- **Reads** — open an account the deployment does not have, seed its standing,
+  allowances and holds, or fail its reads.
+- **Feed** — catch up, fail the feed, or reset the lab.
+
+It is local only: the event lab never calls `BillingAdminApi`, and the server
+remains the source of truth.
+
+```ts
+Console.Flags.make({
+  session: crypto.randomUUID(),
+  actor: { id: "ops_1", kind: "admin" },
+  devTools: import.meta.env.DEV,
+});
+```
+
+The event table is checked against `Subscription.definition.events` by a
+coverage test, so the lab cannot silently miss an event the aggregate adds.
+The panel emits into the open account only; open an account from the list first,
+or use the **Reads** tab to open and seed one that the deployment does not have.
+
+The panel is off by default, and every message it can dispatch is inert while
+`Flags.devTools` is false, so a deployed console cannot be coaxed into fake
+reads. Keep it opt-in per environment.
+
+The components come from `@foldkit/ui`: `Button`, `Input`, `Textarea` and
+`Select` supply the behavior and ARIA wiring, and the package adds only the
+`pk-*` layout classes.
+
+## Foldkit DevTools
+
+[Foldkit DevTools](https://foldkit.dev/core/devtools) is a separate overlay: a
+timeline of every Message, the Model at each step, and time travel. The Vite
+plugin mounts it in development when the package is installed. Pass the
+console's `Message` schema so the DevTools MCP server can dispatch one:
+
+```ts
+Runtime.makeApplication({
+  ...Console,
+  resources,
+  container: document.getElementById("root"),
+  devTools: {
+    // Keep the official badge and panel on the left; the event lab's
+    // floating trigger owns the bottom-right corner.
+    position: "BottomLeft",
+    mode: { development: "TimeTravel", production: "Inspect" },
+    Message: Console.Message,
+  },
+});
+```
+
+`@foldkit/devtools` belongs in `devDependencies`; production builds leave the
+overlay out. The in-app event lab is what an operator sees, and the Foldkit
+overlay is what a developer sees: every event-lab Message is recorded in the
+overlay's timeline, so the lab can produce the events and DevTools can explain
+what they did to the Model.
+
 ## Mount it
 
 `Console` is a normal Foldkit application. The host provides the
@@ -194,7 +261,8 @@ guards, and connects with a WebSocket.
 ```ts
 // Server: resolve the actor from the session cookie your host already sets,
 // then provide it as `Session` and `Admin` exactly as DevGuards does with
-// headers. The cookie is HttpOnly, SameSite=Lax, and scoped to the admin origin.
+// headers. The cookies are HttpOnly, SameSite=Lax, scoped to the admin origin,
+// and written as one Set-Cookie header per cookie.
 const Connection = BillingAdminApi.layerClient.pipe(
   Layer.provide(Domain.protocolWebSocket(`${location.origin}/admin`)),
   Layer.provide(Socket.layerWebSocketConstructorGlobal),
@@ -282,18 +350,32 @@ layer behind it.
 
 ## Styling
 
-The package ships headless state hooks and an optional stylesheet:
+The package ships headless state hooks, a shadcn component kit and an optional
+stylesheet:
 
+- `@potion.run/paykit-admin/ui` exposes the common components: `Button`,
+  `Card`, `Table`, `Input`, `Select`, `Textarea`, `Field`, `Badge`, `Alert`,
+  `Empty` and `Tabs`. They are ported from the yaka shadcn/Foldkit kit and
+  rebuilt against the plain `pk-*` stylesheet. Import a single module
+  (`.../ui/button`) or the namespace (`.../ui`).
+- Behavior comes from `@foldkit/ui` — focus, disabled, invalid and label
+  wiring — and the kit supplies the shadcn markup and classes.
 - `data-paykit-standing`, `data-paykit-status`, `data-paykit-feed`,
   `data-paykit-pending` for state.
 - `data-paykit-consistency="snapshot"` and `data-paykit-as-of` (an ISO time, or
   `unknown`) on the account list, so a host's own styles can mark the list as a
   point-in-time read.
 - `pk-*` classes for the default layout, scoped under `.pk-admin`.
-- `--pk-*` custom properties for colors and spacing.
+- `--pk-*` custom properties for the shadcn theme. The defaults are shadcn's
+  Blue preset over the Neutral base (`--pk-background`, `--pk-foreground`,
+  `--pk-card`, `--pk-primary`, `--pk-muted`, `--pk-destructive`, `--pk-border`,
+  `--pk-input`, `--pk-ring`), with a dark set selected by
+  `prefers-color-scheme`.
 
-Import `styles.css` once, or skip it and target the `data-*` hooks from your
-own design system. The stylesheet has no global resets, fonts or icons.
+New UI composes the kit and the tokens rather than adding raw colors or
+one-off button, card, table or field markup. Import `styles.css` once, or skip
+it and target the `data-*` hooks from your own design system. The stylesheet
+has no global resets, fonts or icons.
 
 ## Tests
 
@@ -305,7 +387,10 @@ stale list and holds responses, opening an account's holds and re-reading them
 when the feed says one moved, a preview that allocates no command id and
 ignores a stale answer, verification, parsing an intent, one command and one
 pending id, rejections, event confirmation, and retrying an `Unknown` outcome
-with the same id. The Api-side read port has its own tests in
+with the same id. The event lab has its own suite: every aggregate event is in
+its table, the table is inert without `Flags.devTools`, an emission takes the
+next sequence and moves the feed, and the seed produces a consistent standing,
+allowances and holds. The Api-side read port has its own tests in
 `packages/paykit/test/admin`, including a property test that every action
 `actionsFor` offers is one `Subscription.predict` accepts, and a test that
 `holds` returns the entities the views fold into `reserved`.

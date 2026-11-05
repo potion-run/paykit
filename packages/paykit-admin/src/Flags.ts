@@ -16,6 +16,12 @@ export const Flags = Schema.Struct({
       kind: Schema.String,
     }),
   ),
+  /**
+   * Opt into the local event lab. It is off unless the host says so, because a
+   * production console must not offer simulated reads and events as if they
+   * were the deployment's.
+   */
+  devTools: Schema.optional(Schema.Boolean),
   /** A wire-encoded `Catalog`, for the first paint and tier choices. */
   catalog: Schema.optional(Schema.Unknown),
   /**

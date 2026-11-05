@@ -11,7 +11,7 @@ import {
   actorFromCookie,
   AdminFromCookie,
   SessionFromCookie,
-  sessionCookie,
+  sessionCookies,
 } from "../src/Session.ts";
 
 type Guard = (
@@ -84,15 +84,18 @@ describe("the cookie session", () => {
     expect(guarded(admin, {})).toEqual({ error: "Unauthenticated" });
   });
 
-  it("sets an HttpOnly, same-site cookie that is only Secure over HTTPS", () => {
-    const local = sessionCookie({ kind: "admin", id: "ops_1" }, { secure: false });
-    expect(local).toContain("pk_actor=ops_1");
-    expect(local).toContain("pk_kind=admin");
-    expect(local).toContain("HttpOnly");
-    expect(local).toContain("SameSite=Lax");
-    expect(local).toContain("Path=/");
-    expect(local).not.toContain("Secure");
+  it("writes one HttpOnly, same-site Set-Cookie per cookie", () => {
+    const local = sessionCookies({ kind: "admin", id: "ops_1" }, { secure: false });
+    expect(local.map(([name, value]) => [name, value])).toEqual([
+      ["pk_actor", "ops_1"],
+      ["pk_kind", "admin"],
+    ]);
+    for (const [, , options] of local) {
+      expect(options).toMatchObject({ httpOnly: true, path: "/", sameSite: "lax" });
+      expect(options?.secure).toBeUndefined();
+    }
 
-    expect(sessionCookie({ kind: "admin", id: "ops_1" }, { secure: true })).toContain("Secure");
+    const secure = sessionCookies({ kind: "admin", id: "ops_1" }, { secure: true });
+    expect(secure.every(([, , options]) => options?.secure === true)).toBe(true);
   });
 });

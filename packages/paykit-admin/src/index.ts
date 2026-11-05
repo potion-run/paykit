@@ -41,6 +41,7 @@ export const routing: Runtime.RoutingConfig<Message> = {
 export interface ConsoleProgram {
   readonly Flags: typeof Flags;
   readonly Model: typeof Model;
+  readonly Message: typeof Message;
   readonly init: typeof init;
   readonly update: typeof update;
   readonly subscriptions: typeof subscriptions;
@@ -48,7 +49,16 @@ export interface ConsoleProgram {
   readonly view: typeof view;
 }
 
-export const Console: ConsoleProgram = { Flags, Model, init, update, subscriptions, routing, view };
+export const Console: ConsoleProgram = {
+  Flags,
+  Model,
+  Message,
+  init,
+  update,
+  subscriptions,
+  routing,
+  view,
+};
 
 export { Flags, init, Model, Message, subscriptions, update, view };
 export { formatDateTime, formatMoney } from "./format.ts";
@@ -66,11 +76,24 @@ export {
   withFilter,
 } from "./Route.ts";
 export { AccountSnapshot, decodeSnapshotFlags } from "./Snapshot.ts";
+export {
+  DevToolsEvent,
+  DevToolsState,
+  DevToolsTab,
+  devToolsEvents,
+  devToolsTabs,
+  initialDevToolsState,
+  subscriptionEventTags,
+} from "./DevTools.ts";
 export type {
   AccountState,
   ActionDraft,
   AdminFailure,
   AdminIntent,
+  AnswerState,
   EventRow,
+  HoldsState,
   Pending,
+  PreviewState,
+  VerifyState,
 } from "./Model.ts";

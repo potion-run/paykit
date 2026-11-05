@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
+import { DevToolsTab } from "./DevTools.ts";
 
 export const Message = defineMessageUnion({
   ClickedRefresh: {},
@@ -56,5 +57,20 @@ export const Message = defineMessageUnion({
   DismissedPreview: {},
   ClickedVerify: {},
   DismissedVerify: {},
+
+  ToggledDevTools: { isOpen: Schema.Boolean },
+  SelectedDevToolsTab: { tab: DevToolsTab },
+  UpdatedDevToolsAccountId: { value: Schema.String },
+  ClickedOpenDevToolsAccount: {},
+  UpdatedDevToolsEventTag: { value: Schema.String },
+  UpdatedDevToolsEventBody: { value: Schema.String },
+  UpdatedDevToolsCommandId: { value: Schema.String },
+  ClickedEmitDevToolsEvent: {},
+  ClickedEmitAllDevToolsEvents: {},
+  ClickedSeedDevToolsSnapshot: {},
+  ClickedCatchUpDevToolsFeed: {},
+  ClickedFailDevToolsFeed: {},
+  ClickedFailDevToolsReads: {},
+  ClickedResetDevTools: {},
 });
 export type Message = typeof Message.Type;

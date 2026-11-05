@@ -44,6 +44,9 @@
     "test": "alchemy-test",
     "typecheck": "tsrs -b"
   },
+  "dependencies": {
+    "@foldkit/ui": "catalog:"
+  },
   "devDependencies": {
     "@alchemy.run/domain": "catalog:",
     "@alchemy.run/test": "catalog:",

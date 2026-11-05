@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { Command } from "foldkit";
 import type { Runtime } from "foldkit";
 import type { Url } from "foldkit/url";
+import { initialDevToolsState } from "./DevTools.ts";
 import { Flags } from "./Flags.ts";
 import { Message } from "./Message.ts";
 import { HoldsState, Model, openedAccount } from "./Model.ts";
@@ -98,6 +99,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
     queryIds: { sent },
     catalog: Option.fromNullishOr(catalog),
     catalogError: Option.none(),
+    devTools: initialDevToolsState(flags.devTools === true),
     route,
     accounts: {
       rows: page?.rows ?? [],

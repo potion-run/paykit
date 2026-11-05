@@ -6,7 +6,7 @@ import {
   Standing,
   SubscriptionStatus,
 } from "@potion.run/paykit/Subscription/Subscription.state";
-import { appendTimeline } from "@potion.run/paykit/Timeline";
+import { appendTimeline, initialTimeline, type AccountEvent } from "@potion.run/paykit/Timeline";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,15 @@ import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
+import {
+  devToolsBilling,
+  devToolsEntitlements,
+  devToolsEventOf,
+  devToolsEvents,
+  devToolsHolds,
+  nextEventSeq,
+  simulatedAt,
+} from "./DevTools.ts";
 import { Message } from "./Message.ts";
 import {
   type AccountState,
@@ -702,8 +711,185 @@ const refresh = (model: Model): UpdateReturn => {
   return account === null ? list : andThen(list, startHolds(list.model, account));
 };
 
+/** One event as the feed reports it, before it reaches the account. */
+type IncomingEvent = {
+  readonly seq: number;
+  readonly at: DateTime.Utc;
+  readonly commandId: string;
+  readonly tag: string;
+  readonly body: string;
+  /**
+   * The decoded event, when the feed carried one. The event lab's payload is
+   * display-only, so a simulated row has no decoded event and does not enter
+   * the timeline fold.
+   */
+  readonly event?: AccountEvent;
+};
+
 /**
- * The console's update. Every write is a `BillingAdmin` command with a
+ * Fold an event into the open account: dedupe by sequence, keep the last 200
+ * rows, fold the decoded event into the timeline, confirm a pending command it
+ * names, and re-read holds when the event moved one. The live stream and the
+ * event lab share this one path.
+ */
+const recordEvent = (model: Model, incoming: IncomingEvent): UpdateReturn => {
+  if (Option.isNone(model.account)) return { model };
+  const account = model.account.value;
+  if (Array.some(account.events, (candidate) => candidate.seq === incoming.seq)) {
+    return { model };
+  }
+  const nextAccount = modifyFields(account, {
+    events: () =>
+      [
+        {
+          seq: incoming.seq,
+          at: incoming.at,
+          commandId: incoming.commandId,
+          tag: incoming.tag,
+          body: incoming.body,
+        },
+        ...account.events,
+      ].slice(0, 200),
+    timeline: () =>
+      incoming.event === undefined
+        ? account.timeline
+        : appendTimeline(account.timeline, {
+            event: incoming.event,
+            envelope: { seq: incoming.seq, at: incoming.at },
+          }),
+    cursor: () => Option.some(incoming.seq),
+  });
+  const nextModel = modifyFields(model, { account: () => Option.some(nextAccount) });
+  const settled = Array.some(
+    account.pending,
+    (candidate) => candidate.commandId === incoming.commandId,
+  )
+    ? accepted(nextModel, incoming.commandId)
+    : nextModel;
+  // A hold event is the one thing the allowance view's `reserved` count
+  // cannot date, so the panel re-reads the entity it folded away.
+  const opened = openAccount(settled);
+  return holdEvent(incoming.tag) && opened !== null
+    ? startHolds(settled, opened)
+    : { model: settled };
+};
+
+const updateDevTools = (
+  model: Model,
+  change: (devTools: Model["devTools"]) => Model["devTools"],
+): Model => modifyFields(model, { devTools: change });
+
+const devToolsCommandId = (model: Model): string => {
+  const commandId = model.devTools.commandId.trim();
+  return commandId === "" ? "devtools_command" : commandId;
+};
+
+const emitDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
+  const account = openAccount(model);
+  if (account === null) return { model };
+  const seq = nextEventSeq(account);
+  const result = recordEvent(model, {
+    seq,
+    at: simulatedAt(seq),
+    commandId: devToolsCommandId(model),
+    tag: event.tag,
+    body: event.body,
+  });
+  const next = updateDevTools(result.model, (devTools) => ({
+    ...devTools,
+    emitted: devTools.emitted + 1,
+  }));
+  return result.commands === undefined
+    ? { model: next }
+    : { model: next, commands: result.commands };
+};
+
+/** Emit the whole table in order, one sequence number each. */
+const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
+  const account = openAccount(model);
+  if (account === null) return { model };
+  const startSeq = nextEventSeq(account);
+  let current = model;
+  const commands: Array<NonNullable<UpdateReturn["commands"]>[number]> = [];
+  for (const [index, event] of devToolsEvents.entries()) {
+    const seq = startSeq + index;
+    const result = recordEvent(current, {
+      seq,
+      at: simulatedAt(seq),
+      commandId: devToolsCommandId(model),
+      tag: event.tag,
+      body: event.body,
+    });
+    current = result.model;
+    if (result.commands !== undefined) commands.push(...result.commands);
+  }
+  const next = updateDevTools(current, (devTools) => ({
+    ...devTools,
+    emitted: devTools.emitted + devToolsEvents.length,
+  }));
+  return commands.length === 0 ? { model: next } : { model: next, commands };
+};
+
+/** Fill the live reads with a simulated standing, so the panels have a shape. */
+const seedDevToolsSnapshot = (model: Model): UpdateReturn => {
+  const account = openAccount(model);
+  if (account === null) return { model };
+  const at = simulatedAt(nextEventSeq(account));
+  const status = Option.match(account.billing, {
+    onNone: () => "active" as const,
+    onSome: (billing) => billing.status,
+  });
+  const holds = devToolsHolds(account.id, model.catalog, at);
+  const tier = Option.match(account.billing, {
+    onNone: () => undefined,
+    onSome: (billing) => billing.tier,
+  });
+  const billing = devToolsBilling(account.id, model.catalog, status, at, tier);
+  const entitlements = devToolsEntitlements(account.id, model.catalog, status, at, holds, tier);
+  const holdsState = HoldsStateSchema.make({
+    requestId: Option.getOrElse(
+      Option.map(account.holds, (current) => current.requestId),
+      () => 0,
+    ),
+    account: account.id,
+    state: "Loaded",
+    asOf: Option.some(at),
+    holds,
+    error: Option.none(),
+  });
+  return updateAccount(model, (value) =>
+    modifyFields(value, {
+      billing: () => Option.some(billing),
+      entitlements: () => Option.some(entitlements),
+      holds: () => Option.some(holdsState),
+      error: () => Option.none(),
+    }),
+  );
+};
+
+const newestEventSeq = (account: AccountState): number =>
+  Array.reduce(account.events, 0, (max, event) => Math.max(max, event.seq));
+
+/**
+ * Open an account by id and seed it, so an empty deployment still has a page
+ * to exercise. The route is the real navigation state, so the live reads
+ * start exactly as they would for a clicked row.
+ */
+const openDevToolsAccount = (model: Model): UpdateReturn => {
+  const requested = model.devTools.accountId.trim();
+  const account = AccountId.make(requested === "" ? "acct_dev" : requested);
+  const navigated = navigate(
+    model,
+    accountRoute(account, model.accounts.filter, afterOf(model.route)),
+    "push",
+  );
+  const seeded = seedDevToolsSnapshot(navigated.model);
+  return navigated.commands === undefined
+    ? { model: seeded.model }
+    : { model: seeded.model, commands: navigated.commands };
+};
+
+/** The console's update. Every write is a `BillingAdmin` command with a
  * command id; every read snapshot is applied only while its account or
  * request is open; and every navigation is a route the URL can reproduce.
  */
@@ -1053,27 +1239,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         return modifyFields(account, { entitlements: () => state });
       }),
 
-    ReceivedEvent: ({ seq, at, commandId, tag, body, event }) => {
-      if (Option.isNone(model.account)) return { model };
-      const account = model.account.value;
-      if (Array.some(account.events, (row) => row.seq === seq)) return { model };
-      const nextAccount = modifyFields(account, {
-        events: () => [{ seq, at, commandId, tag, body }, ...account.events].slice(0, 200),
-        // The raw rows above are a display window; the timeline is the whole
-        // feed since the account opened, and its own `lastSeq` makes a
-        // redelivery a no-op rather than a second entry.
-        timeline: () => appendTimeline(account.timeline, { event, envelope: { seq, at } }),
-        cursor: () => Option.some(seq),
-      });
-      const nextModel = modifyFields(model, { account: () => Option.some(nextAccount) });
-      const settled = Array.some(account.pending, (candidate) => candidate.commandId === commandId)
-        ? accepted(nextModel, commandId)
-        : nextModel;
-      // A hold event is the one thing the allowance view's `reserved` count
-      // cannot date, so the panel re-reads the entity it folded away.
-      const opened = openAccount(settled);
-      return holdEvent(tag) && opened !== null ? startHolds(settled, opened) : { model: settled };
-    },
+    ReceivedEvent: (event) => recordEvent(model, event),
 
     CaughtUpEvents: ({ cursor }) =>
       updateAccount(model, (account) =>
@@ -1218,4 +1384,110 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     DismissedVerify: () =>
       updateAccount(model, (account) => modifyFields(account, { verify: () => Option.none() })),
+
+    ToggledDevTools: ({ isOpen }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, isOpen })) }
+        : { model },
+
+    SelectedDevToolsTab: ({ tab }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, tab })) }
+        : { model },
+
+    UpdatedDevToolsAccountId: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, accountId: value })) }
+        : { model },
+
+    ClickedOpenDevToolsAccount: () =>
+      model.devTools.isEnabled ? openDevToolsAccount(model) : { model },
+
+    UpdatedDevToolsEventTag: ({ value }) => {
+      if (!model.devTools.isEnabled) return { model };
+      const event = devToolsEventOf(value);
+      return {
+        model: updateDevTools(model, (devTools) => ({
+          ...devTools,
+          eventTag: value,
+          ...(Option.isSome(event) ? { eventBody: event.value.body } : {}),
+        })),
+      };
+    },
+
+    UpdatedDevToolsEventBody: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, eventBody: value })) }
+        : { model },
+
+    UpdatedDevToolsCommandId: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, commandId: value })) }
+        : { model },
+
+    ClickedEmitDevToolsEvent: () => {
+      if (!model.devTools.isEnabled) return { model };
+      const event = devToolsEventOf(model.devTools.eventTag);
+      return Option.isNone(event) ? { model } : emitDevToolsEvent(model, event.value);
+    },
+
+    ClickedEmitAllDevToolsEvents: () =>
+      model.devTools.isEnabled ? emitAllDevToolsEvents(model) : { model },
+
+    ClickedSeedDevToolsSnapshot: () =>
+      model.devTools.isEnabled ? seedDevToolsSnapshot(model) : { model },
+
+    ClickedCatchUpDevToolsFeed: () => {
+      if (!model.devTools.isEnabled) return { model };
+      return updateAccount(model, (account) =>
+        modifyFields(account, {
+          feed: () => "Live",
+          cursor: () =>
+            Option.some(
+              Math.max(
+                Option.getOrElse(account.cursor, () => 0),
+                newestEventSeq(account),
+              ),
+            ),
+        }),
+      );
+    },
+
+    ClickedFailDevToolsFeed: () =>
+      model.devTools.isEnabled
+        ? updateAccount(model, (account) =>
+            modifyFields(account, {
+              feed: () => "Failed",
+              error: () => Option.some("Simulated feed failure."),
+            }),
+          )
+        : { model },
+
+    ClickedFailDevToolsReads: () =>
+      model.devTools.isEnabled
+        ? updateAccount(model, (account) =>
+            modifyFields(account, { error: () => Option.some("Simulated read failure.") }),
+          )
+        : { model },
+
+    ClickedResetDevTools: () => {
+      if (!model.devTools.isEnabled) return { model };
+      const reset = updateDevTools(model, (devTools) => ({ ...devTools, emitted: 0 }));
+      return updateAccount(reset, (account) =>
+        modifyFields(account, {
+          events: () => [],
+          timeline: () => initialTimeline,
+          cursor: () => Option.none(),
+          feed: () => "CatchingUp",
+          error: () => Option.none(),
+          draft: () => Option.none(),
+          change: () => Option.none(),
+          pending: () => [],
+          notice: () => Option.none(),
+          holds: () => Option.none(),
+          preview: () => Option.none(),
+          verify: () => Option.none(),
+        }),
+      );
+    },
   });

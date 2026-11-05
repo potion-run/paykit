@@ -14,6 +14,7 @@ import { UsageTimeline, initialTimeline } from "@potion.run/paykit/Timeline";
 import { VerifyMismatch } from "@potion.run/paykit/Verify";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { DevToolsState } from "./DevTools.ts";
 import { AccountFilter, ConsoleRoute } from "./Route.ts";
 
 export { AccountFilter } from "./Route.ts";
@@ -233,6 +234,8 @@ export const Model = Schema.Struct({
   queryIds: Schema.Struct({ sent: Schema.Int }),
   catalog: Schema.Option(Catalog),
   catalogError: Schema.Option(Schema.String),
+  /** The local event lab. Disabled unless the host opts in through `Flags`. */
+  devTools: DevToolsState,
   /** What the address bar names. The Model follows the URL, not the reverse. */
   route: ConsoleRoute,
   accounts: AccountsState,

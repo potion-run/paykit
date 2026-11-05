@@ -7,7 +7,7 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import { BillingLayers } from "./Billing.ts";
-import { exampleActor, sessionCookie } from "./Session.ts";
+import { exampleActor, sessionCookies } from "./Session.ts";
 
 /**
  * The admin surfaces, served from one model:
@@ -32,13 +32,14 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
         const request = yield* HttpServerRequest;
         const url = new URL(request.url, "http://localhost");
         if (url.pathname === "/session") {
-          // The browser sends this cookie on the WebSocket handshake too, which
-          // is why the console can use pushed live reads instead of polling.
-          return HttpServerResponse.empty({
-            headers: {
-              "set-cookie": sessionCookie(exampleActor, { secure: url.protocol === "https:" }),
-            },
-          });
+          // The browser sends these cookies on the WebSocket handshake too,
+          // which is why the console can use pushed live reads instead of
+          // polling. Each cookie needs its own `Set-Cookie` header: a combined
+          // header leaves the browser with only the first pair.
+          return yield* HttpServerResponse.setCookies(
+            HttpServerResponse.empty(),
+            sessionCookies(exampleActor, { secure: url.protocol === "https:" }),
+          ).pipe(Effect.orDie);
         }
         if (url.pathname.startsWith("/console")) return yield* console;
         if (url.pathname.startsWith("/admin")) return yield* admin.fetch;

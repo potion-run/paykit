@@ -64,7 +64,24 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 ## UI rules
 
 - Compose `@foldkit/ui` only for behavior the repo already ships. This package
-  does not reimplement focus traps, popovers or menus.
+  does not reimplement focus traps, popovers or menus. Button, Input, Select
+  and Textarea are the components the console composes; a new control needs a
+  component that exists, not a local copy of its ARIA and keyboard behavior.
+- The local `src/ui` kit is the shadcn layer, ported from the yaka component
+  kit. Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty
+  and Tabs live there. New UI imports the kit; it does not hand-roll a second
+  button, field or table.
+- Style from the shadcn tokens (`--pk-background`, `--pk-foreground`,
+  `--pk-card`, `--pk-primary`, `--pk-muted-foreground`, `--pk-border`,
+  `--pk-ring`, and the semantic status tokens). Do not add raw colors to a
+  component. The dark set is selected by `prefers-color-scheme`.
+- The local event lab is a development surface. It is enabled only through
+  `Flags.devTools`, every dev-tools Message is inert while that flag is false,
+  and it emits simulated events through the same `recordEvent` path the live
+  feed uses. It never calls the Api and never becomes a second write path.
+  It is a floating trigger and a tabbed panel in the
+  [rat-stack](https://github.com/joelhooks/rat-stack/tree/main) shape, not a
+  section in the console layout, so the operator's page stays the page.
 - State is a discriminated union, not booleans. A pending command has a status
   (`Sending`, `Unknown`, `Accepted`, `Rejected`, `Denied`), an intent and a
   reason.

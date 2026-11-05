@@ -28,6 +28,8 @@
   },
   "devDependencies": {
     "@alchemy.run/test": "catalog:",
+    "@foldkit/devtools": "catalog:",
+    "@foldkit/ui": "catalog:",
     "@foldkit/vite-plugin": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",

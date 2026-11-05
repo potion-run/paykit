@@ -3,6 +3,7 @@ import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
 import { Admin, Session } from "@potion.run/paykit/Auth/Guards";
 import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
 import * as Effect from "effect/Effect";
+import * as Cookies from "effect/http/Cookies";
 import * as Headers from "effect/http/Headers";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,18 +45,25 @@ export const actorFromCookie = (headers: Headers.Input): ActorValue | null => {
 };
 
 /**
- * The `Set-Cookie` header `/session` writes. `Secure` is only added over
- * HTTPS, so `alchemy dev` on `http://localhost` can still set it.
+ * The cookies `/session` writes: one `Set-Cookie` per cookie, because a browser
+ * stores only the first name=value pair in a combined header. `Secure` is only
+ * added over HTTPS, so `alchemy dev` on `http://localhost` can still set them.
  */
-export const sessionCookie = (actor: ActorValue, options: { secure: boolean }): string =>
-  [
-    `${ACTOR_COOKIE}=${encodeURIComponent(actor.id)}`,
-    `${KIND_COOKIE}=${actor.kind}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    ...(options.secure ? ["Secure"] : []),
-  ].join("; ");
+export const sessionCookies = (
+  actor: ActorValue,
+  options: { secure: boolean },
+): ReadonlyArray<readonly [string, string, Cookies.Cookie["options"]]> => {
+  const cookieOptions: Cookies.Cookie["options"] = {
+    httpOnly: true,
+    path: "/",
+    sameSite: "lax",
+    ...(options.secure ? { secure: true } : {}),
+  };
+  return [
+    [ACTOR_COOKIE, actor.id, cookieOptions],
+    [KIND_COOKIE, actor.kind, cookieOptions],
+  ];
+};
 
 /**
  * The actor the example mints for `/session`. A production host replaces this

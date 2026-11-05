@@ -3,6 +3,7 @@ import { Console } from "@potion.run/paykit-admin";
 import { AdminChangeTierClient, AdminReadsClient } from "@potion.run/paykit/Admin";
 import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
 import "@potion.run/paykit-admin/styles.css";
+import "./global.css";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
@@ -44,12 +45,25 @@ Runtime.run(
     ...Console,
     resources,
     container: document.getElementById("root"),
+    // The overlay is mounted by `@foldkit/vite-plugin` in development. Passing
+    // `Message` also lets the DevTools MCP server dispatch a Message at the
+    // console, which is how an agent can drive a feed the local server lacks.
+    devTools: {
+      show: "Development",
+      position: "BottomLeft",
+      mode: { development: "TimeTravel", production: "Inspect" },
+      banner: "Paykit admin",
+      Message: Console.Message,
+    },
   }),
   {
     flags: Effect.succeed(
       Console.Flags.make({
         session: crypto.randomUUID(),
         actor: { id: "ops_1", kind: "admin" },
+        // The in-app Event lab is a development surface. A deployed console
+        // neither shows it nor accepts its Messages.
+        devTools: import.meta.env.DEV,
       }),
     ),
   },
