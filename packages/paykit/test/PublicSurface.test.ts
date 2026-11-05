@@ -36,9 +36,17 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.Paykit.feature).toBe(Paykit.feature);
   expect(Paykit.Paykit.Model).toBe(Paykit.Model);
   expect(typeof Paykit.Paykit.providers).toBe("function");
+  expect(typeof Paykit.autoTopUp).toBe("function");
+  expect(Paykit.Paykit.autoTopUp).toBe(Paykit.autoTopUp);
+  expect(typeof Paykit.crossedThreshold).toBe("function");
+  expect(Paykit.AutoTopUp).toBeDefined();
+  expect(Paykit.AutoTopUpInvalid).toBeDefined();
   expect(typeof Paykit.reconcileBillingStack).toBe("function");
   expect(typeof Paykit.allowsOne).toBe("function");
   expect(Paykit.ProrationMismatch).toBeDefined();
+  // a top-up is a policy over a crossing, and its invoice is on the event
+  expect(typeof Paykit.topUpCommandId).toBe("function");
+  expect(Paykit.CreditsPurchased).toBeDefined();
   expect(typeof Paykit.Paykit.CatalogGuard).toBe("object");
   // preview, verify and list are runtime bindings
   expect(typeof Paykit.Preview).toBe("function");

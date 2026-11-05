@@ -250,6 +250,15 @@ export {
   billableLines,
   periodUsageCommandId,
 } from "./Subscription/PeriodCloseUsage.policy.ts";
+export {
+  AutoTopUp,
+  AutoTopUpConfig,
+  AutoTopUpInvalid,
+  autoTopUp,
+  crossedThreshold,
+  topUpCommandId,
+} from "./Subscription/AutoTopUp.policy.ts";
+export type { AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export {
   ScheduleTierChange,
@@ -316,6 +325,7 @@ export {
 export { SettleHold, UsageSettled } from "./Subscription/SettleHold.command.ts";
 export { ReleaseHold, UsageReleased } from "./Subscription/ReleaseHold.command.ts";
 export { PaymentRecorded, RecordPayment } from "./Subscription/RecordPayment.command.ts";
+export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
 export {
   PaymentFailed,
   RecordPaymentFailure,
