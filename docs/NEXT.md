@@ -16,14 +16,15 @@ grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a s
 postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do: `check` from local state, `track`,
 `hold`/`settle`/`release` as addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
-spendable before a plan exists, postpaid usage priced per unit with a money cap, an outbound edge
+spendable before a plan exists, auto top-up (a spend that crosses a threshold buys a pack and opens
+the invoice that prices it), postpaid usage priced per unit with a money cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
 Stripe and Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
 `PolarPrices` create the base prices and products its tiers are sold under, plus a meter and a
 metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.
 
-The six records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
+The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
 (credits are a unit of account, one pool per account), [0003](./adr/0003-the-deploy-provisions-the-vendor.md)
 (identity in the vendor's own field, replace on change, never delete), [0004](./adr/0004-a-hold-is-one-call-and-an-id.md)
@@ -31,7 +32,8 @@ catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-t
 (a cap is a count, not money), [0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md)
 (postpaid usage is a unit price in the catalog, and a money cap is a separate ceiling), and
 [0007](./adr/0007-outbound-events-are-a-policy-over-a-port.md) (outbound events are a policy over a
-delivery port; paykit signs and keys, the app sends).
+delivery port; paykit signs and keys, the app sends). Newer decisions are named beside the slice
+they shaped.
 
 ## The queue
 
@@ -61,9 +63,8 @@ standing no command could leave until the period reset.
   `pendingTier`, the close applies it before the reset, and `WithdrawTierChange` takes it back.
   `actionsFor` offers the schedule for tiers `ChangeTier` refuses and the withdrawal only while one is
   pending; `Preview` decides both; `BillingState` carries `pendingTier` so a page can say "on pro,
-  moving to small at the period end"; the console sends both. What is left is a `ChangeTier`-style
-  quote screen for scheduling — the command needs none (a scheduled change carries no proration), so
-  the console builds it from the catalog it already holds.
+  moving to small at the period end"; the console sends both, building the scheduled payload from the
+  catalog it already holds because a scheduled change carries no proration and so needs no quote.
 - **Console screens**: `paykit-admin` now shows balances, the period's priced usage, "why is this
   account on X" (`Preview`), open holds with their deadlines, verification against the deploy and a
   manual grant. The one left is **refund**, and it is not a screen: paykit has no refund command, so
@@ -76,16 +77,22 @@ standing no command could leave until the period reset.
 
 ### 2. Worth building next
 
-Three things the model is one step away from, and why they belong in a library rather than in a
+**Auto top-up** is done ([ADR
+0013](./adr/0013-an-auto-top-up-is-a-purchase-on-a-crossing.md)):
+`Paykit.autoTopUp({ catalog, threshold, pack })` is a policy over `UsageRecorded` and
+`CreditsConsumed` that buys a one-off pack when a spend takes the pool from above the threshold to at
+or below it. The balance before the spend is on the event, so a second spend below the line is not a
+second crossing; the pack's price is opened as a provider invoice keyed by the crossing, and the
+credits are recorded with that invoice id. The pack is the cooldown; a provider without `invoice` is
+`ProviderCapabilityMissing`. What is left is a per-tier threshold (`Tier.topUp`, carried on the
+standing), a time cooldown as a scheduled command, and an off-session charge capability for a saved
+payment method.
+
+Two things the model is one step away from, and why they belong in a library rather than in a
 hosted service. A console is not one of them: what a library owes is the read model a console renders,
 and `Preview`, `List`, `BillingRead` and `AccountEvents` are that. The screens themselves are the
 example's job.
 
-- **Auto top-up.** When a pool falls below a threshold, buy a pack — a policy over `CreditsConsumed`
-  sending `PurchaseCredits`, the same shape `Dunning` and `PeriodRollover` already have. The decisions
-  are the threshold, the pack, a cooldown, and one command per crossing rather than one per event. It
-  turns "the hold failed" into "the account refilled", which is the difference between billing users
-  notice and billing they do not.
 - **A usage timeline projection.** Not a log database: `AccountEvents` is already the log, so a
   timeline is a projection over it — per feature, per period, with the holds opened and settled and the
   money each recorded. It is the screen people open when a bill looks wrong, and it is the half of
@@ -156,6 +163,10 @@ continues.
 - **A pack outlives the period.** Credits a one-off pack bought never expire, even on a plan whose
   own credits do: `prepaidCredits` is protected, spent only after the plan's credits, and a close
   returns only the difference.
+- **A top-up is a crossing, not a level.** The balance before the spend is on the event
+  (`creditsAfter + cost`, `balanceAfter + amount`), so one crossing buys one pack and a spend that is
+  already below the line does not buy a second. The invoice id is on the event that records the
+  purchase.
 - **A missing capability is a tag.** `ProviderCapabilityMissing`, never a silent no-op.
 - **Nothing is deleted that a bill references.** Prices and products are retained; the event log is
   the record.

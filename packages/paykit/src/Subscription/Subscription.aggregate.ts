@@ -1014,6 +1014,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           amount: command.amount,
           ...(command.price === undefined ? {} : { price: command.price }),
           ...(command.rates === undefined ? {} : { rates: command.rates }),
+          ...(command.invoiceId === undefined ? {} : { invoiceId: command.invoiceId }),
           balanceAfter: creditsOf(state) + command.amount,
           prepaidAfter: prepaidCreditsOf(state) + command.amount,
         }),

@@ -359,6 +359,13 @@ first issue will be "how do I list past-due".
   that crashes between hold and settle does not keep capacity forever. The release is the same
   `UsageReleased` a caller's `Release` records, so a late settle is still `HoldSettled` and a late
   release is a replay.
+- `AutoTopUp` — a policy on `UsageRecorded` and `CreditsConsumed`. A spend that takes the credit pool
+  from above the deployment's threshold to at or below it buys the named one-off pack: the policy
+  opens an invoice for the pack's price keyed by the crossing and records the purchase with that
+  invoice id. The balance before the spend is on the event, so a spend while the pool is already
+  below the line is not a second crossing; the pack is the cooldown. A deployment that provides no
+  `autoTopUp({ ... })` runs nothing, and a provider without `invoice` is
+  `ProviderCapabilityMissing` rather than a free pack.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,
@@ -650,7 +657,7 @@ potion/                          # pnpm workspace root (private)
           AccountEvents.stream.ts  BillingRead.projection.ts
           AccountEventsProjection.ts
           PeriodRollover.policy.ts  Dunning.policy.ts  HoldSweep.policy.ts
-          PeriodCloseUsage.policy.ts
+          PeriodCloseUsage.policy.ts  AutoTopUp.policy.ts
         BillingApi.api.ts  BillingAdminApi.api.ts
         BillingReadStore.ts
         Payments.ts  PaymentsMemory.ts  PaymentsManual.ts

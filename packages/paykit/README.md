@@ -198,6 +198,14 @@ A `kind: "one_off"` tier is a prepaid pack: it grants credits, has no allowances
 `payment_succeeded` grants the credits. There is still one pool, but the part a pack bought is
 protected: a period close expires only the plan's credits, and spending drains the plan's first.
 
+A deployment can also refill the pool itself. `autoTopUp({ catalog, threshold, pack })` provides a
+policy that buys the named `kind: "one_off"` pack when a spend takes the pool from above the
+threshold to at or below it: it asks the account's provider for the pack's price as an invoice
+keyed by the crossing, and records the purchase with that invoice id. Only a spend crosses — a
+grant, an expiry or a hold reservation does not — and one crossing buys one pack, so the next
+refill costs at least the pack's credits in spending. A deployment that never provides the layer
+pays nothing for the policy.
+
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no
 count to report, and `resetsAt` is still there because the period still exists. `Track`, `Hold`,
