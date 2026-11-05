@@ -13,9 +13,14 @@ import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 
-/** A tier change would leave usage above the new tier's included amount. */
+/**
+ * A tier change would leave a blocking allowance below what is already used, so
+ * every later request would be refused. A billed or allowed allowance is not
+ * refused: being past `included` is the state those overages exist for.
+ */
 export class DowngradeBelowUsage extends Domain.Rejection("DowngradeBelowUsage", {
   feature: Schema.String,
+  /** The new tier's included amount, which the usage would exceed. */
   included: Schema.Int,
   used: Schema.Int,
   /**

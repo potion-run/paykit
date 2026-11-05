@@ -351,11 +351,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         const used = usedOf(current, feature);
         const reserved = reservedOf(current, feature);
-        // An unlimited allowance is never below any usage, so only a counted
-        // one can be a downgrade below what the account already owes. Open
-        // holds are owed too: moving below them would leave a blocking
-        // allowance oversubscribed the moment the change commits.
-        if (allowance.included !== "unlimited" && used + reserved > allowance.included) {
+        // Only a blocking allowance can be oversubscribed: below its count,
+        // every later request is refused and the read model reports a negative
+        // `remaining` for a feature that stops at zero. A billed or allowed
+        // allowance is in the ordinary state when `used > included` — that is
+        // what overage means — so the change is allowed, and it is how a
+        // mid-period price change reaches the standing. Open holds are owed
+        // too: moving below them oversubscribes the allowance just the same.
+        if (
+          allowance.overage === "block" &&
+          allowance.included !== "unlimited" &&
+          used + reserved > allowance.included
+        ) {
           return new DowngradeBelowUsage({
             feature,
             included: allowance.included,

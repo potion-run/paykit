@@ -44,12 +44,12 @@ the push is a policy after the close. A mid-period price change is split per ven
 ([ADR 0008](./adr/0008-a-report-names-the-price-each-unit-was-recorded-at.md)): `UsageRecorded` carries
 the price and its billable units, and the report carries one line per price.
 
-What is left of that item is the rule that makes the split observable. `ChangeTier` refuses to move
-below what the account already used, and it refuses that for a billed allowance as well as a
-blocking one — but `used > included` is what "billed" means, so in practice a price change is only
-possible while the period has billed nothing yet. Relaxing `DowngradeBelowUsage` for a billed
-allowance, and deciding what proration goes with it, is the next slice; the report no longer has to
-change for it.
+The rule that made the split observable landed too
+([ADR 0009](./adr/0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md)): only a blocking
+allowance refuses a move below its usage, because only a blocking one can be oversubscribed. A billed
+or allowed feature may change its unit price mid-period, and the close reports the units at both
+prices. What is still open there is a money ceiling already passed by `billed` — a change to a lower
+`moneyCap` is not refused — which is ADR 0005's question, not this one.
 
 ### 1. The remaining surfaces
 
