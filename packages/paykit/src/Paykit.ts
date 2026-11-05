@@ -27,6 +27,7 @@ import { Subscribe } from "./Subscribe.ts";
 import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
 import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
+import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
 import { Track } from "./Track.ts";
 import { Verify, verifyState } from "./Verify.ts";
 import { Webhook, completeCheckout, handleWebhook } from "./Webhooks.ts";
@@ -95,6 +96,9 @@ export const Paykit = {
   Portal,
   List,
   Preview,
+  timelineOf,
+  appendTimeline,
+  initialTimeline,
   ChargeProration,
   Verify,
   verifyState,

@@ -324,6 +324,7 @@ keeping the old one.
 | View | `Entitlements` | per-feature `{ included, used, reserved, remaining, carried, allowed, resetsAt, overage, unitPrice?, moneyCap?, billed? }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes, `carried` being how much of `remaining` rolled over, `billed` the period's money for a postpaid feature |
 | View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits, `dunningAttempts`, and the last tier change's `proration` with the invoice it was billed on |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
+| Fold | `Timeline` | `timelineOf` / `appendTimeline` over the stream: one entry per billing fact, plus a per-period, per-feature rollup |
 | Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |
 
 Both views are guarded by `Session` and scoped by `validate`: an account reads only itself, an
@@ -333,6 +334,11 @@ first issue will be "how do I list past-due".
 
 `Paykit.List` is a binding rather than an Api read because `Domain.Api` serves keyed reads.
 `after` is a cursor, not an offset, so an account created or deleted between pages shifts no row.
+
+The usage timeline is a fold, not a table: `Timeline.ts` turns the account's stream entries into
+ordered entries (usage, holds, credits, payments, tiers, periods) and a rollup per period and
+feature. A consumer that holds the events derives it; nothing stores it, so there is no migration,
+no second log, and no read model that can disagree with the stream.
 
 ### Processes
 
@@ -646,6 +652,7 @@ potion/                          # pnpm workspace root (private)
         Check.ts                 # in-process, read-model and HTTP read paths
         Track.ts  Hold.ts        # Hold / Settle / Release
         Subscribe.ts  Portal.ts  List.ts  Preview.ts  Verify.ts  Webhooks.ts
+        Timeline.ts
         Proration.ts  Doctor.ts
         Auth/
           Actor.ts  Guards.ts  FromHeaders.ts

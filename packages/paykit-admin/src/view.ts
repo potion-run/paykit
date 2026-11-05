@@ -4,6 +4,7 @@ import type { Catalog } from "@potion.run/paykit/Catalog";
 import type { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import type { TimelineEntry } from "@potion.run/paykit/Timeline";
 import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -929,6 +930,143 @@ const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
     ],
   );
 
+const timelineDetail = (entry: TimelineEntry, currency: string | undefined): string => {
+  const parts: string[] = [];
+  if (entry.feature !== undefined) parts.push(entry.feature);
+  if (entry.tier !== undefined) parts.push(`tier ${entry.tier}`);
+  if (entry.holdId !== undefined) parts.push(`hold ${entry.holdId}`);
+  if (entry.amount !== undefined) parts.push(`${entry.amount} units`);
+  if (entry.credits !== undefined) parts.push(`${entry.credits} credits`);
+  if (entry.charge !== undefined) parts.push(formatMoney(entry.charge, entry.currency ?? currency));
+  if (entry.creditsAfter !== undefined) parts.push(`${entry.creditsAfter} left`);
+  if (entry.invoiceId !== undefined) parts.push(`invoice ${entry.invoiceId}`);
+  if (entry.reason !== undefined) parts.push(entry.reason);
+  return parts.join(" · ");
+};
+
+/**
+ * The bill's story: one period per boundary, rolled up per feature, then the
+ * facts in reverse order. The raw event feed below stays the complete record;
+ * this is the slice an operator opens when a number looks wrong.
+ */
+const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
+  const timeline = account.timeline;
+  const currency = Option.match(account.entitlements, {
+    onNone: () => undefined,
+    onSome: (value) => value.currency,
+  });
+  const recent = timeline.entries.toReversed().slice(0, 50);
+  return h.section(
+    [
+      h.Class("pk-panel pk-timeline"),
+      h.DataAttribute("paykit-timeline", String(timeline.entries.length)),
+    ],
+    [
+      h.h2([], ["Timeline"]),
+      ...(timeline.periods.length === 0
+        ? []
+        : [
+            h.div(
+              [h.Class("pk-timeline-periods")],
+              timeline.periods.toReversed().map((period) =>
+                h.keyed("div")(
+                  period.start.epochMilliseconds,
+                  [h.Class("pk-timeline-period")],
+                  [
+                    h.h3([], [`${formatDateTime(period.start)} → ${formatDateTime(period.end)}`]),
+                    h.p(
+                      [h.Class("pk-muted")],
+                      [
+                        `+${period.credits.granted} granted · +${period.credits.purchased} purchased · −${period.credits.spent} spent · −${period.credits.expired} expired${
+                          period.credits.balanceAfter === undefined
+                            ? ""
+                            : ` · ${period.credits.balanceAfter} left`
+                        }`,
+                      ],
+                    ),
+                    Object.keys(period.features).length === 0
+                      ? h.empty
+                      : h.div(
+                          [h.Class("pk-table-wrap")],
+                          [
+                            h.table(
+                              [h.Class("pk-table")],
+                              [
+                                h.thead(
+                                  [],
+                                  [
+                                    h.tr(
+                                      [],
+                                      [
+                                        h.th([], ["Feature"]),
+                                        h.th([], ["Units"]),
+                                        h.th([], ["Credits"]),
+                                        h.th([], ["Charge"]),
+                                        h.th([], ["Holds"]),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                h.tbody(
+                                  [],
+                                  Object.entries(period.features).map(([feature, value]) =>
+                                    h.keyed("tr")(
+                                      feature,
+                                      [],
+                                      [
+                                        h.td([], [feature]),
+                                        h.td([], [String(value.units)]),
+                                        h.td([], [String(value.credits)]),
+                                        h.td([], [formatMoney(value.charge, currency)]),
+                                        h.td(
+                                          [],
+                                          [
+                                            `${value.held} held · ${value.settled} settled · ${value.released} released`,
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ]),
+      recent.length === 0
+        ? h.p(
+            [h.Class("pk-muted")],
+            [
+              "No billing facts yet. Usage, holds and credit moves appear here as the feed delivers them.",
+            ],
+          )
+        : h.ol(
+            [h.Class("pk-events pk-timeline-events")],
+            recent.map((entry) =>
+              h.keyed("li")(
+                entry.seq,
+                [h.Class("pk-event")],
+                [
+                  h.div(
+                    [h.Class("pk-event-head")],
+                    [
+                      h.code([], [entry.kind]),
+                      h.span([h.Class("pk-muted")], [formatDateTime(entry.at)]),
+                    ],
+                  ),
+                  h.div([h.Class("pk-muted")], [timelineDetail(entry, currency)]),
+                ],
+              ),
+            ),
+          ),
+    ],
+  );
+};
+
 const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
   if (Option.isNone(model.account)) {
     return h.section(
@@ -987,6 +1125,7 @@ const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
         onNone: () => h.empty,
         onSome: (entitlements) => usageView(entitlements, h),
       }),
+      timelineView(account, h),
       holdsView(account, h),
       previewView(model, account, h),
       verifyView(account, h),

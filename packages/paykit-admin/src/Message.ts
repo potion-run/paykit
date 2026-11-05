@@ -3,6 +3,7 @@ import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/pay
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountEvent } from "@potion.run/paykit/Timeline";
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
@@ -36,6 +37,7 @@ export const Message = defineMessageUnion({
     commandId: Schema.String,
     tag: Schema.String,
     body: Schema.String,
+    event: AccountEvent,
   },
   CaughtUpEvents: { cursor: Schema.Int },
   FailedEvents: { reason: Schema.String },

@@ -1,4 +1,5 @@
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
+import { initialTimeline } from "@potion.run/paykit/Timeline";
 import * as Option from "effect/Option";
 import { Command } from "foldkit";
 import type { Runtime } from "foldkit";
@@ -72,6 +73,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
           ...openedAccount(route.account),
           billing: Option.fromNullishOr(snapshot?.billing),
           entitlements: Option.fromNullishOr(snapshot?.entitlements),
+          timeline: snapshot?.timeline ?? initialTimeline,
           cursor: Option.fromNullishOr(snapshot?.cursor),
           holds:
             holdsRequest === null

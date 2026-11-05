@@ -179,6 +179,10 @@ around it.
   means exactly "retry with the same id", so a double click cannot double-credit.
 - A view folds one key's events. Cross-account lists and metrics come from the `BillingRead`
   projection through `Paykit.List`, never from a view. `after` is a cursor, not an offset.
+- A usage timeline is a fold over `AccountEvents`, never a second log. `timelineOf` /
+  `appendTimeline` in `Timeline.ts` turn the stream entries into ordered entries and a per-period,
+  per-feature rollup; a consumer that holds the events derives it, `lastSeq` makes a redelivery a
+  no-op, and nothing in `decide` or `check` reads it.
 - An admin action is a command, not a state write. No back doors, no direct row edits.
 - `@potion.run/paykit/Surfaces` is the only place MCP and CLI live, and it derives both from
   the two Apis: `DomainAi.toMcp`, `DomainAi.toToolkit`, `DomainCli.toCli`. Never hand-write a

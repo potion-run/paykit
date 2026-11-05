@@ -3,19 +3,27 @@ import { Catalog } from "@potion.run/paykit/Catalog";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import { UsageTimeline } from "@potion.run/paykit/Timeline";
 import * as Schema from "effect/Schema";
 import type { Flags } from "./Flags.ts";
 
 /**
- * One account's first-paint state, as the host read it. The two views are the
- * same schemas the live reads return, so a snapshot is the first frame of the
- * watch rather than a second shape to keep in step.
+ * One account's first-paint state, as the host read it. The views and the
+ * timeline are the same schemas the live reads and the fold return, so a
+ * snapshot is the first frame of the watch rather than a second shape to keep
+ * in step.
  */
 export const AccountSnapshot = Schema.Struct({
   /** Which account this is the snapshot of. A route naming another account ignores it. */
   account: AccountId,
   billing: Schema.optionalKey(BillingStateView),
   entitlements: Schema.optionalKey(EntitlementsState),
+  /**
+   * The billing timeline folded to `cursor`. Absent, and the feed resumes at
+   * the cursor, the timeline has no history to stamp its first entries with;
+   * a host that seeds a cursor seeds this too.
+   */
+  timeline: Schema.optionalKey(UsageTimeline),
   /**
    * The last event sequence the snapshot includes. The feed resumes after it,
    * so a seeded account does not replay the history it already shows.

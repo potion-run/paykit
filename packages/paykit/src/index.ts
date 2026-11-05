@@ -159,6 +159,19 @@ export type { SubscribeInput, SubscribeResult } from "./Subscribe.ts";
 export { Portal } from "./Portal.ts";
 export type { PortalInput } from "./Portal.ts";
 export { List } from "./List.ts";
+export {
+  AccountEvent,
+  TimelineCredits,
+  TimelineEntry,
+  TimelineFeature,
+  TimelineKind,
+  TimelinePeriod,
+  UsageTimeline,
+  appendTimeline,
+  initialTimeline,
+  timelineOf,
+} from "./Timeline.ts";
+export type { TimelineInput } from "./Timeline.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
