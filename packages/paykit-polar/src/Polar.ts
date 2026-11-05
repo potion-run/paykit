@@ -7,6 +7,8 @@ import {
   type Price,
   type TierKind,
   type UnitPrice,
+  type UsageLine,
+  unitPriceKey,
 } from "@potion.run/paykit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -194,36 +196,36 @@ export const polarBindings = (
           reportUsage: ({
             account,
             periodEnd,
-            quantities,
+            lines,
             commandId,
           }: {
             account: string;
             periodStart: DateTime.Utc;
             periodEnd: DateTime.Utc;
-            quantities: Readonly<Record<string, number>>;
+            lines: ReadonlyArray<UsageLine>;
             commandId: string;
           }) =>
             Effect.forEach(
-              Object.entries(quantities),
-              ([feature, quantity]) => {
-                const eventName = where.meters?.[feature];
+              lines,
+              (line) => {
+                const eventName = where.meters?.[line.feature];
                 if (eventName === undefined) {
                   return Effect.fail(
                     new PaymentDeclined({
                       provider: "polar",
                       code: "meter_not_configured",
-                      message: `no Polar meter for ${feature}`,
+                      message: `no Polar meter for ${line.feature}`,
                     }),
                   );
                 }
                 return client.reportUsage!({
                   eventName,
                   externalCustomerId: account,
-                  quantity,
-                  // The period plus the account and feature, so two accounts
-                  // closing one period do not collide and one report can carry
-                  // every billable feature.
-                  externalId: `${commandId}:${account}:${feature}`,
+                  quantity: line.quantity,
+                  // The period plus the account, feature and price: two accounts
+                  // closing one period must not collide, and one period can
+                  // record a feature at two prices after a mid-period change.
+                  externalId: `${commandId}:${account}:${line.feature}:${unitPriceKey(line.unitPrice)}`,
                   timestamp: DateTime.formatIso(periodEnd),
                 }).pipe(
                   Effect.as({}),

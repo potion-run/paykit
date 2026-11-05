@@ -4,9 +4,22 @@ import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { UnitPrice } from "./Allowance.ts";
+import { UnitPrice } from "./Allowance.ts";
 import { TierKind, type Price } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
+
+/**
+ * One line of a usage report: the billable units a closed period recorded at
+ * one price. A period can have several lines for one feature, because a
+ * standing's unit price may change mid-period, and the vendor has to price each
+ * unit at the price it was recorded at.
+ */
+export const UsageLine = Schema.Struct({
+  feature: Schema.String,
+  unitPrice: UnitPrice,
+  quantity: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+});
+export type UsageLine = typeof UsageLine.Type;
 
 /** A provider did not implement the operation a binding asked for. */
 export class ProviderCapabilityMissing extends Schema.TaggedError<ProviderCapabilityMissing>()(
@@ -71,11 +84,8 @@ export const Payments = Domain.ExternalSystem("Payments", {
       /** The closed period the quantities belong to. */
       periodStart: Schema.DateTimeUtc,
       periodEnd: Schema.DateTimeUtc,
-      /** The billable units of each metered feature: the part past `included`. */
-      quantities: Schema.Record(
-        Schema.String,
-        Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
-      ),
+      /** The billable units, one line per price they were recorded at. */
+      lines: Schema.Array(UsageLine),
       /** Idempotency key: the closing period, so a redelivery is the same report. */
       commandId: Schema.String,
     },
@@ -108,8 +118,8 @@ export interface PaymentsService {
     readonly account: string;
     readonly periodStart: DateTime.Utc;
     readonly periodEnd: DateTime.Utc;
-    /** Billable units per feature. A zero quantity is not a usage report. */
-    readonly quantities: Readonly<Record<string, number>>;
+    /** The billable units, one line per price they were recorded at. */
+    readonly lines: ReadonlyArray<UsageLine>;
     readonly commandId: string;
   }) => Effect.Effect<{}, PaymentError>;
 }

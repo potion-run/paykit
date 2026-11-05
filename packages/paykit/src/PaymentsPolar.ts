@@ -10,6 +10,7 @@ import {
   type PaymentCapability,
   type PaymentError,
   type MoneyProvider,
+  type UsageLine,
 } from "./Payments.ts";
 import type { Price, TierKind } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
@@ -50,7 +51,7 @@ export interface PolarBindings {
     readonly account: string;
     readonly periodStart: DateTime.Utc;
     readonly periodEnd: DateTime.Utc;
-    readonly quantities: Readonly<Record<string, number>>;
+    readonly lines: ReadonlyArray<UsageLine>;
     readonly commandId: string;
   }) => Effect.Effect<{}, PaymentError>;
 }
@@ -140,7 +141,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
         account: string;
         periodStart: DateTime.Utc;
         periodEnd: DateTime.Utc;
-        quantities: Readonly<Record<string, number>>;
+        lines: ReadonlyArray<UsageLine>;
         commandId: string;
       }) =>
         props.bindings.reportUsage === undefined

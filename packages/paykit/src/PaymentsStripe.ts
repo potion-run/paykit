@@ -10,6 +10,7 @@ import {
   type PaymentCapability,
   type PaymentError,
   type MoneyProvider,
+  type UsageLine,
 } from "./Payments.ts";
 import type { Price, TierKind } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
@@ -56,7 +57,7 @@ export interface StripeBindings {
     readonly account: string;
     readonly periodStart: DateTime.Utc;
     readonly periodEnd: DateTime.Utc;
-    readonly quantities: Readonly<Record<string, number>>;
+    readonly lines: ReadonlyArray<UsageLine>;
     readonly commandId: string;
   }) => Effect.Effect<{}, PaymentError>;
 }
@@ -188,7 +189,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
         account: string;
         periodStart: DateTime.Utc;
         periodEnd: DateTime.Utc;
-        quantities: Readonly<Record<string, number>>;
+        lines: ReadonlyArray<UsageLine>;
         commandId: string;
       }) =>
         props.bindings.reportUsage === undefined

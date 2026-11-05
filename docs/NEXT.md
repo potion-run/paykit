@@ -40,8 +40,16 @@ Ordered by value per unit of work. Each is small enough to finish in one pass an
 The vendor meter landed in [ADR 0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) §2:
 the quantity pushed at close is the period's *billable* units (`used - included`), not `billed`
 money, because the vendor applies its own metered price. `decide` still never reads the provider;
-the push is a policy after the close. A mid-period price change still needs the report split per
-vendor price rather than one report at the standing's price.
+the push is a policy after the close. A mid-period price change is split per vendor price now
+([ADR 0008](./adr/0008-a-report-names-the-price-each-unit-was-recorded-at.md)): `UsageRecorded` carries
+the price and its billable units, and the report carries one line per price.
+
+What is left of that item is the rule that makes the split observable. `ChangeTier` refuses to move
+below what the account already used, and it refuses that for a billed allowance as well as a
+blocking one — but `used > included` is what "billed" means, so in practice a price change is only
+possible while the period has billed nothing yet. Relaxing `DowngradeBelowUsage` for a billed
+allowance, and deciding what proration goes with it, is the next slice; the report no longer has to
+change for it.
 
 ### 1. The remaining surfaces
 

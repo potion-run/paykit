@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AllowanceKind, Included, Overage, Resets, UnitPrice } from "../Allowance.ts";
+import { AllowanceKind, Included, Overage, Resets, UnitPrice, unitPriceKey } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
@@ -18,6 +18,18 @@ import {
   recordedCount,
   spendHeadroomOf,
 } from "./Subscription.state.ts";
+
+/**
+ * The units a period recorded at one price. Two entries mean the standing's unit
+ * price changed mid-period, and the close reports each one separately: the
+ * vendor prices what it is told, so telling it only the standing's price would
+ * reprice everything recorded before the change.
+ */
+export const PricedUnits = Schema.Struct({
+  unitPrice: UnitPrice,
+  quantity: Schema.Int,
+});
+export type PricedUnits = typeof PricedUnits.Type;
 
 /** What a tier grants, what has been used, and when it resets. */
 export const FeatureEntitlement = Schema.Struct({
@@ -70,6 +82,12 @@ export const FeatureEntitlement = Schema.Struct({
   moneyCap: Schema.optionalKey(Schema.Int),
   /** Money billed for this feature this period, in the standing's currency. */
   billed: Schema.optionalKey(Schema.Int),
+  /**
+   * The units this period recorded, keyed by the price they were recorded at.
+   * Absent for a feature with no unit price, and on a view written before the
+   * close began splitting its report.
+   */
+  priced: Schema.optionalKey(Schema.Record(Schema.String, PricedUnits)),
 });
 export type FeatureEntitlement = typeof FeatureEntitlement.Type;
 
@@ -92,6 +110,19 @@ export const EntitlementsState = Schema.Struct({
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
 export type EntitlementsState = typeof EntitlementsState.Type;
+
+/** One event's billable units added to the price it was recorded at. */
+const pricedAfter = (
+  current: Readonly<Record<string, PricedUnits>> | undefined,
+  unitPrice: UnitPrice,
+  units: number,
+): Record<string, PricedUnits> => {
+  const key = unitPriceKey(unitPrice);
+  return {
+    ...current,
+    [key]: { unitPrice, quantity: (current?.[key]?.quantity ?? 0) + units },
+  };
+};
 
 const epoch = DateTime.makeUnsafe(0);
 
@@ -246,6 +277,11 @@ export class Entitlements extends Domain.View("Entitlements", {
                 used: event.usedAfter,
                 remaining: event.remainingAfter,
                 ...(event.billedAfter === undefined ? {} : { billed: event.billedAfter }),
+                ...(event.unitPrice === undefined || event.billable === undefined
+                  ? {}
+                  : {
+                      priced: pricedAfter(feature.priced, event.unitPrice, event.billable),
+                    }),
                 allowed: allowsOne(
                   view.standing,
                   feature.overage,
@@ -432,10 +468,12 @@ export class Entitlements extends Domain.View("Entitlements", {
               // number to report.
               const recorded = recordedCount(event.remaining, feature);
               const spendable = recorded === undefined ? includedRemainingOf(value) : recorded;
+              const { priced: recordedPrices, ...carried } = value;
               return [
                 feature,
                 {
-                  ...value,
+                  ...carried,
+                  ...(kept && recordedPrices !== undefined ? { priced: recordedPrices } : {}),
                   used: kept ? value.used : 0,
                   reserved: kept ? value.reserved : 0,
                   remaining: spendable,
@@ -678,6 +716,7 @@ const featuresOf = (
       const used = keepUsage ? (previous[feature]?.used ?? 0) : 0;
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
       const billed = keepUsage ? (previous[feature]?.billed ?? 0) : 0;
+      const priced = keepUsage ? previous[feature]?.priced : undefined;
       const spendable = spendableOf(remaining, feature, allowance);
       return [
         feature,
@@ -701,6 +740,7 @@ const featuresOf = (
           ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
           ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
           ...(billed === 0 ? {} : { billed }),
+          ...(priced === undefined ? {} : { priced }),
           resets: allowance.resets,
           resetsAt: allowance.resets === "never" ? null : periodEnd,
         },

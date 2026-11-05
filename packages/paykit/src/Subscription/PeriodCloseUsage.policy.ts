@@ -2,28 +2,33 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  type UsageLine,
+  providerFor,
+} from "../Payments.ts";
 import { PeriodClosed } from "./ClosePeriod.command.ts";
 import { Entitlements, type EntitlementsState } from "./Entitlements.view.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 
 /**
- * The closing period's billable units per feature. `included` is free, so the
- * vendor meter is sent only the part past it; sending every unit would charge
- * the included grant a second time at the vendor.
+ * The closing period's billable units, one line per price they were recorded at.
+ * `included` is free, so the vendor meter is sent only the part past it — and
+ * that part is already net of the grant, because `UsageRecorded.billable` is
+ * the part of each event past `included` when it was recorded.
+ *
+ * Two lines for one feature mean the standing's unit price changed mid-period.
+ * Reporting one number at the standing's price would reprice everything
+ * recorded before the change, which is the bug this split exists to remove.
  */
-export const billableQuantities = (
-  features: EntitlementsState["features"],
-): Readonly<Record<string, number>> => {
-  const quantities: Record<string, number> = {};
-  for (const [feature, value] of Object.entries(features)) {
-    if (value.unitPrice === undefined) continue;
-    const included = typeof value.included === "number" ? value.included : 0;
-    const quantity = Math.max(0, value.used - included);
-    if (quantity > 0) quantities[feature] = quantity;
-  }
-  return quantities;
-};
+export const billableLines = (features: EntitlementsState["features"]): ReadonlyArray<UsageLine> =>
+  Object.entries(features).flatMap(([feature, value]) =>
+    Object.values(value.priced ?? {})
+      .filter((entry) => entry.quantity > 0)
+      .map((entry) => ({ feature, unitPrice: entry.unitPrice, quantity: entry.quantity })),
+  );
 
 /**
  * The idempotency key for one period's report. The period is the command id,
@@ -59,8 +64,8 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
 
     return Effect.fn("Paykit.PeriodCloseUsage.react")(function* ({ key, event, state }) {
       if (state === null) return;
-      const quantities = billableQuantities(state.features);
-      if (Object.keys(quantities).length === 0) return;
+      const lines = billableLines(state.features);
+      if (lines.length === 0) return;
 
       const standing = yield* subscriptions.state(key);
       // A vendor reference is what says which customer's meter to feed. A free
@@ -86,7 +91,7 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
           account: key.id,
           periodStart: event.periodStart,
           periodEnd: event.periodEnd,
-          quantities,
+          lines,
           commandId,
         });
       });

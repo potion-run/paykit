@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { UnitPrice } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { Standing } from "./Subscription.state.ts";
@@ -91,6 +92,18 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
   charge: Schema.optionalKey(Schema.Int),
   /** The feature's billed total this period after this event. */
   billedAfter: Schema.optionalKey(Schema.Int),
+  /**
+   * The catalog price this usage was recorded at. Absent when the allowance has
+   * no unit price, and on an event recorded before the field existed — which is
+   * why the close falls back to the standing's price for such a period.
+   */
+  unitPrice: Schema.optionalKey(UnitPrice),
+  /**
+   * The units of this event past `included`, at `unitPrice`: what the vendor is
+   * owed for it. The free grant is spent once per period by the first units
+   * recorded, so summing this per price is the period's billable split.
+   */
+  billable: Schema.optionalKey(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
 }) {}
 

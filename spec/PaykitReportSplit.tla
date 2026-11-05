@@ -1,11 +1,14 @@
 ------------------------- MODULE PaykitReportSplit --------------------------
-\* A period's usage can be recorded at more than one price: a tier change or a
-\* catalog edit mid-period retires one vendor price and the next unit is sold
-\* under another. The close must report each unit at the price it was recorded
-\* at, and the vendor must receive all of them.
+\* A period's usage can be recorded at more than one price: a tier change
+\* mid-period retires one vendor price and sells the next unit under another.
+\* The close reports each unit at the price it was recorded at, in one report
+\* that carries a line per price, and the vendor receives all of them.
 \*
-\* This is the design the queue needs, not the code as it stands: `PaykitReport`
-\* is today's close, which sends one quantity per period.
+\* Mirrors `Subscription/PeriodCloseUsage.policy.ts` (`billableLines`),
+\* `Subscription/Entitlements.view.ts` (`FeatureEntitlement.priced`) and
+\* `Subscription/TrackUsage.command.ts` (`UsageRecorded.billable`).
+\*
+\* Read spec/README.md beside this file before changing it.
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS
@@ -13,7 +16,6 @@ CONSTANTS
   MaxUnits,           \* the most units one period records
   MaxClock,           \* the logical clock's bound
   Included,           \* free units per period, granted once across the period
-  KeyIncludesPrice,   \* whether the vendor's idempotency key names the price
   SharesIncluded      \* whether the free units are shared across a period's prices
 
 Periods == 1..MaxPeriod
@@ -31,14 +33,8 @@ Freeze(usage) ==
   ELSE [v \in Prices |->
           Max2(0, Cardinality({i \in 1..Len(usage) : usage[i] = v}) - Included)]
 
-\* What the vendor's meter is sent for a period: the part past the grant.
+\* What the vendor's meter is owed for a period: the part past the grant.
 Billable(usage) == Max2(0, Len(usage) - Included)
-
-\* The idempotency key one report carries. The period names the report; the
-\* price has to name it too, or the second report for a period is a redelivery
-\* of the first and its units never arrive.
-Keys == IF KeyIncludesPrice THEN Periods \X Prices ELSE Periods \X {0}
-KeyOf(report) == IF KeyIncludesPrice THEN report ELSE <<report[1], 0>>
 
 VARIABLES
   clock,      \* a logical clock: a period is closable only once its end has come
@@ -46,9 +42,9 @@ VARIABLES
   recorded,   \* recorded[p]: the prices of p's units, in the order they were taken
   closed,     \* the periods the aggregate has closed
   frozen,     \* frozen[p][v]: the billable units p closed with, per price
-  outbox,     \* <<period, price>> reports the store still has to deliver
-  delivered,  \* the reports handed to the vendor's meter
-  vendor      \* vendor[key]: the quantity the meter holds for that key, 0 for none
+  outbox,     \* the periods whose report the store still has to deliver
+  delivered,  \* the periods whose report the vendor accepted
+  vendor      \* vendor[p][v]: the units the meter holds for p at price v
 
 vars == <<clock, open, recorded, closed, frozen, outbox, delivered, vendor>>
 
@@ -60,7 +56,7 @@ Init ==
   /\ frozen = [p \in Periods |-> [v \in Prices |-> 0]]
   /\ outbox = {}
   /\ delivered = {}
-  /\ vendor = [k \in Keys |-> 0]
+  /\ vendor = [p \in Periods |-> [v \in Prices |-> 0]]
 
 Tick ==
   /\ clock < MaxClock
@@ -77,31 +73,32 @@ TrackUsage(v) ==
   /\ recorded' = [recorded EXCEPT ![open] = Append(recorded[open], v)]
   /\ UNCHANGED <<clock, open, closed, frozen, outbox, delivered, vendor>>
 
+\* `PeriodEnded`: the close freezes the period's billable units per price and
+\* writes one report carrying all of them. The report is a function of the
+\* period, so a redelivery is the same payload.
 ClosePeriod ==
   /\ clock >= open
   /\ open \notin closed
   /\ closed' = closed \cup {open}
   /\ frozen' = [frozen EXCEPT ![open] = Freeze(recorded[open])]
-  /\ outbox' = outbox \cup {<<open, v>> : v \in {w \in Prices : Freeze(recorded[open])[w] > 0}}
+  /\ outbox' = outbox \cup {open}
   /\ open' = IF open < MaxPeriod THEN open + 1 ELSE open
   /\ UNCHANGED <<clock, recorded, delivered, vendor>>
 
-\* `PeriodCloseUsage`: the outbox hands one report to the provider, which keys
-\* it, so a second report under the same key is the same report to the meter.
-Deliver(report) ==
-  /\ report \in outbox
-  /\ outbox' = outbox \ {report}
-  /\ delivered' = delivered \cup {report}
-  /\ vendor' = IF vendor[KeyOf(report)] = 0
-               THEN [vendor EXCEPT ![KeyOf(report)] = frozen[report[1]][report[2]]]
-               ELSE vendor
+\* `PeriodCloseUsage`: the outbox hands the report to the provider, which keys
+\* it by the period, so a second delivery is the same report to the meter.
+Deliver(p) ==
+  /\ p \in outbox
+  /\ outbox' = outbox \ {p}
+  /\ delivered' = delivered \cup {p}
+  /\ vendor' = [vendor EXCEPT ![p] = frozen[p]]
   /\ UNCHANGED <<clock, open, recorded, closed, frozen>>
 
 Next ==
   \/ Tick
   \/ \E v \in Prices : TrackUsage(v)
   \/ ClosePeriod
-  \/ \E report \in outbox : Deliver(report)
+  \/ \E p \in outbox : Deliver(p)
 
 Spec == Init /\ [][Next]_vars
 
@@ -109,11 +106,11 @@ TypeOK ==
   /\ clock \in 0..MaxClock
   /\ open \in Periods
   /\ \A p \in Periods : Len(recorded[p]) \in 0..MaxUnits
-  /\ \A p \in Periods, v \in Prices : frozen[p][v] \in 0..MaxUnits
   /\ closed \subseteq Periods
-  /\ outbox \subseteq Periods \X Prices
-  /\ delivered \subseteq Periods \X Prices
-  /\ vendor \in [Keys -> 0..MaxUnits]
+  /\ outbox \subseteq Periods
+  /\ delivered \subseteq Periods
+  /\ \A p \in Periods, v \in Prices : frozen[p][v] \in 0..MaxUnits
+  /\ \A p \in Periods, v \in Prices : vendor[p][v] \in 0..MaxUnits
 
 \* The split conserves the period's billable units: reporting by price gives the
 \* same total as reporting the period in one number.
@@ -121,20 +118,14 @@ SplitConservesBillable ==
   \A p \in closed : frozen[p][1] + frozen[p][2] = Billable(recorded[p])
 
 \* Nothing reaches the meter for a period the aggregate did not close.
-NoReportWithoutClose == \A report \in delivered : report[1] \in closed
+NoReportWithoutClose == delivered \subseteq closed
 
-\* Every report the meter accepted carries the number that period closed with
-\* at that price.
-MeterHoldsTheClosingQuantity ==
-  \A report \in delivered :
-    vendor[KeyOf(report)] = 0 \/ vendor[KeyOf(report)] = frozen[report[1]][report[2]]
+\* Every delivered report carries the period's closing quantity at each price.
+ReportNamesEveryPrice ==
+  \A p \in delivered, v \in Prices : vendor[p][v] = frozen[p][v]
 
-\* Once every report is delivered, every price a period billed for is at the
-\* meter with the right number — one lost report is one lost charge.
+\* Once a period is delivered, every price it billed for is at the meter — one
+\* lost line is one unbilled unit.
 EveryBillableUnitArrived ==
-  LET everythingDelivered ==
-        \A p \in closed : {<<p, v>> : v \in {w \in Prices : frozen[p][w] > 0}} \subseteq delivered
-  IN everythingDelivered =>
-       \A p \in closed, v \in Prices :
-         frozen[p][v] = 0 \/ vendor[KeyOf(<<p, v>>)] = frozen[p][v]
+  \A p \in delivered, v \in Prices : frozen[p][v] = 0 \/ vendor[p][v] = frozen[p][v]
 =============================================================================

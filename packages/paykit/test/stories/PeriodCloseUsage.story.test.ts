@@ -16,6 +16,7 @@ import {
   AttachProviderRef,
   ProviderRefAttached,
 } from "../../src/Subscription/AttachProviderRef.command.ts";
+import { ChangeTier, TierChanged } from "../../src/Subscription/ChangeTier.command.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -23,7 +24,7 @@ import {
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import {
   PeriodCloseUsage,
-  billableQuantities,
+  billableLines,
   periodUsageCommandId,
 } from "../../src/Subscription/PeriodCloseUsage.policy.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
@@ -46,8 +47,26 @@ const meteredTier = tier({
   ],
 });
 
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [meteredTier] }));
+// The same tier after a price change: one unit past the grant now costs 3
+// minor units instead of 2, and the grant itself is untouched.
+const retunedTier = tier({
+  id: "retuned",
+  price,
+  grants: [
+    allowance(messages, {
+      included: 100,
+      overage: "bill",
+      unitPrice: { amount: 3, currency: "usd" },
+    }),
+  ],
+});
+
+const testCatalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [meteredTier, retunedTier] }),
+);
 const metered = allowancesOf(testCatalog, "metered")!;
+const retuned = allowancesOf(testCatalog, "retuned")!;
+const repriced = { amount: 3, currency: "usd" } as const;
 const account = Subscription.ref("acct_period_usage");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -132,12 +151,15 @@ it.effect("reports the closing period's billable units once, at the close", () =
           remainingAfter: -50,
           charge: 100,
           billedAfter: 100,
+          unitPrice,
+          // The part of the 150 past the 100 included: what the vendor owes.
+          billable: 50,
         }),
       ),
       Story.clock(monthLater),
       Story.call(Payments.reportUsage, {
         account: "acct_period_usage",
-        quantities: { messages: 50 },
+        lines: [{ feature: "messages", unitPrice, quantity: 50 }],
         commandId,
       }),
       Story.returned(Payments.reportUsage, {}),
@@ -149,9 +171,99 @@ it.effect("reports the closing period's billable units once, at the close", () =
         account: "acct_period_usage",
         periodStart: start,
         periodEnd: monthLater,
-        quantities: { messages: 50 },
+        lines: [{ feature: "messages", unitPrice, quantity: 50 }],
         commandId,
       },
+    ]);
+  });
+});
+
+it.effect("reports a unit at the price it was recorded at, not the price at the close", () => {
+  const player = PaymentsMemory();
+  const story = storyWith(player);
+  const commandId = periodUsageCommandId(start, monthLater);
+  return Effect.gen(function* () {
+    yield* story(
+      ...subscribed,
+      // Under the grant, so nothing bills at the first price yet.
+      Story.when(account, new TrackUsage({ feature: "messages", amount: 50 })),
+      Story.then(
+        account,
+        new UsageRecorded({
+          feature: "messages",
+          amount: 50,
+          cost: 0,
+          creditsAfter: 0,
+          usedAfter: 50,
+          remainingAfter: 50,
+          charge: 0,
+          billedAfter: 0,
+          unitPrice,
+          billable: 0,
+        }),
+      ),
+      // The price changes mid-period; the grant does not move, so the change is
+      // allowed and the standing keeps the usage it already recorded.
+      Story.when(
+        account,
+        new ChangeTier({
+          tier: "retuned",
+          allowances: retuned,
+          price,
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          proration: { currency: "usd", credit: 1900, charge: 1900, due: 0 },
+        }),
+      ),
+      Story.then(
+        account,
+        new TierChanged({
+          tier: "retuned",
+          allowances: retuned,
+          remaining: { messages: 50 },
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          currency: "usd",
+          interval: "month",
+          priceBefore: price,
+          priceAfter: price,
+          proration: { currency: "usd", credit: 1900, charge: 1900, due: 0 },
+        }),
+      ),
+      // 150 more units: the first 50 spend the rest of the grant, the other 100
+      // bill. They are the only ones past `included`, so the report has one line
+      // and it names the second price.
+      Story.when(account, new TrackUsage({ feature: "messages", amount: 150 })),
+      Story.then(
+        account,
+        new UsageRecorded({
+          feature: "messages",
+          amount: 150,
+          cost: 0,
+          creditsAfter: 0,
+          usedAfter: 200,
+          remainingAfter: -100,
+          charge: 300,
+          billedAfter: 300,
+          unitPrice: repriced,
+          billable: 100,
+        }),
+      ),
+      Story.clock(monthLater),
+      Story.call(Payments.reportUsage, {
+        account: "acct_period_usage",
+        lines: [{ feature: "messages", unitPrice: repriced, quantity: 100 }],
+        commandId,
+      }),
+      Story.returned(Payments.reportUsage, {}),
+      Story.then(account, ...closed),
+    );
+
+    expect(player.reports).toHaveLength(1);
+    expect(player.reports[0]!.lines).toEqual([
+      { feature: "messages", unitPrice: repriced, quantity: 100 },
     ]);
   });
 });
@@ -174,6 +286,8 @@ it.effect("reports nothing when the closing period used only its included units"
           remainingAfter: 40,
           charge: 0,
           billedAfter: 0,
+          unitPrice,
+          billable: 0,
         }),
       ),
       Story.clock(monthLater),
@@ -231,6 +345,8 @@ it.effect("reports nothing for an account with no vendor customer", () => {
           remainingAfter: -50,
           charge: 100,
           billedAfter: 100,
+          unitPrice,
+          billable: 50,
         }),
       ),
       // No provider reference: there is no customer whose meter could receive
@@ -258,6 +374,8 @@ it.effect("a provider without a meter fails the close instead of billing silentl
         remainingAfter: -50,
         charge: 100,
         billedAfter: 100,
+        unitPrice,
+        billable: 50,
       }),
     ),
     Story.clock(monthLater),
@@ -271,9 +389,9 @@ it.effect("a provider without a meter fails the close instead of billing silentl
   );
 });
 
-it("prices only the part past included, and skips features with no unit price", () => {
+it("reports one line per price, and skips features with no price", () => {
   expect(
-    billableQuantities({
+    billableLines({
       messages: {
         included: 100,
         used: 150,
@@ -286,6 +404,10 @@ it("prices only the part past included, and skips features with no unit price", 
         resetsAt: monthLater,
         unitPrice,
         billed: 100,
+        priced: {
+          "usd:2": { unitPrice, quantity: 50 },
+          "usd:3": { unitPrice: { amount: 3, currency: "usd" }, quantity: 10 },
+        },
       },
       storage: {
         included: 10,
@@ -299,7 +421,10 @@ it("prices only the part past included, and skips features with no unit price", 
         resetsAt: monthLater,
       },
     }),
-  ).toEqual({ messages: 50 });
+  ).toEqual([
+    { feature: "messages", unitPrice, quantity: 50 },
+    { feature: "messages", unitPrice: { amount: 3, currency: "usd" }, quantity: 10 },
+  ]);
 });
 
 it("names the report by the period, so a retry is the same idempotency key", () => {

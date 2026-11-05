@@ -67,6 +67,7 @@ import {
   allowsUsage,
   availableOf,
   billedOf,
+  billableUnitsOf,
   canEnterGrace,
   chargeOf,
   creditRateOf,
@@ -566,7 +567,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           creditsAfter: state.credits,
           usedAfter: used + command.amount,
           remainingAfter: remainingAfterSpending(remaining, command.amount),
-          ...(allowance.unitPrice === undefined ? {} : { charge, billedAfter: billed + charge }),
+          ...(allowance.unitPrice === undefined
+            ? {}
+            : {
+                charge,
+                billedAfter: billed + charge,
+                // The price this unit was recorded at, and the part of it past
+                // the free grant. Captured here because `used` is the only
+                // place the running total lives: the close never has to work
+                // out which units the grant covered.
+                unitPrice: allowance.unitPrice,
+                billable: billableUnitsOf(allowance.included, used, command.amount),
+              }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -822,7 +834,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remainingAfter: remaining,
           ...(allowance?.unitPrice === undefined
             ? {}
-            : { charge, billedAfter: billedMoney + charge }),
+            : {
+                charge,
+                billedAfter: billedMoney + charge,
+                unitPrice: allowance.unitPrice,
+                billable: billableUnitsOf(allowance.included, used, billed),
+              }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
         new UsageSettled({

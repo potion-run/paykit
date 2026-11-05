@@ -210,7 +210,7 @@ describe("the usage adapter", () => {
     Effect.gen(function* () {
       const asked: Array<{
         account: string;
-        quantities: Readonly<Record<string, number>>;
+        lines: ReadonlyArray<{ feature: string; quantity: number }>;
         commandId: string;
       }> = [];
       const provider = PaymentsStripe({
@@ -257,7 +257,7 @@ describe("the usage adapter", () => {
             account: "acct_1",
             periodStart,
             periodEnd,
-            quantities: { messages: 50 },
+            lines: [{ feature: "messages", unitPrice, quantity: 50 }],
             commandId: "period-usage:1:2",
           });
         }),
@@ -267,7 +267,7 @@ describe("the usage adapter", () => {
           account: "acct_1",
           periodStart,
           periodEnd,
-          quantities: { messages: 50 },
+          lines: [{ feature: "messages", unitPrice, quantity: 50 }],
           commandId: "period-usage:1:2",
         },
       ]);
@@ -276,7 +276,7 @@ describe("the usage adapter", () => {
 
   it.effect("Polar maps a tier's usage prices, and reportUsage reaches the binding", () =>
     Effect.gen(function* () {
-      const asked: Array<{ quantities: Readonly<Record<string, number>> }> = [];
+      const asked: Array<{ lines: ReadonlyArray<{ feature: string; quantity: number }> }> = [];
       const provider = PaymentsPolar({
         bindings: {
           ...polarBindings,
@@ -312,12 +312,14 @@ describe("the usage adapter", () => {
             account: "acct_1",
             periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
             periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
-            quantities: { messages: 50 },
+            lines: [{ feature: "messages", unitPrice, quantity: 50 }],
             commandId: "period-usage:1:2",
           });
         }),
       );
-      expect(asked[0]).toMatchObject({ quantities: { messages: 50 } });
+      expect(asked[0]).toMatchObject({
+        lines: [{ feature: "messages", unitPrice, quantity: 50 }],
+      });
     }),
   );
 
@@ -335,7 +337,7 @@ describe("the usage adapter", () => {
               account: "acct_1",
               periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
               periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
-              quantities: { messages: 50 },
+              lines: [{ feature: "messages", unitPrice, quantity: 50 }],
               commandId: "period-usage:1:2",
             });
           }),
