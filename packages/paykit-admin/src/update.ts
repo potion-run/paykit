@@ -6,6 +6,7 @@ import {
   Standing,
   SubscriptionStatus,
 } from "@potion.run/paykit/Subscription/Subscription.state";
+import { appendTimeline } from "@potion.run/paykit/Timeline";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1052,12 +1053,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         return modifyFields(account, { entitlements: () => state });
       }),
 
-    ReceivedEvent: ({ seq, at, commandId, tag, body }) => {
+    ReceivedEvent: ({ seq, at, commandId, tag, body, event }) => {
       if (Option.isNone(model.account)) return { model };
       const account = model.account.value;
-      if (Array.some(account.events, (event) => event.seq === seq)) return { model };
+      if (Array.some(account.events, (row) => row.seq === seq)) return { model };
       const nextAccount = modifyFields(account, {
         events: () => [{ seq, at, commandId, tag, body }, ...account.events].slice(0, 200),
+        // The raw rows above are a display window; the timeline is the whole
+        // feed since the account opened, and its own `lastSeq` makes a
+        // redelivery a no-op rather than a second entry.
+        timeline: () => appendTimeline(account.timeline, { event, envelope: { seq, at } }),
         cursor: () => Option.some(seq),
       });
       const nextModel = modifyFields(model, { account: () => Option.some(nextAccount) });

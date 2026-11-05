@@ -37,6 +37,11 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.Paykit.Model).toBe(Paykit.Model);
   expect(typeof Paykit.Paykit.providers).toBe("function");
   expect(typeof Paykit.autoTopUp).toBe("function");
+  expect(typeof Paykit.timelineOf).toBe("function");
+  expect(typeof Paykit.appendTimeline).toBe("function");
+  expect(typeof Paykit.Paykit.timelineOf).toBe("function");
+  expect(Paykit.TimelineEntry).toBeDefined();
+  expect(Paykit.UsageTimeline).toBeDefined();
   expect(Paykit.Paykit.autoTopUp).toBe(Paykit.autoTopUp);
   expect(typeof Paykit.crossedThreshold).toBe("function");
   expect(Paykit.AutoTopUp).toBeDefined();

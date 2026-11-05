@@ -17,7 +17,9 @@ postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. Wha
 `hold`/`settle`/`release` as addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
 spendable before a plan exists, auto top-up (a spend that crosses a threshold buys a pack and opens
-the invoice that prices it), postpaid usage priced per unit with a money cap, an outbound edge
+the invoice that prices it), a usage timeline folded from the account's events (one entry per
+billing fact, plus a per-period, per-feature rollup), postpaid usage priced per unit with a money
+cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
 Stripe and Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
 `PolarPrices` create the base prices and products its tiers are sold under, plus a meter and a
@@ -88,15 +90,21 @@ credits are recorded with that invoice id. The pack is the cooldown; a provider 
 standing), a time cooldown as a scheduled command, and an off-session charge capability for a saved
 payment method.
 
-Two things the model is one step away from, and why they belong in a library rather than in a
-hosted service. A console is not one of them: what a library owes is the read model a console renders,
-and `Preview`, `List`, `BillingRead` and `AccountEvents` are that. The screens themselves are the
-example's job.
+**A usage timeline** is done ([ADR
+0014](./adr/0014-a-usage-timeline-is-a-fold-over-the-account-log.md)): `timelineOf` /
+`appendTimeline` in `Timeline.ts` fold the account's `AccountEvents` into one entry per billing fact
+(usage, hold, settle, release, credit moves, payments, tiers, periods), each stamped with the period
+it happened in, plus a per-period and per-feature rollup of units, credits and money. It is a fold,
+not a table: `lastSeq` makes a redelivery a no-op, the raw stream stays the audit trail, and the
+console renders it from the feed it already watches. What is left is a server-side paged timeline
+for an account bigger than a browser should hold, and a per-dimension breakdown (the dimension is
+on the hold, not on `UsageRecorded`).
 
-- **A usage timeline projection.** Not a log database: `AccountEvents` is already the log, so a
-  timeline is a projection over it — per feature, per period, with the holds opened and settled and the
-  money each recorded. It is the screen people open when a bill looks wrong, and it is the half of
-  `Preview` that answers "what changed" rather than "why".
+One thing the model is one step away from, and why it belongs in a library rather than in a hosted
+service. A console is not one of them: what a library owes is the read model a console renders, and
+`Preview`, `List`, `BillingRead`, `AccountEvents` and the timeline are that. The screens themselves
+are the example's job.
+
 - **Per-customer custom plans.** A `TierChanged` already carries the allowances it granted, so history
   stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
   whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
@@ -163,6 +171,9 @@ continues.
 - **A pack outlives the period.** Credits a one-off pack bought never expire, even on a plan whose
   own credits do: `prepaidCredits` is protected, spent only after the plan's credits, and a close
   returns only the difference.
+- **A timeline is a fold, not a log.** `timelineOf` / `appendTimeline` read `AccountEvents`; they
+  store nothing, add no number an event did not carry, and nothing in `decide` or `check` reads
+  them. `lastSeq` makes a redelivered event a no-op.
 - **A top-up is a crossing, not a level.** The balance before the spend is on the event
   (`creditsAfter + cost`, `balanceAfter + amount`), so one crossing buys one pack and a spend that is
   already below the line does not buy a second. The invoice id is on the event that records the

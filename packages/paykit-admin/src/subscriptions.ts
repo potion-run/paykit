@@ -56,6 +56,7 @@ export const subscriptions: Subscription.Subscriptions<Model, Message, ConsoleRe
           commandId: envelope.commandId,
           tag: event._tag,
           body: eventBody(event),
+          event,
         }),
       onCaughtUp: (cursor): Message => Message.CaughtUpEvents({ cursor }),
       onFailure: (error): Message => Message.FailedEvents({ reason: error._tag }),

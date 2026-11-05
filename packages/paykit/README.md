@@ -273,6 +273,12 @@ and neither lets a provider id into the catalog.
 One aggregate keyed by account holds both the standing and its usage counters. A view folds one
 account's events; lists and dashboards come from the `BillingRead` projection, never from a view.
 
+A bill's story is a fold over the same `AccountEvents` the console already watches:
+`timelineOf(entries)` / `appendTimeline(timeline, entry)` return one entry per billing fact in log
+order, each stamped with the period it happened in, plus a per-period and per-feature rollup of
+units, credits and money. It is a fold, not a second log: the raw stream stays the audit trail, and
+nothing in `check()` or `decide` reads it.
+
 ```ts
 Paykit.Model; // the Domain model
 Paykit.BillingApi; // tenant commands, Entitlements, BillingState, AccountEvents

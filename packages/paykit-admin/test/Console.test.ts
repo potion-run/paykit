@@ -4,7 +4,11 @@ import {
   BillingAdminApi,
   BillingReadPage,
   Catalog,
+  CreditsGranted,
   NotSubscribed,
+  SubscriptionActivated,
+  UsageRecorded,
+  UsageReserved,
   allowance,
   catalog,
   messages,
@@ -293,6 +297,7 @@ describe("the console model", () => {
         commandId,
         tag: "CreditsGranted",
         body: "{}",
+        event: new CreditsGranted({ amount: 250, balanceAfter: 250 }),
       }),
     ).model;
     if (Option.isNone(received.account)) return;
@@ -742,15 +747,115 @@ describe("the console model", () => {
         commandId: "cmd_1",
         tag: "UsageReserved",
         body: "{}",
+        event: new UsageReserved({
+          holdId: "hold_1",
+          feature: "messages",
+          amount: 1,
+          rate: 0,
+          cost: 0,
+          at,
+          expiresAt: at,
+          remainingAfter: 1,
+        }),
       }),
     );
     expect(reserved.commands?.map((command) => command.name)).toEqual(["GetHolds"]);
 
     const unrelated = update(
       model,
-      Message.ReceivedEvent({ seq: 2, at, commandId: "cmd_2", tag: "CreditsGranted", body: "{}" }),
+      Message.ReceivedEvent({
+        seq: 2,
+        at,
+        commandId: "cmd_2",
+        tag: "CreditsGranted",
+        body: "{}",
+        event: new CreditsGranted({ amount: 1, balanceAfter: 1 }),
+      }),
     );
     expect(unrelated.commands).toBeUndefined();
+  });
+
+  it("folds the event feed into a usage timeline, once, in order", () => {
+    const periodEnd = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+    const sequence = [
+      Message.ReceivedEvent({
+        seq: 1,
+        at,
+        commandId: "cmd_1",
+        tag: "SubscriptionActivated",
+        body: "{}",
+        event: new SubscriptionActivated({
+          tier: "pro",
+          allowances: {},
+          remaining: {},
+          credits: 100,
+          creditsExpire: "period",
+          rates: {},
+          periodStart: at,
+          periodEnd,
+          anchorTz: "UTC",
+          interval: "month",
+          statusAfter: "active",
+        }),
+      }),
+      Message.ReceivedEvent({
+        seq: 2,
+        at,
+        commandId: "cmd_2",
+        tag: "UsageRecorded",
+        body: "{}",
+        event: new UsageRecorded({
+          feature: "messages",
+          amount: 150,
+          cost: 0,
+          creditsAfter: 100,
+          usedAfter: 150,
+          remainingAfter: -50,
+          charge: 100,
+          billedAfter: 100,
+          unitPrice: { amount: 2, currency: "usd" },
+          billable: 50,
+        }),
+      }),
+      Message.ReceivedEvent({
+        seq: 3,
+        at,
+        commandId: "cmd_3",
+        tag: "CreditsGranted",
+        body: "{}",
+        event: new CreditsGranted({ amount: 50, balanceAfter: 150 }),
+      }),
+    ];
+
+    const received = sequence.reduce(
+      (current, message) => update(current, message).model,
+      withBilling(),
+    );
+    // A redelivered event is the same sequence number: the fold ignores it.
+    const replayed = update(received, sequence[1]!).model;
+    if (Option.isNone(replayed.account)) return;
+    const timeline = replayed.account.value.timeline;
+
+    expect(timeline.entries.map((entry) => entry.kind)).toEqual([
+      "started",
+      "usage",
+      "credit-grant",
+    ]);
+    expect(timeline.periods[0]?.features.messages).toEqual({
+      units: 150,
+      credits: 0,
+      charge: 100,
+      held: 0,
+      settled: 0,
+      released: 0,
+    });
+    expect(timeline.periods[0]?.credits).toEqual({
+      granted: 150,
+      purchased: 0,
+      spent: 0,
+      expired: 0,
+      balanceAfter: 150,
+    });
   });
 
   it("asks the model what a command would do, and records nothing", () => {

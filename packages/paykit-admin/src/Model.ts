@@ -10,6 +10,7 @@ import { Proration } from "@potion.run/paykit/Proration";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId, HoldRecord } from "@potion.run/paykit/Subscription/Subscription.state";
+import { UsageTimeline, initialTimeline } from "@potion.run/paykit/Timeline";
 import { VerifyMismatch } from "@potion.run/paykit/Verify";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -185,6 +186,12 @@ export const AccountState = Schema.Struct({
   billing: Schema.Option(BillingStateView),
   entitlements: Schema.Option(EntitlementsState),
   events: Schema.Array(EventRow),
+  /**
+   * The billing facts the event feed has carried, folded as they arrive. A
+   * pure fold (`@potion.run/paykit/Timeline`), never a stored read model: the
+   * account stream is the log, and this is the slice a bill is read from.
+   */
+  timeline: UsageTimeline,
   cursor: Schema.Option(Schema.Int),
   feed: FeedState,
   error: Schema.Option(Schema.String),
@@ -239,6 +246,7 @@ export const openedAccount = (id: AccountId): AccountState => ({
   billing: Option.none(),
   entitlements: Option.none(),
   events: [],
+  timeline: initialTimeline,
   cursor: Option.none(),
   feed: "CatchingUp",
   error: Option.none(),
