@@ -51,6 +51,11 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # The models are the designs no test can reach. They run in seconds and
+      # need no JVM, so they sit before the suite rather than after it.
+      - name: Model check
+        run: pnpm spec
+
       - name: Test
         run: pnpm test
 

@@ -19,6 +19,10 @@ A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGEN
 carries rules a reader needs before touching it, and add it to the workspace globs and the root
 `tsconfig.json` project references in the same commit.
 
+`spec/` holds TLA+ models of what no test can reach — two writers on one account, a deadline firing
+mid-flight, an outbox that redelivers, a crash between a side effect and its record. They are
+checked by `pnpm spec`; read [`spec/README.md`](./spec/README.md) before adding or changing one.
+
 ## Repo rules
 
 - **One scope.** Every published package is `@potion.run/<name>`. Nothing unscoped, nothing under
@@ -52,6 +56,8 @@ carries rules a reader needs before touching it, and add it to the workspace glo
   form npm publishes, packages must share one version, and an internal dependency is
   `workspace:*`.
 - **alchemy-test** (`@alchemy.run/test`) runs each package's `test/*.test.ts` under Bun.
+- **tla-ts** (`pnpm spec`) model-checks the `spec/*.tla` models against their `spec/*.cfg` scope —
+  TLC without the JVM, so the gate needs nothing beyond `pnpm install`.
 - **husky** owns the git hooks; `pnpm prepare` installs them on install.
 - **agent sources** (`pnpm vendor:agent-sources`) shallow-clones Effect, Alchemy and Foldkit
   into `.agent_sources/` for source-first reading; see [Source-first](#source-first).
@@ -254,11 +260,18 @@ from typecheck, lint and format. Do not import from them and do not commit them.
 
 ## Gates
 
-Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
-The first four never compile `lib/`; `pnpm build` and `node scripts/smoke-artifact.mjs` are what
-prove a published artifact loads.
+Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm spec`, `pnpm test`,
+`pnpm build`. The first four never compile `lib/`; `pnpm build` and `node scripts/smoke-artifact.mjs`
+are what prove a published artifact loads.
 
-`.github/workflows/check.yml` runs all six on every push and pull request, and is modelled on
+`pnpm spec` model-checks the TLA+ models in [`spec/`](./spec) with `tla-ts`. They cover what a test
+cannot: interleavings across writers, deadlines, the outbox and a crash. A model that has never been
+made to fail is a model nobody has tested, so every config carries the constant that flips it into
+the broken design; see [`spec/README.md`](./spec/README.md). A counterexample trace is a test's
+setup — when a model finds something, reproduce it under `packages/paykit/test/` rather than leaving
+it in the model.
+
+`.github/workflows/check.yml` runs all seven on every push and pull request, and is modelled on
 alchemy's `check.yml`: one job, steps in the order that makes each later step meaningful, every
 action pinned to a commit rather than a tag, and `cancel-in-progress` only for pull requests.
 `.github/workflows/release.yml` is a manual run on `main` that re-runs the gates, bumps the shared
