@@ -48,33 +48,74 @@ The rule that made the split observable landed too
 ([ADR 0009](./adr/0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md)): only a blocking
 allowance refuses a move below its usage, because only a blocking one can be oversubscribed. A billed
 or allowed feature may change its unit price mid-period, and the close reports the units at both
-prices. What is still open there is a money ceiling already passed by `billed` — a change to a lower
-`moneyCap` is not refused — which is ADR 0005's question, not this one.
+prices. The money ceiling closed too ([ADR
+0011](./adr/0011-a-tier-change-cannot-move-into-a-ceiling-already-passed.md)): a change into a cap the
+period has already billed past is refused with `DowngradeBelowSpend`, and a change into a unit ceiling
+it has already passed with `DowngradeBelowCeiling`. Both were previously reachable, and both produced a
+standing no command could leave until the period reset.
 
 ### 1. The remaining surfaces
 
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
-- **Archived prices** (ADR 0003): a retired Stripe price is retained but stays `active: true`, and a
-  retired Polar product stays purchasable. Archiving needs a vendor write against a resource the
-  stack no longer tracks — a sweep by lookup-key (Stripe) or name prefix (Polar) is the obvious
-  shape.
+- **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
+  a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
+  purchasable. Both halves landed for Stripe — `retiredPrices` decides, `RetiredPrices` lists and
+  deactivates, and the live case proves a price is archived rather than deleted. What is left is the
+  Polar half, which waits on its sandbox token.
 
-## The live cases that have never been run
+### 2. Worth building next
+
+Three things the model is one step away from, and why they belong in a library rather than in a
+hosted service. A console is not one of them: what a library owes is the read model a console renders,
+and `Preview`, `List`, `BillingRead` and `AccountEvents` are that. The screens themselves are the
+example's job.
+
+- **Auto top-up.** When a pool falls below a threshold, buy a pack — a policy over `CreditsConsumed`
+  sending `PurchaseCredits`, the same shape `Dunning` and `PeriodRollover` already have. The decisions
+  are the threshold, the pack, a cooldown, and one command per crossing rather than one per event. It
+  turns "the hold failed" into "the account refilled", which is the difference between billing users
+  notice and billing they do not.
+- **A usage timeline projection.** Not a log database: `AccountEvents` is already the log, so a
+  timeline is a projection over it — per feature, per period, with the holds opened and settled and the
+  money each recorded. It is the screen people open when a bill looks wrong, and it is the half of
+  `Preview` that answers "what changed" rather than "why".
+- **Per-customer custom plans.** A `TierChanged` already carries the allowances it granted, so history
+  stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
+  whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
+  is a decision, not code, and it is the one thing here a host cannot do for itself.
+
+## The live cases
 
 Both provisioning packages carry a live test that is gated on a vendor key and reports **skipped** in
-every run so far. They are the only proof each helper works against a real API, and the only place
+every other run. They are the only proof each helper works against a real API, and the only place
 the "replace keeps the old one" claim is actually tested.
 
+**Stripe ran green on 2026-11-05**, from `main`, on a test-mode account — [run
+41971381878](https://github.com/potion-run/paykit/actions/runs/41971381878), 48 passed and none
+skipped. So the price the catalog states is created, replaced on a change, and the replaced one is
+retained and still retrievable; the meter and the metered price are created from the same unit price.
+**Polar has not run.** It waits on `POLAR_ACCESS_TOKEN`, and its guard fails rather than skips until
+the secret exists.
+
+They run from `.github/workflows/live.yml` — a manual dispatch, from `main`, with a `vendor` input of
+`both`, `stripe` or `polar`. It is separate from `check.yml` for two reasons: the cases mutate a real
+test account, and a secret must not be in the path of a pull request from a fork. A missing secret
+**fails** that workflow rather than skipping it, because a manual run whose only purpose is the live
+case should not report green having done nothing.
+
 ```sh
+# The same thing locally, against the same kind of account.
 STRIPE_API_KEY=sk_test_… pnpm --filter @potion.run/paykit-stripe test
-POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
+POLAR_ACCESS_TOKEN=… pnpm --filter @potion.run/paykit-polar test
 ```
 
-Run them before trusting provisioning, and before publishing anything that advertises it. Expect
-them to create and retire prices/products in those test accounts; both start with `stack.destroy()`
-and leave retained objects behind, which is the point of the rule and a mess in a shared account.
-The Polar case is pinned to `server: "sandbox"`, so a production token cannot reach production.
+Expect them to create and retire prices/products in those test accounts; both start with
+`stack.destroy()` and leave retained objects behind, which is the point of the rule and a mess in a
+shared account. Use dedicated test accounts — once `RetiredPrices` lands, a sweep over
+`paykit:<stage>:*` archives what it thinks the catalog abandoned, which is only safe where everything
+in the account came from the sweep. The Polar case is pinned to `server: "sandbox"`, so a production
+token cannot reach production.
 
 ## How the last slices were done
 

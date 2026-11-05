@@ -273,7 +273,13 @@ export {
   Subscribe as SubscribeCommand,
 } from "./Subscription/Subscribe.command.ts";
 export { TrialStarted, StartTrial } from "./Subscription/StartTrial.command.ts";
-export { TierChanged, ChangeTier, DowngradeBelowUsage } from "./Subscription/ChangeTier.command.ts";
+export {
+  TierChanged,
+  ChangeTier,
+  DowngradeBelowUsage,
+  DowngradeBelowSpend,
+  DowngradeBelowCeiling,
+} from "./Subscription/ChangeTier.command.ts";
 export {
   AllowanceExceeded,
   CreditExceeded,

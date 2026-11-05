@@ -22,7 +22,11 @@ import { Preview, type PreviewResult } from "../Preview.ts";
 import { Proration } from "../Proration.ts";
 import { AlreadyCanceled } from "../Subscription/AlreadyCanceled.rejection.ts";
 import { TierChanged } from "../Subscription/ChangeTier.command.ts";
-import { DowngradeBelowUsage } from "../Subscription/ChangeTier.command.ts";
+import {
+  DowngradeBelowCeiling,
+  DowngradeBelowSpend,
+  DowngradeBelowUsage,
+} from "../Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
@@ -57,6 +61,8 @@ export const PreviewRejection = Schema.Union([
   NotSubscribed,
   CurrencyMismatch,
   DowngradeBelowUsage,
+  DowngradeBelowSpend,
+  DowngradeBelowCeiling,
   AlreadyCanceled,
   ProrationMismatch,
   CatalogMismatch,

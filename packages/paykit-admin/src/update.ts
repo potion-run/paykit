@@ -1,4 +1,3 @@
-import type { BillingReadQuery } from "@potion.run/paykit/BillingReadStore";
 import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
 import {
   AccountId,
@@ -7,18 +6,18 @@ import {
 } from "@potion.run/paykit/Subscription/Subscription.state";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
+import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import { Message } from "./Message.ts";
 import {
-  type AccountFilter,
   type AccountState,
   type ActionDraft,
-  AccountState as AccountStateSchema,
   AdminFailure,
   AdminRejected,
   AdminUnknown,
@@ -28,17 +27,23 @@ import {
   ChangeTierQuoted,
   ChangeTierQuoting,
   type Model,
+  openedAccount,
   type Pending,
   Pending as PendingSchema,
 } from "./Model.ts";
 import type { UpdateReturn } from "./Requirements.ts";
-
-const queryOf = (filter: AccountFilter, after?: string): BillingReadQuery => ({
-  ...(Option.isSome(filter.standing) ? { standing: filter.standing.value } : {}),
-  ...(Option.isSome(filter.status) ? { status: filter.status.value } : {}),
-  ...(Option.isSome(filter.tier) ? { tier: filter.tier.value } : {}),
-  ...(after === undefined ? {} : { after }),
-});
+import {
+  type AccountFilter,
+  accountRoute,
+  accountsRoute,
+  type ConsoleRoute,
+  filterOf,
+  queryOf,
+  reflectRoute,
+  routeOf,
+  sameFilter,
+  withFilter,
+} from "./Route.ts";
 
 const startList = (model: Model, filter: AccountFilter, after?: string): UpdateReturn => {
   const requestId = model.queryIds.sent;
@@ -402,8 +407,74 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
 };
 
 /**
+ * Reflect a route into the address bar. `push` for a navigation the operator
+ * chose (opening or closing an account), `replace` for a filter change, which
+ * adjusts the view rather than landing somewhere new.
+ */
+const ReflectRoute = Command.define("ReflectRoute", {
+  args: { url: Schema.String, replace: Schema.Boolean },
+  messages: [Message.CompletedReflectRoute],
+  execute: ({ url, replace }) =>
+    (replace ? replaceUrl(url) : pushUrl(url)).pipe(Effect.as(Message.CompletedReflectRoute())),
+});
+
+const LoadExternal = Command.define("LoadExternal", {
+  args: { href: Schema.String },
+  messages: [Message.CompletedLoadExternal],
+  execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
+});
+
+/**
+ * Make the Model follow a route. The open account is keyed by the route, so a
+ * route naming another account drops the old state and its live reads restart
+ * at the new account; a route that changed the filter starts one read for it.
+ * Applying the route the Model already holds is a no-op, which is what makes
+ * the runtime's echo after a push harmless.
+ */
+const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
+  const filter = filterOf(route);
+  const account = route._tag === "Account" ? route.account : null;
+  const open = Option.isSome(model.account) ? model.account.value : null;
+  const sameAccount = open !== null && account !== null && open.id === account;
+  const followed = modifyFields(model, {
+    route: () => route,
+    accounts: (accounts) => modifyFields(accounts, { filter: () => filter }),
+    account: () =>
+      sameAccount
+        ? Option.some(open)
+        : account === null
+          ? Option.none()
+          : Option.some(openedAccount(account)),
+  });
+  return sameFilter(filter, model.accounts.filter)
+    ? { model: followed }
+    : startList(followed, filter);
+};
+
+/** Follow a route and reflect it into the address bar. */
+const navigate = (model: Model, route: ConsoleRoute, history: "push" | "replace"): UpdateReturn => {
+  const followed = applyRoute(model, route);
+  return {
+    model: followed.model,
+    commands: [
+      ...(followed.commands ?? []),
+      ReflectRoute({ url: reflectRoute(route), replace: history === "replace" }),
+    ],
+  };
+};
+
+/**
+ * A confirmed write can change a row — its tier, standing or credits — so the
+ * list is re-read instead of left trailing the account. `ListAccounts` is a
+ * point-in-time read, not a subscription; a write the console itself made is
+ * the one moment it knows the snapshot is older than the account.
+ */
+const afterWrite = (model: Model): UpdateReturn => startList(model, model.accounts.filter);
+
+/**
  * The console's update. Every write is a `BillingAdmin` command with a
- * command id; every read snapshot is applied only while its account is open.
+ * command id; every read snapshot is applied only while its account or
+ * request is open; and every navigation is a route the URL can reproduce.
  */
 export const update = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
@@ -416,47 +487,56 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       }),
 
     UpdatedStandingFilter: ({ value }) =>
-      startList(model, {
-        ...model.accounts.filter,
-        standing: Schema.decodeUnknownOption(Standing)(value),
-      }),
+      navigate(
+        model,
+        withFilter(model.route, {
+          ...model.accounts.filter,
+          standing: Schema.decodeUnknownOption(Standing)(value),
+        }),
+        "replace",
+      ),
 
     UpdatedStatusFilter: ({ value }) =>
-      startList(model, {
-        ...model.accounts.filter,
-        status: Schema.decodeUnknownOption(SubscriptionStatus)(value),
-      }),
+      navigate(
+        model,
+        withFilter(model.route, {
+          ...model.accounts.filter,
+          status: Schema.decodeUnknownOption(SubscriptionStatus)(value),
+        }),
+        "replace",
+      ),
 
     UpdatedTierFilter: ({ value }) =>
-      startList(model, {
-        ...model.accounts.filter,
-        tier: value === "" ? Option.none() : Option.some(value),
-      }),
+      navigate(
+        model,
+        withFilter(model.route, {
+          ...model.accounts.filter,
+          tier: value === "" ? Option.none() : Option.some(value),
+        }),
+        "replace",
+      ),
 
-    ClickedAccount: ({ account }) => ({
-      model: modifyFields(model, {
-        account: () =>
-          Option.some(
-            AccountStateSchema.make({
-              id: account,
-              billing: Option.none(),
-              entitlements: Option.none(),
-              events: [],
-              cursor: Option.none(),
-              feed: "CatchingUp",
-              error: Option.none(),
-              draft: Option.none(),
-              change: Option.none(),
-              pending: [],
-              notice: Option.none(),
-            }),
-          ),
-      }),
-    }),
+    ClickedAccount: ({ account }) =>
+      navigate(model, accountRoute(account, model.accounts.filter), "push"),
 
-    ClosedAccount: () => ({
-      model: modifyFields(model, { account: () => Option.none() }),
-    }),
+    ClosedAccount: () => navigate(model, accountsRoute(model.accounts.filter), "push"),
+
+    ChangedUrl: ({ url }) => applyRoute(model, routeOf(url)),
+
+    ClickedLink: ({ request }) =>
+      Match.value(request).pipe(
+        Match.withReturnType<UpdateReturn>(),
+        Match.tag("Internal", ({ url }) => navigate(model, routeOf(url), "push")),
+        Match.tag("External", ({ href }) => ({
+          model,
+          commands: [LoadExternal({ href })],
+        })),
+        Match.exhaustive,
+      ),
+
+    CompletedReflectRoute: () => ({ model }),
+
+    CompletedLoadExternal: () => ({ model }),
 
     ReceivedAdminQuery: ({ message: query }) =>
       Match.value(query).pipe(
@@ -480,6 +560,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                       next: () => Option.fromNullishOr(page.next),
                       state: () => "Loaded",
                       error: () => Option.none(),
+                      // The page says when the store answered it. A page the
+                      // store did not stamp stays unstamped: the console must
+                      // not invent a read time it does not have.
+                      asOf: () => Option.fromNullishOr(page.asOf),
                     }),
                 }),
               }
@@ -514,7 +598,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           "SucceededExpire",
           "SucceededScheduleCancellation",
           "SucceededResume",
-          ({ commandId }) => ({ model: accepted(model, commandId) }),
+          ({ commandId }) => afterWrite(accepted(model, commandId)),
         ),
         Match.tag(
           "FailedGrantCredits",
@@ -592,13 +676,14 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             }),
             Match.tag("applied", ({ commandId, tier }) => {
               const next = settle(model, commandId, "Accepted", Option.none());
-              return updateAccount(next, (value) =>
+              const confirmed = updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
                   change: () => Option.none(),
                   notice: () => Option.some(`Tier changed to ${tier}.`),
                 }),
               );
+              return afterWrite(confirmed.model);
             }),
             Match.tag("rejected", ({ commandId, rejection }) => {
               const next =

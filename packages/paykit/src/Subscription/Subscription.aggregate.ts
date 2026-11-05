@@ -15,7 +15,13 @@ import { Session } from "../Auth/Guards.ts";
 import { prorate, sameProration } from "../Proration.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
-import { ChangeTier, DowngradeBelowUsage, TierChanged } from "./ChangeTier.command.ts";
+import {
+  ChangeTier,
+  DowngradeBelowCeiling,
+  DowngradeBelowSpend,
+  DowngradeBelowUsage,
+  TierChanged,
+} from "./ChangeTier.command.ts";
 import {
   ClosePeriod,
   CreditsExpired,
@@ -374,6 +380,24 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           return new DowngradeBelowUsage({
             feature,
             included: allowance.included,
+            used,
+            ...(reserved === 0 ? {} : { reserved }),
+          });
+        }
+        // The two ceilings are kept across a change too, and a ceiling already
+        // passed is a standing no command can leave: every later `TrackUsage`
+        // and `Hold` refuses until the period resets the counters. Money and
+        // units are refused separately because the evidence a console shows is
+        // a different sentence in each.
+        const billed = billedOf(current, feature);
+        if (allowance.moneyCap !== undefined && billed > allowance.moneyCap) {
+          return new DowngradeBelowSpend({ feature, moneyCap: allowance.moneyCap, billed });
+        }
+        const ceiling = spendCeilingOf(allowance);
+        if (ceiling !== null && used + reserved > ceiling) {
+          return new DowngradeBelowCeiling({
+            feature,
+            ceiling,
             used,
             ...(reserved === 0 ? {} : { reserved }),
           });

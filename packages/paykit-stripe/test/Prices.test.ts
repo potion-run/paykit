@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { lookupKeyOf, priceDeclarations } from "../src/Prices.ts";
+import { lookupKeyOf, priceDeclarations, retiredPrices } from "../src/Prices.ts";
 
 const pro = { amount: 1900, currency: "usd", interval: "month" as const };
 const scale = { amount: 19_800, currency: "usd", interval: "annual" as const };
@@ -123,5 +123,71 @@ describe("price declarations", () => {
 
   it("declares nothing for a catalog with no prices", () => {
     expect(priceDeclarations({}, stage)).toEqual([]);
+  });
+});
+
+describe("the archive sweep", () => {
+  const declared = priceDeclarations(
+    { pro: { price: pro, usage: { messages: { amount: 2, currency: "usd" } } } },
+    stage,
+  );
+
+  it("names a base price whose tier left the catalog, and nothing else", () => {
+    const retired = retiredPrices(
+      declared,
+      [
+        { id: "price_pro", lookupKey: "paykit:prod:pro", active: true },
+        { id: "price_scale", lookupKey: "paykit:prod:scale", active: true },
+      ],
+      stage,
+    );
+    expect(retired.map((price) => price.id)).toEqual(["price_scale"]);
+  });
+
+  it("names a metered price whose feature left the tier", () => {
+    // The tier is still sold, so its base price stays; the feature behind the
+    // meter is gone, so the metered price is the one to archive.
+    const retired = retiredPrices(
+      declared,
+      [
+        { id: "price_pro", lookupKey: "paykit:prod:pro", active: true },
+        { id: "price_msg", lookupKey: "paykit:prod:pro:usage:messages", active: true },
+        { id: "price_seats", lookupKey: "paykit:prod:pro:usage:seats", active: true },
+      ],
+      stage,
+    );
+    expect(retired.map((price) => price.id)).toEqual(["price_seats"]);
+  });
+
+  it("leaves another stage's prices alone, even though they share one account", () => {
+    const retired = retiredPrices(
+      declared,
+      [{ id: "price_preview", lookupKey: "paykit:preview:pro", active: true }],
+      stage,
+    );
+    expect(retired).toEqual([]);
+  });
+
+  it("is idempotent: an archived price is not named a second time", () => {
+    const found = [{ id: "price_scale", lookupKey: "paykit:prod:scale", active: false }];
+    expect(retiredPrices(declared, found, stage)).toEqual([]);
+  });
+
+  it("leaves a price with no lookup key alone: it is not this library's", () => {
+    const retired = retiredPrices(
+      declared,
+      [{ id: "price_manual", lookupKey: null, active: true }],
+      stage,
+    );
+    expect(retired).toEqual([]);
+  });
+
+  it("does not read `prod` as a prefix of `production`", () => {
+    const retired = retiredPrices(
+      declared,
+      [{ id: "price_other", lookupKey: "paykit:production:pro", active: true }],
+      stage,
+    );
+    expect(retired).toEqual([]);
   });
 });

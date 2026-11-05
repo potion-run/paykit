@@ -8,26 +8,18 @@ import { CommandIds } from "@potion.run/paykit/Foldkit";
 import { Proration } from "@potion.run/paykit/Proration";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
-import {
-  AccountId,
-  Standing,
-  SubscriptionStatus,
-} from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { AccountFilter, ConsoleRoute } from "./Route.ts";
+
+export { AccountFilter } from "./Route.ts";
 
 export const LoadState = Schema.Literals(["Idle", "Loading", "Loaded", "Failed"]);
 export type LoadState = typeof LoadState.Type;
 
 export const FeedState = Schema.Literals(["CatchingUp", "Live", "Failed"]);
 export type FeedState = typeof FeedState.Type;
-
-/** The server-side filters the list accepts. Empty means "all". */
-export const AccountFilter = Schema.Struct({
-  standing: Schema.Option(Standing),
-  status: Schema.Option(SubscriptionStatus),
-  tier: Schema.Option(Schema.String),
-});
-export type AccountFilter = typeof AccountFilter.Type;
 
 export const EventRow = Schema.Struct({
   seq: Schema.Int,
@@ -164,6 +156,12 @@ export const AccountsState = Schema.Struct({
   state: LoadState,
   error: Schema.Option(Schema.String),
   requestId: Schema.Option(Schema.Int),
+  /**
+   * When the store answered the page on screen. `None` means the rows came
+   * from a snapshot with no stamp, so the console says "provenance unknown"
+   * rather than claiming they are current.
+   */
+  asOf: Schema.Option(Schema.DateTimeUtc),
 });
 export type AccountsState = typeof AccountsState.Type;
 
@@ -174,10 +172,27 @@ export const Model = Schema.Struct({
   queryIds: Schema.Struct({ sent: Schema.Int }),
   catalog: Schema.Option(Catalog),
   catalogError: Schema.Option(Schema.String),
+  /** What the address bar names. The Model follows the URL, not the reverse. */
+  route: ConsoleRoute,
   accounts: AccountsState,
   account: Schema.Option(AccountState),
 });
 export type Model = typeof Model.Type;
+
+/** The state of an account nothing has been read for yet. */
+export const openedAccount = (id: AccountId): AccountState => ({
+  id,
+  billing: Option.none(),
+  entitlements: Option.none(),
+  events: [],
+  cursor: Option.none(),
+  feed: "CatchingUp",
+  error: Option.none(),
+  draft: Option.none(),
+  change: Option.none(),
+  pending: [],
+  notice: Option.none(),
+});
 
 /** The action names the console can currently send. `ChangeTier` waits for a server quote. */
 export const ConsoleAction: ReadonlyArray<AdminAction> = [

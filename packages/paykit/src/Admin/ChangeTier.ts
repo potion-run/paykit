@@ -19,7 +19,11 @@ import { tierTermsOf } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Proration, sameProration } from "../Proration.ts";
-import { DowngradeBelowUsage } from "../Subscription/ChangeTier.command.ts";
+import {
+  DowngradeBelowCeiling,
+  DowngradeBelowSpend,
+  DowngradeBelowUsage,
+} from "../Subscription/ChangeTier.command.ts";
 import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
@@ -49,6 +53,8 @@ export const ChangeTierRejection = Schema.Union([
   NotSubscribed,
   CurrencyMismatch,
   DowngradeBelowUsage,
+  DowngradeBelowSpend,
+  DowngradeBelowCeiling,
   ProrationMismatch,
   CatalogMismatch,
 ]);

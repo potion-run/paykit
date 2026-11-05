@@ -1,0 +1,96 @@
+name: Live
+
+# The two provisioning packages carry a live test that only runs with a vendor
+# key, and every other run reports it as skipped. This is the workflow that
+# supplies one.
+#
+# It is manual, and only from `main`, on purpose:
+#
+# - It **mutates a real vendor account.** Both cases deploy a scratch stack,
+#   assert the cloud state out of band, destroy it, and leave retained prices,
+#   products and meters behind — that retention is the rule under test. Running
+#   it on every push would litter the account and race two PRs into one stack.
+# - It holds a **secret a fork must never see.** `pull_request` does not expose
+#   secrets to forks, but `workflow_dispatch` runs whatever ref it is given, so
+#   the `main` guard below is what keeps a branch from running untrusted code
+#   with the key.
+#
+# A missing secret is a failure here, not a skip: the whole point of a manual
+# run is the case that only the key can execute. `check.yml` keeps its skips —
+# there, a green suite with no vendor account is the correct result.
+
+on:
+  workflow_dispatch:
+    inputs:
+      vendor:
+        description: Which vendor to exercise against a real test account.
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - stripe
+          - polar
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live vendor case
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      # The gate in the test is `skipIf(!hasKey)`, which is right for `check.yml`
+      # and wrong here: a run that skipped everything would report success while
+      # proving nothing. Check the secret before spending a runner on it.
+      - name: Require the Stripe key
+        if: inputs.vendor != 'polar'
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+        run: |
+          if [ -z "$STRIPE_API_KEY" ]; then
+            echo "::error::STRIPE_API_KEY is not set for this repository."
+            exit 1
+          fi
+
+      - name: Require the Polar token
+        if: inputs.vendor != 'stripe'
+        env:
+          POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$POLAR_ACCESS_TOKEN" ]; then
+            echo "::error::POLAR_ACCESS_TOKEN is not set for this repository."
+            exit 1
+          fi
+
+      # Test mode. The case creates and retires prices, meters and products in
+      # whatever account the key belongs to, then leaves the retained ones, so
+      # this belongs on a dedicated test account and never on a live key.
+      - name: Stripe, against a test-mode account
+        if: inputs.vendor != 'polar'
+        env:
+          STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+        run: pnpm --filter @potion.run/paykit-stripe test
+
+      # The client is pinned to `server: "sandbox"`, so a production token
+      # cannot reach production.
+      - name: Polar, against the sandbox
+        if: inputs.vendor != 'stripe'
+        env:
+          POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
+        run: pnpm --filter @potion.run/paykit-polar test

@@ -4,6 +4,7 @@ import type { Catalog } from "@potion.run/paykit/Catalog";
 import type { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
@@ -70,6 +71,14 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const standing = Option.getOrElse(filter.standing, () => "");
   const status = Option.getOrElse(filter.status, () => "");
   const tier = Option.getOrElse(filter.tier, () => "");
+  // A list is a point-in-time read, never a live view: say when it was read,
+  // or say the read time is unknown. The panel never presents the rows as
+  // current, because the account beside them is live and this is not.
+  const asOf = Option.getOrUndefined(model.accounts.asOf);
+  const asOfText =
+    asOf === undefined
+      ? `Snapshot · read time unknown${model.accounts.state === "Loading" ? " · refreshing…" : ""}`
+      : `Read ${formatDateTime(asOf)} · not live${model.accounts.state === "Loading" ? " · refreshing…" : ""}`;
   const tierOptions = Option.match(model.catalog, {
     onNone: () => [{ value: "", label: "All tiers" }],
     onSome: (catalog: Catalog) =>
@@ -80,11 +89,29 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   });
 
   return h.section(
-    [h.Class("pk-panel pk-accounts")],
+    [h.Class("pk-panel pk-accounts"), h.DataAttribute("paykit-consistency", "snapshot")],
     [
       h.div(
         [h.Class("pk-panel-head")],
-        [h.h2([], ["Accounts"]), button("Refresh", Message.ClickedRefresh(), h)],
+        [
+          h.div(
+            [],
+            [
+              h.h2([], ["Accounts"]),
+              h.p(
+                [
+                  h.Class("pk-muted pk-as-of"),
+                  h.DataAttribute(
+                    "paykit-as-of",
+                    asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
+                  ),
+                ],
+                [asOfText],
+              ),
+            ],
+          ),
+          button("Refresh", Message.ClickedRefresh(), h),
+        ],
       ),
       h.div(
         [h.Class("pk-filters")],
@@ -108,56 +135,56 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
         onNone: () => h.empty,
         onSome: (error) => h.p([h.Class("pk-error")], [`Could not load accounts: ${error}`]),
       }),
-      model.accounts.state === "Loading"
-        ? h.p([h.Class("pk-muted")], ["Loading accounts…"])
-        : model.accounts.rows.length === 0
-          ? h.p([h.Class("pk-empty")], ["No accounts match these filters."])
-          : h.div(
-              [h.Class("pk-table-wrap")],
-              [
-                h.table(
-                  [h.Class("pk-table")],
-                  [
-                    h.thead(
-                      [],
-                      [
-                        h.tr(
-                          [],
-                          [
-                            h.th([], ["Account"]),
-                            h.th([], ["Tier"]),
-                            h.th([], ["Standing"]),
-                            h.th([], ["Status"]),
-                            h.th([], ["Period end"]),
-                          ],
-                        ),
-                      ],
-                    ),
-                    h.tbody(
-                      [],
-                      model.accounts.rows.map((row: BillingReadRow) =>
-                        h.keyed("tr")(
-                          row.account,
-                          [
-                            h.Class("pk-row"),
-                            h.OnClick(
-                              Message.ClickedAccount({ account: AccountId.make(row.account) }),
-                            ),
-                          ],
-                          [
-                            h.td([h.Class("pk-account-id")], [row.account]),
-                            h.td([], [row.tier]),
-                            h.td([], [badge("standing", row.standing, h)]),
-                            h.td([], [badge("status", row.status, h)]),
-                            h.td([], [formatDateTime(row.periodEnd)]),
-                          ],
-                        ),
+      model.accounts.rows.length === 0
+        ? model.accounts.state === "Loading"
+          ? h.p([h.Class("pk-muted")], ["Loading accounts…"])
+          : h.p([h.Class("pk-empty")], ["No accounts match these filters."])
+        : h.div(
+            [h.Class("pk-table-wrap")],
+            [
+              h.table(
+                [h.Class("pk-table")],
+                [
+                  h.thead(
+                    [],
+                    [
+                      h.tr(
+                        [],
+                        [
+                          h.th([], ["Account"]),
+                          h.th([], ["Tier"]),
+                          h.th([], ["Standing"]),
+                          h.th([], ["Status"]),
+                          h.th([], ["Period end"]),
+                        ],
+                      ),
+                    ],
+                  ),
+                  h.tbody(
+                    [],
+                    model.accounts.rows.map((row: BillingReadRow) =>
+                      h.keyed("tr")(
+                        row.account,
+                        [
+                          h.Class("pk-row"),
+                          h.OnClick(
+                            Message.ClickedAccount({ account: AccountId.make(row.account) }),
+                          ),
+                        ],
+                        [
+                          h.td([h.Class("pk-account-id")], [row.account]),
+                          h.td([], [row.tier]),
+                          h.td([], [badge("standing", row.standing, h)]),
+                          h.td([], [badge("status", row.status, h)]),
+                          h.td([], [formatDateTime(row.periodEnd)]),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                ],
+              ),
+            ],
+          ),
       Option.match(model.accounts.next, {
         onNone: () => h.empty,
         onSome: () => button("Next page", Message.ClickedNextPage(), h),

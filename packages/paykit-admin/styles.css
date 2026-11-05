@@ -87,6 +87,12 @@
     margin: 0;
   }
 
+  /* The list is a point-in-time read; the label says so and never hides. */
+  .pk-as-of {
+    margin: 2px 0 0;
+    font-size: 12px;
+  }
+
   .pk-filters {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -16,10 +16,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Url } from "foldkit/url";
 import { Flags } from "../src/Flags.ts";
 import { init } from "../src/init.ts";
 import { Message } from "../src/Message.ts";
 import { ConsoleAction, Model } from "../src/Model.ts";
+import { AccountSnapshot } from "../src/Snapshot.ts";
 import { update } from "../src/update.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
@@ -48,6 +50,16 @@ const row = {
 
 const page = BillingReadPage.make({ rows: [row], next: null });
 
+/** A URL the runtime would hand `init`; `search` has no leading `?`. */
+const url = (pathname = "/", search?: string): Url => ({
+  protocol: "https:",
+  host: "admin.test",
+  port: Option.none(),
+  pathname,
+  search: Option.fromNullishOr(search),
+  hash: Option.none(),
+});
+
 const flags = (overrides: Partial<Flags> = {}): Flags =>
   Flags.make({
     session: "session-1",
@@ -60,6 +72,7 @@ const seeded = (): Model =>
       catalog: Schema.encodeSync(Catalog)(testCatalog),
       accounts: Schema.encodeSync(BillingReadPage)(page),
     }),
+    url(),
   ).model;
 
 const opened = (): Model => {
@@ -80,6 +93,32 @@ const billing = {
   dunningAttempts: 0,
   currency: "usd",
   price: { amount: 1900, currency: "usd", interval: "month" as const },
+};
+
+const entitlementsState = {
+  account: account,
+  tier: "pro",
+  status: "active" as const,
+  standing: "good" as const,
+  periodStart: at,
+  periodEnd: at,
+  cancelAtPeriodEnd: false,
+  credits: 0,
+  dunningAttempts: 0,
+  currency: "usd",
+  features: {
+    messages: {
+      included: 2_000,
+      used: 0,
+      reserved: 0,
+      remaining: 2_000,
+      carried: 0,
+      allowed: true,
+      overage: "bill" as const,
+      resets: "month" as const,
+      resetsAt: at,
+    },
+  },
 };
 
 const withBilling = (): Model =>
@@ -104,6 +143,7 @@ describe("the console model", () => {
         catalog: Schema.encodeSync(Catalog)(testCatalog),
         accounts: Schema.encodeSync(BillingReadPage)(page),
       }),
+      url(),
     );
     expect(result.commands).toBeUndefined();
     expect(Option.isSome(result.model.catalog)).toBe(true);
@@ -112,13 +152,13 @@ describe("the console model", () => {
   });
 
   it("asks for the catalog and the first page when flags do not seed them", () => {
-    const result = init(flags());
+    const result = init(flags(), url());
     expect(result.commands?.map((command) => command.name)).toEqual(["GetCatalog", "ListAccounts"]);
     expect(result.model.accounts.state).toBe("Loading");
   });
 
   it("applies a list page only for the request it answers", () => {
-    const model = init(flags()).model;
+    const model = init(flags(), url()).model;
     const requestId = Option.getOrThrow(model.accounts.requestId);
     const accepted = update(
       model,
@@ -385,5 +425,158 @@ describe("the console model", () => {
     const closed = update(withBilling(), Message.ClosedAccount()).model;
     expect(Option.isNone(closed.account)).toBe(true);
     expect(closed.accounts.rows.length).toBe(1);
+  });
+
+  it("opens the account the URL names and seeds it from flags", () => {
+    const snapshot = AccountSnapshot.make({
+      account,
+      billing,
+      entitlements: entitlementsState,
+      cursor: 4,
+    });
+    const result = init(
+      flags({
+        catalog: Schema.encodeSync(Catalog)(testCatalog),
+        accounts: Schema.encodeSync(BillingReadPage)(page),
+        account: Schema.encodeSync(AccountSnapshot)(snapshot),
+      }),
+      url(`/accounts/${account}`),
+    );
+    expect(result.commands).toBeUndefined();
+    expect(result.model.route._tag).toBe("Account");
+    if (Option.isNone(result.model.account)) return;
+    const opened = result.model.account.value;
+    expect(opened.id).toBe(account);
+    expect(Option.isSome(opened.billing)).toBe(true);
+    expect(Option.isSome(opened.entitlements)).toBe(true);
+    expect(opened.cursor).toEqual(Option.some(4));
+    // The feed resumes after the cursor and says it is catching up until it
+    // has; a seeded panel is the first frame of the watch, not a live claim.
+    expect(opened.feed).toBe("CatchingUp");
+  });
+
+  it("falls back to the live reads when a snapshot no longer decodes", () => {
+    const result = init(
+      flags({ account: { account, billing: { tier: "pro", nope: true } } }),
+      url(`/accounts/${account}`),
+    );
+    expect(result.model.route._tag).toBe("Account");
+    if (Option.isNone(result.model.account)) return;
+    const opened = result.model.account.value;
+    expect(opened.id).toBe(account);
+    expect(Option.isNone(opened.billing)).toBe(true);
+    expect(Option.isNone(opened.cursor)).toBe(true);
+  });
+
+  it("opens an account the URL names even when flags seed nothing", () => {
+    const result = init(flags(), url(`/accounts/${account}`, "standing=grace"));
+    expect(result.model.route._tag).toBe("Account");
+    expect(Option.getOrNull(result.model.accounts.filter.standing)).toBe("grace");
+    if (Option.isNone(result.model.account)) return;
+    expect(result.model.account.value.id).toBe(account);
+    // The list and catalog are still asked for, with the URL's filter.
+    expect(result.commands?.map((command) => command.name)).toEqual(["GetCatalog", "ListAccounts"]);
+    const list = result.commands?.find((command) => command.name === "ListAccounts");
+    expect(list?.args?.query).toEqual({ standing: "grace" });
+  });
+
+  it("reflects the route it follows, and boots the same view from that URL", () => {
+    const navigated = update(seeded(), Message.ClickedAccount({ account }));
+    expect(navigated.commands?.map((command) => command.name)).toEqual(["ReflectRoute"]);
+    const reflected = navigated.commands?.[0]?.args?.url;
+    expect(reflected).toBe(`/accounts/${account}`);
+
+    const refreshed = init(
+      flags({
+        catalog: Schema.encodeSync(Catalog)(testCatalog),
+        accounts: Schema.encodeSync(BillingReadPage)(page),
+      }),
+      url(String(reflected)),
+    ).model;
+    expect(refreshed.route).toEqual(navigated.model.route);
+    expect(Option.map(refreshed.account, (open) => open.id)).toEqual(Option.some(account));
+  });
+
+  it("follows a back button through the URL, resetting the keyed reads", () => {
+    const withAccount = update(seeded(), Message.ClickedAccount({ account })).model;
+    const backed = update(withAccount, Message.ChangedUrl({ url: url("/") }));
+    expect(backed.model.route._tag).toBe("Accounts");
+    expect(Option.isNone(backed.model.account)).toBe(true);
+    // No navigation echo: the address bar already says what the Model follows.
+    expect(backed.commands).toBeUndefined();
+
+    const forward = update(backed.model, Message.ChangedUrl({ url: url(`/accounts/${account}`) }));
+    expect(Option.map(forward.model.account, (open) => open.id)).toEqual(Option.some(account));
+  });
+
+  it("replaces the URL on a filter change and reads the list once", () => {
+    const changed = update(seeded(), Message.UpdatedStandingFilter({ value: "grace" }));
+    expect(changed.commands?.map((command) => command.name).sort()).toEqual([
+      "ListAccounts",
+      "ReflectRoute",
+    ]);
+    expect(changed.commands?.find((command) => command.name === "ReflectRoute")?.args).toEqual({
+      url: "/?standing=grace",
+      replace: true,
+    });
+    expect(Option.getOrNull(changed.model.accounts.filter.standing)).toBe("grace");
+
+    // The runtime echoes the replace back as a URL change; that must not read
+    // the list a second time.
+    const echoed = update(changed.model, Message.ChangedUrl({ url: url("/", "standing=grace") }));
+    expect(echoed.commands).toBeUndefined();
+    expect(Option.getOrNull(echoed.model.accounts.filter.standing)).toBe("grace");
+  });
+
+  it("says when the list was read, and re-reads it after a write", () => {
+    const stamped = BillingReadPage.make({ rows: [row], next: null, asOf: at });
+    const model = init(
+      flags({ accounts: Schema.encodeSync(BillingReadPage)(stamped) }),
+      url(),
+    ).model;
+    expect(model.accounts.asOf).toEqual(Option.some(at));
+
+    const submitted = update(withDraft("250"), Message.ClickedSubmitAction());
+    const commandId = submitted.model.account.pipe(
+      Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
+      Option.getOrThrow,
+    );
+    const settled = update(
+      submitted.model,
+      Message.ReceivedAdminResult({
+        message: BillingAdmin.Message.SucceededGrantCredits({
+          commandId,
+          reply: { balance: 250 },
+          receipt: { stream: "Subscription/acct_a", version: 2 },
+        }),
+      }),
+    );
+    expect(settled.commands?.map((command) => command.name)).toEqual(["ListAccounts"]);
+    // The rows stay while the re-read is in flight; the panel says the list is
+    // refreshing rather than blanking what the operator was reading.
+    expect(settled.model.accounts.rows.length).toBe(1);
+    expect(settled.model.accounts.state).toBe("Loading");
+
+    const requestId = Option.getOrThrow(settled.model.accounts.requestId);
+    const reread = update(
+      settled.model,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededListAccounts({
+          requestId,
+          page: BillingReadPage.make({ rows: [row], next: null, asOf: at }),
+        }),
+      }),
+    ).model;
+    expect(reread.accounts.state).toBe("Loaded");
+    expect(reread.accounts.asOf).toEqual(Option.some(at));
+  });
+
+  it("never claims a read time the page does not carry", () => {
+    const unstamped = BillingReadPage.make({ rows: [row], next: null });
+    const model = init(
+      flags({ accounts: Schema.encodeSync(BillingReadPage)(unstamped) }),
+      url(),
+    ).model;
+    expect(Option.isNone(model.accounts.asOf)).toBe(true);
   });
 });
