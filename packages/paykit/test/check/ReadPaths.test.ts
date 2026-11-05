@@ -5,15 +5,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Check } from "../../src/Billing/Check.binding.ts";
+import { CheckOverTransport } from "../../src/Billing/CheckOverTransport.layer.ts";
+import { CheckReadModel } from "../../src/Billing/CheckReadModel.layer.ts";
+import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import {
-  CheckHttp,
-  CheckInProcess,
-  CheckReadModel,
-  CheckTransport,
-  type CheckResult,
-} from "../../src/Check.ts";
+import { CheckTransport, type CheckResult } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
@@ -21,7 +19,7 @@ import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
-import { Track } from "../../src/Track.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const freeTier = tier({
@@ -38,10 +36,17 @@ const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const account = "acct_paths";
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/**
+ * The tenant bundle, plus the two read paths a `Check` can take instead of the
+ * model: one row from the projection, or a transport. They are layers of the
+ * same tag, so a test swaps one for another and the call site does not move.
+ */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 
@@ -71,10 +76,12 @@ describe("Check read paths", () => {
   it.live("in-process and read-model paths agree", () =>
     Effect.gen(function* () {
       yield* subscribeFree;
-      const inProcess = yield* CheckInProcess();
-      const readModel = yield* CheckReadModel();
-      const first = yield* inProcess({ account, feature: "messages", amount: 1 });
-      const second = yield* readModel({ account, feature: "messages", amount: 1 });
+      const inProcess = yield* Check(account);
+      const first = yield* inProcess({ feature: "messages", amount: 1 });
+      const second = yield* Effect.gen(function* () {
+        const readModel = yield* Check(account);
+        return yield* readModel({ feature: "messages", amount: 1 });
+      }).pipe(Effect.provide(CheckReadModel));
       expect(second).toEqual(first);
       expect(first.allowed).toBe(true);
       expect(first.remaining).toBe(100);
@@ -84,30 +91,33 @@ describe("Check read paths", () => {
   it.live("both paths see a Track after the projection catches up", () =>
     Effect.gen(function* () {
       yield* subscribeFree;
-      const track = yield* Track();
-      const receipt = yield* track({ account, feature: "messages", amount: 40 });
-      yield* BillingRead.caughtUp(receipt);
-      // The row is the projection's, so wait for it to catch up with the view.
-      const entitlements = yield* Entitlements;
+      const track = yield* TrackUsage(account);
       const store = yield* BillingReadStore;
+      // The binding guarantees the view; the row is the projection's, so wait for
+      // it to catch up with that view before reading the other path.
+      yield* track({ feature: "messages", amount: 40, dedupeKey: "read-paths-40" });
+      const entitlements = yield* Entitlements;
       yield* waitForProjection(
         store,
         account,
         Option.getOrNull(yield* entitlements.query(Subscription.ref(account))),
       );
-      const inProcess = yield* CheckInProcess();
-      const readModel = yield* CheckReadModel();
-      expect(yield* readModel({ account, feature: "messages", amount: 1 })).toEqual(
-        yield* inProcess({ account, feature: "messages", amount: 1 }),
-      );
-      expect((yield* readModel({ account, feature: "messages", amount: 1 })).remaining).toBe(60);
+      const inProcess = yield* Check(account);
+      const readModel = yield* Effect.gen(function* () {
+        const read = yield* Check(account);
+        return yield* read({ feature: "messages", amount: 1 });
+      }).pipe(Effect.provide(CheckReadModel));
+      expect(readModel).toEqual(yield* inProcess({ feature: "messages", amount: 1 }));
+      expect(readModel.remaining).toBe(60);
     }).pipe(run),
   );
 
   it.live("the read-model path answers blocked when the row does not exist", () =>
     Effect.gen(function* () {
-      const readModel = yield* CheckReadModel();
-      const answer = yield* readModel({ account: "acct_missing", feature: "messages" });
+      const answer = yield* Effect.gen(function* () {
+        const read = yield* Check("acct_missing");
+        return yield* read({ feature: "messages" });
+      }).pipe(Effect.provide(CheckReadModel));
       expect(answer).toEqual({
         allowed: false,
         remaining: 0,
@@ -133,10 +143,10 @@ describe("Check read paths", () => {
         }),
     });
     return Effect.gen(function* () {
-      const http = yield* CheckHttp();
-      expect(yield* http({ account, feature: "messages", amount: 1 })).toEqual(expected);
+      const http = yield* Check(account);
+      expect(yield* http({ feature: "messages", amount: 1 })).toEqual(expected);
       expect(calls).toBe(1);
-    }).pipe(Effect.provide(transport), Effect.provide(World));
+    }).pipe(Effect.provide(CheckOverTransport), Effect.provide(transport), Effect.provide(World));
   });
 
   it.live("the read model round-trips features, credits and standing", () =>
@@ -154,8 +164,8 @@ describe("Check read paths", () => {
   it.live("a missing feature is not allowed even with a good standing", () =>
     Effect.gen(function* () {
       yield* subscribeFree;
-      const check = yield* CheckInProcess();
-      const answer = yield* check({ account, feature: "seats" });
+      const check = yield* Check(account);
+      const answer = yield* check({ feature: "seats" });
       expect(answer.allowed).toBe(false);
       expect(answer.standing).toBe("good");
     }).pipe(run),
@@ -168,22 +178,21 @@ describe("the read model answers what check() answers", () => {
       const receipt = yield* subscribeFree;
       yield* BillingRead.caughtUp(receipt);
       const entitlements = yield* Entitlements;
-      const check = yield* CheckInProcess();
+      const check = yield* Check(account);
 
       const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
-      const answered = yield* check({ account, feature: "messages", amount: 1 });
+      const answered = yield* check({ feature: "messages", amount: 1 });
       expect(view?.features.messages?.allowed).toBe(answered.allowed);
       expect(view?.features.messages?.remaining).toBe(answered.remaining);
       expect(view?.standing).toBe(answered.standing);
 
       // Spend the whole allowance: the view says no, and so does check().
-      const track = yield* Track();
-      const spent = yield* track({ account, feature: "messages", amount: 100 });
-      yield* BillingRead.caughtUp(spent);
+      const track = yield* TrackUsage(account);
+      yield* track({ feature: "messages", amount: 100, dedupeKey: "read-paths-100" });
       const empty = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
       expect(empty?.features.messages?.allowed).toBe(false);
       expect(empty?.features.messages?.remaining).toBe(0);
-      expect((yield* check({ account, feature: "messages", amount: 1 })).allowed).toBe(false);
+      expect((yield* check({ feature: "messages", amount: 1 })).allowed).toBe(false);
     }).pipe(run),
   );
 
@@ -191,8 +200,7 @@ describe("the read model answers what check() answers", () => {
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
-      const track = yield* Track();
-      const check = yield* CheckInProcess();
+      const check = yield* Check(account);
       const receipt = yield* subscription.send(
         Subscription.ref(account),
         new Subscribe({
@@ -204,11 +212,15 @@ describe("the read model answers what check() answers", () => {
         }),
       );
       yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
-      yield* track({ account, feature: "messages", amount: 2000 });
+      yield* (yield* TrackUsage(account))({
+        feature: "messages",
+        amount: 2000,
+        dedupeKey: "read-paths-2000",
+      });
       const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
       expect(view?.features.messages?.remaining).toBe(0);
       expect(view?.features.messages?.allowed).toBe(true);
-      expect((yield* check({ account, feature: "messages", amount: 1 })).allowed).toBe(true);
+      expect((yield* check({ feature: "messages", amount: 1 })).allowed).toBe(true);
     }).pipe(run),
   );
 });

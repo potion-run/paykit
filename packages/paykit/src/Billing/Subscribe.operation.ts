@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { asSystem } from "./Auth/Actor.ts";
-import { tierOf, tierTermsOf } from "./Catalog.ts";
-import { CatalogService } from "./CatalogService.ts";
+import { asSystem } from "../Auth/Actor.ts";
+import { tierOf, tierTermsOf } from "../Catalog.ts";
+import { CatalogService } from "../CatalogService.ts";
 import {
   type PaymentError,
   Payments,
@@ -11,12 +11,12 @@ import {
   ProviderCapabilityMissing,
   type PaymentsService,
   providerFor,
-} from "./Payments.ts";
-import { AttachProviderRef } from "./Subscription/AttachProviderRef.command.ts";
-import { Entitlements } from "./Subscription/Entitlements.view.ts";
-import { Subscribe as SubscribeCommand } from "./Subscription/Subscribe.command.ts";
-import { Subscription } from "./Subscription/Subscription.aggregate.ts";
-import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
+} from "../Payments.ts";
+import { AttachProviderRef } from "../Subscription/AttachProviderRef.command.ts";
+import { Entitlements } from "../Subscription/Entitlements.view.ts";
+import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 
 /** What `Subscribe` asks for. */
 export interface SubscribeInput {
@@ -89,7 +89,7 @@ const purchasePath = (
  *
  * @primitive
  */
-export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
+export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
   const catalog = yield* CatalogService;
   const subscription = yield* Subscription;
   const entitlements = yield* Entitlements;

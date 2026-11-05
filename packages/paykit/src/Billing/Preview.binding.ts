@@ -2,10 +2,9 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
-import type { PreviewCommand, PreviewResult } from "../Preview.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
+import type { PreviewCommand, PreviewResult } from "./Preview.operation.ts";
 
 /**
  * What to decide without recording. The account is the bind, so a caller names
@@ -60,7 +59,7 @@ export type PreviewVerb = (request: PreviewRequest) => Effect.Effect<PreviewResu
 export interface Preview extends Binding.Service<
   Preview,
   "Paykit.Preview",
-  (account: AccountId) => Effect.Effect<PreviewVerb>
+  (account: string) => Effect.Effect<PreviewVerb>
 > {}
 
 export const Preview = Binding.Service<Preview>("Paykit.Preview");

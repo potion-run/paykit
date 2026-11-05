@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { asSystem } from "./Auth/Actor.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "./Payments.ts";
-import { NoProrationDue } from "./Subscription/RecordProrationInvoice.command.ts";
-import { RecordProrationInvoice } from "./Subscription/RecordProrationInvoice.command.ts";
-import { Subscription } from "./Subscription/Subscription.aggregate.ts";
+import { asSystem } from "../Auth/Actor.ts";
+import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import { NoProrationDue } from "../Subscription/RecordProrationInvoice.command.ts";
+import { RecordProrationInvoice } from "../Subscription/RecordProrationInvoice.command.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 
 /** Which account's unbilled tier change to collect. */
 export interface ChargeProrationInput {
@@ -55,7 +55,7 @@ export type ChargeProrationResult = typeof ChargeProrationResult.Type;
  *
  * @primitive
  */
-export const ChargeProration = Effect.fn("Paykit.ChargeProration")(function* () {
+export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(function* () {
   const subscription = yield* Subscription;
   const router = yield* Effect.serviceOption(PaymentsRouter);
 

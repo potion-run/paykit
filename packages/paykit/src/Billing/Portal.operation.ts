@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "./Payments.ts";
-import { Subscription } from "./Subscription/Subscription.aggregate.ts";
+import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 
 /** What `Portal` opens. */
 export interface PortalInput {
@@ -14,7 +14,7 @@ export interface PortalInput {
  * The portal belongs to the provider the account already pays through, so the
  * standing picks it and only that provider's layer is provided for the call.
  */
-export const Portal = Effect.fn("Paykit.Portal")(function* () {
+export const portalOperation = Effect.fn("Paykit.Portal")(function* () {
   const subscription = yield* Subscription;
   const router = yield* Effect.serviceOption(PaymentsRouter);
 

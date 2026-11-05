@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { BillingAdminApi } from "../BillingAdminApi.api.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import {
   EnterGrace,
   Expire,
@@ -52,9 +53,12 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.GrantCredits")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.GrantCredits.add")(function* (request) {
           const receipt = yield* bound(toGrantCreditsError)(
-            client.GrantCredits(account, { amount: request.amount }, options(request.dedupeKey)),
+            client.GrantCredits(id, { amount: request.amount }, options(request.dedupeKey)),
           );
           return receipt.reply;
         });
@@ -67,16 +71,19 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.ExtendTrial")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.ExtendTrial.extend")(function* (request) {
           const receipt = yield* bound(toExtendTrialError)(
             client.ExtendTrial(
-              account,
+              id,
               { trialEndsAt: request.trialEndsAt },
               options(request.dedupeKey),
             ),
           );
           const view = yield* bound(toExtendTrialError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });
@@ -89,16 +96,15 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.EnterGrace")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.EnterGrace.open")(function* (request) {
           const receipt = yield* bound(toEnterGraceError)(
-            client.EnterGrace(
-              account,
-              { graceUntil: request.graceUntil },
-              options(request.dedupeKey),
-            ),
+            client.EnterGrace(id, { graceUntil: request.graceUntil }, options(request.dedupeKey)),
           );
           const view = yield* bound(toEnterGraceError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });
@@ -111,12 +117,15 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.Recover")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.Recover.standing")(function* (request) {
           const receipt = yield* bound(toRecoverError)(
-            client.Recover(account, {}, options(request.dedupeKey)),
+            client.Recover(id, {}, options(request.dedupeKey)),
           );
           const view = yield* bound(toRecoverError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });
@@ -129,12 +138,15 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.Expire")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.Expire.standing")(function* (request) {
           const receipt = yield* bound(toExpireError)(
-            client.Expire(account, {}, options(request.dedupeKey)),
+            client.Expire(id, {}, options(request.dedupeKey)),
           );
           const view = yield* bound(toExpireError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });
@@ -147,16 +159,19 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.RecordPayment")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.RecordPayment.record")(function* (request) {
           const receipt = yield* bound(toRecordPaymentError)(
             client.RecordPayment(
-              account,
+              id,
               { amount: request.amount, currency: request.currency },
               options(request.dedupeKey),
             ),
           );
           const view = yield* bound(toRecordPaymentError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });
@@ -169,16 +184,19 @@ export const BillingAdminApiLayer = Layer.mergeAll(
       const client = yield* BillingAdminApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
       return Effect.fn("Paykit.RecordPaymentFailure")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.RecordPaymentFailure.record")(function* (request) {
           const receipt = yield* bound(toRecordPaymentFailureError)(
             client.RecordPaymentFailure(
-              account,
+              id,
               { reason: request.reason, graceUntil: request.graceUntil },
               options(request.dedupeKey),
             ),
           );
           const view = yield* bound(toRecordPaymentFailureError)(
-            client.BillingState.get(account, { atLeast: receipt, ...options() }),
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
           return standingSnapshot(view);
         });

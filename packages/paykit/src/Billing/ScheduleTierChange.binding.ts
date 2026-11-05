@@ -5,10 +5,8 @@ import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
-import type { TierId } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /**
@@ -18,7 +16,7 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  * moves until the boundary.
  */
 export interface ScheduleTierChangeRequest {
-  readonly tier: TierId;
+  readonly tier: string;
   /** The retry key, which is also the command id. */
   readonly dedupeKey: string;
 }
@@ -99,7 +97,7 @@ export type WithdrawTierChangeVerb = (
  * **Example:** Move to a smaller plan at the boundary
  * ```typescript
  * const schedule = yield* Paykit.ScheduleTierChange(account);
- * const { pendingTier } = yield* schedule({ tier: "small" as TierId, dedupeKey: requestId });
+ * const { pendingTier } = yield* schedule({ tier: "small", dedupeKey: requestId });
  * ```
  *
  * @binding
@@ -109,7 +107,7 @@ export type WithdrawTierChangeVerb = (
 export interface ScheduleTierChange extends Binding.Service<
   ScheduleTierChange,
   "Paykit.ScheduleTierChange",
-  (account: AccountId) => Effect.Effect<ScheduleTierChangeVerb>
+  (account: string) => Effect.Effect<ScheduleTierChangeVerb>
 > {}
 
 export const ScheduleTierChange = Binding.Service<ScheduleTierChange>("Paykit.ScheduleTierChange");
@@ -133,7 +131,7 @@ export const ScheduleTierChange = Binding.Service<ScheduleTierChange>("Paykit.Sc
 export interface WithdrawTierChange extends Binding.Service<
   WithdrawTierChange,
   "Paykit.WithdrawTierChange",
-  (account: AccountId) => Effect.Effect<WithdrawTierChangeVerb>
+  (account: string) => Effect.Effect<WithdrawTierChangeVerb>
 > {}
 
 export const WithdrawTierChange = Binding.Service<WithdrawTierChange>("Paykit.WithdrawTierChange");

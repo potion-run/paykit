@@ -7,9 +7,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
+import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
+import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { CheckInProcess, CheckReadModel } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
@@ -25,7 +27,7 @@ import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscri
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
-import { Track } from "../../src/Track.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const unlimitedTier = tier({
@@ -209,10 +211,13 @@ it.effect("closes the period: usage resets, the count stays absent, the period s
   ),
 );
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/** The model, its store and every tenant binding. */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 it.live("check() answers remaining: null, and the read model keeps it", () =>
   Effect.gen(function* () {
@@ -232,12 +237,16 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);
 
-    const track = yield* Track();
-    const tracked = yield* track({ account: account.id, feature: "messages", amount: 1_000_000 });
-    yield* BillingRead.caughtUp(tracked);
+    const track = yield* trackUsageBinding(account.id);
+    const tracked = yield* track({
+      feature: "messages",
+      amount: 1_000_000,
+      dedupeKey: "unlimited-track",
+    });
+    expect(tracked.used).toBe(1_000_000);
 
-    const inProcess = yield* CheckInProcess();
-    const answer = yield* inProcess({ account: account.id, feature: "messages" });
+    const inProcess = yield* checkBinding(account.id);
+    const answer = yield* inProcess({ feature: "messages" });
     expect(answer.allowed).toBe(true);
     // Unlimited is the absence of a count, not a large one.
     expect(answer.remaining).toBeNull();
@@ -246,8 +255,8 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
     expect(answer.standing).toBe("good");
 
     // The read-model path and the in-process path agree, as they do for a count.
-    const readModel = yield* CheckReadModel();
-    expect(yield* readModel({ account: account.id, feature: "messages" })).toEqual(answer);
+    const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
+    expect(yield* readModel({ feature: "messages" })).toEqual(answer);
 
     // The row round-trips the absence of a count, not a zero.
     const store = yield* BillingReadStore;

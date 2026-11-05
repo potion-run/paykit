@@ -9,10 +9,10 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { ChargeProration } from "../../src/Billing/Portal.binding.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
-import { ChargeProration } from "../../src/ChargeProration.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
@@ -24,10 +24,10 @@ import {
 import { prorate } from "../../src/Proration.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
-import { NoProrationDue } from "../../src/Subscription/RecordProrationInvoice.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { assertProperty } from "../support/Property.ts";
 
 const proTier = tier({
@@ -100,16 +100,19 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
 const world = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
   // `provideMerge` so the projection's store is the one the test reads: a
   // `provide` would give the handlers a private copy.
-  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
-    Layer.provide(Domain.InMemory),
-    Layer.provideMerge(MemoryBillingReadStore),
-    Layer.provideMerge(
-      Layer.mergeAll(
-        Layer.succeed(Actor, system("test")),
-        catalogLayer(testCatalog),
-        invoicing(asked, failWith),
+  bindingsWorld(
+    PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
+      Layer.provide(Domain.InMemory),
+      Layer.provideMerge(MemoryBillingReadStore),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(Actor, system("test")),
+          catalogLayer(testCatalog),
+          invoicing(asked, failWith),
+        ),
       ),
     ),
+    { catalog: testCatalog, providers: invoicing(asked, failWith) },
   );
 
 /** Pro, then up to scale: the state now owes `upgrade.due`. */
@@ -153,8 +156,8 @@ describe("charging a proration", () => {
     return run(
       Effect.gen(function* () {
         yield* upgraded;
-        const charge = yield* ChargeProration();
-        const result = yield* charge({ account });
+        const charge = yield* ChargeProration(account);
+        const result = yield* charge();
         expect(result).toEqual({
           outcome: "charged",
           invoiceId: "inv_1",
@@ -179,8 +182,8 @@ describe("charging a proration", () => {
     return run(
       Effect.gen(function* () {
         yield* upgraded;
-        const charge = yield* ChargeProration();
-        yield* charge({ account });
+        const charge = yield* ChargeProration(account);
+        yield* charge();
 
         const billing = yield* BillingState;
         // A view is fed by deliveries, so the page catches up just after the
@@ -215,16 +218,17 @@ describe("charging a proration", () => {
     );
   });
 
-  it.live("bills once: a second call is refused, not a second invoice", () => {
+  it.live("bills once: a second call answers nothing, not a second invoice", () => {
     const asked: Array<Invoice> = [];
     return run(
       Effect.gen(function* () {
         yield* upgraded;
-        const charge = yield* ChargeProration();
-        yield* charge({ account });
-        const second = yield* Effect.flip(charge({ account }));
-        expect(second).toBeInstanceOf(NoProrationDue);
-        expect((second as NoProrationDue).reason).toBe("billed");
+        const charge = yield* ChargeProration(account);
+        yield* charge();
+        // The invoice id is recorded, so the second call has nothing to collect.
+        // That is a result, not a refusal: a caller asks "collect what you can"
+        // and does not write a catch for the common case.
+        expect(yield* charge()).toEqual({ outcome: "nothing" });
         expect(asked.length).toBe(1);
       }),
       asked,
@@ -247,10 +251,8 @@ describe("charging a proration", () => {
             price: proPrice,
           }),
         );
-        const charge = yield* ChargeProration();
-        const error = yield* Effect.flip(charge({ account }));
-        expect(error).toBeInstanceOf(NoProrationDue);
-        expect((error as NoProrationDue).reason).toBe("none");
+        const charge = yield* ChargeProration(account);
+        expect(yield* charge()).toEqual({ outcome: "nothing" });
         expect(asked).toEqual([]);
       }),
       asked,
@@ -285,11 +287,11 @@ describe("charging a proration", () => {
             proration: downgrade,
           }),
         );
-        const charge = yield* ChargeProration();
-        const error = yield* Effect.flip(charge({ account }));
+        const charge = yield* ChargeProration(account);
         // `due` is negative: the account is owed, and paying it out is a refund,
-        // which is a provider action rather than a subscription one.
-        expect(error).toBeInstanceOf(NoProrationDue);
+        // which is a provider action rather than a subscription one — so there is
+        // nothing to collect, and the verb says so rather than failing.
+        expect(yield* charge()).toEqual({ outcome: "nothing" });
         expect(asked).toEqual([]);
       }),
       asked,
@@ -306,8 +308,8 @@ describe("charging a proration", () => {
     return run(
       Effect.gen(function* () {
         yield* upgraded;
-        const charge = yield* ChargeProration();
-        const error = yield* Effect.flip(charge({ account }));
+        const charge = yield* ChargeProration(account);
+        const error = yield* Effect.flip(charge());
         expect(error).toBeInstanceOf(PaymentDeclined);
         const subscription = yield* Subscription;
         const state = yield* subscription.state(Subscription.ref(account));
@@ -379,8 +381,8 @@ describe("charging a proration", () => {
           );
           if (Result.isFailure(changed)) return false;
 
-          const charge = yield* ChargeProration();
-          const first = yield* Effect.result(charge({ account }));
+          const charge = yield* ChargeProration(account);
+          const first = yield* Effect.result(charge());
 
           if (due > 0) {
             // The positive difference is charged once, for the amount the log
@@ -391,22 +393,17 @@ describe("charging a proration", () => {
             if (first.success.currency !== proration!.currency) return false;
             if (asked.length !== 1 || asked[0]?.amount !== due) return false;
 
-            const second = yield* Effect.result(charge({ account }));
-            if (!Result.isFailure(second)) return false;
-            if (second.failure._tag !== "NoProrationDue") return false;
-            if (second.failure.reason !== "billed") return false;
+            const second = yield* Effect.result(charge());
+            if (Result.isFailure(second)) return false;
+            if (second.success.outcome !== "nothing") return false;
             return asked.length === 1;
           }
 
           // A credit or a no-op is recorded, never collected.
-          if (Result.isFailure(first)) {
-            return (
-              first.failure._tag === "NoProrationDue" &&
-              first.failure.reason === "none" &&
-              asked.length === 0
-            );
-          }
-          return false;
+          // A credit or a no-op is recorded, never collected.
+          return (
+            !Result.isFailure(first) && first.success.outcome === "nothing" && asked.length === 0
+          );
         }).pipe(Effect.provide(world(asked)));
       },
       { runs: 30, size: 12 },

@@ -7,9 +7,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance, grant } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
+import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
+import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { CheckInProcess, CheckReadModel } from "../../src/Check.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
@@ -28,7 +30,7 @@ import {
   UsageRecorded,
 } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
-import { Track } from "../../src/Track.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
@@ -154,17 +156,20 @@ it.effect("closes the period with nothing to reset for the flag", () =>
   ),
 );
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/** The model, its store and every tenant binding. */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 it.live("check() allows a granted flag, refuses an ungranted one, and the read model agrees", () =>
   Effect.gen(function* () {
     const readAccount = Subscription.ref("acct_flags_read");
     const subscription = yield* Subscription;
     const entitlements = yield* Entitlements;
-    const inProcess = yield* CheckInProcess();
+    const inProcess = yield* checkBinding(readAccount.id);
 
     // No grant at all: the existing missing-feature path, unchanged.
     const basicReceipt = yield* subscription.send(
@@ -180,7 +185,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     );
     yield* entitlements.query(readAccount, { atLeast: basicReceipt });
     yield* BillingRead.caughtUp(basicReceipt);
-    const ungranted = yield* inProcess({ account: readAccount.id, feature: "sso" });
+    const ungranted = yield* inProcess({ feature: "sso" });
     expect(ungranted.allowed).toBe(false);
     expect(ungranted.remaining).toBe(0);
 
@@ -201,7 +206,6 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     yield* BillingRead.caughtUp(receipt);
 
     const granted = yield* inProcess({
-      account: readAccount.id,
       feature: "sso",
       amount: 1_000_000,
     });
@@ -212,8 +216,16 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
       standing: "good",
     });
 
-    const readModel = yield* CheckReadModel();
-    expect(yield* readModel({ account: readAccount.id, feature: "sso" })).toEqual(granted);
+    const readModel = yield* Effect.gen(function* () {
+      // The read model answers from a row, so it needs the projection caught up.
+      yield* waitForProjection(
+        yield* BillingReadStore,
+        readAccount.id,
+        Option.getOrNull(yield* entitlements.query(readAccount)),
+      );
+      return yield* checkBinding(readAccount.id);
+    }).pipe(Effect.provide(CheckReadModelLayer));
+    expect(yield* readModel({ feature: "sso" })).toEqual(granted);
 
     // The row carries the flag's judgement, not a count it invented.
     const store = yield* BillingReadStore;
@@ -228,9 +240,9 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     expect(row?.features.sso?.included).toBe(1);
 
     // And a Track still refuses it through the binding.
-    const track = yield* Track();
+    const track = yield* trackUsageBinding(readAccount.id);
     const refused = yield* Effect.exit(
-      track({ account: readAccount.id, feature: "sso", amount: 1 }),
+      track({ feature: "sso", amount: 1, dedupeKey: "flags-track" }),
     );
     expect(refused._tag).toBe("Failure");
     expect(String(refused)).toContain("FeatureNotMetered");

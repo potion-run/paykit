@@ -73,7 +73,7 @@ const stateOf = (account: string) =>
 describe("a Stack with two providers", () => {
   it.live("a new account buys through the first provider, and its ref names that one", () =>
     Effect.gen(function* () {
-      const purchase = yield* (yield* SubscribeBinding("acct_new" as never))({
+      const purchase = yield* (yield* SubscribeBinding("acct_new"))({
         tier: "pro" as TierId,
       });
       expect("url" in purchase).toBe(true);
@@ -88,7 +88,7 @@ describe("a Stack with two providers", () => {
       yield* referred("acct_manual", "manual");
       // `manual` has no checkout, so the purchase is an invoice — proof the
       // router picked the provider the standing names, not the fallback.
-      const purchase = yield* (yield* SubscribeBinding("acct_manual" as never))({
+      const purchase = yield* (yield* SubscribeBinding("acct_manual"))({
         tier: "pro" as TierId,
       });
       expect("invoiceId" in purchase).toBe(true);
@@ -101,7 +101,7 @@ describe("a Stack with two providers", () => {
   it.live("the portal opens on the account's own provider, not the fallback", () =>
     Effect.gen(function* () {
       yield* referred("acct_portal_manual", "manual");
-      const error = yield* Effect.flip((yield* PortalBinding("acct_portal_manual" as never))());
+      const error = yield* Effect.flip((yield* PortalBinding("acct_portal_manual"))());
       // `manual` declares no portal, so the routed call fails on that provider;
       // the fallback would have opened one.
       expect(error).toBeInstanceOf(ProviderCapabilityMissing);
@@ -109,7 +109,7 @@ describe("a Stack with two providers", () => {
 
       // An account with no refs falls back to the first provider, which has a
       // portal — so the refusal above was the routing, not a missing op.
-      const opened = yield* (yield* PortalBinding("acct_never_seen" as never))();
+      const opened = yield* (yield* PortalBinding("acct_never_seen"))();
       expect(opened.url).toContain("portal");
     }).pipe(run),
   );

@@ -17,7 +17,7 @@ const tiers = { pro: { price: proPrice, productId: "prod_example" } };
 const recording = (asked: Array<Record<string, unknown>> = []): PolarClient => ({
   createCheckoutSession: (request) =>
     Effect.sync(() => {
-      asked.push(request as never);
+      asked.push(request);
       return { url: `https://polar.test/checkout/${request.productId}` };
     }),
   createCustomerSession: () => Effect.sync(() => ({ url: "https://polar.test/portal" })),
@@ -100,7 +100,7 @@ describe("the example's money routes", () => {
       expect(applied.eventId).toBe("msg_example");
 
       // 3. The entitlement answers from local state, no provider in the read.
-      const check = yield* Check(account as never);
+      const check = yield* Check(account);
       let answer = yield* check({ feature: "messages", amount: 1 });
       // A view is fed by deliveries, so the read catches up just after the
       // command commits.

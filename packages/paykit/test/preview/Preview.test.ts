@@ -5,16 +5,17 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Preview } from "../../src/Billing/Preview.binding.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { Preview } from "../../src/Preview.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 
 const freeTier = tier({
   id: "free",
@@ -36,20 +37,25 @@ const testCatalog = Effect.runSync(
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const account = "acct_preview";
 
-const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
-  .pipe(Layer.provide(Domain.InMemory))
-  .pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
+const World = bindingsWorld(
+  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+    .pipe(Layer.provide(Domain.InMemory))
+    // The tenant bundle carries `List`, which reads the projection store.
+    .pipe(Layer.provideMerge(MemoryBillingReadStore))
+    .pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
+      ),
     ),
-  );
+  { catalog: testCatalog },
+);
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 
 it.live("previews a subscribe without recording anything", () =>
   Effect.gen(function* () {
-    const preview = yield* Preview();
-    const result = yield* preview({ account, command: { kind: "subscribe", tier: "pro" } });
+    const preview = yield* Preview(account);
+    const result = yield* preview({ command: { kind: "subscribe", tier: "pro" } });
     expect(result._tag).toBe("accepted");
     if (result._tag !== "accepted") return;
     expect(result.state._tag).toBe("Subscribed");
@@ -75,8 +81,8 @@ it.live("previews the charge a tier change would make", () =>
         price: { amount: 1900, currency: "usd", interval: "month" },
       }),
     );
-    const preview = yield* Preview();
-    const result = yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+    const preview = yield* Preview(account);
+    const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
     expect(result._tag).toBe("accepted");
     if (result._tag !== "accepted") return;
     expect(result.proration?.due).toBe(8000);
@@ -86,19 +92,20 @@ it.live("previews the charge a tier change would make", () =>
 
 it.live("a preview carries the rejection the write would return", () =>
   Effect.gen(function* () {
-    const preview = yield* Preview();
-    const result = yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+    const preview = yield* Preview(account);
+    const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
     expect(result._tag).toBe("rejected");
     if (result._tag !== "rejected") return;
-    expect(result.rejection._tag).toBe("NotSubscribed");
+    // A model refusal is data: the console renders the tag it carries.
+    expect((result.rejection as { readonly _tag: string })._tag).toBe("NotSubscribed");
   }).pipe(run),
 );
 
 it.live("a preview of a tier the catalog does not carry fails typed", () =>
   Effect.gen(function* () {
-    const preview = yield* Preview();
+    const preview = yield* Preview(account);
     const exit = yield* Effect.exit(
-      preview({ account, command: { kind: "subscribe", tier: "enterprise" } }),
+      preview({ command: { kind: "subscribe", tier: "enterprise" } }),
     );
     expect(exit._tag).toBe("Failure");
     expect(String(exit)).toContain("TierNotInCatalog");
@@ -107,8 +114,8 @@ it.live("a preview of a tier the catalog does not carry fails typed", () =>
 
 it("a preview's events match what the same command records", () =>
   Effect.gen(function* () {
-    const preview = yield* Preview();
-    const predicted = yield* preview({ account, command: { kind: "subscribe", tier: "free" } });
+    const preview = yield* Preview(account);
+    const predicted = yield* preview({ command: { kind: "subscribe", tier: "free" } });
     expect(predicted._tag).toBe("accepted");
     if (predicted._tag !== "accepted") return;
     // `predict` runs the same `decide`, so the tag and the period agree with
@@ -131,8 +138,8 @@ it("a preview's events match what the same command records", () =>
 
 it("the clock a preview decides at is the clock the model used", () =>
   Effect.gen(function* () {
-    const preview = yield* Preview();
-    const result = yield* preview({ account, command: { kind: "subscribe", tier: "free" } });
+    const preview = yield* Preview(account);
+    const result = yield* preview({ command: { kind: "subscribe", tier: "free" } });
     expect(result._tag).toBe("accepted");
     if (result._tag !== "accepted" || result.state._tag !== "Subscribed") return;
     const now = DateTime.makeUnsafe(yield* Effect.sync(() => Date.now()));
@@ -156,11 +163,8 @@ it.live("previews scheduling a change without recording it", () =>
         price: { amount: 1900, currency: "usd", interval: "month" },
       }),
     );
-    const preview = yield* Preview();
-    const result = yield* preview({
-      account,
-      command: { kind: "scheduleTierChange", tier: "scale" },
-    });
+    const preview = yield* Preview(account);
+    const result = yield* preview({ command: { kind: "scheduleTierChange", tier: "scale" } });
     expect(result._tag).toBe("accepted");
     if (result._tag !== "accepted") return;
     // A scheduled change carries no proration: the period it was scheduled in
@@ -179,11 +183,11 @@ it.live("previews scheduling a change without recording it", () =>
 it.live("previews the withdrawal of a scheduled change", () =>
   Effect.gen(function* () {
     const subscription = yield* Subscription;
-    const preview = yield* Preview();
-    const nothing = yield* preview({ account, command: { kind: "withdrawTierChange" } });
+    const preview = yield* Preview(account);
+    const nothing = yield* preview({ command: { kind: "withdrawTierChange" } });
     expect(nothing._tag).toBe("rejected");
     if (nothing._tag !== "rejected") return;
-    expect(nothing.rejection._tag).toBe("NotSubscribed");
+    expect((nothing.rejection as { readonly _tag: string })._tag).toBe("NotSubscribed");
 
     yield* subscription.send(
       Subscription.ref(account),
@@ -208,7 +212,7 @@ it.live("previews the withdrawal of a scheduled change", () =>
       }),
     );
 
-    const result = yield* preview({ account, command: { kind: "withdrawTierChange" } });
+    const result = yield* preview({ command: { kind: "withdrawTierChange" } });
     expect(result._tag).toBe("accepted");
     if (result._tag !== "accepted") return;
     expect(result.events.map((event) => event._tag)).toEqual(["TierChangeWithdrawn"]);

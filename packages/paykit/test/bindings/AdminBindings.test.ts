@@ -20,6 +20,7 @@ import {
   RecordPaymentFailure,
   Recover,
 } from "../../src/Billing/index.ts";
+import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { BillingAdminApi } from "../../src/BillingAdminApi.api.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
@@ -28,7 +29,6 @@ import { CatalogGuardLive } from "../../src/CatalogGuard.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { Subscribe } from "../../src/Subscribe.ts";
 import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 
@@ -78,7 +78,7 @@ const tenantApiWorld = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)
 );
 
 const subscribe = Effect.gen(function* () {
-  const subscribe = yield* Subscribe();
+  const subscribe = yield* subscribeOperation();
   yield* subscribe({ account, tier: "free" });
 });
 
@@ -91,8 +91,11 @@ const both = <A, E>(
   it.live(`${name} over the admin Api`, () => body().pipe(Effect.provide(adminApiWorld)));
 };
 
-const provided = <A>(tag: A) =>
+/** Is this binding in the context the layer built? */
+const provided = <A extends { readonly key: string }>(tag: A) =>
   Effect.gen(function* () {
+    // A tag is a value and a type at once; the helper only needs to know the
+    // service is there, so the shape is erased at this one line.
     const held = yield* Effect.serviceOption(tag as never);
     return Option.isSome(held);
   });

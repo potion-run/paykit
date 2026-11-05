@@ -1,11 +1,9 @@
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { BillingReadStore, type BillingReadRow } from "./BillingReadStore.ts";
-import { Entitlements, type EntitlementsState } from "./Subscription/Entitlements.view.ts";
-import { Subscription } from "./Subscription/Subscription.aggregate.ts";
+import type { BillingReadRow } from "./BillingReadStore.ts";
+import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import {
   Standing,
   SubscriptionStatus,
@@ -136,38 +134,6 @@ export const evaluateCheck = (
     standing: state.standing,
   };
 };
-
-/**
- * The entitlement plane: one local read, no provider round trip. `check` never
- * records usage; call `Track` in the same transaction that does the work.
- */
-export const CheckInProcess = Effect.fn("Paykit.Check.inProcess")(function* () {
-  const entitlements = yield* Entitlements;
-  return Effect.fn("Paykit.Check.ask")(function* (input: CheckInput) {
-    const view = yield* entitlements.query(Subscription.ref(input.account));
-    return evaluateCheck(Option.getOrNull(view), input);
-  });
-});
-
-/** The edge path: one row from `billing_rm_*`, no event fold. */
-export const CheckReadModel = Effect.fn("Paykit.Check.readModel")(function* () {
-  const store = yield* BillingReadStore;
-  return Effect.fn("Paykit.Check.askReadModel")(function* (input: CheckInput) {
-    const row = yield* store.get(input.account);
-    return evaluateCheck(row === null ? null : rowToState(row), input);
-  });
-});
-
-/** The cross-service path: delegate to the configured transport. */
-export const CheckHttp = Effect.fn("Paykit.Check.http")(function* () {
-  const transport = yield* CheckTransport;
-  return Effect.fn("Paykit.Check.askHttp")(function* (input: CheckInput) {
-    return yield* transport.check(input);
-  });
-});
-
-/** The default read path: in-process, same host as the model. */
-export const Check = CheckInProcess;
 
 /** The read model's row as the state `evaluateCheck` reads. */
 export const rowToState = (row: BillingReadRow): EntitlementsState => ({

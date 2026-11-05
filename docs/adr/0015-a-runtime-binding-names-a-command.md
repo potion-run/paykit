@@ -44,7 +44,25 @@ re-introduces the second spelling this decision exists to remove.
 `Paykit.ChangeTier`. Not `Track`, not `Settle`, not `use`. The name in the SDK, in `BillingApi`, in
 the MCP tool list and in the CLI is one string.
 
-**2. The account is the bind, and the request is the rest.** The shape is Alchemy's
+**2. The account is the bind, and the request is the rest — as an encoded id.**
+The shape is Alchemy's `(scope) => Effect<(request) => Effect<…>>`, so `TrackUsage(account)` returns
+the verb and the verb takes only `{ feature, amount, dimension }`. The bound id is struck from the
+request type, the way `RetrievePriceRequest` omits `price`, so a second account is not representable.
+
+The bind takes the **encoded** id — a `string` — and the layer brands it once through
+`Subscription.ref(account)`, which is `Domain.Aggregate.ref`: Alchemy's own
+`static ref(id: Encoded): Ref<Self>` decodes the plain id to the branded one
+(`Aggregate.ts`, `decodeUnknownSync(definition.id)`). The brand belongs inside the domain, where
+`decide` and the Api client need it; the boundary takes what the caller has. That is also why a tier
+id is a `string` in the request: the binding validates it against the catalog (`tierOf` →
+`TierNotInCatalog`), so a brand there would buy nothing and cost every caller a cast.
+
+The rule this replaced was the opposite, and it produced `as never` at forty call sites. `never` is
+assignable to everything, so a wrong argument type-checked silently — the cast removed the very check
+the brand was there to make. A brand at a boundary that has no validator is theatre; a brand at a
+boundary whose validator runs is the only place it pays.
+
+**2b. The account stays a value, not a resource.** The shape is Alchemy's
 `(scope) => Effect<(request) => Effect<…>>`, so `TrackUsage(account)` returns the verb and the verb
 takes only `{ feature, amount, dimension }`. The bound id is struck from the request type, the way
 `RetrievePriceRequest` omits `price`, so a second account is not representable. The account stays a
@@ -176,8 +194,16 @@ layer.
 
 The barrel is deliberately *not* the package root. `TrackUsage`, `Hold`, `Preview` and friends are
 still the names of command classes and of the old bindings, so exporting the tags from the root in the
-same commit would put two meanings of one name in one namespace. The root re-points in slice 5, when
-the old names are deleted.
+same commit would put two meanings of one name in one namespace. The root re-pointed in slice 5, when
+the old names were deleted.
+
+**3c — landed.** `test/bindings/HttpTransport.test.ts` serves `BillingApi` and drives
+`BillingApiLayer` over `layerClientHttp`: the outgoing request becomes a `Request`, the Api's own
+`fetch` answers it, and the response becomes a client response, so the `Session` middleware, the
+NDJSON framing and the reply decoding all run for real. On that transport the test proves
+read-your-write (the binding waited on `Entitlements` over the same Api before answering), a replay
+by `dedupeKey`, and an `AllowanceExceeded` decoded back into the class a caller matches. That was the
+last claim in this document with no test behind it.
 
 **3b — landed.** The surface has a documented entry point that does not disturb a retiring name:
 `Paykit.Billing` (also `export * as Billing` from the package root) is the binding barrel. So

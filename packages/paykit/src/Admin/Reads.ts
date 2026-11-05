@@ -15,12 +15,12 @@ import * as Schema from "effect/Schema";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Admin } from "../Auth/Guards.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { listOperation } from "../Billing/List.operation.ts";
+import { previewOperation, type PreviewResult } from "../Billing/Preview.operation.ts";
 import { BillingReadPage, BillingReadQuery } from "../BillingReadStore.ts";
 import { Catalog } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
-import { List } from "../List.ts";
-import { Preview, type PreviewResult } from "../Preview.ts";
 import { Proration } from "../Proration.ts";
 import { AlreadyCanceled } from "../Subscription/AlreadyCanceled.rejection.ts";
 import { TierChanged } from "../Subscription/ChangeTier.command.ts";
@@ -202,8 +202,8 @@ export class AdminReads extends Context.Service<AdminReads, AdminReadsShape>()(
  * @layer
  */
 export const makeAdminReads = Effect.gen(function* () {
-  const list = yield* List();
-  const preview = yield* Preview();
+  const list = yield* listOperation();
+  const preview = yield* previewOperation();
   const verify = yield* Verify();
   const subscription = yield* Subscription;
   const catalog = yield* CatalogService;

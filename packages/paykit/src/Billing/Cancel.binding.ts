@@ -5,7 +5,6 @@ import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { AlreadyCanceled } from "../Subscription/AlreadyCanceled.rejection.ts";
 import { NotScheduled } from "../Subscription/NotScheduled.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Both cancel and resume take nothing but their retry key. */
@@ -68,7 +67,7 @@ export type ResumeVerb = (request: CancelRequest) => Effect.Effect<StandingResul
 export interface ScheduleCancellation extends Binding.Service<
   ScheduleCancellation,
   "Paykit.ScheduleCancellation",
-  (account: AccountId) => Effect.Effect<CancelVerb>
+  (account: string) => Effect.Effect<CancelVerb>
 > {}
 
 export const ScheduleCancellation = Binding.Service<ScheduleCancellation>(
@@ -93,7 +92,7 @@ export const ScheduleCancellation = Binding.Service<ScheduleCancellation>(
 export interface Resume extends Binding.Service<
   Resume,
   "Paykit.Resume",
-  (account: AccountId) => Effect.Effect<ResumeVerb>
+  (account: string) => Effect.Effect<ResumeVerb>
 > {}
 
 export const Resume = Binding.Service<Resume>("Paykit.Resume");

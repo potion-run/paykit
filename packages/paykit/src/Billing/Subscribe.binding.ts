@@ -3,11 +3,9 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { type PaymentError, PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
-import type { SubscribeResult } from "../Subscribe.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
-import type { TierId } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
+import type { SubscribeResult } from "./Subscribe.operation.ts";
 
 /**
  * Buy a tier. There is no `dedupeKey`: the purchase path is not a command but a
@@ -17,7 +15,7 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  */
 export interface SubscribeRequest {
   /** The tier to buy. Its price decides whether there is anything to pay. */
-  readonly tier: TierId;
+  readonly tier: string;
   /** The account's period anchor. Defaults to UTC. */
   readonly anchorTz?: string;
 }
@@ -64,7 +62,7 @@ export type SubscribeVerb = (
  * **Example:** Free activates; priced redirects
  * ```typescript
  * const subscribe = yield* Paykit.Subscribe(account);
- * const purchase = yield* subscribe({ tier: "pro" as TierId });
+ * const purchase = yield* subscribe({ tier: "pro" });
  * if ("url" in purchase) return Response.redirect(purchase.url);
  * ```
  *
@@ -75,7 +73,7 @@ export type SubscribeVerb = (
 export interface Subscribe extends Binding.Service<
   Subscribe,
   "Paykit.Subscribe",
-  (account: AccountId) => Effect.Effect<SubscribeVerb>
+  (account: string) => Effect.Effect<SubscribeVerb>
 > {}
 
 export const Subscribe = Binding.Service<Subscribe>("Paykit.Subscribe");

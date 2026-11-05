@@ -6,17 +6,15 @@ import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import type { SubscriptionStatus } from "../Subscription/Subscription.state.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { TrialAlreadyUsed } from "../Subscription/TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "../Subscription/TrialDeadlineNotLater.rejection.ts";
-import type { TierId } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Start a trial on a tier, until a deadline the caller states. */
 export interface StartTrialRequest {
   /** The tier the trial is on. Its price's interval decides the cadence. */
-  readonly tier: TierId;
+  readonly tier: string;
   /**
    * When the trial ends. It must be after now and, for an annual trial, the
    * converted period is annual: the deadline is the first period's end.
@@ -76,7 +74,7 @@ export type StartTrialVerb = (
  * ```typescript
  * const startTrial = yield* Paykit.StartTrial(account);
  * yield* startTrial({
- *   tier: "pro" as TierId,
+ *   tier: "pro",
  *   trialEndsAt: DateTime.add(now, { days: 14 }),
  *   dedupeKey: requestId,
  * });
@@ -89,7 +87,7 @@ export type StartTrialVerb = (
 export interface StartTrial extends Binding.Service<
   StartTrial,
   "Paykit.StartTrial",
-  (account: AccountId) => Effect.Effect<StartTrialVerb>
+  (account: string) => Effect.Effect<StartTrialVerb>
 > {}
 
 export const StartTrial = Binding.Service<StartTrial>("Paykit.StartTrial");

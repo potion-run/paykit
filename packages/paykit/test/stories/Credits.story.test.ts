@@ -8,11 +8,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
+import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
+import { Hold as holdBinding } from "../../src/Billing/Hold.binding.ts";
+import { ReleaseHold as releaseBinding } from "../../src/Billing/ReleaseHold.binding.ts";
+import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
-import { CheckInProcess, CheckReadModel } from "../../src/Check.ts";
 import { feature, messages } from "../../src/Feature.ts";
-import { Hold as HoldBinding, Release as ReleaseBinding } from "../../src/Hold.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { ChangeTier, TierChanged } from "../../src/Subscription/ChangeTier.command.ts";
 import {
@@ -31,7 +34,7 @@ import {
   UsageRecorded,
 } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
-import { Track } from "../../src/Track.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });
@@ -434,10 +437,13 @@ it.effect("a tier change carries the balance over instead of re-granting", () =>
   ),
 );
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/** The model, its store and every tenant binding. */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 it.live("check prices a request from the pool, by dimension, on every read path", () =>
   Effect.gen(function* () {
@@ -459,13 +465,17 @@ it.live("check prices a request from the pool, by dimension, on every read path"
     const view = Option.getOrNull(yield* entitlements.query(ref, { atLeast: receipt }));
     yield* waitForProjection(store, account.id, view);
 
-    const track = yield* Track();
-    yield* track({ account: account.id, feature: "ai", amount: 100, dimension: "gpt-large" });
+    const track = yield* trackUsageBinding(account.id);
+    yield* track({
+      feature: "ai",
+      amount: 100,
+      dimension: "gpt-large",
+      dedupeKey: "credits-track",
+    });
 
-    const check = yield* CheckInProcess();
+    const check = yield* checkBinding(account.id);
     // 1,000 credits gone, 49,000 left; a big-model call costs 10.
     const granted = yield* check({
-      account: account.id,
       feature: "ai",
       amount: 1,
       dimension: "gpt-large",
@@ -475,38 +485,32 @@ it.live("check prices a request from the pool, by dimension, on every read path"
 
     // 5,000 units of the big model cost 50,000: more than the pool holds.
     const refused = yield* check({
-      account: account.id,
       feature: "ai",
       amount: 5_000,
       dimension: "gpt-large",
     });
     expect(refused.allowed).toBe(false);
     // The default rate prices the same request at 5,000, which fits.
-    const cheap = yield* check({ account: account.id, feature: "ai", amount: 5_000 });
+    const cheap = yield* check({ feature: "ai", amount: 5_000 });
     expect(cheap.allowed).toBe(true);
 
     // A hold takes credits out of the pool before anything is billed.
-    const held = yield* HoldBinding();
+    const held = yield* holdBinding(account.id);
     const placed = yield* held({
-      account: account.id,
       feature: "ai",
       amount: 1_000,
       dimension: "gpt-large",
+      dedupeKey: "credits-hold",
     });
-    expect(
-      (yield* check({ account: account.id, feature: "ai", dimension: "gpt-large" })).remaining,
-    ).toBe(39_000);
-    const released = yield* ReleaseBinding();
-    yield* released({ account: account.id, holdId: placed.holdId });
-    expect(
-      (yield* check({ account: account.id, feature: "ai", dimension: "gpt-large" })).remaining,
-    ).toBe(49_000);
+    expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(39_000);
+    const released = yield* releaseBinding(account.id);
+    yield* released({ holdId: placed.holdId, dedupeKey: "credits-release" });
+    expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(49_000);
 
     // The row carries the card and the pool, so the edge prices it the same way.
-    const readModel = yield* CheckReadModel();
+    const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
     expect(
       yield* readModel({
-        account: account.id,
         feature: "ai",
         amount: 5_000,
         dimension: "gpt-large",

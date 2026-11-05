@@ -12,9 +12,7 @@ import {
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
-import type { TierId } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /**
@@ -24,7 +22,7 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  * this binding needs the model in process and is not served over an Api today.
  */
 export interface ChangeTierRequest {
-  readonly tier: TierId;
+  readonly tier: string;
   /** The retry key, which is also the command id. */
   readonly dedupeKey: string;
 }
@@ -88,7 +86,7 @@ export type ChangeTierVerb = (
 export interface ChangeTier extends Binding.Service<
   ChangeTier,
   "Paykit.ChangeTier",
-  (account: AccountId) => Effect.Effect<ChangeTierVerb>
+  (account: string) => Effect.Effect<ChangeTierVerb>
 > {}
 
 export const ChangeTier = Binding.Service<ChangeTier>("Paykit.ChangeTier");

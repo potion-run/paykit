@@ -6,12 +6,7 @@ import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
 import { tierTermsOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
-import { ChargeProration as chargeProrationOf } from "../ChargeProration.ts";
 import { evaluateCheck } from "../Check.ts";
-import { List as listOf } from "../List.ts";
-import { Portal as portalOf } from "../Portal.ts";
-import { Preview as previewOf } from "../Preview.ts";
-import { Subscribe as subscribeOf } from "../Subscribe.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
@@ -27,21 +22,25 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
-import { Webhook as webhookOf } from "../Webhooks.ts";
+import { webhookOperation } from "../Webhooks.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
+import { chargeProrationOperation } from "./ChargeProration.operation.ts";
 import { Check, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { List, toListError } from "./List.binding.ts";
+import { listOperation } from "./List.operation.ts";
 import {
   ChargeProration,
   Portal,
   toChargeProrationError,
   toPortalError,
 } from "./Portal.binding.ts";
+import { portalOperation } from "./Portal.operation.ts";
 import { Preview, toPreviewError } from "./Preview.binding.ts";
+import { previewOperation } from "./Preview.operation.ts";
 import { ReleaseHold, toReleaseHoldError } from "./ReleaseHold.binding.ts";
 import {
   ScheduleTierChange,
@@ -52,6 +51,7 @@ import {
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { Subscribe, toSubscribeError } from "./Subscribe.binding.ts";
+import { subscribeOperation } from "./Subscribe.operation.ts";
 import { toTrackUsageError, TrackUsage, usageOutcome } from "./TrackUsage.binding.ts";
 import { Webhook, toWebhookError } from "./Webhook.binding.ts";
 
@@ -418,7 +418,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     Subscribe,
     Effect.gen(function* () {
-      const subscribe = yield* subscribeOf();
+      const subscribe = yield* subscribeOperation();
       return Effect.fn("Paykit.Subscribe")(function* (account) {
         return Effect.fn("Paykit.Subscribe.start")(function* (request) {
           return yield* bound(toSubscribeError)(
@@ -435,7 +435,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     Preview,
     Effect.gen(function* () {
-      const preview = yield* previewOf();
+      const preview = yield* previewOperation();
       return Effect.fn("Paykit.Preview")(function* (account) {
         return Effect.fn("Paykit.Preview.decide")(function* (request) {
           return yield* bound(toPreviewError)(preview({ account, command: request.command }));
@@ -446,7 +446,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     Portal,
     Effect.gen(function* () {
-      const portal = yield* portalOf();
+      const portal = yield* portalOperation();
       return Effect.fn("Paykit.Portal")(function* (account) {
         return Effect.fn("Paykit.Portal.open")(function* () {
           return yield* bound(toPortalError)(portal({ account }));
@@ -457,7 +457,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     ChargeProration,
     Effect.gen(function* () {
-      const chargeProration = yield* chargeProrationOf();
+      const chargeProration = yield* chargeProrationOperation();
       return Effect.fn("Paykit.ChargeProration")(function* (account) {
         return Effect.fn("Paykit.ChargeProration.account")(function* () {
           return yield* bound(toChargeProrationError)(
@@ -474,7 +474,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     List,
     Effect.gen(function* () {
-      const list = yield* listOf();
+      const list = yield* listOperation();
       return Effect.fn("Paykit.List")(function* () {
         return Effect.fn("Paykit.List.page")(function* (query) {
           return yield* bound(toListError)(list(query));
@@ -485,7 +485,7 @@ export const BillingInProcess = Layer.mergeAll(
   Layer.effect(
     Webhook,
     Effect.gen(function* () {
-      const webhook = yield* webhookOf();
+      const webhook = yield* webhookOperation();
       return Effect.fn("Paykit.Webhook")(function* () {
         return Effect.fn("Paykit.Webhook.apply")(function* (event) {
           return yield* bound(toWebhookError)(webhook(event));

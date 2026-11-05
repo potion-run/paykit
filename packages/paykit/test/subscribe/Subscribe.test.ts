@@ -3,17 +3,17 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
+import { Subscribe } from "../../src/Billing/Subscribe.binding.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
-import { Subscribe } from "../../src/Subscribe.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
 import { completeCheckout } from "../../src/Webhooks.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 
 const freeTier = tier({
   id: "free",
@@ -36,24 +36,25 @@ const testCatalog = Effect.runSync(
 );
 const account = "acct_checkout";
 
-const ModelWorld = PaykitModel.layer(
-  PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
-).pipe(Layer.provide(Domain.InMemory));
+const ModelWorld = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+  .pipe(Layer.provide(Domain.InMemory))
+  // The tenant bundle carries `List`, which reads the projection store.
+  .pipe(Layer.provideMerge(MemoryBillingReadStore));
 
 const withMemory = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
   Effect.provide(
     effect,
-    Layer.mergeAll(ModelWorld, catalogLayer(testCatalog), PaymentsMemory().payments),
+    bindingsWorld(ModelWorld, { catalog: testCatalog, providers: PaymentsMemory().payments }),
   ) as Effect.Effect<A, E, never>;
 
 const withManual = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
   Effect.provide(
     effect,
-    Layer.mergeAll(ModelWorld, catalogLayer(testCatalog), PaymentsManual().payments),
+    bindingsWorld(ModelWorld, { catalog: testCatalog, providers: PaymentsManual().payments }),
   ) as Effect.Effect<A, E, never>;
 
 const withNoProvider = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
-  Effect.provide(effect, Layer.mergeAll(ModelWorld, catalogLayer(testCatalog))) as Effect.Effect<
+  Effect.provide(effect, bindingsWorld(ModelWorld, { catalog: testCatalog })) as Effect.Effect<
     A,
     E,
     never
@@ -67,8 +68,8 @@ const state = Effect.gen(function* () {
 describe("Subscribe purchase path", () => {
   it.live("activates a free tier immediately", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      const started = yield* subscribe({ account, tier: "free" });
+      const subscribe = yield* Subscribe(account);
+      const started = yield* subscribe({ tier: "free" });
       expect(started).toEqual({ activated: true });
       expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free" });
     }).pipe(withMemory),
@@ -76,8 +77,8 @@ describe("Subscribe purchase path", () => {
 
   it.live("opens a hosted checkout and stores its reference before standing exists", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      const started = yield* subscribe({ account, tier: "pro" });
+      const subscribe = yield* Subscribe(account);
+      const started = yield* subscribe({ tier: "pro" });
       expect("url" in started).toBe(true);
       const current = yield* state;
       expect(current._tag).toBe("Unsubscribed");
@@ -89,8 +90,8 @@ describe("Subscribe purchase path", () => {
 
   it.live("a checkout_completed webhook activates and keeps the reference", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      yield* subscribe({ account, tier: "pro" });
+      const subscribe = yield* Subscribe(account);
+      yield* subscribe({ tier: "pro" });
       const action = yield* completeCheckout({
         id: "evt_checkout_1",
         provider: "memory",
@@ -109,9 +110,9 @@ describe("Subscribe purchase path", () => {
 
   it.live("opens a one-off purchase without changing the standing", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      yield* subscribe({ account, tier: "free" });
-      const purchase = yield* subscribe({ account, tier: "credits_1k" });
+      const subscribe = yield* Subscribe(account);
+      yield* subscribe({ tier: "free" });
+      const purchase = yield* subscribe({ tier: "credits_1k" });
       expect("url" in purchase).toBe(true);
 
       // The checkout is a purchase, not a second standing: the account is
@@ -131,8 +132,8 @@ describe("Subscribe purchase path", () => {
 
   it.live("buys a pack before a plan, and the first subscription carries the pool", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      const purchase = yield* subscribe({ account, tier: "credits_1k" });
+      const subscribe = yield* Subscribe(account);
+      const purchase = yield* subscribe({ tier: "credits_1k" });
       expect("url" in purchase).toBe(true);
       expect((yield* state)._tag).toBe("Unsubscribed");
 
@@ -149,7 +150,7 @@ describe("Subscribe purchase path", () => {
         prepaidCredits: 1_000,
       });
 
-      yield* subscribe({ account, tier: "free" });
+      yield* subscribe({ tier: "free" });
       expect(yield* state).toMatchObject({
         _tag: "Subscribed",
         tier: "free",
@@ -161,8 +162,8 @@ describe("Subscribe purchase path", () => {
 
   it.live("falls back to an invoice when the provider has no hosted checkout", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      const started = yield* subscribe({ account, tier: "pro" });
+      const subscribe = yield* Subscribe(account);
+      const started = yield* subscribe({ tier: "pro" });
       expect("invoiceId" in started).toBe(true);
       const current = yield* state;
       if (current._tag === "Unsubscribed") {
@@ -173,8 +174,8 @@ describe("Subscribe purchase path", () => {
 
   it.live("a priced checkout without a provider fails typed", () =>
     Effect.gen(function* () {
-      const subscribe = yield* Subscribe();
-      const exit = yield* Effect.exit(subscribe({ account, tier: "pro" }));
+      const subscribe = yield* Subscribe(account);
+      const exit = yield* Effect.exit(subscribe({ tier: "pro" }));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
         expect(String(exit.cause)).toContain("ProviderCapabilityMissing");

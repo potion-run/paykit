@@ -3,7 +3,6 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { HoldSettled, HoldUnknown } from "../Subscription/Hold.command.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Return a hold without billing any of it. */
@@ -58,7 +57,7 @@ export type ReleaseHoldVerb = (
 export interface ReleaseHold extends Binding.Service<
   ReleaseHold,
   "Paykit.ReleaseHold",
-  (account: AccountId) => Effect.Effect<ReleaseHoldVerb>
+  (account: string) => Effect.Effect<ReleaseHoldVerb>
 > {}
 
 export const ReleaseHold = Binding.Service<ReleaseHold>("Paykit.ReleaseHold");

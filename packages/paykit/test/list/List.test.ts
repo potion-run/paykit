@@ -1,6 +1,8 @@
+import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { List } from "../../src/Billing/List.binding.ts";
 import {
   BillingReadStore,
   DEFAULT_PAGE,
@@ -9,13 +11,13 @@ import {
   type BillingReadRow,
   queryRows,
 } from "../../src/BillingReadStore.ts";
-import { List } from "../../src/List.ts";
+import { catalog } from "../../src/Catalog.ts";
+import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { standingOf } from "../../src/Subscription/Subscription.state.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 
 const at = Effect.runSync(
-  Effect.succeed(new Date("2030-01-01T00:00:00Z")).pipe(
-    Effect.map((date) => date as unknown as never),
-  ),
+  Effect.succeed(new Date("2030-01-01T00:00:00Z")).pipe(Effect.map((date) => date as unknown)),
 );
 
 const row = (account: string, overrides: Partial<BillingReadRow> = {}): BillingReadRow =>
@@ -33,6 +35,7 @@ const row = (account: string, overrides: Partial<BillingReadRow> = {}): BillingR
   }) as BillingReadRow;
 
 const accounts = ["acct_a", "acct_b", "acct_c", "acct_d", "acct_e"];
+const testCatalog = Effect.runSync(catalog({ features: [], tiers: [] }));
 
 describe("cross-account list", () => {
   it("walks every account once, in a stable cursor order", () => {
@@ -126,6 +129,17 @@ describe("the List binding", () => {
       // A page is a snapshot, so the binding stamps when it answered. The
       // console shows this instead of presenting the list as live.
       expect(all.asOf).toBeDefined();
-    }).pipe(Effect.provide(Layer.mergeAll(MemoryBillingReadStore))),
+    }).pipe(
+      Effect.provide(
+        // The binding is built from the model, so the world is the model and its
+        // store — the same world every other binding test provides.
+        bindingsWorld(
+          PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+            .pipe(Layer.provide(Domain.InMemory))
+            .pipe(Layer.provideMerge(MemoryBillingReadStore)),
+          { catalog: testCatalog },
+        ),
+      ),
+    ),
   );
 });

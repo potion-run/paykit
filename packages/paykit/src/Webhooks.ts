@@ -104,7 +104,7 @@ export type WebhookAction = typeof WebhookAction.Type;
  * buffered: the provider's retry is the recovery, and the edge never invents an
  * order across facts.
  */
-export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
+export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
   const subscription = yield* Subscription;
   const catalog = yield* CatalogService;
 
@@ -261,7 +261,7 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
  * replays rather than recording twice.
  */
 export const handleWebhook = (event: WebhookEvent) =>
-  Webhook().pipe(Effect.flatMap((apply) => apply(event)));
+  webhookOperation().pipe(Effect.flatMap((apply) => apply(event)));
 
 /**
  * Complete a checkout from the provider's `checkout_completed` webhook. The

@@ -3,7 +3,6 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { CheckResult } from "../Check.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /**
@@ -63,7 +62,7 @@ export type CheckVerb = (request: CheckRequest) => Effect.Effect<CheckResult, Ch
 export interface Check extends Binding.Service<
   Check,
   "Paykit.Check",
-  (account: AccountId) => Effect.Effect<CheckVerb>
+  (account: string) => Effect.Effect<CheckVerb>
 > {}
 
 export const Check = Binding.Service<Check>("Paykit.Check");

@@ -15,12 +15,15 @@ import {
   system,
   tier,
 } from "@potion.run/paykit";
-import { ChargeProration } from "@potion.run/paykit/ChargeProration";
 // These suites drive the implementation modules the binding layers delegate to:
 // the public surface names the tags (`Paykit.Webhook(account)`), and the vendor
 // end-to-end path is about the provider, not about the binding shape.
-import { CheckInProcess as Check } from "@potion.run/paykit/Check";
-import { Subscribe } from "@potion.run/paykit/Subscribe";
+import {
+  BillingInProcess,
+  Check,
+  ChargeProration,
+  Subscribe,
+} from "@potion.run/paykit/Billing/index";
 import { ChangeTier } from "@potion.run/paykit/Subscription/ChangeTier.command";
 import { handleWebhook } from "@potion.run/paykit/Webhooks";
 import * as Clock from "effect/Clock";
@@ -80,11 +83,19 @@ const world = (client: PolarClient) => {
     invoiceProductId: "prod_proration",
     client,
   });
+  const model = PaykitModel.layer(PaykitHandlers).pipe(
+    Layer.provideMerge(MemoryBillingReadStore),
+    Layer.provide(Domain.InMemory),
+    Layer.provideMerge(Layer.succeed(Actor, system("test"))),
+  );
   return Layer.mergeAll(
-    PaykitModel.layer(PaykitHandlers).pipe(
-      Layer.provideMerge(MemoryBillingReadStore),
-      Layer.provide(Domain.InMemory),
-      Layer.provideMerge(Layer.succeed(Actor, system("test"))),
+    model,
+    // The bindings resolve the model, the catalog and the provider when the
+    // layer is built, so they are provided rather than merged beside it.
+    BillingInProcess.pipe(
+      Layer.provide(model),
+      Layer.provide(polar.payments),
+      Layer.provide(catalogLayer(testCatalog)),
     ),
     catalogLayer(testCatalog),
     polar.payments,
@@ -115,8 +126,8 @@ const delivery = Effect.gen(function* () {
 
 /** Buy pro and let Polar's webhook activate it, as a deployment would. */
 const purchased = Effect.gen(function* () {
-  const subscribe = yield* Subscribe();
-  yield* subscribe({ account, tier: "pro" });
+  const subscribe = yield* Subscribe(account);
+  yield* subscribe({ tier: "pro" });
   const event = Option.getOrThrow(yield* webhook(yield* delivery));
   yield* handleWebhook(event);
 });
@@ -127,13 +138,13 @@ describe("Polar, from checkout to check()", () => {
       yield* purchased;
 
       // The entitlement answers from local state, with no provider in the read.
-      const check = yield* Check();
-      let result = yield* check({ account, feature: "messages", amount: 1 });
+      const check = yield* Check(account);
+      let result = yield* check({ feature: "messages", amount: 1 });
       // A view is fed by deliveries, so the read catches up just after the
       // command commits. The budget is in seconds: a loaded suite is slower.
       for (let attempt = 0; attempt < 500 && !result.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
-        result = yield* check({ account, feature: "messages", amount: 1 });
+        result = yield* check({ feature: "messages", amount: 1 });
       }
       expect(result.allowed).toBe(true);
       expect(result.remaining).toBe(2_000);
@@ -193,7 +204,7 @@ describe("Polar, from checkout to check()", () => {
         }),
       );
 
-      const charged = yield* (yield* ChargeProration())({ account });
+      const charged = yield* (yield* ChargeProration(account))();
       expect(charged).toEqual({
         outcome: "charged",
         invoiceId: "ord_proration_1",

@@ -7,7 +7,7 @@ import {
   BillingReadStore,
   MAX_PAGE,
   queryRows,
-} from "./BillingReadStore.ts";
+} from "../BillingReadStore.ts";
 
 /**
  * One page of accounts, in a stable cursor order. This is the only read that
@@ -41,7 +41,7 @@ import {
  *
  * @primitive
  */
-export const List = Effect.fn("Paykit.List")(function* () {
+export const listOperation = Effect.fn("Paykit.List")(function* () {
   const store = yield* BillingReadStore;
   return Effect.fn("Paykit.List.page")(function* (query?: BillingReadQuery) {
     const page = yield* store.list(query);

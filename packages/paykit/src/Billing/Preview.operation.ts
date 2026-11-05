@@ -4,19 +4,19 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
-import { Actor, system } from "./Auth/Actor.ts";
-import { type Catalog, tierOf, tierTermsOf } from "./Catalog.ts";
-import { CatalogService } from "./CatalogService.ts";
-import type { Proration } from "./Proration.ts";
-import { ChangeTier } from "./Subscription/ChangeTier.command.ts";
-import { planChangeTier } from "./Subscription/ChangeTier.plan.ts";
-import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.command.ts";
-import { ScheduleTierChange } from "./Subscription/ScheduleTierChange.command.ts";
-import { Subscribe } from "./Subscription/Subscribe.command.ts";
-import { Subscription } from "./Subscription/Subscription.aggregate.ts";
-import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
-import { WithdrawTierChange } from "./Subscription/WithdrawTierChange.command.ts";
+import { Actor, system } from "../Auth/Actor.ts";
+import { type Catalog, tierOf, tierTermsOf } from "../Catalog.ts";
+import { CatalogService } from "../CatalogService.ts";
+import type { Proration } from "../Proration.ts";
+import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
+import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
+import { ScheduleCancellation } from "../Subscription/ScheduleCancellation.command.ts";
+import { ScheduleTierChange } from "../Subscription/ScheduleTierChange.command.ts";
+import { Subscribe } from "../Subscription/Subscribe.command.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
+import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
 
 /** What a caller wants decided before anything is recorded. */
 export type PreviewCommand =
@@ -125,7 +125,7 @@ const prorationOf = (events: ReadonlyArray<PreviewEvent>): Proration | undefined
  *
  * @primitive
  */
-export const Preview = Effect.fn("Paykit.Preview")(function* () {
+export const previewOperation = Effect.fn("Paykit.Preview")(function* () {
   const catalog = yield* CatalogService;
   const subscription = yield* Subscription;
 

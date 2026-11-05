@@ -7,14 +7,16 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Preview } from "../../src/Billing/Preview.binding.ts";
+import type { PreviewCommand } from "../../src/Billing/Preview.operation.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { tierTermsOf } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { Preview, type PreviewCommand } from "../../src/Preview.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   canonical,
@@ -27,11 +29,16 @@ import {
   TierName,
 } from "./Arbitraries.ts";
 
-const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
-  Layer.provide(Domain.InMemory),
-  Layer.provideMerge(
-    Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
+const World = bindingsWorld(
+  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
+    Layer.provide(Domain.InMemory),
+    Layer.provideMerge(
+      Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
+    ),
+    // The tenant bundle carries `List`, which reads the projection store.
+    Layer.provideMerge(MemoryBillingReadStore),
   ),
+  { catalog: testCatalog },
 );
 
 const Case = Schema.Struct({
@@ -59,8 +66,8 @@ describe("preview", () => {
           if (state._tag !== "Subscribed") return false;
 
           const command: PreviewCommand = kind === "cancel" ? { kind } : { kind, tier: nextTier };
-          const preview = yield* Preview();
-          const result = yield* preview({ account: ref.id, command });
+          const preview = yield* Preview(ref.id);
+          const result = yield* preview({ command });
           const now = start;
           const pureCommand =
             kind === "cancel"
@@ -96,7 +103,10 @@ describe("preview", () => {
             return true;
           }
 
-          return result._tag === "rejected" && result.rejection._tag === decision._tag;
+          return (
+            result._tag === "rejected" &&
+            (result.rejection as { readonly _tag: string })._tag === decision._tag
+          );
         }).pipe(Effect.provide(World)),
       { runs: 30, size: 12 },
     ),

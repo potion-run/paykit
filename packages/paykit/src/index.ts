@@ -272,7 +272,12 @@ export { CheckFailed, CheckStatus, CheckTransport, evaluateCheck, rowToState } f
 export type { CheckInput, CheckResult } from "./Check.ts";
 export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
 export type { Proration as ProrationValue } from "./Proration.ts";
-export type { PreviewCommand, PreviewEvent, PreviewInput, PreviewResult } from "./Preview.ts";
+export type {
+  PreviewCommand,
+  PreviewEvent,
+  PreviewInput,
+  PreviewResult,
+} from "./Billing/Preview.operation.ts";
 export {
   WebhookAction,
   WebhookEvent,

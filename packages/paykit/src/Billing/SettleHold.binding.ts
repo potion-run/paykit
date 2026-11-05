@@ -8,7 +8,6 @@ import {
   HoldSettled,
   HoldUnknown,
 } from "../Subscription/Hold.command.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { MoneyCapExceeded, StandingBlocksUsage } from "../Subscription/TrackUsage.command.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
@@ -80,7 +79,7 @@ export type SettleHoldVerb = (
 export interface SettleHold extends Binding.Service<
   SettleHold,
   "Paykit.SettleHold",
-  (account: AccountId) => Effect.Effect<SettleHoldVerb>
+  (account: string) => Effect.Effect<SettleHoldVerb>
 > {}
 
 export const SettleHold = Binding.Service<SettleHold>("Paykit.SettleHold");

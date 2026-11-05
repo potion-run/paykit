@@ -13,8 +13,9 @@ key), `build`, `exports:check`, `validate:publish-packages`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a
-postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do: `check` from local state, `track`,
-`hold`/`settle`/`release` as addressable entities, a policy that releases a hold on its own deadline,
+postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do, as
+command-named bindings: `Check` from local state, `TrackUsage`, `Hold`/`SettleHold`/`ReleaseHold` as
+addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
 spendable before a plan exists, auto top-up (a spend that crosses a threshold buys a pack and opens
 the invoice that prices it), a usage timeline folded from the account's events (one entry per

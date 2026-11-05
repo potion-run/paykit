@@ -69,8 +69,11 @@ const apiWorld = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)).pipe
 );
 
 /** The tags a caller may resolve from a layer, asked one at a time. */
-const provided = <A>(tag: A) =>
+/** Is this binding in the context the layer built? */
+const provided = <A extends { readonly key: string }>(tag: A) =>
   Effect.gen(function* () {
+    // A tag is a value and a type at once; the helper only needs to know the
+    // service is there, so the shape is erased at this one line.
     const held = yield* Effect.serviceOption(tag as never);
     return Option.isSome(held);
   });

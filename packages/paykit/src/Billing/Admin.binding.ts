@@ -9,7 +9,6 @@ import { TrialNotActive } from "../Subscription/ExtendTrial.command.ts";
 import { NotInGrace } from "../Subscription/NotInGrace.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import type { SubscriptionStatus } from "../Subscription/Subscription.state.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { TrialDeadlineNotLater } from "../Subscription/TrialDeadlineNotLater.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
@@ -194,7 +193,7 @@ export type RecordPaymentFailureVerb = (
 export interface GrantCredits extends Binding.Service<
   GrantCredits,
   "Paykit.GrantCredits",
-  (account: AccountId) => Effect.Effect<GrantCreditsVerb>
+  (account: string) => Effect.Effect<GrantCreditsVerb>
 > {}
 
 export const GrantCredits = Binding.Service<GrantCredits>("Paykit.GrantCredits");
@@ -218,7 +217,7 @@ export const GrantCredits = Binding.Service<GrantCredits>("Paykit.GrantCredits")
 export interface ExtendTrial extends Binding.Service<
   ExtendTrial,
   "Paykit.ExtendTrial",
-  (account: AccountId) => Effect.Effect<ExtendTrialVerb>
+  (account: string) => Effect.Effect<ExtendTrialVerb>
 > {}
 
 export const ExtendTrial = Binding.Service<ExtendTrial>("Paykit.ExtendTrial");
@@ -241,7 +240,7 @@ export const ExtendTrial = Binding.Service<ExtendTrial>("Paykit.ExtendTrial");
 export interface EnterGrace extends Binding.Service<
   EnterGrace,
   "Paykit.EnterGrace",
-  (account: AccountId) => Effect.Effect<EnterGraceVerb>
+  (account: string) => Effect.Effect<EnterGraceVerb>
 > {}
 
 export const EnterGrace = Binding.Service<EnterGrace>("Paykit.EnterGrace");
@@ -264,7 +263,7 @@ export const EnterGrace = Binding.Service<EnterGrace>("Paykit.EnterGrace");
 export interface Recover extends Binding.Service<
   Recover,
   "Paykit.Recover",
-  (account: AccountId) => Effect.Effect<RecoverVerb>
+  (account: string) => Effect.Effect<RecoverVerb>
 > {}
 
 export const Recover = Binding.Service<Recover>("Paykit.Recover");
@@ -288,7 +287,7 @@ export const Recover = Binding.Service<Recover>("Paykit.Recover");
 export interface Expire extends Binding.Service<
   Expire,
   "Paykit.Expire",
-  (account: AccountId) => Effect.Effect<ExpireVerb>
+  (account: string) => Effect.Effect<ExpireVerb>
 > {}
 
 export const Expire = Binding.Service<Expire>("Paykit.Expire");
@@ -311,7 +310,7 @@ export const Expire = Binding.Service<Expire>("Paykit.Expire");
 export interface RecordPayment extends Binding.Service<
   RecordPayment,
   "Paykit.RecordPayment",
-  (account: AccountId) => Effect.Effect<RecordPaymentVerb>
+  (account: string) => Effect.Effect<RecordPaymentVerb>
 > {}
 
 export const RecordPayment = Binding.Service<RecordPayment>("Paykit.RecordPayment");
@@ -335,7 +334,7 @@ export const RecordPayment = Binding.Service<RecordPayment>("Paykit.RecordPaymen
 export interface RecordPaymentFailure extends Binding.Service<
   RecordPaymentFailure,
   "Paykit.RecordPaymentFailure",
-  (account: AccountId) => Effect.Effect<RecordPaymentFailureVerb>
+  (account: string) => Effect.Effect<RecordPaymentFailureVerb>
 > {}
 
 export const RecordPaymentFailure = Binding.Service<RecordPaymentFailure>(

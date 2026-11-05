@@ -118,15 +118,18 @@ const billing = yield* Paykit.Stack("Billing", {
 });
 
 // 2. runtime — Binding.Services, one contract each, several implementations
-const check = yield* Paykit.Check();
-yield* check({ account, feature: "messages", amount: 1 });        // => { allowed, remaining, resetsAt, standing }
+const check = yield* Paykit.Check(account);
+yield* check({ feature: "messages", amount: 1 });   // => { allowed, remaining, resetsAt, standing }
 
-const track = yield* Paykit.Track();
-yield* track({ account, feature: "messages", amount: 1, dedupeKey: requestId });
+// The bind is the account; the request is the rest.
+const trackUsage = yield* Paykit.TrackUsage(account);
+yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: requestId });
 
-const { holdId } = yield* Paykit.Hold({ account, feature: "messages", amount: 10, dedupeKey: turnId });
-yield* Paykit.Settle({ account, holdId, amount: 8 });              // => { billed: 8, released: 2 }
-yield* Paykit.Release({ account, holdId });                        // => { released: 10 }
+const hold = yield* Paykit.Hold(account);
+const { holdId } = yield* hold({ feature: "messages", amount: 10, dedupeKey: turnId });
+
+yield* (yield* Paykit.SettleHold(account))({ holdId, amount: 8, dedupeKey: `${turnId}:settle` });
+yield* (yield* Paykit.ReleaseHold(account))({ holdId, dedupeKey: `${turnId}:release` });
 // A hold still open at its `expiresAt` (15 minutes by default) is released by
 // `HoldSweep`, so a crash between hold and settle returns the capacity.
 
@@ -555,7 +558,7 @@ Two table classes, no more: `billing_event` (append-only, the only truth) and `b
 
 ### Read paths for `check`
 
-Preferred, in order: `CheckInProcess` (same Durable Object), `CheckReadModel` (one row from
+Preferred, in order: `BillingInProcess` (same Durable Object), `CheckReadModel` (one row from
 `billing_rm_*` at the edge), `CheckHttp` (cross-service). Shipping only the HTTP one would
 reintroduce the round trip the library exists to remove.
 
@@ -650,7 +653,7 @@ potion/                          # pnpm workspace root (private)
         Feature.ts  Allowance.ts  Tier.ts  Catalog.ts  CatalogService.ts
         BillingStack.resource.ts
         Check.ts                 # in-process, read-model and HTTP read paths
-        Track.ts  Hold.ts        # Hold / Settle / Release
+        Billing/                # one binding per command, and its layers
         Subscribe.ts  Portal.ts  List.ts  Preview.ts  Verify.ts  Webhooks.ts
         Timeline.ts
         Proration.ts  Doctor.ts

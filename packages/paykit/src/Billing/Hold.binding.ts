@@ -4,7 +4,6 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { HoldExceeded } from "../Subscription/Hold.command.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import {
   FeatureNotMetered,
   MoneyCapExceeded,
@@ -94,7 +93,7 @@ export type HoldVerb = (request: HoldRequest) => Effect.Effect<HoldResult, HoldE
 export interface Hold extends Binding.Service<
   Hold,
   "Paykit.Hold",
-  (account: AccountId) => Effect.Effect<HoldVerb>
+  (account: string) => Effect.Effect<HoldVerb>
 > {}
 
 export const Hold = Binding.Service<Hold>("Paykit.Hold");

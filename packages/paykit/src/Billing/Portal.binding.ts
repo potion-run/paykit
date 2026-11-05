@@ -3,7 +3,6 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { type PaymentError, PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** What a portal answers: a hosted URL. */
@@ -83,7 +82,7 @@ export type ChargeProrationVerb = () => Effect.Effect<ChargeProrationResult, Cha
 export interface Portal extends Binding.Service<
   Portal,
   "Paykit.Portal",
-  (account: AccountId) => Effect.Effect<PortalVerb>
+  (account: string) => Effect.Effect<PortalVerb>
 > {}
 
 export const Portal = Binding.Service<Portal>("Paykit.Portal");
@@ -113,7 +112,7 @@ export const Portal = Binding.Service<Portal>("Paykit.Portal");
 export interface ChargeProration extends Binding.Service<
   ChargeProration,
   "Paykit.ChargeProration",
-  (account: AccountId) => Effect.Effect<ChargeProrationVerb>
+  (account: string) => Effect.Effect<ChargeProrationVerb>
 > {}
 
 export const ChargeProration = Binding.Service<ChargeProration>("Paykit.ChargeProration");

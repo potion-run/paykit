@@ -117,8 +117,8 @@ export const moneyRoutes = (provider: MoneyProvider) =>
        */
       purchase: (account: string, tier: string) =>
         Effect.gen(function* () {
-          const subscribe = yield* Paykit.Subscribe(account as never);
-          return yield* subscribe({ tier: tier as never });
+          const subscribe = yield* Paykit.Subscribe(account);
+          return yield* subscribe({ tier: tier });
         }),
 
       /**
@@ -145,7 +145,7 @@ export const moneyRoutes = (provider: MoneyProvider) =>
 
 /** Write one usage fact for an account, as the app does after serving a request. */
 export const track = Effect.fn("Example.track")(function* (account: string, feature: string) {
-  const trackUsage = yield* Paykit.TrackUsage(account as never);
+  const trackUsage = yield* Paykit.TrackUsage(account);
   return yield* trackUsage({
     feature,
     amount: 1,

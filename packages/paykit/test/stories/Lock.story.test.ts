@@ -7,10 +7,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Hold as holdBinding } from "../../src/Billing/Hold.binding.ts";
+import { ReleaseHold as releaseBinding } from "../../src/Billing/ReleaseHold.binding.ts";
+import { SettleHold as settleBinding } from "../../src/Billing/SettleHold.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
-import { Hold as holdBinding, Release, Settle } from "../../src/Hold.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import {
@@ -26,6 +28,7 @@ import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscri
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const proTier = tier({
@@ -322,10 +325,13 @@ it.effect("the sweep releases a hold at its deadline, so a settle is refused", (
   ),
 );
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/** The model, its store and every tenant binding. */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 it.live("the bindings hold, settle a partial amount, and release what is left", () =>
   Effect.gen(function* () {
@@ -344,22 +350,24 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
     );
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
 
-    const hold = yield* holdBinding();
-    const settle = yield* Settle();
-    const release = yield* Release();
+    const hold = yield* holdBinding(account.id);
+    const settle = yield* settleBinding(account.id);
+    const release = yield* releaseBinding(account.id);
 
-    const placed = yield* hold({ account: account.id, feature: "messages", amount: 400 });
+    const placed = yield* hold({ feature: "messages", amount: 400, dedupeKey: "lock-1" });
     expect(placed.holdId).toBeDefined();
     expect(placed.remaining).toBe(1_600);
 
     // 250 ran: 150 comes back in the same call.
-    expect(yield* settle({ account: account.id, holdId: placed.holdId, amount: 250 })).toEqual({
-      billed: 250,
-      released: 150,
-    });
+    expect(yield* settle({ holdId: placed.holdId, amount: 250, dedupeKey: "lock-settle" })).toEqual(
+      {
+        billed: 250,
+        released: 150,
+      },
+    );
 
-    const second = yield* hold({ account: account.id, feature: "messages", amount: 100 });
-    expect(yield* release({ account: account.id, holdId: second.holdId })).toEqual({
+    const second = yield* hold({ feature: "messages", amount: 100, dedupeKey: "lock-2" });
+    expect(yield* release({ holdId: second.holdId, dedupeKey: "lock-release-2" })).toEqual({
       released: 100,
     });
 
@@ -377,12 +385,12 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
     expect(row?.features.messages?.remaining).toBe(1_750);
 
     // A hold that has not settled is exactly what `reserved` counts.
-    const open = yield* hold({ account: account.id, feature: "messages", amount: 300 });
+    const open = yield* hold({ feature: "messages", amount: 300, dedupeKey: "lock-3" });
     const held = yield* entitlements.query(Subscription.ref(account.id));
     const heldRow = yield* waitForProjection(store, account.id, Option.getOrNull(held));
     expect(heldRow?.features.messages?.reserved).toBe(300);
     expect(heldRow?.features.messages?.remaining).toBe(1_450);
-    yield* release({ account: account.id, holdId: open.holdId });
+    yield* release({ holdId: open.holdId, dedupeKey: "lock-release-3" });
   }).pipe(Effect.provide(World)),
 );
 

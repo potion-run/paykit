@@ -4,7 +4,6 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CreditExceedsBalance } from "../Subscription/ConsumeCredits.command.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Credits to spend from the account's pool. */
@@ -65,7 +64,7 @@ export type ConsumeCreditsVerb = (
 export interface ConsumeCredits extends Binding.Service<
   ConsumeCredits,
   "Paykit.ConsumeCredits",
-  (account: AccountId) => Effect.Effect<ConsumeCreditsVerb>
+  (account: string) => Effect.Effect<ConsumeCreditsVerb>
 > {}
 
 export const ConsumeCredits = Binding.Service<ConsumeCredits>("Paykit.ConsumeCredits");

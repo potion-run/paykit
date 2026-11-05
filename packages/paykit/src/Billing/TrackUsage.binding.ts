@@ -3,7 +3,6 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { FeatureEntitlement } from "../Subscription/Entitlements.view.ts";
-import type { AccountId } from "../Subscription/Subscription.state.ts";
 import { creditRateOf } from "../Subscription/Subscription.state.ts";
 import {
   AllowanceExceeded,
@@ -141,7 +140,7 @@ export type TrackUsageVerb = (
 export interface TrackUsage extends Binding.Service<
   TrackUsage,
   "Paykit.TrackUsage",
-  (account: AccountId) => Effect.Effect<TrackUsageVerb>
+  (account: string) => Effect.Effect<TrackUsageVerb>
 > {}
 
 export const TrackUsage = Binding.Service<TrackUsage>("Paykit.TrackUsage");

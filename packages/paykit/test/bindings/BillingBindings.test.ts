@@ -24,6 +24,7 @@ import {
 import { SettleHold } from "../../src/Billing/SettleHold.binding.ts";
 import { StartTrial } from "../../src/Billing/StartTrial.binding.ts";
 import { Subscribe as SubscribeBinding } from "../../src/Billing/Subscribe.binding.ts";
+import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { Webhook } from "../../src/Billing/Webhook.binding.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
@@ -33,10 +34,10 @@ import { CatalogGuardLive } from "../../src/CatalogGuard.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
-import { Subscribe } from "../../src/Subscribe.ts";
 import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
-import { tier, type TierId } from "../../src/Tier.ts";
+import { tier } from "../../src/Tier.ts";
 
 /**
  * A catalog that exercises every shape the bindings answer:
@@ -102,6 +103,18 @@ const inProcessWorld = Layer.mergeAll(
   PaymentsMemory().payments,
 ).pipe(Layer.provideMerge(Model));
 
+/** The tenant bundle with no provider: a capability error, not a crash. */
+const worldWithoutProvider = Layer.mergeAll(BillingInProcess, catalogLayer(testCatalog)).pipe(
+  Layer.provideMerge(Model),
+);
+
+/** The tenant bundle behind the manual provider: invoice, no portal. */
+const worldManual = Layer.mergeAll(
+  BillingInProcess,
+  catalogLayer(testCatalog),
+  PaymentsManual().payments,
+).pipe(Layer.provideMerge(Model));
+
 /**
  * The same bindings over `BillingApi`: its `Session` middleware, its encoders
  * and its reply decoding are all on the path.
@@ -136,7 +149,7 @@ const both = <A, E>(name: string, body: () => Effect.Effect<A, E, World>) => {
 };
 
 const subscribe = Effect.gen(function* () {
-  const subscribe = yield* Subscribe();
+  const subscribe = yield* subscribeOperation();
   yield* subscribe({ account, tier: "free" });
 });
 
@@ -309,7 +322,7 @@ describe("paykit bindings", () => {
     Effect.gen(function* () {
       yield* subscribe;
       const changeTier = yield* ChangeTier(account);
-      const moved = yield* changeTier({ tier: "pro" as TierId, dedupeKey: "upgrade-1" });
+      const moved = yield* changeTier({ tier: "pro", dedupeKey: "upgrade-1" });
       expect(moved.tier).toBe("pro");
       // Free to pro mid-period is a positive proration: the part of the month
       // left, at pro's price.
@@ -321,9 +334,7 @@ describe("paykit bindings", () => {
 
       // A tier id is branded from the catalog; an unknown one is a decode
       // failure at the boundary, which is the point of the brand.
-      const unknown = yield* Effect.exit(
-        changeTier({ tier: "nope" as TierId, dedupeKey: "upgrade-2" }),
-      );
+      const unknown = yield* Effect.exit(changeTier({ tier: "nope", dedupeKey: "upgrade-2" }));
       expect(unknown._tag).toBe("Failure");
       if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("TierNotInCatalog");
     }).pipe(Effect.provide(inProcessWorld)),
@@ -335,9 +346,7 @@ describe("paykit bindings", () => {
       const schedule = yield* ScheduleTierChange(account);
       const withdraw = yield* WithdrawTierChange(account);
 
-      expect((yield* schedule({ tier: "pro" as TierId, dedupeKey: "move-1" })).pendingTier).toBe(
-        "pro",
-      );
+      expect((yield* schedule({ tier: "pro", dedupeKey: "move-1" })).pendingTier).toBe("pro");
       expect((yield* withdraw({ dedupeKey: "move-2" })).pendingTier).toBe(null);
 
       const refused = yield* Effect.exit(withdraw({ dedupeKey: "move-3" }));
@@ -355,7 +364,7 @@ describe("paykit bindings", () => {
       const deadline = DateTime.add(DateTime.makeUnsafe(Date.now()), { days: 14 });
 
       const started = yield* startTrial({
-        tier: "pro" as TierId,
+        tier: "pro",
         trialEndsAt: deadline,
         dedupeKey: "trial-1",
       });
@@ -365,7 +374,7 @@ describe("paykit bindings", () => {
 
       const again = yield* Effect.exit(
         startTrial({
-          tier: "pro" as TierId,
+          tier: "pro",
           trialEndsAt: DateTime.add(deadline, { days: 1 }),
           dedupeKey: "trial-2",
         }),
@@ -381,7 +390,7 @@ describe("paykit bindings", () => {
       const startTrial = yield* StartTrial(account);
       const past = DateTime.subtract(DateTime.makeUnsafe(Date.now()), { days: 1 });
       const refused = yield* Effect.exit(
-        startTrial({ tier: "pro" as TierId, trialEndsAt: past, dedupeKey: "trial-past" }),
+        startTrial({ tier: "pro", trialEndsAt: past, dedupeKey: "trial-past" }),
       );
       expect(refused._tag).toBe("Failure");
       if (refused._tag === "Failure") {
@@ -394,14 +403,14 @@ describe("paykit bindings", () => {
     Effect.gen(function* () {
       const subscribe = yield* SubscribeBinding(account);
       // A free tier activates and waits for the view, so a Check right after sees it.
-      expect(yield* subscribe({ tier: "free" as TierId })).toEqual({ activated: true });
+      expect(yield* subscribe({ tier: "free" })).toEqual({ activated: true });
       expect((yield* (yield* Check(account))({ feature: "messages", amount: 1 })).allowed).toBe(
         true,
       );
 
       // A priced tier opens the provider's path; the standing activates when the
       // webhook arrives, not here.
-      const purchase = yield* subscribe({ tier: "pro" as TierId });
+      const purchase = yield* subscribe({ tier: "pro" });
       expect("url" in purchase && purchase.url).toContain("checkout");
     }).pipe(Effect.provide(inProcessWorld)),
   );
@@ -447,7 +456,7 @@ describe("paykit bindings", () => {
       const nothing = yield* chargeProration();
       expect(nothing.outcome).toBe("nothing");
 
-      yield* changeTier({ tier: "pro" as TierId, dedupeKey: "upgrade-charge" });
+      yield* changeTier({ tier: "pro", dedupeKey: "upgrade-charge" });
       const charged = yield* chargeProration();
       expect(charged.outcome).toBe("charged");
       expect(charged.amount ?? 0).toBeGreaterThan(0);
@@ -489,6 +498,32 @@ describe("paykit bindings", () => {
       // second activation would reset the period and forget what was recorded.
       expect(yield* webhook({ ...event, id: "evt_2" })).toBe("ignored");
     }).pipe(Effect.provide(inProcessWorld)),
+  );
+
+  it.live("a portal without a provider answers a capability error, not a crash", () =>
+    Effect.gen(function* () {
+      yield* subscribe;
+      const portal = yield* Portal(account);
+      const refused = yield* Effect.exit(portal());
+      expect(refused._tag).toBe("Failure");
+      if (refused._tag === "Failure") {
+        expect(String(refused.cause)).toContain("ProviderCapabilityMissing");
+      }
+    }).pipe(Effect.provide(worldWithoutProvider)),
+  );
+
+  it.live("the manual provider sells through an invoice and has no portal", () =>
+    Effect.gen(function* () {
+      const subscribe = yield* SubscribeBinding(account);
+      const purchase = yield* subscribe({ tier: "pro" });
+      expect("invoiceId" in purchase).toBe(true);
+      const portal = yield* Portal(account);
+      const refused = yield* Effect.exit(portal());
+      expect(refused._tag).toBe("Failure");
+      if (refused._tag === "Failure") {
+        expect(String(refused.cause)).toContain("ProviderCapabilityMissing");
+      }
+    }).pipe(Effect.provide(worldManual)),
   );
 
   it.live("the account is the bind, so a request cannot name another", () =>

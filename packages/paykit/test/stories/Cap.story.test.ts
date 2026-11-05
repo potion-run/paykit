@@ -9,6 +9,11 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
+import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
+import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
+import { Hold as holdBinding } from "../../src/Billing/Hold.binding.ts";
+import { ReleaseHold as releaseBinding } from "../../src/Billing/ReleaseHold.binding.ts";
+import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import {
   CatalogCapWithoutBilling,
@@ -16,9 +21,7 @@ import {
   catalog,
   defineCatalog,
 } from "../../src/Catalog.ts";
-import { CheckInProcess, CheckReadModel } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
-import { Hold as HoldBinding, Release } from "../../src/Hold.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
   CreditsExpired,
@@ -35,7 +38,7 @@ import {
   UsageRecorded,
 } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
-import { Track } from "../../src/Track.ts";
+import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
@@ -303,10 +306,13 @@ it.effect("an uncapped billed allowance is unchanged", () =>
   ),
 );
 
-const World = PaykitModel.layer(PaykitHandlers)
+const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(Layer.provideMerge(MemoryBillingReadStore))
   .pipe(Layer.provide(Domain.InMemory))
   .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
+
+/** The model, its store and every tenant binding. */
+const World = bindingsWorld(Model, { catalog: testCatalog });
 
 it.live("check() refuses at the ceiling while the standing stays good, on every path", () =>
   Effect.gen(function* () {
@@ -327,21 +333,19 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
     );
     yield* entitlements.query(ref, { atLeast: receipt });
 
-    const check = yield* CheckInProcess();
-    const withinCeiling = yield* check({ account: account.id, feature: "messages", amount: 120 });
+    const check = yield* checkBinding(account.id);
+    const withinCeiling = yield* check({ feature: "messages", amount: 120 });
     expect(withinCeiling.allowed).toBe(true);
     expect(withinCeiling.remaining).toBe(100);
     expect(withinCeiling.standing).toBe("good");
     expect(withinCeiling.resetsAt).not.toBeNull();
     // 121 units would pass `included + cap`.
-    expect((yield* check({ account: account.id, feature: "messages", amount: 121 })).allowed).toBe(
-      false,
-    );
+    expect((yield* check({ feature: "messages", amount: 121 })).allowed).toBe(false);
 
-    const track = yield* Track();
-    yield* track({ account: account.id, feature: "messages", amount: 120 });
+    const track = yield* trackUsageBinding(account.id);
+    yield* track({ feature: "messages", amount: 120, dedupeKey: "cap-track" });
 
-    const atCeiling = yield* check({ account: account.id, feature: "messages", amount: 1 });
+    const atCeiling = yield* check({ feature: "messages", amount: 1 });
     expect(atCeiling.allowed).toBe(false);
     // Out of what it bought, not in trouble: the standing is still good.
     expect(atCeiling.standing).toBe("good");
@@ -349,10 +353,8 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
 
     // The three read paths agree, from the row alone.
     yield* waitForProjection(store, account.id, Option.getOrNull(yield* entitlements.query(ref)));
-    const readModel = yield* CheckReadModel();
-    expect(yield* readModel({ account: account.id, feature: "messages", amount: 1 })).toEqual(
-      atCeiling,
-    );
+    const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
+    expect(yield* readModel({ feature: "messages", amount: 1 })).toEqual(atCeiling);
 
     const row = yield* waitForProjection(
       store,
@@ -364,15 +366,19 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
 
     // A hold that would pass the ceiling is refused, and does not change it.
     const refused = yield* Effect.exit(
-      (yield* HoldBinding())({ account: account.id, feature: "messages", amount: 1 }),
+      (yield* holdBinding(account.id))({
+        feature: "messages",
+        amount: 1,
+        dedupeKey: "cap-hold-over",
+      }),
     );
     expect(refused._tag).toBe("Failure");
     expect(String(refused)).toContain("SpendCapExceeded");
 
     // A released hold that fit would have returned its units; this one left is
     // still 20 short, and releasing nothing issued changes nothing.
-    const release = yield* Release();
-    const unknown = yield* Effect.exit(release({ account: account.id, holdId: "hold_none" }));
+    const release = yield* releaseBinding(account.id);
+    const unknown = yield* Effect.exit(release({ holdId: "hold_none", dedupeKey: "cap-none" }));
     expect(unknown._tag).toBe("Failure");
   }).pipe(Effect.provide(World)),
 );
