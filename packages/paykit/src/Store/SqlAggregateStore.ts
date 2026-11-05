@@ -8,11 +8,13 @@ import type {
   AggregateKit,
   AggregateStore,
   Delivery,
+  SendResult,
   StoredEvent,
 } from "@alchemy.run/domain/Platform";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import type { SqlError } from "./Sql.ts";
 import type { SqlEventLog } from "./SqlEventLog.ts";
 
 /** What one aggregate's store needs beyond the log itself. */
@@ -27,7 +29,17 @@ export interface SqlAggregateStoreOptions {
 
 const DEFAULT_POLL = 250;
 
+/**
+ * How many times one `send` re-reads and re-decides after another writer moved
+ * the instance first. A winner commits a handful of rows, so contention on one
+ * account is short; this is a ceiling on a pathological race, not on throughput.
+ */
+const MAX_SEND_ATTEMPTS = 32;
+
 const parse = (json: string): unknown => JSON.parse(json);
+
+/** What one attempt at a command settles to: an outcome, or the need to look again. */
+type SendOutcome = SendResult | { readonly _tag: "Conflict" };
 
 /**
  * A `Domain.AggregateStore` over `SqlEventLog`.
@@ -35,8 +47,11 @@ const parse = (json: string): unknown => JSON.parse(json);
  * The log is the truth; this adapter is what keeps it that way. Each of the
  * five guarantees has exactly one place in this file:
  *
- * 1. **One writer per account** — `append` takes the account's lock inside its
- *    transaction, so two commands on one account serialize.
+ * 1. **One writer per account** — a commit runs in one transaction, so two
+ *    commands on one instance serialize at the write. A decision taken outside
+ *    that transaction carries the version it was made on: if the log moved, the
+ *    append refuses it and the command is decided again, rather than published
+ *    over a state it never saw.
  * 2. **Dedupe by `commandId`** — a replay finds the stored receipt and returns
  *    it without deciding again, and `append` refuses a second write of the same
  *    id, so a retried webhook cannot become a second charge.
@@ -102,6 +117,100 @@ export const SqlAggregateStore = (
     // needed to carry the kit around.
     let kit: AggregateKit | undefined;
 
+    /**
+     * One read, one decide, one append — against the instance as it is now. It
+     * answers `Conflict` when another writer committed between the read and the
+     * append, because the decision then describes a state that is no longer the
+     * instance's.
+     */
+    const attemptSend = (
+      bound: AggregateKit,
+      id: string,
+      command: unknown,
+      meta: SendMeta,
+    ): Effect.Effect<SendOutcome, SqlError> =>
+      Effect.gen(function* () {
+        // A receipt for this command id means the command already ran.
+        const stored = yield* log.receipt(aggregate, id, meta.commandId);
+        if (stored !== undefined) {
+          return { _tag: "Accepted" as const, receipt: parse(stored) as never };
+        }
+
+        const before = yield* read(id);
+        const handled = yield* bound.handle({
+          id,
+          state: before.state as never,
+          version: before.version,
+          command: command as never,
+          commandId: meta.commandId,
+          context: meta.context,
+          now: options.now(),
+          ...(meta.correlationId === undefined ? {} : { correlationId: meta.correlationId }),
+          ...(meta.trace === undefined ? {} : { trace: meta.trace }),
+          ...(meta.link === undefined ? {} : { link: meta.link }),
+        });
+        if (handled._tag === "Rejected") {
+          return { _tag: "Rejected" as const, rejection: handled.rejection };
+        }
+
+        const receipt = {
+          stream: `${aggregate}/${id}`,
+          version: handled.version,
+          events: handled.events.map((event) => event.event),
+          reply: handled.reply,
+        };
+        const appended = yield* log.append({
+          aggregate,
+          account: id,
+          commandId: meta.commandId,
+          at: options.now(),
+          events: handled.events.map((event) => event.event),
+          state: handled.state,
+          receipt,
+          deliveries: handled.deliveries,
+          // The version this decision was made on. Writing it past a newer one
+          // would publish a state the events do not add up to; the caller looks
+          // again instead.
+          expectedVersion: before.version,
+        });
+        if (appended.conflict) return { _tag: "Conflict" as const };
+        // Another writer committed this command id in between; the log deduped
+        // it, so its stored receipt is the answer, not ours.
+        if (appended.duplicate) {
+          const raced = yield* log.receipt(aggregate, id, meta.commandId);
+          if (raced === undefined) {
+            return yield* Effect.die("a duplicate append left no receipt");
+          }
+          return { _tag: "Accepted" as const, receipt: parse(raced) as never };
+        }
+
+        yield* drain(id);
+        return { _tag: "Accepted" as const, receipt: receipt as never };
+      });
+
+    /**
+     * A command against the instance, re-decided as many times as another writer
+     * gets there first. `decide` is pure, so a retry is not a second effect: it
+     * is the same command over a state that moved.
+     */
+    const send = (
+      bound: AggregateKit,
+      id: string,
+      command: unknown,
+      meta: SendMeta,
+      remaining: number,
+    ): Effect.Effect<SendResult, SqlError> =>
+      Effect.gen(function* () {
+        const outcome = yield* attemptSend(bound, id, command, meta);
+        if (outcome._tag !== "Conflict") return outcome;
+        if (remaining === 0) {
+          return yield* Effect.die(
+            `${aggregate}/${id}: ${MAX_SEND_ATTEMPTS} writers kept moving the instance under ${meta.commandId}`,
+          );
+        }
+        return yield* send(bound, id, command, meta, remaining - 1);
+      });
+
     const store: AggregateStore = {
       send: ((id: string, command: unknown, meta: SendMeta) =>
         Effect.gen(function* () {
@@ -109,58 +218,7 @@ export const SqlAggregateStore = (
           if (bound === undefined) {
             return yield* Effect.die("aggregate store used before it was built");
           }
-
-          // A receipt for this command id means the command already ran.
-          const stored = yield* log.receipt(aggregate, id, meta.commandId);
-          if (stored !== undefined) {
-            return { _tag: "Accepted" as const, receipt: parse(stored) as never };
-          }
-
-          const before = yield* read(id);
-          const handled = yield* bound.handle({
-            id,
-            state: before.state as never,
-            version: before.version,
-            command: command as never,
-            commandId: meta.commandId,
-            context: meta.context,
-            now: options.now(),
-            ...(meta.correlationId === undefined ? {} : { correlationId: meta.correlationId }),
-            ...(meta.trace === undefined ? {} : { trace: meta.trace }),
-            ...(meta.link === undefined ? {} : { link: meta.link }),
-          });
-          if (handled._tag === "Rejected") {
-            return { _tag: "Rejected" as const, rejection: handled.rejection };
-          }
-
-          const receipt = {
-            stream: `${aggregate}/${id}`,
-            version: handled.version,
-            events: handled.events.map((event) => event.event),
-            reply: handled.reply,
-          };
-          const appended = yield* log.append({
-            aggregate,
-            account: id,
-            commandId: meta.commandId,
-            at: options.now(),
-            events: handled.events.map((event) => event.event),
-            state: handled.state,
-            receipt,
-            deliveries: handled.deliveries,
-          });
-          // Another writer committed this command id in between; the log
-          // deduped it, so its stored receipt is the answer, not ours.
-          if (appended.duplicate) {
-            const raced = yield* log.receipt(aggregate, id, meta.commandId);
-            if (raced === undefined) {
-              return yield* Effect.die("a duplicate append left no receipt");
-            }
-            return { _tag: "Accepted" as const, receipt: parse(raced) as never };
-          }
-
-          yield* drain(id);
-          return { _tag: "Accepted" as const, receipt: receipt as never };
+          return yield* send(bound, id, command, meta, MAX_SEND_ATTEMPTS);
         }).pipe(Effect.orDie)) as AggregateStore["send"],
 
       schedule: ((id: string, command: unknown, meta: SendMeta, due: Due) =>

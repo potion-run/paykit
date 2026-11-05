@@ -1,12 +1,70 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import { migrate } from "../../src/Migrations/index.ts";
 import { SqlAggregateStore } from "../../src/Store/SqlAggregateStore.ts";
 import { SqlEventLog } from "../../src/Store/SqlEventLog.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
 const account = "acct_sql";
+
+/** The pool a stand-in kernel starts from, so the arithmetic below is obvious. */
+const INITIAL_POOL = 100;
+
+/**
+ * A stand-in for the kernel with one rule — spend what the snapshot covers —
+ * and one deliberate pause: a spend waits at the read until a second spend has
+ * read too, so both decisions are taken on the same version. Two processes
+ * produce that interleaving for free; a single-process test has to be told to.
+ */
+const poolKit = (arrivals: Ref.Ref<number>, gate: Deferred.Deferred<void>) => ({
+  name: "Pool",
+  handle: (input: {
+    readonly id: string;
+    readonly version: number;
+    readonly state: unknown;
+    readonly command: unknown;
+    readonly commandId: string;
+  }) =>
+    Effect.gen(function* () {
+      const state = (input.state as { readonly pool: number } | null) ?? { pool: INITIAL_POOL };
+      const amount = (input.command as { readonly amount: number }).amount;
+      if (amount > 0) {
+        const arrived = yield* Ref.updateAndGet(arrivals, (seen) => seen + 1);
+        if (arrived === 2) yield* Deferred.succeed(gate, undefined);
+        yield* Deferred.await(gate);
+      }
+      if (state.pool < amount) {
+        return { _tag: "Rejected" as const, rejection: { _tag: "Overdrawn" } };
+      }
+      const pool = state.pool - amount;
+      return {
+        _tag: "Accepted" as const,
+        state: { pool },
+        version: input.version + 1,
+        events: [
+          {
+            event: { _tag: "Spent", amount, poolAfter: pool },
+            envelope: {
+              id: input.id,
+              seq: input.version + 1,
+              at: 1,
+              commandId: input.commandId,
+            },
+          },
+        ],
+        reply: { pool },
+        deliveries: [],
+      };
+    }),
+});
+
+/** Bind the stand-in kernel the way a hosted model would. */
+const bind = (store: unknown, kit: unknown): void => {
+  (store as { bind: (bound: unknown) => void }).bind(kit);
+};
 
 /**
  * A durable log on a real SQLite database. The store is driven directly — the
@@ -185,6 +243,46 @@ describe("the SQL aggregate store", () => {
       expect(state.version).toBe(0);
       expect(state.state).toBeNull();
       expect(yield* store.events!(account)).toEqual([]);
+    }),
+  );
+
+  it.effect("re-decides a command instead of publishing a state its log cannot explain", () =>
+    Effect.gen(function* () {
+      const { log } = yield* world;
+      const store = yield* storeOver(log);
+      const arrivals = yield* Ref.make(0);
+      const gate = yield* Deferred.make<void>();
+      bind(store, poolKit(arrivals, gate));
+
+      yield* store.send(
+        account,
+        { amount: 0 } as never,
+        {
+          commandId: "open",
+          context: {},
+        } as never,
+      );
+
+      // Two spends of 60 against a pool of 100, decided on the same version.
+      // Only one may land: the second is made on a pool the first already
+      // spent, so writing it would leave a state the log does not add up to.
+      const outcomes = yield* Effect.forEach(
+        ["spend-a", "spend-b"],
+        (commandId) =>
+          store.send(account, { amount: 60 } as never, { commandId, context: {} } as never),
+        { concurrency: "unbounded" },
+      );
+
+      const grown = yield* store.state(account);
+      const events = yield* store.events!(account);
+      const fold = events.reduce(
+        (pool, row) => pool - (row.event as { readonly amount: number }).amount,
+        INITIAL_POOL,
+      );
+
+      expect(outcomes.filter((outcome) => outcome._tag === "Rejected").length).toBe(1);
+      expect(fold).toBe(40);
+      expect((grown.state as { readonly pool: number }).pool).toBe(fold);
     }),
   );
 });

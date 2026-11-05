@@ -77,8 +77,8 @@ describe("SqlEventLog", () => {
   it.effect("appends events, state and receipt atomically, then dedupes the command", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;
-      expect(yield* append(log)).toEqual({ version: 1, duplicate: false });
-      expect(yield* append(log)).toEqual({ version: 1, duplicate: true });
+      expect(yield* append(log)).toEqual({ version: 1, duplicate: false, conflict: false });
+      expect(yield* append(log)).toEqual({ version: 1, duplicate: true, conflict: false });
       expect((yield* log.events("Subscription", "acct_1")).length).toBe(1);
       expect((yield* log.pendingDeliveries()).length).toBe(1);
 
@@ -93,7 +93,7 @@ describe("SqlEventLog", () => {
           state: { _tag: "Used", n: 3 },
           receipt: { version: 3 },
         }),
-      ).toEqual({ version: 3, duplicate: false });
+      ).toEqual({ version: 3, duplicate: false, conflict: false });
       expect((yield* log.events("Subscription", "acct_1")).map((row) => row.seq)).toEqual([
         1, 2, 3,
       ]);
@@ -134,6 +134,7 @@ describe("SqlEventLog", () => {
       expect(yield* append(log, { commandId: "cmd_2", events: [{ _tag: "Used" }] })).toEqual({
         version: 2,
         duplicate: false,
+        conflict: false,
       });
       expect((yield* log.events("Subscription", "acct_1")).map((row) => row.seq)).toEqual([1, 2]);
     }),
@@ -396,7 +397,7 @@ describe("SqlEventLog", () => {
       const adapted = SqlEventLog(stringy, { now: () => 1_000 });
       expect((yield* adapted.events("Subscription", "acct_1")).map((row) => row.at)).toEqual([100]);
       expect((yield* adapted.pendingDeliveries()).map((row) => row.seq)).toEqual([1]);
-      expect(yield* append(adapted)).toEqual({ version: 1, duplicate: true });
+      expect(yield* append(adapted)).toEqual({ version: 1, duplicate: true, conflict: false });
 
       yield* log.upsertReadModel({
         ...readModelRow,

@@ -56,7 +56,9 @@ sed 's/ReadsLiveUsage = FALSE/ReadsLiveUsage = TRUE/' spec/PaykitReport.cfg > /t
 sed 's/ChecksVersion = TRUE/ChecksVersion = FALSE/' spec/PaykitStore.cfg > /tmp/stale.cfg
 ```
 
-Both produce `ReportedQuantityIsClosing` / `StateIsFoldOfLog` traces today.
+Both produce `ReportedQuantityIsClosing` / `StateIsFoldOfLog` traces today. The
+second models what this store did before the fix described below, so it stays as
+the test of the invariant rather than as dead history.
 
 ## What the model does not cover
 
@@ -74,22 +76,20 @@ Both produce `ReportedQuantityIsClosing` / `StateIsFoldOfLog` traces today.
 
 ## What it found
 
-`PaykitStore` found that the store's state row can disagree with its own log.
-`SqlAggregateStore.send` reads and decides **outside** the transaction
-`SqlEventLog.append` takes, and `append` stamps `MAX(seq)` without comparing it
+`PaykitStore` found that the store's state row could disagree with its own log.
+`SqlAggregateStore.send` read and decided **outside** the transaction
+`SqlEventLog.append` takes, and `append` stamped `MAX(seq)` without comparing it
 to the version the decision was made on. Two writers that read the same version
-both commit, and the second publishes a state computed from a snapshot the first
-already spent.
+both committed, and the second published a state computed from a snapshot the
+first already spent.
 
-Two things in the code say this was meant to be closed and is not: the store's
-own doc comment claims "`append` takes the account's lock inside its
+Two things in the code said this was meant to be closed and was not: the store's
+own doc comment claimed "`append` takes the account's lock inside its
 transaction", and `SqlExecutor.lock(account)` — "take the per-account write lock
-for the current transaction" — has no caller anywhere in the repo. The port
-`SqlAsyncExecutor.isolation` even distinguishes `deferred` (D1), where the reads
-did not hold a lock, from `serializable`.
+for the current transaction" — had no caller anywhere in the repo.
 
 Reproduced against the shipped SQLite driver: a pool of 100, two concurrent
-spends of 60, both accepted. The log folds to `-20` while the state row says
+spends of 60, both accepted. The log folded to `-20` while the state row said
 `40`.
 
 ```
@@ -98,10 +98,19 @@ fold of log: -20
 published pool: 40
 ```
 
-The fix is the `ChecksVersion` arm the model already carries: take the account's
-lock before the read, or compare the version the decision was made on inside
-`append` and have `send` re-read and re-decide when they differ. Until it lands,
-`ChecksVersion = FALSE` is what the code does.
+Closed by the `ChecksVersion` arm the model already carried: `append` takes the
+`expectedVersion` the decision was made on and answers `conflict` instead of
+writing when the log has moved, and `send` re-reads and re-decides — bounded at
+32 attempts, because `decide` is pure and a retry is the same command over a
+state that moved, not a second effect.
+
+The trace is the test: `test/sql/AggregateStore.test.ts`, "re-decides a command
+instead of publishing a state its log cannot explain", runs both spends against
+a gate inside `handle` so both reads land before either append. Remove
+`expectedVersion` from `send` and it fails.
+
+`ChecksVersion = FALSE` still models the old behaviour, which is what that test
+would catch if the check ever went away.
 
 ## Counterexamples become tests
 
