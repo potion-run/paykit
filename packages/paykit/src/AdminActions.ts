@@ -3,6 +3,7 @@ import { allowancesOf, type Catalog } from "./Catalog.ts";
 import type { BillingStateView } from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { spendCeilingOf } from "./Subscription/Subscription.state.ts";
+import type { Tier } from "./Tier.ts";
 
 /**
  * The commands a console may offer for one account. This is a UI aid, not an
@@ -14,6 +15,8 @@ export const AdminAction = Schema.Literals([
   "GrantCredits",
   "ExtendTrial",
   "ChangeTier",
+  "ScheduleTierChange",
+  "WithdrawTierChange",
   "EnterGrace",
   "RecordPayment",
   "RecordPaymentFailure",
@@ -24,10 +27,13 @@ export const AdminAction = Schema.Literals([
 ]);
 export type AdminAction = typeof AdminAction.Type;
 
-/** One action the console may offer, and the tiers a `ChangeTier` may choose. */
+/** One action the console may offer, and the tiers a tier change may choose. */
 export interface AdminActionDescriptor {
   readonly action: AdminAction;
-  /** Tier ids a `ChangeTier` may choose. Empty for every other action. */
+  /**
+   * Tier ids a `ChangeTier` or `ScheduleTierChange` may choose. Empty for every
+   * other action.
+   */
   readonly tiers: ReadonlyArray<string>;
 }
 
@@ -35,6 +41,8 @@ const actionOrder: ReadonlyArray<AdminAction> = [
   "GrantCredits",
   "ExtendTrial",
   "ChangeTier",
+  "ScheduleTierChange",
+  "WithdrawTierChange",
   "EnterGrace",
   "RecordPayment",
   "RecordPaymentFailure",
@@ -44,6 +52,13 @@ const actionOrder: ReadonlyArray<AdminAction> = [
   "Resume",
 ];
 
+/**
+ * A pack is a purchase, not a tier: it grants credits, has no allowances, and
+ * never becomes a standing. A tier-change command that names one is refused, so
+ * the console must not offer it.
+ */
+const sellableTier = (tier: Tier): boolean => (tier.kind ?? "subscription") !== "one_off";
+
 const changeTiers = (
   state: Pick<BillingStateView, "tier" | "currency">,
   catalog: Catalog | undefined,
@@ -51,6 +66,7 @@ const changeTiers = (
 ): ReadonlyArray<string> => {
   if (catalog === undefined) return [];
   return catalog.tiers
+    .filter(sellableTier)
     .filter((tier) => tier.id !== state.tier)
     .filter(
       (tier) =>
@@ -96,14 +112,40 @@ const changeTiers = (
 };
 
 /**
+ * The tiers a `ScheduleTierChange` may choose: every compatible tier but the
+ * one the account is on. No entitlement filter applies, and that is the whole
+ * point of scheduling — a smaller allowance than the period has already used is
+ * refused now and belongs at the boundary, where the counters reset with it.
+ */
+const scheduleTiers = (
+  state: Pick<BillingStateView, "tier" | "currency">,
+  catalog: Catalog | undefined,
+): ReadonlyArray<string> => {
+  if (catalog === undefined) return [];
+  return catalog.tiers
+    .filter(sellableTier)
+    .filter((tier) => tier.id !== state.tier)
+    .filter(
+      (tier) =>
+        state.currency === undefined ||
+        tier.price === undefined ||
+        tier.price.currency === state.currency,
+    )
+    .map((tier) => tier.id);
+};
+
+/**
  * The actions that make sense for a standing, in a stable display order.
  *
  * `ChangeTier` is offered only when the catalog has a tier the account is not
  * on, the currency matches, and (when entitlements are supplied) the account's
  * used and reserved units fit the new tier's blocking allowances, unit ceiling
  * and money ceiling — the rules `ChangeTier`'s `DowngradeBelowUsage`,
- * `DowngradeBelowCeiling` and `DowngradeBelowSpend` apply. The model still
- * decides: this function never replaces a rejection or a preview.
+ * `DowngradeBelowCeiling` and `DowngradeBelowSpend` apply. `ScheduleTierChange`
+ * is offered for every other compatible tier, because a move those rules refuse
+ * now is exactly what belongs at the boundary. `WithdrawTierChange` is offered
+ * only while a change is scheduled. The model still decides: this function
+ * never replaces a rejection or a preview.
  *
  * ### Offering actions from a billing snapshot
  * **Example:** What an operator may do with an account in grace
@@ -118,7 +160,10 @@ const changeTiers = (
  * @primitive
  */
 export const actionsFor = (
-  state: Pick<BillingStateView, "status" | "tier" | "currency" | "cancelAtPeriodEnd">,
+  state: Pick<
+    BillingStateView,
+    "status" | "tier" | "currency" | "cancelAtPeriodEnd" | "pendingTier"
+  >,
   options: {
     readonly catalog?: Catalog;
     readonly entitlements?: EntitlementsState;
@@ -127,6 +172,7 @@ export const actionsFor = (
   if (state.status === "expired" || state.status === "canceled") return [];
 
   const tiers = changeTiers(state, options.catalog, options.entitlements);
+  const scheduled = scheduleTiers(state, options.catalog);
   const isTrialing = state.status === "trialing";
   const isActive = state.status === "active";
   const isGrace = state.status === "grace";
@@ -139,6 +185,10 @@ export const actionsFor = (
         return isTrialing;
       case "ChangeTier":
         return tiers.length > 0;
+      case "ScheduleTierChange":
+        return scheduled.length > 0;
+      case "WithdrawTierChange":
+        return state.pendingTier !== undefined;
       case "EnterGrace":
         return isTrialing || isActive;
       case "RecordPayment":
@@ -155,9 +205,12 @@ export const actionsFor = (
     }
   };
 
+  const tiersFor = (action: AdminAction): ReadonlyArray<string> => {
+    if (action === "ChangeTier") return tiers;
+    return action === "ScheduleTierChange" ? scheduled : [];
+  };
+
   return actionOrder.flatMap((action) =>
-    isOffered(action)
-      ? [{ action, tiers: action === "ChangeTier" ? tiers : [] } satisfies AdminActionDescriptor]
-      : [],
+    isOffered(action) ? [{ action, tiers: tiersFor(action) } satisfies AdminActionDescriptor] : [],
   );
 };

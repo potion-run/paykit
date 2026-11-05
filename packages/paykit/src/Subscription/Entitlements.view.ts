@@ -227,12 +227,17 @@ export class Entitlements extends Domain.View("Entitlements", {
         {
           ...rest,
           tier: event.tier,
+          credits: event.credits,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           features: featuresOf(
             event.allowances,
             event.rates,
-            // A tier change carries the balance over; the new cards price it.
-            view.credits,
+            // The pool the event records. A mid-period change carries the
+            // balance over, so this is the same number it already held; a change
+            // applied at the boundary grants the new period's pool, and reading
+            // the old balance here would leave every credit feature reporting a
+            // pool the new tier never had.
+            event.credits,
             heldOf(view.features),
             view.features,
             event.remaining,
@@ -511,6 +516,9 @@ export class Entitlements extends Domain.View("Entitlements", {
     // now: the counters and `remaining` stay the current tier's until the close
     // applies the change and resets them onto the new allowances.
     TierChangeScheduled: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // A withdrawal moves nothing the account may use: the tier it is on, its
+    // counters and its pool are the ones the schedule was going to leave behind.
+    TierChangeWithdrawn: (view, _event, context): EntitlementsState => withAccount(view, context),
     CancellationScheduled: (view, _event, context): EntitlementsState =>
       withAccount({ ...view, cancelAtPeriodEnd: true }, context),
     CancellationWithdrawn: (view, _event, context): EntitlementsState =>

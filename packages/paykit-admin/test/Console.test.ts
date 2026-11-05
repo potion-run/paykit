@@ -144,6 +144,12 @@ const withChangeDraft = (tier: string): Model => {
   return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
 };
 
+const withScheduleDraft = (tier: string): Model => {
+  const model = withBilling();
+  const openedDraft = update(model, Message.ClickedAction({ action: "ScheduleTierChange" })).model;
+  return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
+};
+
 describe("the console model", () => {
   it("seeds the first paint from flags without asking again", () => {
     const result = init(
@@ -855,5 +861,27 @@ describe("the console model", () => {
         Option.getOrThrow,
       ),
     ).toBe(0);
+  });
+});
+
+describe("a change at the period end", () => {
+  it("sends the schedule with the catalog's terms and no quote", () => {
+    const result = update(withScheduleDraft("free"), Message.ClickedSubmitAction());
+    // No server round trip: a scheduled change carries no proration, so the
+    // console builds it from the catalog it holds.
+    expect(result.commands?.map((command) => command.name)).toEqual(["ScheduleTierChange"]);
+    expect(result.commands?.[0]?.args?.input).toMatchObject({
+      tier: "free",
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+    });
+  });
+
+  it("sends a withdrawal for the scheduled change", () => {
+    const opened = update(withBilling(), Message.ClickedAction({ action: "WithdrawTierChange" }));
+    const result = update(opened.model, Message.ClickedSubmitAction());
+    expect(result.commands?.map((command) => command.name)).toEqual(["WithdrawTierChange"]);
+    expect(result.commands?.[0]?.args?.input).toEqual({});
   });
 });

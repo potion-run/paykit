@@ -24,6 +24,7 @@ import { Recover } from "../../src/Subscription/Recover.command.ts";
 import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
+import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -34,6 +35,7 @@ import {
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
+import { WithdrawTierChange } from "../../src/Subscription/WithdrawTierChange.command.ts";
 import { tier } from "../../src/Tier.ts";
 
 const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });
@@ -206,6 +208,8 @@ export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("EnterGrace", {}),
   Schema.TaggedStruct("Recover", {}),
   Schema.TaggedStruct("ScheduleCancellation", {}),
+  Schema.TaggedStruct("ScheduleTierChange", { tier: TierName }),
+  Schema.TaggedStruct("WithdrawTierChange", {}),
   Schema.TaggedStruct("Resume", {}),
   Schema.TaggedStruct("ClosePeriod", {}),
   Schema.TaggedStruct("PeriodEnded", {}),
@@ -329,6 +333,10 @@ export const commandOf = (
       return new Recover();
     case "ScheduleCancellation":
       return new ScheduleCancellation();
+    case "ScheduleTierChange":
+      return new ScheduleTierChange({ tier: plan.tier, ...termsOf(plan.tier) });
+    case "WithdrawTierChange":
+      return new WithdrawTierChange();
     case "Resume":
       return new Resume();
     case "ClosePeriod":

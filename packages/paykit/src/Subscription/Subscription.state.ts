@@ -480,6 +480,8 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "CreditsConsumed",
   "CancellationScheduled",
   "CancellationWithdrawn",
+  "TierChangeScheduled",
+  "TierChangeWithdrawn",
   "PeriodClosed",
   "UsageReset",
   "CreditsExpired",

@@ -11,15 +11,19 @@ import type { Proration } from "./Proration.ts";
 import { ChangeTier } from "./Subscription/ChangeTier.command.ts";
 import { planChangeTier } from "./Subscription/ChangeTier.plan.ts";
 import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.command.ts";
+import { ScheduleTierChange } from "./Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "./Subscription/Subscribe.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
+import { WithdrawTierChange } from "./Subscription/WithdrawTierChange.command.ts";
 
 /** What a caller wants decided before anything is recorded. */
 export type PreviewCommand =
   | { readonly kind: "subscribe"; readonly tier: string }
   | { readonly kind: "changeTier"; readonly tier: string }
+  | { readonly kind: "scheduleTierChange"; readonly tier: string }
+  | { readonly kind: "withdrawTierChange" }
   | { readonly kind: "cancel" };
 
 /** The account and the action to decide without recording. */
@@ -49,7 +53,12 @@ export type PreviewResult =
   | { readonly _tag: "rejected"; readonly rejection: Schema.Top["Type"] }
   | { readonly _tag: "unpredictable"; readonly cause: unknown };
 
-type Previewable = Subscribe | ChangeTier | ScheduleCancellation;
+type Previewable =
+  | Subscribe
+  | ChangeTier
+  | ScheduleTierChange
+  | WithdrawTierChange
+  | ScheduleCancellation;
 
 /**
  * The command a preview describes, built from the catalog the Stack deployed.
@@ -64,6 +73,7 @@ const commandOf = (
   now: DateTime.Utc,
 ): Previewable | null => {
   if (input.kind === "cancel") return new ScheduleCancellation();
+  if (input.kind === "withdrawTierChange") return new WithdrawTierChange();
   const tier = tierOf(catalog, input.tier);
   const terms = tierTermsOf(catalog, input.tier);
   if (terms === null || tier === null) return null;
@@ -73,6 +83,16 @@ const commandOf = (
   const price = tier.price === undefined ? {} : { price: tier.price };
   if (input.kind === "subscribe") {
     return new Subscribe({ tier: input.tier, allowances, credits, creditsExpire, rates, ...price });
+  }
+  if (input.kind === "scheduleTierChange") {
+    return new ScheduleTierChange({
+      tier: input.tier,
+      allowances,
+      credits,
+      creditsExpire,
+      rates,
+      ...price,
+    });
   }
   const plan = planChangeTier(catalog, input.tier, state, now);
   return plan === null ? null : plan.command;
@@ -115,7 +135,7 @@ export const Preview = Effect.fn("Paykit.Preview")(function* () {
     const command = commandOf(catalog, input.command, state, now);
     if (command === null) {
       return yield* new TierNotInCatalog({
-        tier: input.command.kind === "cancel" ? "*" : input.command.tier,
+        tier: "tier" in input.command ? input.command.tier : "*",
       });
     }
     // A preview runs the guarded command's own `decide`, which needs the

@@ -11,6 +11,7 @@ import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Preview } from "../../src/Preview.ts";
+import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
@@ -140,3 +141,79 @@ it("the clock a preview decides at is the clock the model used", () =>
     );
     expect(drift).toBeLessThan(5_000);
   }).pipe(run));
+
+it.live("previews scheduling a change without recording it", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    yield* subscription.send(
+      Subscription.ref(account),
+      new Subscribe({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: proAllowances,
+        price: { amount: 1900, currency: "usd", interval: "month" },
+      }),
+    );
+    const preview = yield* Preview();
+    const result = yield* preview({
+      account,
+      command: { kind: "scheduleTierChange", tier: "scale" },
+    });
+    expect(result._tag).toBe("accepted");
+    if (result._tag !== "accepted") return;
+    // A scheduled change carries no proration: the period it was scheduled in
+    // has ended, so there is nothing to prorate.
+    expect(result.proration).toBeUndefined();
+    expect(result.events.map((event) => event._tag)).toEqual(["TierChangeScheduled"]);
+    expect(result.state._tag === "Subscribed" ? result.state.pendingTier?.tier : undefined).toBe(
+      "scale",
+    );
+    // Nothing was written.
+    const state = yield* subscription.state(Subscription.ref(account));
+    expect(state._tag === "Subscribed" ? state.pendingTier : "missing").toBeUndefined();
+  }).pipe(run),
+);
+
+it.live("previews the withdrawal of a scheduled change", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    const preview = yield* Preview();
+    const nothing = yield* preview({ account, command: { kind: "withdrawTierChange" } });
+    expect(nothing._tag).toBe("rejected");
+    if (nothing._tag !== "rejected") return;
+    expect(nothing.rejection._tag).toBe("NotSubscribed");
+
+    yield* subscription.send(
+      Subscription.ref(account),
+      new Subscribe({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: proAllowances,
+        price: { amount: 1900, currency: "usd", interval: "month" },
+      }),
+    );
+    yield* subscription.send(
+      Subscription.ref(account),
+      new ScheduleTierChange({
+        tier: "scale",
+        allowances: allowancesOf(testCatalog, "scale")!,
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        price: { amount: 9900, currency: "usd", interval: "month" },
+      }),
+    );
+
+    const result = yield* preview({ account, command: { kind: "withdrawTierChange" } });
+    expect(result._tag).toBe("accepted");
+    if (result._tag !== "accepted") return;
+    expect(result.events.map((event) => event._tag)).toEqual(["TierChangeWithdrawn"]);
+    // The schedule is still there: a preview does not record.
+    const state = yield* subscription.state(Subscription.ref(account));
+    expect(state._tag === "Subscribed" ? state.pendingTier?.tier : undefined).toBe("scale");
+  }).pipe(run),
+);

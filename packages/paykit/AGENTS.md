@@ -117,6 +117,15 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 - A period close resets every allowance except `resets: "never"`, which keeps its usage, open
   holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
   further period, and `EnterGrace` is refused once the standing is terminal.
+- A scheduled tier change is data on the standing (`pendingTier`), not a second command queue. The
+  close applies it before the reset, so the next period starts on the new tier's allowances; a
+  second `ScheduleTierChange` replaces the first and a mid-period `ChangeTier` clears it.
+  `WithdrawTierChange` drops it, and refuses (`NoTierChangeScheduled`) when nothing is scheduled.
+  Because the boundary is a new period, it grants the new tier's credits *plus* the pack the account
+  holds and keeps `prepaidCredits` so the pack stays protected. That new grant is for the period
+  starting here, so it expires at the **next** close by the new tier's `creditsExpire`; the closing
+  period expires nothing it did not grant. It also starts every counter over — a `resets: "never"`
+  count belongs to the allowance it was recorded on, not to the one the account is entering.
 - A trial opens on the cadence its price states: an annual trial converts into an annual period,
   not a monthly one. Its deadline is the first period's end, so it only moves forward:
   `StartTrial` refuses one that is not after `now` and `ExtendTrial` one that is not after the

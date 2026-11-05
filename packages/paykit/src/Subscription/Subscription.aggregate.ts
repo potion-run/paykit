@@ -116,6 +116,11 @@ import {
 } from "./TrackUsage.command.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
+import {
+  NoTierChangeScheduled,
+  TierChangeWithdrawn,
+  WithdrawTierChange,
+} from "./WithdrawTierChange.command.ts";
 
 /** The currency a tier's postpaid prices are stated in, if it has any. */
 const unitPriceCurrencyOf = (allowances: Allowances): string | undefined => {
@@ -196,6 +201,13 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // A scheduled change lands first: `UsageReset` reads the allowances in state,
   // so the new tier has to be in the log before the counters reset onto it.
   const pending: PendingTier | undefined = state.pendingTier;
+  // The boundary is a new period, so it grants the pool the way an activation
+  // does: the new tier's credits plus whatever one-off pack the account still
+  // holds. Replacing the pool with the grant alone would spend a pack the
+  // customer paid for, and dropping `prepaidCredits` would stop protecting it.
+  const prepaid = prepaidCreditsOf(state);
+  const credits = pending === undefined ? state.credits : pending.credits + prepaid;
+  const creditsExpire = pending?.creditsExpire ?? state.creditsExpire;
   const moved =
     pending === undefined
       ? []
@@ -209,8 +221,9 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
                 includedRemainingOf(allowance),
               ]),
             ),
-            credits: pending.credits,
-            creditsExpire: pending.creditsExpire,
+            credits,
+            ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
+            creditsExpire,
             rates: pending.rates,
             ...(pending.currency === undefined ? {} : { currency: pending.currency }),
             ...(pending.interval === undefined ? {} : { interval: pending.interval }),
@@ -228,16 +241,31 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // One reset per allowance, so `remaining` and `carried` cannot disagree about
   // what the closing period left behind.
   const resets = Object.entries(allowances).map(
-    ([feature, allowance]) => [feature, resetOf(state, feature, allowance)] as const,
+    ([feature, allowance]) =>
+      [
+        feature,
+        // A scheduled change starts every counter over. The allowance the period
+        // recorded against is not the one the next period runs on, so a
+        // `resets: "never"` count belongs to the tier being left. A close with no
+        // change keeps those counters, which is what makes them lifetime counts
+        // for the tier they were recorded on.
+        pending === undefined
+          ? resetOf(state, feature, allowance)
+          : { remaining: includedRemainingOf(allowance), carried: 0, kept: false },
+      ] as const,
   );
   // A `resets: "never"` feature keeps its usage, holds and remainder, so the
   // reset does not touch it.
   const kept = Object.fromEntries(
     resets.filter(([, reset]) => reset.kept).map(([feature]) => [feature, true]),
   );
-  // A one-off pack bought from a period pool is never expired; only the plan's
-  // own credits go back.
-  const expiring = expiringCreditsOf(state);
+  // Expiry is a property of the grant that is ending. With no scheduled change,
+  // that is the plan's own credits for the period just closed: a one-off pack
+  // bought from a period pool is never expired, and a `"never"` pool has
+  // nothing to return. With a scheduled change the old grant is replaced by the
+  // new tier's grant at the boundary, so this close expires nothing of its own:
+  // the new grant's `creditsExpire` rule applies at the *next* close.
+  const expiring = pending === undefined ? expiringCreditsOf(state) : 0;
   return [
     ...moved,
     new PeriodClosed({
@@ -255,8 +283,9 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       ...(Object.keys(kept).length === 0 ? {} : { kept }),
     }),
     // Expiry is a property of the grant: a "never" pool survives the boundary,
-    // and a one-off pack bought from a period pool is never expired.
-    ...(state.creditsExpire === "period"
+    // a one-off pack bought from a period pool is never expired, and a scheduled
+    // change's new grant is for the period that starts here.
+    ...(pending === undefined && state.creditsExpire === "period"
       ? [
           new CreditsExpired({
             amount: expiring,
@@ -295,6 +324,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ConsumeCredits,
     ScheduleCancellation,
     ScheduleTierChange,
+    WithdrawTierChange,
     Resume,
     ClosePeriod,
     Expire,
@@ -1011,6 +1041,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ScheduleTierChange: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      // The payload is the catalog's terms and the close applies it from the log
+      // alone, so it is checked here exactly as `ChangeTier` checks it. An
+      // empty allowance is what a one-off pack carries: scheduling one would
+      // move the standing onto a pack at the boundary and overwrite its pool
+      // with the pack's credits.
+      if (emptyAllowances(command.allowances)) {
+        return new TierNotInCatalog({ tier: command.tier });
+      }
+      const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
+      if (
+        state.currency !== undefined &&
+        priceCurrency !== undefined &&
+        state.currency !== priceCurrency
+      ) {
+        return new CurrencyMismatch({ expected: state.currency, actual: priceCurrency });
+      }
       return [
         new TierChangeScheduled({
           tier: command.tier,
@@ -1023,6 +1069,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           interval: state.interval,
         }),
       ];
+    },
+    WithdrawTierChange: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      // Nothing pending is a refusal rather than a no-op, for the same reason
+      // `Resume` refuses: the caller asked to withdraw something that is not
+      // there, and the log should not record an intent that never existed.
+      if (state.pendingTier === undefined) return new NoTierChangeScheduled();
+      return [new TierChangeWithdrawn({ tier: state.pendingTier.tier })];
     },
     ScheduleCancellation: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
@@ -1316,6 +1370,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             },
           }
         : state,
+    TierChangeWithdrawn: (state) => {
+      if (state._tag !== "Subscribed") return state;
+      // The schedule is data on the standing, so withdrawing it is dropping the
+      // field. Everything else — the tier, the counters, the pool — is what the
+      // account already had.
+      const { pendingTier: _withdrawn, ...rest } = state;
+      return rest;
+    },
     CancellationScheduled: (state, event) =>
       state._tag === "Subscribed"
         ? { ...state, cancelAtPeriodEnd: event.cancelAtPeriodEndAfter }

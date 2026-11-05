@@ -23,6 +23,8 @@ export class BillingAdminApi extends Domain.Api("BillingAdminApi", {
     "ScheduleCancellation",
     "Resume",
     "ChangeTier",
+    "ScheduleTierChange",
+    "WithdrawTierChange",
   ],
   views: ["Entitlements", "BillingState"],
   streams: ["AccountEvents"],

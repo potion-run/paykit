@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import { actionsFor, type AdminAction } from "../../src/AdminActions.ts";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, admin } from "../../src/Auth/Actor.ts";
-import { catalog } from "../../src/Catalog.ts";
+import { catalog, tierTermsOf } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import {
   BillingState,
@@ -29,8 +29,10 @@ import { RecordPaymentFailure } from "../../src/Subscription/RecordPaymentFailur
 import { Recover } from "../../src/Subscription/Recover.command.ts";
 import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
+import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../../src/Subscription/Subscription.state.ts";
+import { WithdrawTierChange } from "../../src/Subscription/WithdrawTierChange.command.ts";
 import { tier } from "../../src/Tier.ts";
 import {
   propertyAccount,
@@ -285,7 +287,9 @@ type ConsoleCommand =
   | RecordPaymentFailure
   | Recover
   | Resume
-  | ScheduleCancellation;
+  | ScheduleCancellation
+  | ScheduleTierChange
+  | WithdrawTierChange;
 
 /**
  * The command the console's intent would build for one offered action: the
@@ -329,10 +333,26 @@ const commandFor = (
       return new ScheduleCancellation();
     case "Resume":
       return new Resume();
+    case "WithdrawTierChange":
+      return new WithdrawTierChange();
     case "ChangeTier":
       return tierId === null
         ? null
         : (planChangeTier(generatedCatalog, tierId, state, now)?.command ?? null);
+    case "ScheduleTierChange": {
+      if (tierId === null) return null;
+      const terms = tierTermsOf(generatedCatalog, tierId);
+      return terms === null
+        ? null
+        : new ScheduleTierChange({
+            tier: tierId,
+            allowances: terms.allowances,
+            credits: terms.credits,
+            creditsExpire: terms.creditsExpire,
+            rates: terms.rates,
+            ...(terms.price === undefined ? {} : { price: terms.price }),
+          });
+    }
   }
 };
 
@@ -350,7 +370,9 @@ describe("offered actions", () => {
 
         for (const descriptor of offered) {
           const tiers: ReadonlyArray<string | null> =
-            descriptor.action === "ChangeTier" ? descriptor.tiers : [null];
+            descriptor.action === "ChangeTier" || descriptor.action === "ScheduleTierChange"
+              ? descriptor.tiers
+              : [null];
           // `actionsFor` must not offer a change with no tier to change to.
           if (tiers.length === 0) return false;
           for (const tierId of tiers) {
@@ -372,4 +394,63 @@ describe("offered actions", () => {
       { runs: 300, size: 40 },
     ),
   );
+});
+
+describe("a change at the period end", () => {
+  /** A standing on `pro` with no entitlements supplied, plus a pending tier. */
+  const pending = (tier: string) => ({
+    tier,
+    allowances: {},
+    credits: 0,
+    creditsExpire: "period" as const,
+    rates: {},
+  });
+
+  it("offers scheduling where ChangeTier is refused, and withdraw while it is pending", () => {
+    // `free` includes 100 and the account has used 4,500, so a mid-period move is
+    // `DowngradeBelowUsage` — the boundary is the only place that request fits.
+    const offered = actionsFor(state("active"), {
+      catalog: testCatalog,
+      entitlements: entitlements(4_500),
+    });
+    const change = offered.find((descriptor) => descriptor.action === "ChangeTier");
+    const schedule = offered.find((descriptor) => descriptor.action === "ScheduleTierChange");
+    expect(change?.tiers).toEqual(["scale"]);
+    // `euro` is a different currency; the rest are offered even though the move
+    // is refused now.
+    expect(schedule?.tiers).toEqual(["free", "scale"]);
+    // Nothing is scheduled yet, so there is nothing to withdraw.
+    expect(offered.map((descriptor) => descriptor.action)).not.toContain("WithdrawTierChange");
+  });
+
+  it("never offers a one-off pack as a tier", () => {
+    // A pack has no allowances, so both the mid-period change and the boundary
+    // change would be refused. The console must not render a button that can
+    // only return `TierNotInCatalog`.
+    const pack = tier({
+      id: "pack",
+      kind: "one_off",
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      credits: 10_000,
+      grants: [] as never,
+    });
+    const withPack = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, pack] }));
+    const offered = actionsFor(state("active"), { catalog: withPack });
+    for (const action of ["ChangeTier", "ScheduleTierChange"] as const) {
+      expect(offered.find((descriptor) => descriptor.action === action)?.tiers).not.toContain(
+        "pack",
+      );
+    }
+  });
+
+  it("offers the withdrawal only while a change is scheduled", () => {
+    const pendingTier = pending("free");
+    const offered = actionsFor({ ...state("active"), pendingTier } as never, {
+      catalog: testCatalog,
+    });
+    expect(offered.map((descriptor) => descriptor.action)).toContain("WithdrawTierChange");
+
+    const withdrawn = actionsFor(state("active"), { catalog: testCatalog });
+    expect(withdrawn.map((descriptor) => descriptor.action)).not.toContain("WithdrawTierChange");
+  });
 });

@@ -56,6 +56,8 @@ export const AdminIntent = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
   Schema.Struct({ kind: Schema.Literal("Resume") }),
   Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("ScheduleTierChange"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("WithdrawTierChange") }),
 ]);
 export type AdminIntent = typeof AdminIntent.Type;
 
@@ -79,6 +81,8 @@ export const ActionDraft = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
   Schema.Struct({ kind: Schema.Literal("Resume") }),
   Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("ScheduleTierChange"), tier: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("WithdrawTierChange") }),
 ]);
 export type ActionDraft = typeof ActionDraft.Type;
 
@@ -260,4 +264,6 @@ export const ConsoleAction: ReadonlyArray<AdminAction> = [
   "Expire",
   "ScheduleCancellation",
   "Resume",
+  "ScheduleTierChange",
+  "WithdrawTierChange",
 ];

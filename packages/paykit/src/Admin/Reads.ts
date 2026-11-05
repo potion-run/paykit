@@ -33,10 +33,13 @@ import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts"
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { CancellationScheduled } from "../Subscription/ScheduleCancellation.command.ts";
+import { TierChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
 import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { HoldRecord, SubscriptionState } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
+import { TierChangeWithdrawn } from "../Subscription/WithdrawTierChange.command.ts";
 import { Verify, VerifyMismatch } from "../Verify.ts";
 
 /** A preview that could not be turned into a wire value. */
@@ -54,6 +57,8 @@ export type AdminReadError = typeof AdminReadError.Type;
 export const PreviewEvents = Schema.Union([
   SubscriptionActivated,
   TierChanged,
+  TierChangeScheduled,
+  TierChangeWithdrawn,
   CancellationScheduled,
 ]);
 export type PreviewEvents = typeof PreviewEvents.Type;
@@ -67,6 +72,7 @@ export const PreviewRejection = Schema.Union([
   DowngradeBelowSpend,
   DowngradeBelowCeiling,
   AlreadyCanceled,
+  NoTierChangeScheduled,
   ProrationMismatch,
   CatalogMismatch,
 ]);
