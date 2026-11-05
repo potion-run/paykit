@@ -275,6 +275,12 @@ the broken design; see [`spec/README.md`](./spec/README.md). A counterexample tr
 setup — when a model finds something, reproduce it under `packages/paykit/test/` rather than leaving
 it in the model.
 
+`.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
+carry a live case that skips without `STRIPE_API_KEY` / `POLAR_ACCESS_TOKEN`, so `check.yml` stays
+green with no secrets; the manual workflow is where those cases actually run, and it fails rather than
+skips when a secret is missing. Keep the two apart: the cases mutate a real test account, and a secret
+must not sit in the path of a pull request from a fork.
+
 `.github/workflows/check.yml` runs all seven on every push and pull request, and is modelled on
 alchemy's `check.yml`: one job, steps in the order that makes each later step meaningful, every
 action pinned to a commit rather than a tag, and `cancel-in-progress` only for pull requests.

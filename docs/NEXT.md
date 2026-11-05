@@ -61,21 +61,30 @@ prices. What is still open there is a money ceiling already passed by `billed` �
   stage's prices the catalog no longer declares. What is left is the write: a `RetiredPrices` resource
   that lists, sweeps and deactivates, with a live test as the authority, and the Polar half beside it.
 
-## The live cases that have never been run
+## The live cases
 
 Both provisioning packages carry a live test that is gated on a vendor key and reports **skipped** in
-every run so far. They are the only proof each helper works against a real API, and the only place
+every other run. They are the only proof each helper works against a real API, and the only place
 the "replace keeps the old one" claim is actually tested.
 
+They run from `.github/workflows/live.yml` — a manual dispatch, from `main`, with a `vendor` input of
+`both`, `stripe` or `polar`. It is separate from `check.yml` for two reasons: the cases mutate a real
+test account, and a secret must not be in the path of a pull request from a fork. A missing secret
+**fails** that workflow rather than skipping it, because a manual run whose only purpose is the live
+case should not report green having done nothing.
+
 ```sh
+# The same thing locally, against the same kind of account.
 STRIPE_API_KEY=sk_test_… pnpm --filter @potion.run/paykit-stripe test
-POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
+POLAR_ACCESS_TOKEN=… pnpm --filter @potion.run/paykit-polar test
 ```
 
-Run them before trusting provisioning, and before publishing anything that advertises it. Expect
-them to create and retire prices/products in those test accounts; both start with `stack.destroy()`
-and leave retained objects behind, which is the point of the rule and a mess in a shared account.
-The Polar case is pinned to `server: "sandbox"`, so a production token cannot reach production.
+Expect them to create and retire prices/products in those test accounts; both start with
+`stack.destroy()` and leave retained objects behind, which is the point of the rule and a mess in a
+shared account. Use dedicated test accounts — once `RetiredPrices` lands, a sweep over
+`paykit:<stage>:*` archives what it thinks the catalog abandoned, which is only safe where everything
+in the account came from the sweep. The Polar case is pinned to `server: "sandbox"`, so a production
+token cannot reach production.
 
 ## How the last slices were done
 
