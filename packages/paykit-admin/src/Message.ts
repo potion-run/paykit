@@ -18,6 +18,8 @@ export const Message = defineMessageUnion({
   UpdatedTierFilter: { value: Schema.String },
   ClickedAccount: { account: AccountId },
   ClosedAccount: {},
+  ClickedPlans: {},
+  ClickedFeatures: {},
 
   /** The runtime's `routing.onUrlChange`: a push, a replace, or a back button. */
   ChangedUrl: { url: Url },

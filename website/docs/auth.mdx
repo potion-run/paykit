@@ -1,0 +1,108 @@
+---
+title: Auth
+description: Gate the Api with any session, without teaching the model who answered.
+sidebar:
+  order: 3
+---
+
+paykit does not own authentication. `Session` and `Admin` are middleware over a
+single question: **who is calling, and for which account?** A deployment answers
+that from its own session — Better Auth, yielded/auth, a cookie, a bearer token —
+and the catalog and the model never learn which one.
+
+## One resolver, two guards
+
+```ts
+import { Paykit } from "@potion.run/paykit";
+import * as Effect from "effect/Effect";
+
+const resolve: Paykit.ActorResolver = ({ headers }) =>
+  sessionFor(headers).pipe(
+    Effect.map((session) =>
+      session === null ? null : Paykit.actorAccount(session.user.id),
+    ),
+  );
+
+const Tenant = Paykit.SessionFrom(resolve);
+const Operator = Paykit.AdminFrom(resolve);
+// or both from one resolver, for a Worker that serves both surfaces
+const Guards = Paykit.GuardsFrom(resolve);
+```
+
+The resolver returns `ActorValue | null`:
+
+| Answer | The guard does |
+| --- | --- |
+| `Paykit.actorAccount(id)` | Provides the `Actor`; a command may target only `id`. |
+| `Paykit.actorAdmin(id)` | Provides the `Actor`; a command may target any account. |
+| `null` | Refuses with `Unauthenticated`. |
+| A failure | Becomes a defect. A broken session store is not an anonymous caller, and must not sign a valid user out. |
+
+`SessionFrom` reads the command's `target` and refuses with `Forbidden` when an
+`account` actor names another account. `AdminFrom` requires `kind: "admin"`.
+The views re-check the key, so a read is scoped even if a route forgot to be.
+
+## Better Auth
+
+The [auth example](https://github.com/potion-run/paykit/tree/main/examples/auth)
+wires Better Auth to D1 and reduces it to one resolver:
+
+```ts
+import { BetterAuth } from "@alchemy.run/better-auth";
+
+const auth = yield* BetterAuth({
+  basePath: "/api/auth",
+  emailAndPassword: { enabled: true },
+});
+
+const resolve: Paykit.ActorResolver = ({ headers }) =>
+  auth.getSession(toWebHeaders(headers)).pipe(
+    Effect.map((session) =>
+      session === null ? null : Paykit.actorAccount(session.user.id),
+    ),
+  );
+
+const Guards = Paykit.GuardsFrom(resolve);
+```
+
+Mount Better Auth's own routes outside the payment guards:
+
+```ts
+if (path.startsWith("/api/auth")) return yield* auth.fetch;
+if (path.startsWith("/api")) return yield* tenant.fetch;
+if (path.startsWith("/admin")) return yield* admin.fetch;
+```
+
+A caller cannot have a session before it can sign in, so `/api/auth/*` must not
+require one.
+
+## yielded/auth or your own session
+
+The resolver API is not specific to Better Auth. A yielded/auth session, a
+same-origin cookie or a signed header is the same shape:
+
+```ts
+const Guards = Paykit.GuardsFrom(({ headers }) =>
+  Effect.sync(() => {
+    const session = readCookie(headers);
+    return session === null ? null : Paykit.actorAccount(session.accountId);
+  }),
+);
+```
+
+`examples/admin` uses exactly that with a cookie, and `SessionFromHeaders` is
+the development implementation over `x-paykit-actor` / `x-paykit-kind`. They
+differ only in how they answer "who is this?".
+
+## Where the account comes from
+
+Choose one identity and use it everywhere:
+
+- A user is one account: `Paykit.actorAccount(user.id)`.
+- A team owns the subscription: map the session's active organization or team
+  id, and the same user acts for that account.
+
+Never derive the account from a query parameter or a request body. The guard
+compares the command's target with the session's account, so a caller cannot
+name another account — but the route must still pass the session's id when it
+binds `Paykit.Subscribe(account)` or `Paykit.TrackUsage(account)`.

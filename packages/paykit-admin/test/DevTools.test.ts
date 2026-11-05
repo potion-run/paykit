@@ -128,6 +128,18 @@ describe("the event lab", () => {
     expect(again.devTools.emitted).toBe(2);
   });
 
+  it("opens the lab account when emitting with nothing open", () => {
+    const model = seeded(true);
+    expect(Option.isNone(model.account)).toBe(true);
+
+    const result = update(model, Message.ClickedEmitDevToolsEvent());
+    const account = openAccount(result.model);
+    expect(account.id).toBe("acct_dev");
+    expect(account.events[0]?.tag).toBe(devToolsEvents[0]?.tag);
+    expect(Option.isSome(account.billing)).toBe(true);
+    expect(result.commands?.map((command) => command.name)).toEqual(["GetHolds", "ReflectRoute"]);
+  });
+
   it("emits every event, in order, and re-reads holds for the hold events", () => {
     const result = update(opened(), Message.ClickedEmitAllDevToolsEvents());
     const account = openAccount(result.model);

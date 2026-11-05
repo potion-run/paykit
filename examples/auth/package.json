@@ -1,0 +1,34 @@
+{
+  "name": "@potion.run/example-auth",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/auth"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/better-auth": "catalog:",
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/domain": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "alchemy": "catalog:",
+    "better-auth": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

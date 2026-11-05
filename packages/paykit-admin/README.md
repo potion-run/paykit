@@ -17,9 +17,13 @@ command id.
 
 The console covers the account list, the standing and allowance panels, the
 period's priced usage, open holds with their deadlines, the billing timeline
-folded from the event feed, the account event feed, and these actions: `GrantCredits`, `ExtendTrial`, `ChangeTier`, `EnterGrace`,
-`RecordPayment`, `RecordPaymentFailure`, `Recover`, `Expire`,
-`ScheduleCancellation` and `Resume`.
+folded from the event feed, and the account event feed. Two read-only pages
+list the deploy's `Plans` and `Features` from the catalog the console already
+holds.
+
+The account page offers these actions: `GrantCredits`, `ExtendTrial`,
+`ChangeTier`, `EnterGrace`, `RecordPayment`, `RecordPaymentFailure`, `Recover`,
+`Expire`, `ScheduleCancellation` and `Resume`.
 
 Two panels ask questions instead of writing: **Ask the model** runs `Preview` —
 the same `decide` a write runs — and shows the events it would record or the
@@ -46,6 +50,8 @@ button all land on the same view:
 | `/?standing=grace&tier=pro` | The list, filtered |
 | `/?after=acct_50` | The next page, by the cursor the previous one returned |
 | `/accounts/:account` | One account, with the list's filters and page preserved |
+| `/plans` | The deploy's tiers, read only |
+| `/features` | The deploy's features, read only |
 
 `Console.routing` turns a URL change into `ChangedUrl` and a link click into
 `ClickedLink`; spreading `Console` into `Runtime.makeApplication` brings it
@@ -58,8 +64,9 @@ page cursor is in the URL too, so a refresh keeps the page and back walks it;
 changing a filter drops the cursor, because a cursor from another filter names
 a row that filter may not have.
 
-Run the app on its own origin (`/` and `/accounts/...` are the console's
-paths), and keep `/admin` and `/console` for the Api and read surfaces.
+Run the app on its own origin (`/`, `/accounts/...`, `/plans` and
+`/features` are the console's paths), and keep `/admin` and `/console` for the
+Api and read surfaces.
 
 ## The list is a point-in-time read
 
@@ -154,8 +161,9 @@ Console.Flags.make({
 
 The event table is checked against `Subscription.definition.events` by a
 coverage test, so the lab cannot silently miss an event the aggregate adds.
-The panel emits into the open account only; open an account from the list first,
-or use the **Reads** tab to open and seed one that the deployment does not have.
+With no account open, **Emit selected** and **Emit every event** open the lab
+account and seed it before recording; the **Reads** tab can open and seed any
+other account the deployment does not have.
 
 The panel is off by default, and every message it can dispatch is inert while
 `Flags.devTools` is false, so a deployed console cannot be coaxed into fake

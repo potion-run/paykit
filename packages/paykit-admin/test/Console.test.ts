@@ -33,6 +33,7 @@ import { Flags } from "../src/Flags.ts";
 import { init } from "../src/init.ts";
 import { Message } from "../src/Message.ts";
 import { ConsoleAction, Model } from "../src/Model.ts";
+import { ConsoleRoute } from "../src/Route.ts";
 import { AccountSnapshot } from "../src/Snapshot.ts";
 import { update } from "../src/update.ts";
 
@@ -444,6 +445,33 @@ describe("the console model", () => {
     const closed = update(withBilling(), Message.ClosedAccount()).model;
     expect(Option.isNone(closed.account)).toBe(true);
     expect(closed.accounts.rows.length).toBe(1);
+  });
+
+  it("boots a catalog page from its URL without an account", () => {
+    const plans = init(flags({ catalog: Schema.encodeSync(Catalog)(testCatalog) }), url("/plans"));
+    expect(plans.model.route).toEqual(ConsoleRoute.Plans());
+    expect(Option.isNone(plans.model.account)).toBe(true);
+
+    const features = init(flags(), url("/features"));
+    expect(features.model.route).toEqual(ConsoleRoute.Features());
+    expect(Option.isNone(features.model.account)).toBe(true);
+  });
+
+  it("navigates to the read-only catalog pages", () => {
+    const plans = update(seeded(), Message.ClickedPlans());
+    expect(plans.model.route).toEqual(ConsoleRoute.Plans());
+    expect(Option.isNone(plans.model.account)).toBe(true);
+    expect(plans.commands?.find((command) => command.name === "ReflectRoute")?.args).toEqual({
+      url: "/plans",
+      replace: false,
+    });
+
+    const features = update(plans.model, Message.ClickedFeatures());
+    expect(features.model.route).toEqual(ConsoleRoute.Features());
+    expect(features.commands?.find((command) => command.name === "ReflectRoute")?.args).toEqual({
+      url: "/features",
+      replace: false,
+    });
   });
 
   it("opens the account the URL names and seeds it from flags", () => {

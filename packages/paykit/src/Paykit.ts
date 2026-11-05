@@ -1,4 +1,6 @@
 import { allowance, grant } from "./Allowance.ts";
+import { account as actorAccount, admin as actorAdmin, mayActOn } from "./Auth/Actor.ts";
+import { AdminFrom, GuardsFrom, SessionFrom } from "./Auth/FromResolver.ts";
 import * as Billing from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
@@ -106,6 +108,13 @@ export const Paykit = {
   Verify,
   verifyState,
   doctor,
+  // auth — one resolver per deployment, then the two guards on it
+  SessionFrom,
+  AdminFrom,
+  GuardsFrom,
+  mayActOn,
+  actorAccount,
+  actorAdmin,
   // runtime — the four layers
   BillingInProcess: Billing.BillingInProcess,
   BillingApiLayer: Billing.BillingApiLayer,

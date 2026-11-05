@@ -345,6 +345,8 @@ export type { ActorKind, ActorValue } from "./Auth/Actor.ts";
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
 export { Admin, Session } from "./Auth/Guards.ts";
+export { AdminFrom, GuardsFrom, SessionFrom } from "./Auth/FromResolver.ts";
+export type { ActorResolver, FromResolverOptions, GuardRequest } from "./Auth/FromResolver.ts";
 export {
   ACTOR_HEADER,
   AdminFromHeaders,

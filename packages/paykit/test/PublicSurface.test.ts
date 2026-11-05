@@ -88,6 +88,13 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.Admin).toBeDefined();
   expect(Paykit.Forbidden).toBeDefined();
   expect(Paykit.Unauthenticated).toBeDefined();
+  // one resolver per deployment, and the two guards over it
+  expect(typeof Paykit.SessionFrom).toBe("function");
+  expect(typeof Paykit.AdminFrom).toBe("function");
+  expect(typeof Paykit.GuardsFrom).toBe("function");
+  expect(typeof Paykit.Paykit.SessionFrom).toBe("function");
+  expect(Paykit.Paykit.SessionFrom).toBe(Paykit.SessionFrom);
+  expect(Paykit.Paykit.GuardsFrom).toBe(Paykit.GuardsFrom);
   expect(Paykit.CatalogMismatch).toBeDefined();
   expect(Paykit.mayActOn({ kind: "account", id: "a" }, "a")).toBe(true);
   expect(Paykit.mayActOn({ kind: "account", id: "a" }, "b")).toBe(false);

@@ -17,7 +17,8 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   re-parsed with `routeOf`. Never keep a selection the URL cannot reproduce.
   Applying a route naming another account replaces the account state, which is
   what restarts its keyed reads. A filter change drops the page cursor; opening
-  an account keeps both.
+  an account keeps both. `/plans` and `/features` are read-only catalog pages;
+  they name no account and carry no list filter or page cursor.
 - **A seeded snapshot is the first frame of a live read, not a second source.**
   `Flags` carries wire-encoded snapshots decoded by `decodeSnapshotFlags`; a
   snapshot that no longer decodes falls back to the live read. A seeded account

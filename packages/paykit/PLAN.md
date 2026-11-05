@@ -521,8 +521,11 @@ needs; the Api's composition of commands is the blast radius.
 - `CatalogGuard` is a third guard, on the three commands that carry catalog-derived fields. It
   provides nothing; it refuses a command whose allowances or price disagree with the catalog.
 - `SessionFromHeaders` and `AdminFromHeaders` are development guards. They read
-  `x-paykit-actor` and `x-paykit-kind`. A production deployment replaces them with a Layer over
-  its own session, and the header never becomes an authentication scheme by accident.
+  `x-paykit-actor` and `x-paykit-kind`. A production deployment replaces them with
+  `SessionFrom(resolve)` / `AdminFrom(resolve)` (or `GuardsFrom(resolve)`) over its own session;
+  the header never becomes an authentication scheme by accident. A resolver answers
+  `ActorValue | null` from the request's headers: `null` is anonymous, a failure is a defect, and
+  Better Auth, yielded/auth, a cookie and a bearer token all reduce to the same shape.
 
 `decide` stays pure: it does not read `Actor`, so a model rule never depends on which surface
 sent a command. Authorization at the account boundary is middleware; a model rule about state
@@ -658,7 +661,7 @@ potion/                          # pnpm workspace root (private)
         Timeline.ts
         Proration.ts  Doctor.ts
         Auth/
-          Actor.ts  Guards.ts  FromHeaders.ts
+          Actor.ts  Guards.ts  FromResolver.ts  FromHeaders.ts
           Unauthenticated.rejection.ts  Forbidden.rejection.ts
         Subscription/
           Subscription.aggregate.ts  Subscription.state.ts  Subscription.id.ts

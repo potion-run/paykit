@@ -55,7 +55,7 @@ import {
   accountRoute,
   accountsRoute,
   afterOf,
-  type ConsoleRoute,
+  ConsoleRoute,
   filterOf,
   queryOf,
   reflectRoute,
@@ -784,7 +784,7 @@ const devToolsCommandId = (model: Model): string => {
   return commandId === "" ? "devtools_command" : commandId;
 };
 
-const emitDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
+const recordDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
   const account = openAccount(model);
   if (account === null) return { model };
   const seq = nextEventSeq(account);
@@ -804,8 +804,17 @@ const emitDevToolsEvent = (model: Model, event: { tag: string; body: string }): 
     : { model: next, commands: result.commands };
 };
 
+/**
+ * Emit one lab event. With no account open the lab opens its own account
+ * first, so the button is never a disabled dead end on a fresh console.
+ */
+const emitDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
+  const opened = openAccount(model) === null ? openDevToolsAccount(model) : { model };
+  return andThen(opened, recordDevToolsEvent(opened.model, event));
+};
+
 /** Emit the whole table in order, one sequence number each. */
-const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
+const recordAllDevToolsEvents = (model: Model): UpdateReturn => {
   const account = openAccount(model);
   if (account === null) return { model };
   const startSeq = nextEventSeq(account);
@@ -828,6 +837,12 @@ const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
     emitted: devTools.emitted + devToolsEvents.length,
   }));
   return commands.length === 0 ? { model: next } : { model: next, commands };
+};
+
+/** Emit every lab event, opening the lab account first when none is open. */
+const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
+  const opened = openAccount(model) === null ? openDevToolsAccount(model) : { model };
+  return andThen(opened, recordAllDevToolsEvents(opened.model));
 };
 
 /** Fill the live reads with a simulated standing, so the panels have a shape. */
@@ -942,6 +957,10 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClosedAccount: () =>
       navigate(model, accountsRoute(model.accounts.filter, afterOf(model.route)), "push"),
+
+    ClickedPlans: () => navigate(model, ConsoleRoute.Plans(), "push"),
+
+    ClickedFeatures: () => navigate(model, ConsoleRoute.Features(), "push"),
 
     ChangedUrl: ({ url }) => applyRoute(model, routeOf(url)),
 

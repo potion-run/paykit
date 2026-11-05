@@ -1,17 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Headers from "effect/http/Headers";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Actor, ActorKind, type ActorValue, mayActOn } from "./Actor.ts";
-import { Forbidden } from "./Forbidden.rejection.ts";
-import { Admin, Session } from "./Guards.ts";
-import { Unauthenticated } from "./Unauthenticated.rejection.ts";
+import { ActorKind, type ActorValue } from "./Actor.ts";
+import { AdminFrom, type ActorResolver, GuardsFrom, SessionFrom } from "./FromResolver.ts";
 
 /**
  * The header a caller names itself in, and the header naming its kind. Read
  * only by the development guards: a production deployment replaces them with a
- * Layer over its own session, so the header never becomes an authentication
+ * resolver over its own session, so the header never becomes an authentication
  * scheme by accident.
  */
 export const ACTOR_HEADER = "x-paykit-actor";
@@ -28,12 +25,8 @@ export const actorFromHeaders = (headers: Headers.Input): ActorValue | null => {
   return { kind: decoded.value, id: id.value };
 };
 
-const targetOf = (payload: unknown): string | null => {
-  const target = (payload as { readonly target?: unknown } | null)?.target;
-  return typeof target === "string" ? target : null;
-};
-
-const unauthenticated = new Unauthenticated({ source: "headers" });
+/** The development resolver: the actor a request's headers name. */
+const fromHeaders: ActorResolver = ({ headers }) => Effect.sync(() => actorFromHeaders(headers));
 
 /**
  * The development `Session` guard: the caller is the `x-paykit-actor` header,
@@ -41,20 +34,15 @@ const unauthenticated = new Unauthenticated({ source: "headers" });
  * caller may only target itself; an `admin` or `system` caller may target any
  * account.
  *
+ * It is {@link SessionFrom} over a header resolver, so a production deployment
+ * swaps the resolver and keeps the guard.
+ *
  * Never expose this to the internet. It exists so `alchemy dev`, the console
  * and the tests can exercise the guarded path without an identity provider.
  *
  * @layer
  */
-export const SessionFromHeaders = Layer.succeed(Session, (effect, { headers, payload }) => {
-  const actor = actorFromHeaders(headers);
-  if (actor === null) return Effect.fail(unauthenticated);
-  const target = targetOf(payload);
-  if (target !== null && !mayActOn(actor, target)) {
-    return Effect.fail(new Forbidden({ account: target, actor: actor.id, kind: actor.kind }));
-  }
-  return Effect.provideService(effect, Actor, actor);
-});
+export const SessionFromHeaders = SessionFrom(fromHeaders, { source: "headers" });
 
 /**
  * The development `Admin` guard: the caller must present the `admin` kind in
@@ -65,14 +53,7 @@ export const SessionFromHeaders = Layer.succeed(Session, (effect, { headers, pay
  *
  * @layer
  */
-export const AdminFromHeaders = Layer.succeed(Admin, (effect, { headers }) => {
-  const actor = actorFromHeaders(headers);
-  if (actor === null) return Effect.fail(unauthenticated);
-  if (actor.kind !== "admin") {
-    return Effect.fail(new Forbidden({ account: actor.id, actor: actor.id, kind: actor.kind }));
-  }
-  return Effect.provideService(effect, Actor, actor);
-});
+export const AdminFromHeaders = AdminFrom(fromHeaders, { source: "headers" });
 
 /**
  * Both development guards, for a Worker that serves the tenant and the admin
@@ -80,4 +61,4 @@ export const AdminFromHeaders = Layer.succeed(Admin, (effect, { headers }) => {
  *
  * @layer
  */
-export const DevGuards = Layer.mergeAll(SessionFromHeaders, AdminFromHeaders);
+export const DevGuards = GuardsFrom(fromHeaders, { source: "headers" });

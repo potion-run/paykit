@@ -60,6 +60,12 @@ pnpm --filter @potion.run/example-billing test
 pnpm --filter @potion.run/example-billing dev
 ```
 
+[`examples/auth`](./examples/auth) gates the same model with a
+[Better Auth](https://better-auth.com) session, and shows the provider-neutral
+`Paykit.SessionFrom` / `Paykit.AdminFrom` resolver that swaps Better Auth for
+yielded/auth, a cookie or a deployment's own session service without touching
+the catalog or the model.
+
 ## The shape of it
 
 - **Entitlement is ours, money is the provider's.** `check()` never calls a provider: it reads a row

@@ -1,9 +1,12 @@
 import { actionsFor } from "@potion.run/paykit/Admin";
+import type { Allowance } from "@potion.run/paykit/Allowance";
 import type { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import type { Catalog } from "@potion.run/paykit/Catalog";
+import type { Feature } from "@potion.run/paykit/Feature";
 import type { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import type { Tier } from "@potion.run/paykit/Tier";
 import type { TimelineEntry } from "@potion.run/paykit/Timeline";
 import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
@@ -24,7 +27,7 @@ import {
 import { alert, alertDescription } from "./ui/alert.ts";
 import { badge as uiBadge, type BadgeVariant } from "./ui/badge.ts";
 import { button as uiButton, type ButtonSize, type ButtonVariant } from "./ui/button.ts";
-import { card, cardHeader, cardTitle } from "./ui/card.ts";
+import { card, cardDescription, cardHeader, cardTitle } from "./ui/card.ts";
 import { empty } from "./ui/empty.ts";
 import { field } from "./ui/field.ts";
 import { input } from "./ui/input.ts";
@@ -58,8 +61,330 @@ const button = (
     [label],
   );
 
-const dangerButton = (label: string, message: Message, h: HtmlBuilder<Message>): Html =>
-  uiButton(h, { onClick: message, variant: "destructive" }, [label]);
+type Tone = "neutral" | "success" | "warning" | "destructive" | "info";
+
+const iconPaths = {
+  accounts:
+    "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75",
+  arrowLeft: "M19 12H5 M12 19l-7-7 7-7",
+  chevronRight: "m9 18 6-6-6-6",
+  features: "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z",
+  plans: "M12 2 2 7l10 5 10-5-10-5Z M2 17l10 5 10-5 M2 12l10 5 10-5",
+} as const;
+
+const icon = (h: HtmlBuilder<Message>, path: string, className = "pk-icon"): Html =>
+  h.svg(
+    [
+      h.Class(className),
+      h.ViewBox("0 0 24 24"),
+      h.Width("16"),
+      h.Height("16"),
+      h.Fill("none"),
+      h.Stroke("currentColor"),
+      h.StrokeWidth("1.8"),
+      h.StrokeLinecap("round"),
+      h.StrokeLinejoin("round"),
+      h.AriaHidden(true),
+    ],
+    [h.path([h.D(path)], [])],
+  );
+
+const initialsOf = (value: string): string => {
+  const trimmed = value.replace(/^acct[_-]?/i, "");
+  return (trimmed === "" ? value : trimmed).slice(0, 2).toUpperCase();
+};
+
+const accountAvatar = (account: string, h: HtmlBuilder<Message>, isSmall = false): Html =>
+  h.span(
+    [h.Class(isSmall ? "pk-avatar pk-avatar-sm" : "pk-avatar"), h.AriaHidden(true)],
+    [initialsOf(account)],
+  );
+
+const standingValueOf = (status: string): "good" | "grace" | "blocked" =>
+  status === "grace" ? "grace" : status === "active" || status === "trialing" ? "good" : "blocked";
+
+const navItem = (
+  label: string,
+  path: string,
+  isActive: boolean,
+  message: Message,
+  h: HtmlBuilder<Message>,
+): Html =>
+  uiButton(
+    h,
+    {
+      onClick: message,
+      variant: "ghost",
+      className: "pk-nav-item",
+      attributes: [
+        h.DataAttribute("active", isActive ? "true" : "false"),
+        ...(isActive ? [h.AriaCurrent("page")] : []),
+      ],
+    },
+    [icon(h, path, "pk-nav-icon"), h.span([h.Class("pk-nav-text")], [label])],
+  );
+
+const stat = (
+  label: string,
+  value: string,
+  detail: string,
+  tone: Tone,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class("pk-stat"), h.DataAttribute("tone", tone)],
+    [
+      h.span([h.Class("pk-stat-label")], [label]),
+      h.strong([h.Class("pk-stat-value")], [value]),
+      h.span([h.Class("pk-stat-detail")], [detail]),
+    ],
+  );
+
+const section = (
+  title: string,
+  description: string,
+  children: ReadonlyArray<Html>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.section(
+    [h.Class("pk-section")],
+    [
+      h.div(
+        [h.Class("pk-section-head")],
+        [
+          h.div(
+            [],
+            [
+              h.h2([h.Class("pk-section-title")], [title]),
+              h.p([h.Class("pk-section-description")], [description]),
+            ],
+          ),
+        ],
+      ),
+      ...children,
+    ],
+  );
+
+const sidebarView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.aside(
+    [h.Class("pk-sidebar")],
+    [
+      h.div(
+        [h.Class("pk-brand")],
+        [
+          h.div([h.Class("pk-brand-mark"), h.AriaHidden(true)], ["p"]),
+          h.div(
+            [h.Class("pk-brand-copy")],
+            [
+              h.span([h.Class("pk-brand-name")], ["Paykit"]),
+              h.span([h.Class("pk-brand-tagline")], ["Billing operations"]),
+            ],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-workspace")],
+        [
+          h.span([h.Class("pk-workspace-label")], ["Workspace"]),
+          h.div(
+            [h.Class("pk-workspace-name")],
+            [h.span([h.Class("pk-workspace-dot")], []), h.span([], ["Admin console"])],
+          ),
+        ],
+      ),
+      h.nav(
+        [h.Class("pk-nav"), h.AriaLabel("Console")],
+        [
+          navItem(
+            "Accounts",
+            iconPaths.accounts,
+            model.route._tag === "Accounts" || model.route._tag === "Account",
+            Message.ClosedAccount(),
+            h,
+          ),
+          h.p([h.Class("pk-nav-label")], ["Catalog"]),
+          navItem(
+            "Plans",
+            iconPaths.plans,
+            model.route._tag === "Plans",
+            Message.ClickedPlans(),
+            h,
+          ),
+          navItem(
+            "Features",
+            iconPaths.features,
+            model.route._tag === "Features",
+            Message.ClickedFeatures(),
+            h,
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-sidebar-footer")],
+        [
+          Option.match(model.actor, {
+            onNone: () => h.span([h.Class("pk-user-name")], ["No actor seeded"]),
+            onSome: (actor) =>
+              h.div(
+                [h.Class("pk-user")],
+                [
+                  h.span(
+                    [h.Class("pk-avatar pk-avatar-user"), h.AriaHidden(true)],
+                    [initialsOf(actor.id)],
+                  ),
+                  h.div(
+                    [h.Class("pk-user-copy")],
+                    [
+                      h.span([h.Class("pk-user-name")], [actor.id]),
+                      h.span([h.Class("pk-user-kind")], [actor.kind]),
+                    ],
+                  ),
+                ],
+              ),
+          }),
+        ],
+      ),
+    ],
+  );
+
+const breadcrumbItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => {
+  switch (model.route._tag) {
+    case "Accounts":
+      return [h.strong([], ["Accounts"])];
+    case "Account":
+      return [
+        h.span([], ["Accounts"]),
+        icon(h, iconPaths.chevronRight, "pk-crumb-icon"),
+        h.strong([], [model.route.account]),
+      ];
+    case "Plans":
+      return [h.strong([], ["Plans"])];
+    case "Features":
+      return [h.strong([], ["Features"])];
+  }
+};
+
+const topbarView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.header(
+    [h.Class("pk-topbar")],
+    [
+      h.nav(
+        [h.Class("pk-breadcrumb"), h.AriaLabel("Breadcrumb")],
+        [
+          h.span([], ["Billing"]),
+          icon(h, iconPaths.chevronRight, "pk-crumb-icon"),
+          ...breadcrumbItems(model, h),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-topbar-actions")],
+        [h.span([h.Class("pk-env-chip")], [h.span([h.Class("pk-env-dot")], []), "Admin console"])],
+      ),
+    ],
+  );
+
+const accountsPageHead = (h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("pk-page-head")],
+    [
+      h.div(
+        [],
+        [
+          h.p([h.Class("pk-eyebrow")], ["Billing"]),
+          h.h1([], ["Accounts"]),
+          h.p(
+            [h.Class("pk-page-subtitle")],
+            ["Every account, its standing and where its period stands."],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-page-actions")],
+        [button("Refresh", Message.ClickedRefresh(), h, { variant: "default" })],
+      ),
+    ],
+  );
+
+const accountPageHead = (account: AccountState, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("pk-page-head pk-detail-page-head")],
+    [
+      h.div(
+        [h.Class("pk-detail-heading")],
+        [
+          h.div(
+            [h.Class("pk-back-row")],
+            [
+              uiButton(h, { onClick: Message.ClosedAccount(), variant: "ghost", size: "sm" }, [
+                icon(h, iconPaths.arrowLeft, "pk-button-icon"),
+                "All accounts",
+              ]),
+            ],
+          ),
+          h.div(
+            [h.Class("pk-detail-identity")],
+            [
+              accountAvatar(account.id, h),
+              h.div(
+                [h.Class("pk-detail-copy")],
+                [
+                  h.p([h.Class("pk-eyebrow")], ["Account"]),
+                  h.div([h.Class("pk-detail-title-row")], [h.h1([], [account.id])]),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-page-actions")],
+        [
+          badge("feed", account.feed, h),
+          button("Refresh", Message.ClickedRefresh(), h, { variant: "default" }),
+        ],
+      ),
+    ],
+  );
+
+const catalogPageHead = (title: string, subtitle: string, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("pk-page-head")],
+    [
+      h.div(
+        [],
+        [
+          h.p([h.Class("pk-eyebrow")], ["Catalog"]),
+          h.h1([], [title]),
+          h.p([h.Class("pk-page-subtitle")], [subtitle]),
+        ],
+      ),
+      h.div([h.Class("pk-page-actions")], [h.span([h.Class("pk-count-pill")], ["Read only"])]),
+    ],
+  );
+
+const pageHeadView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  switch (model.route._tag) {
+    case "Account":
+      return Option.match(model.account, {
+        onNone: () => accountsPageHead(h),
+        onSome: (account) => accountPageHead(account, h),
+      });
+    case "Accounts":
+      return accountsPageHead(h);
+    case "Plans":
+      return catalogPageHead(
+        "Plans",
+        "The tiers this deployment sells, what they include, and what they cost.",
+        h,
+      );
+    case "Features":
+      return catalogPageHead(
+        "Features",
+        "Every feature the deployment declares and how it is metered.",
+        h,
+      );
+  }
+};
 
 const badgeVariantOf = (kind: string, value: string): BadgeVariant => {
   if (kind === "standing") {
@@ -154,14 +479,35 @@ const filterOptions = (
   ...values.map((value) => ({ value, label: value })),
 ];
 
+const accountsSummaryView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const rows = model.accounts.rows;
+  const countOf = (standing: string): number =>
+    rows.filter((row) => row.standing === standing).length;
+  return h.div(
+    [
+      h.Class("pk-stats"),
+      h.DataAttribute("paykit-summary", "accounts"),
+      h.AriaLabel("Accounts on this page"),
+    ],
+    [
+      stat("Accounts", String(rows.length), "On this page", "neutral", h),
+      stat("Good standing", String(countOf("good")), "Active or trialing", "success", h),
+      stat("In grace", String(countOf("grace")), "Payment attention", "warning", h),
+      stat("Blocked", String(countOf("blocked")), "Access suspended", "destructive", h),
+    ],
+  );
+};
+
 const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const filter = model.accounts.filter;
   const standing = Option.getOrElse(filter.standing, () => "");
   const status = Option.getOrElse(filter.status, () => "");
   const tier = Option.getOrElse(filter.tier, () => "");
+  const hasFilter =
+    Option.isSome(filter.standing) || Option.isSome(filter.status) || Option.isSome(filter.tier);
   // A list is a point-in-time read, never a live view: say when it was read,
   // or say the read time is unknown. The panel never presents the rows as
-  // current, because the account beside them is live and this is not.
+  // current, because the account it opens is live and this is not.
   const asOf = Option.getOrUndefined(model.accounts.asOf);
   const asOfText =
     asOf === undefined
@@ -176,6 +522,572 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
       ),
   });
 
+  return h.div(
+    [h.Class("pk-accounts-page")],
+    [
+      accountsSummaryView(model, h),
+      card(
+        h,
+        [
+          cardHeader(h, [
+            h.div(
+              [],
+              [
+                cardTitle(h, ["Accounts"]),
+                cardDescription(h, ["Every account with its plan, standing and current period."]),
+                h.p(
+                  [
+                    h.Class("pk-as-of"),
+                    h.DataAttribute(
+                      "paykit-as-of",
+                      asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
+                    ),
+                  ],
+                  [asOfText],
+                ),
+              ],
+            ),
+            h.div(
+              [h.Class("pk-card-actions")],
+              [
+                h.span(
+                  [h.Class("pk-count-pill")],
+                  [
+                    `${model.accounts.rows.length} ${
+                      model.accounts.rows.length === 1 ? "account" : "accounts"
+                    }`,
+                  ],
+                ),
+              ],
+            ),
+          ]),
+          h.div(
+            [h.Class("pk-filters")],
+            [
+              selectControl(
+                "filter-standing",
+                "Standing",
+                standing,
+                filterOptions(["good", "grace", "blocked"], "All standings"),
+                (value) => Message.UpdatedStandingFilter({ value }),
+                h,
+              ),
+              selectControl(
+                "filter-status",
+                "Status",
+                status,
+                filterOptions(
+                  ["trialing", "active", "grace", "canceled", "expired"],
+                  "All statuses",
+                ),
+                (value) => Message.UpdatedStatusFilter({ value }),
+                h,
+              ),
+              selectControl(
+                "filter-tier",
+                "Tier",
+                tier,
+                tierOptions,
+                (value) => Message.UpdatedTierFilter({ value }),
+                h,
+              ),
+            ],
+          ),
+          Option.match(model.accounts.error, {
+            onNone: () => h.empty,
+            onSome: (error) =>
+              alert(h, { variant: "destructive" }, [
+                alertDescription(h, [`Could not load accounts: ${error}`]),
+              ]),
+          }),
+          model.accounts.rows.length === 0
+            ? model.accounts.state === "Loading"
+              ? h.p([h.Class("pk-muted pk-loading")], ["Loading accounts…"])
+              : empty(h, {
+                  title: hasFilter
+                    ? "No accounts match these filters."
+                    : "No accounts on this page.",
+                  description: hasFilter
+                    ? "Adjust the filters or refresh the list."
+                    : "Accounts appear here after their first billing event reaches the projection.",
+                })
+            : table(
+                h,
+                [
+                  tableHeader(h, [
+                    tableRow(h, [
+                      tableHead(h, ["Account"]),
+                      tableHead(h, ["Plan"]),
+                      tableHead(h, ["Status"]),
+                      tableHead(h, ["Standing"]),
+                      tableHead(h, ["Period end"]),
+                      tableHead(h, [h.span([h.Class("pk-sr-only")], ["Open account"])]),
+                    ]),
+                  ]),
+                  tableBody(
+                    h,
+                    model.accounts.rows.map((row: BillingReadRow) =>
+                      tableRow(
+                        h,
+                        [
+                          tableCell(
+                            h,
+                            [
+                              h.div(
+                                [h.Class("pk-account-cell")],
+                                [
+                                  accountAvatar(row.account, h, true),
+                                  h.div(
+                                    [h.Class("pk-account-copy")],
+                                    [
+                                      h.span([h.Class("pk-account-name")], [row.account]),
+                                      h.span(
+                                        [h.Class("pk-account-meta")],
+                                        [
+                                          `${formatMoney(row.credits, row.currency)}${
+                                            row.cancelAtPeriodEnd ? " · cancels" : ""
+                                          }`,
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ],
+                            { className: "pk-account-id" },
+                          ),
+                          tableCell(h, [h.span([h.Class("pk-plan-name")], [row.tier])]),
+                          tableCell(h, [badge("status", row.status, h)]),
+                          tableCell(h, [badge("standing", row.standing, h)]),
+                          tableCell(h, [formatDateTime(row.periodEnd)]),
+                          tableCell(h, [icon(h, iconPaths.chevronRight)], {
+                            className: "pk-row-arrow",
+                          }),
+                        ],
+                        {
+                          key: row.account,
+                          className: "pk-row",
+                          attributes: [
+                            h.OnClick(
+                              Message.ClickedAccount({ account: AccountId.make(row.account) }),
+                            ),
+                          ],
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+                { ariaLabel: "Accounts" },
+              ),
+          h.div(
+            [h.Class("pk-table-footer")],
+            [
+              h.span(
+                [h.Class("pk-muted")],
+                [
+                  Option.isSome(model.accounts.next)
+                    ? "More accounts match these filters."
+                    : "End of the current page.",
+                ],
+              ),
+              Option.match(model.accounts.next, {
+                onNone: () => h.empty,
+                onSome: () => button("Next page", Message.ClickedNextPage(), h),
+              }),
+            ],
+          ),
+        ],
+        {
+          className: "pk-accounts",
+          attributes: [h.DataAttribute("paykit-consistency", "snapshot")],
+        },
+      ),
+    ],
+  );
+};
+
+const catalogBadge = (label: string, variant: BadgeVariant, h: HtmlBuilder<Message>): Html =>
+  uiBadge(h, { variant, className: "pk-badge-catalog" }, [label]);
+
+const catalogFeature = (catalog: Catalog, id: string, h: HtmlBuilder<Message>): Html => {
+  const feature = catalog.features.find((candidate) => candidate.id === id);
+  return h.div(
+    [h.Class("pk-catalog-feature")],
+    [
+      h.span([h.Class("pk-catalog-feature-name")], [feature?.name ?? id]),
+      ...(feature?.name === undefined ? [] : [h.span([h.Class("pk-catalog-feature-id")], [id])]),
+    ],
+  );
+};
+
+const includedLabel = (allowance: Allowance): string =>
+  allowance.kind === "flag"
+    ? "On / off"
+    : allowance.included === "unlimited"
+      ? "Unlimited"
+      : String(allowance.included);
+
+const allowanceTerms = (allowance: Allowance): string => {
+  if (allowance.kind === "flag") return "—";
+  const terms: string[] = [];
+  if (allowance.carryOver === true) terms.push("carry over");
+  if (allowance.cap !== undefined) terms.push(`${allowance.cap} unit cap`);
+  if (allowance.unitPrice !== undefined)
+    terms.push(`${formatMoney(allowance.unitPrice.amount, allowance.unitPrice.currency)} / unit`);
+  if (allowance.moneyCap !== undefined)
+    terms.push(`${formatMoney(allowance.moneyCap, allowance.unitPrice?.currency)} money cap`);
+  return terms.length === 0 ? "—" : terms.join(" · ");
+};
+
+const tierKindOf = (tier: Tier): "subscription" | "one_off" => tier.kind ?? "subscription";
+
+const planGrants = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html =>
+  tier.grants.length === 0
+    ? h.p([h.Class("pk-muted")], ["This pack sells credits only."])
+    : table(
+        h,
+        [
+          tableHeader(h, [
+            tableRow(h, [
+              tableHead(h, ["Feature"]),
+              tableHead(h, ["Included"]),
+              tableHead(h, ["Overage"]),
+              tableHead(h, ["Resets"]),
+              tableHead(h, ["Terms"]),
+            ]),
+          ]),
+          tableBody(
+            h,
+            tier.grants.map((allowance) =>
+              tableRow(
+                h,
+                [
+                  tableCell(h, [catalogFeature(catalog, allowance.feature, h)]),
+                  tableCell(h, [includedLabel(allowance)]),
+                  tableCell(h, [allowance.overage]),
+                  tableCell(h, [allowance.resets]),
+                  tableCell(h, [allowanceTerms(allowance)]),
+                ],
+                { key: allowance.feature },
+              ),
+            ),
+          ),
+        ],
+        { ariaLabel: `${tier.name ?? tier.id} grants` },
+      );
+
+const planCard = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html => {
+  const kind = tierKindOf(tier);
+  const price =
+    tier.price === undefined
+      ? "Free"
+      : `${formatMoney(tier.price.amount, tier.price.currency)} / ${tier.price.interval}`;
+  const creditsExpire = tier.creditsExpire ?? (kind === "one_off" ? "never" : "period");
+  return card(
+    h,
+    [
+      h.div(
+        [h.Class("pk-plan-head")],
+        [
+          h.div(
+            [],
+            [
+              h.h2([h.Class("pk-plan-name")], [tier.name ?? tier.id]),
+              h.span([h.Class("pk-plan-id")], [tier.id]),
+            ],
+          ),
+          h.span([h.Class("pk-plan-price")], [price]),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-plan-badges")],
+        [
+          catalogBadge(
+            kind === "one_off" ? "One-off pack" : "Subscription",
+            kind === "one_off" ? "info" : "outline",
+            h,
+          ),
+          ...(tier.credits === undefined
+            ? []
+            : [catalogBadge(`${tier.credits.toLocaleString("en")} credits`, "secondary", h)]),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-plan-meta")],
+        [
+          h.span(
+            [],
+            [
+              h.strong([], [String(tier.grants.length)]),
+              ` ${tier.grants.length === 1 ? "grant" : "grants"}`,
+            ],
+          ),
+          ...(tier.credits === undefined
+            ? []
+            : [
+                h.span(
+                  [],
+                  [
+                    `Credits ${creditsExpire === "never" ? "never expire" : "expire at period end"}`,
+                  ],
+                ),
+              ]),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-plan-grants")],
+        [h.h3([h.Class("pk-plan-grants-title")], ["Grants"]), planGrants(catalog, tier, h)],
+      ),
+    ],
+    {
+      className: "pk-plan-card",
+      attributes: [
+        h.DataAttribute("paykit-plan", tier.id),
+        h.DataAttribute("paykit-plan-kind", kind),
+      ],
+    },
+  );
+};
+
+const catalogStats = (
+  values: ReadonlyArray<readonly [string, string, string, Tone]>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class("pk-stats")],
+    values.map(([label, value, detail, tone]) => stat(label, value, detail, tone, h)),
+  );
+
+const catalogUnavailableView = (model: Model, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("pk-catalog-page")],
+    [
+      empty(h, {
+        title: Option.isSome(model.catalogError) ? "Catalog unavailable." : "Loading the catalog…",
+        description: Option.match(model.catalogError, {
+          onNone: () => "The deploy catalog is on its way.",
+          onSome: (error) => `The deploy did not answer with a catalog: ${error}.`,
+        }),
+      }),
+    ],
+  );
+
+const plansView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const catalog = Option.getOrNull(model.catalog);
+  if (catalog === null) return catalogUnavailableView(model, h);
+  const tiers = catalog.tiers;
+  const subscriptions = tiers.filter((tier) => tierKindOf(tier) === "subscription").length;
+  const oneOff = tiers.length - subscriptions;
+  const priced = tiers.filter((tier) => tier.price !== undefined).length;
+  return h.div(
+    [h.Class("pk-catalog-page"), h.DataAttribute("paykit-catalog", "plans")],
+    [
+      catalogStats(
+        [
+          ["Plans", String(tiers.length), "In this deploy", "neutral"],
+          ["Subscriptions", String(subscriptions), "Recurring standing", "info"],
+          ["One-off packs", String(oneOff), "Credits only", "info"],
+          ["Priced", String(priced), "With a price", "success"],
+        ],
+        h,
+      ),
+      tiers.length === 0
+        ? empty(h, {
+            title: "No plans declared.",
+            description: "The deploy's catalog has no tiers.",
+          })
+        : h.div(
+            [h.Class("pk-plan-grid")],
+            tiers.map((tier) => planCard(catalog, tier, h)),
+          ),
+    ],
+  );
+};
+
+const creditRatesLabel = (feature: Feature): string =>
+  feature.creditRates === undefined
+    ? "—"
+    : Object.entries(feature.creditRates)
+        .map(([dimension, credits]) => `${dimension}: ${credits}`)
+        .join(" · ");
+
+const grantedBy = (catalog: Catalog, feature: Feature, h: HtmlBuilder<Message>): Html => {
+  const tiers = catalog.tiers.filter((tier) =>
+    tier.grants.some((allowance) => allowance.feature === feature.id),
+  );
+  return tiers.length === 0
+    ? h.span([h.Class("pk-muted")], ["Not granted"])
+    : h.div(
+        [h.Class("pk-plan-tag-list")],
+        tiers.map((tier) =>
+          h.span(
+            [h.Class("pk-plan-tag"), h.DataAttribute("paykit-plan-tag", tier.id)],
+            [tier.name ?? tier.id],
+          ),
+        ),
+      );
+};
+
+const featuresView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const catalog = Option.getOrNull(model.catalog);
+  if (catalog === null) return catalogUnavailableView(model, h);
+  const features = catalog.features;
+  const flags = features.filter((feature) => feature.kind === "flag").length;
+  const metered = features.length - flags;
+  const creditPriced = features.filter((feature) => feature.creditRates !== undefined).length;
+  return h.div(
+    [h.Class("pk-catalog-page"), h.DataAttribute("paykit-catalog", "features")],
+    [
+      catalogStats(
+        [
+          ["Features", String(features.length), "In this deploy", "neutral"],
+          ["Metered", String(metered), "Counted usage", "info"],
+          ["Flags", String(flags), "On or off", "info"],
+          ["Credit priced", String(creditPriced), "With a rate card", "success"],
+        ],
+        h,
+      ),
+      card(
+        h,
+        [
+          cardHeader(h, [
+            h.div(
+              [],
+              [
+                cardTitle(h, ["Features"]),
+                cardDescription(h, [
+                  "Every capability a plan can grant, and the plans that grant it.",
+                ]),
+              ],
+            ),
+            h.span(
+              [h.Class("pk-count-pill")],
+              [`${features.length} ${features.length === 1 ? "feature" : "features"}`],
+            ),
+          ]),
+          features.length === 0
+            ? empty(h, {
+                title: "No features declared.",
+                description: "The deploy's catalog has no features.",
+              })
+            : table(
+                h,
+                [
+                  tableHeader(h, [
+                    tableRow(h, [
+                      tableHead(h, ["Feature"]),
+                      tableHead(h, ["Kind"]),
+                      tableHead(h, ["Credit rates"]),
+                      tableHead(h, ["Granted by"]),
+                    ]),
+                  ]),
+                  tableBody(
+                    h,
+                    features.map((feature) =>
+                      tableRow(
+                        h,
+                        [
+                          tableCell(h, [catalogFeature(catalog, feature.id, h)]),
+                          tableCell(h, [
+                            catalogBadge(
+                              feature.kind === "flag" ? "Flag" : "Metered",
+                              feature.kind === "flag" ? "secondary" : "outline",
+                              h,
+                            ),
+                          ]),
+                          tableCell(h, [creditRatesLabel(feature)]),
+                          tableCell(h, [grantedBy(catalog, feature, h)]),
+                        ],
+                        { key: feature.id },
+                      ),
+                    ),
+                  ),
+                ],
+                { ariaLabel: "Features" },
+              ),
+        ],
+        { className: "pk-features" },
+      ),
+    ],
+  );
+};
+
+const billingView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html =>
+  card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Plan & billing"]),
+            cardDescription(h, ["The standing this account is billed on."]),
+          ],
+        ),
+        h.div(
+          [h.Class("pk-badges")],
+          [
+            badge("status", billing.status, h),
+            badge("standing", standingValueOf(billing.status), h),
+          ],
+        ),
+      ]),
+      h.dl(
+        [h.Class("pk-facts")],
+        [
+          h.div([], [h.dt([], ["Tier"]), h.dd([], [billing.tier])]),
+          h.div(
+            [],
+            [
+              h.dt([], ["Period"]),
+              h.dd(
+                [],
+                [`${formatDateTime(billing.periodStart)} – ${formatDateTime(billing.periodEnd)}`],
+              ),
+            ],
+          ),
+          h.div([], [h.dt([], ["Interval"]), h.dd([], [billing.interval])]),
+          h.div(
+            [],
+            [
+              h.dt([], ["Price"]),
+              h.dd(
+                [],
+                [
+                  billing.price === undefined
+                    ? "Free"
+                    : `${formatMoney(billing.price.amount, billing.price.currency)} / ${billing.price.interval}`,
+                ],
+              ),
+            ],
+          ),
+          h.div(
+            [],
+            [h.dt([], ["Credits"]), h.dd([], [formatMoney(billing.credits, billing.currency)])],
+          ),
+          h.div(
+            [],
+            [h.dt([], ["Trial ends"]), h.dd([], [formatOptionalDateTime(billing.trialEndsAt)])],
+          ),
+          h.div(
+            [],
+            [h.dt([], ["Grace until"]), h.dd([], [formatOptionalDateTime(billing.graceUntil)])],
+          ),
+          h.div(
+            [],
+            [
+              h.dt([], ["Cancel at period end"]),
+              h.dd([], [billing.cancelAtPeriodEnd ? "Yes" : "No"]),
+            ],
+          ),
+        ],
+      ),
+    ],
+    { className: "pk-billing" },
+  );
+
+const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Html => {
+  const entries = Object.entries(entitlements.features);
   return card(
     h,
     [
@@ -183,230 +1095,55 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
         h.div(
           [],
           [
-            cardTitle(h, ["Accounts"]),
-            h.p(
-              [
-                h.Class("pk-as-of"),
-                h.DataAttribute(
-                  "paykit-as-of",
-                  asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
-                ),
-              ],
-              [asOfText],
-            ),
+            cardTitle(h, ["Allowances"]),
+            cardDescription(h, ["What this standing includes, and what is left to use."]),
           ],
         ),
-        button("Refresh", Message.ClickedRefresh(), h, { variant: "default" }),
+        badge("holds", String(entries.length), h),
       ]),
-      h.div(
-        [h.Class("pk-filters")],
-        [
-          selectControl(
-            "filter-standing",
-            "Standing",
-            standing,
-            filterOptions(["good", "grace", "blocked"], "All standings"),
-            (value) => Message.UpdatedStandingFilter({ value }),
-            h,
-          ),
-          selectControl(
-            "filter-status",
-            "Status",
-            status,
-            filterOptions(["trialing", "active", "grace", "canceled", "expired"], "All statuses"),
-            (value) => Message.UpdatedStatusFilter({ value }),
-            h,
-          ),
-          selectControl(
-            "filter-tier",
-            "Tier",
-            tier,
-            tierOptions,
-            (value) => Message.UpdatedTierFilter({ value }),
-            h,
-          ),
-        ],
-      ),
-      Option.match(model.accounts.error, {
-        onNone: () => h.empty,
-        onSome: (error) =>
-          alert(h, { variant: "destructive" }, [
-            alertDescription(h, [`Could not load accounts: ${error}`]),
-          ]),
-      }),
-      model.accounts.rows.length === 0
-        ? model.accounts.state === "Loading"
-          ? h.p([h.Class("pk-muted")], ["Loading accounts…"])
-          : empty(h, {
-              title: "No accounts match these filters.",
-              description: "Adjust the filters or refresh the list.",
-            })
+      entries.length === 0
+        ? empty(h, {
+            title: "No allowances yet.",
+            description: "This account has no features from its standing.",
+          })
         : table(
             h,
             [
               tableHeader(h, [
                 tableRow(h, [
-                  tableHead(h, ["Account"]),
-                  tableHead(h, ["Tier"]),
-                  tableHead(h, ["Standing"]),
-                  tableHead(h, ["Status"]),
-                  tableHead(h, ["Period end"]),
+                  tableHead(h, ["Feature"]),
+                  tableHead(h, ["Included"]),
+                  tableHead(h, ["Used"]),
+                  tableHead(h, ["Reserved"]),
+                  tableHead(h, ["Remaining"]),
+                  tableHead(h, ["Overage"]),
+                  tableHead(h, ["Resets"]),
                 ]),
               ]),
               tableBody(
                 h,
-                model.accounts.rows.map((row: BillingReadRow) =>
+                entries.map(([name, feature]) =>
                   tableRow(
                     h,
                     [
-                      tableCell(h, [row.account], { className: "pk-account-id" }),
-                      tableCell(h, [row.tier]),
-                      tableCell(h, [badge("standing", row.standing, h)]),
-                      tableCell(h, [badge("status", row.status, h)]),
-                      tableCell(h, [formatDateTime(row.periodEnd)]),
+                      tableCell(h, [name]),
+                      tableCell(h, [String(feature.included)]),
+                      tableCell(h, [String(feature.used)]),
+                      tableCell(h, [String(feature.reserved)]),
+                      tableCell(h, [String(feature.remaining)]),
+                      tableCell(h, [feature.overage]),
+                      tableCell(h, [feature.resets]),
                     ],
-                    {
-                      key: row.account,
-                      className: "pk-row",
-                      attributes: [
-                        h.OnClick(Message.ClickedAccount({ account: AccountId.make(row.account) })),
-                      ],
-                    },
+                    { key: name },
                   ),
                 ),
               ),
             ],
-            { ariaLabel: "Accounts" },
+            { ariaLabel: "Allowances" },
           ),
-      Option.match(model.accounts.next, {
-        onNone: () => h.empty,
-        onSome: () => button("Next page", Message.ClickedNextPage(), h),
-      }),
     ],
-    {
-      className: "pk-accounts",
-      attributes: [h.DataAttribute("paykit-consistency", "snapshot")],
-    },
+    { className: "pk-allowances" },
   );
-};
-
-const billingView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html =>
-  card(h, [
-    cardHeader(h, [
-      cardTitle(h, ["Standing"]),
-      h.div(
-        [h.Class("pk-badges")],
-        [
-          badge("status", billing.status, h),
-          badge(
-            "standing",
-            billing.status === "grace"
-              ? "grace"
-              : billing.status === "active" || billing.status === "trialing"
-                ? "good"
-                : "blocked",
-            h,
-          ),
-        ],
-      ),
-    ]),
-    h.dl(
-      [h.Class("pk-facts")],
-      [
-        h.div([], [h.dt([], ["Tier"]), h.dd([], [billing.tier])]),
-        h.div(
-          [],
-          [
-            h.dt([], ["Period"]),
-            h.dd(
-              [],
-              [`${formatDateTime(billing.periodStart)} – ${formatDateTime(billing.periodEnd)}`],
-            ),
-          ],
-        ),
-        h.div([], [h.dt([], ["Interval"]), h.dd([], [billing.interval])]),
-        h.div(
-          [],
-          [
-            h.dt([], ["Price"]),
-            h.dd(
-              [],
-              [
-                billing.price === undefined
-                  ? "Free"
-                  : `${formatMoney(billing.price.amount, billing.price.currency)} / ${billing.price.interval}`,
-              ],
-            ),
-          ],
-        ),
-        h.div(
-          [],
-          [h.dt([], ["Credits"]), h.dd([], [formatMoney(billing.credits, billing.currency)])],
-        ),
-        h.div(
-          [],
-          [h.dt([], ["Trial ends"]), h.dd([], [formatOptionalDateTime(billing.trialEndsAt)])],
-        ),
-        h.div(
-          [],
-          [h.dt([], ["Grace until"]), h.dd([], [formatOptionalDateTime(billing.graceUntil)])],
-        ),
-        h.div(
-          [],
-          [
-            h.dt([], ["Cancel at period end"]),
-            h.dd([], [billing.cancelAtPeriodEnd ? "Yes" : "No"]),
-          ],
-        ),
-      ],
-    ),
-  ]);
-
-const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Html => {
-  const entries = Object.entries(entitlements.features);
-  return card(h, [
-    cardHeader(h, [cardTitle(h, ["Allowances"])]),
-    entries.length === 0
-      ? empty(h, {
-          title: "No allowances yet.",
-          description: "This account has no features from its standing.",
-        })
-      : table(
-          h,
-          [
-            tableHeader(h, [
-              tableRow(h, [
-                tableHead(h, ["Feature"]),
-                tableHead(h, ["Included"]),
-                tableHead(h, ["Used"]),
-                tableHead(h, ["Reserved"]),
-                tableHead(h, ["Remaining"]),
-                tableHead(h, ["Overage"]),
-                tableHead(h, ["Resets"]),
-              ]),
-            ]),
-            tableBody(
-              h,
-              entries.map(([name, feature]) =>
-                tableRow(
-                  h,
-                  [
-                    tableCell(h, [name]),
-                    tableCell(h, [String(feature.included)]),
-                    tableCell(h, [String(feature.used)]),
-                    tableCell(h, [String(feature.reserved)]),
-                    tableCell(h, [String(feature.remaining)]),
-                    tableCell(h, [feature.overage]),
-                    tableCell(h, [feature.resets]),
-                  ],
-                  { key: name },
-                ),
-              ),
-            ),
-          ],
-          { ariaLabel: "Allowances" },
-        ),
-  ]);
 };
 
 /** A point-in-time read's label: never claims to be live. */
@@ -435,6 +1172,7 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
           [],
           [
             cardTitle(h, ["Open holds"]),
+            cardDescription(h, ["Reservations the allowance table folds into reserved counts."]),
             h.p(
               [
                 h.Class("pk-as-of"),
@@ -513,7 +1251,15 @@ const usageView = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Ht
   return card(
     h,
     [
-      cardHeader(h, [cardTitle(h, ["Usage this period"])]),
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Usage this period"]),
+            cardDescription(h, ["What the period recorded at each price, and what it billed."]),
+          ],
+        ),
+      ]),
       table(
         h,
         [
@@ -764,7 +1510,15 @@ const actionButtons = (
   const enabled = descriptors.filter((descriptor) => ConsoleAction.includes(descriptor.action));
 
   return card(h, [
-    cardHeader(h, [cardTitle(h, ["Actions"])]),
+    cardHeader(h, [
+      h.div(
+        [],
+        [
+          cardTitle(h, ["Operator actions"]),
+          cardDescription(h, ["Every action is a command recorded against this account."]),
+        ],
+      ),
+    ]),
     enabled.length === 0
       ? empty(h, {
           title: "No operator actions.",
@@ -984,38 +1738,51 @@ const pendingView = (pending: Pending, h: HtmlBuilder<Message>): Html =>
   );
 
 const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
-  card(h, [
-    cardHeader(h, [cardTitle(h, ["Events"]), badge("feed", account.feed, h)]),
-    Option.match(account.error, {
-      onNone: () => h.empty,
-      onSome: (error) => alert(h, { variant: "destructive" }, [alertDescription(h, [error])]),
-    }),
-    account.events.length === 0
-      ? empty(h, {
-          title: "Waiting for the first event.",
-          description: "The account's event stream fills this panel as it catches up.",
-        })
-      : h.ol(
-          [h.Class("pk-events")],
-          account.events.map((event) =>
-            h.keyed("li")(
-              event.seq,
-              [h.Class("pk-event")],
-              [
-                h.div(
-                  [h.Class("pk-event-head")],
-                  [
-                    h.code([], [event.tag]),
-                    h.span([h.Class("pk-muted")], [formatDateTime(event.at)]),
-                  ],
-                ),
-                h.div([h.Class("pk-muted")], [event.commandId]),
-                h.pre([], [event.body]),
-              ],
+  card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Events"]),
+            cardDescription(h, ["The account's complete event log, newest first."]),
+          ],
+        ),
+        badge("feed", account.feed, h),
+      ]),
+      Option.match(account.error, {
+        onNone: () => h.empty,
+        onSome: (error) => alert(h, { variant: "destructive" }, [alertDescription(h, [error])]),
+      }),
+      account.events.length === 0
+        ? empty(h, {
+            title: "Waiting for the first event.",
+            description: "The account's event stream fills this panel as it catches up.",
+          })
+        : h.ol(
+            [h.Class("pk-events pk-event-log")],
+            account.events.map((event) =>
+              h.keyed("li")(
+                event.seq,
+                [h.Class("pk-event")],
+                [
+                  h.div(
+                    [h.Class("pk-event-head")],
+                    [
+                      h.code([], [event.tag]),
+                      h.span([h.Class("pk-muted")], [formatDateTime(event.at)]),
+                    ],
+                  ),
+                  h.div([h.Class("pk-muted")], [event.commandId]),
+                  h.pre([], [event.body]),
+                ],
+              ),
             ),
           ),
-        ),
-  ]);
+    ],
+    { className: "pk-event-card" },
+  );
 
 const timelineDetail = (entry: TimelineEntry, currency: string | undefined): string => {
   const parts: string[] = [];
@@ -1047,7 +1814,15 @@ const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   return card(
     h,
     [
-      cardHeader(h, [cardTitle(h, ["Timeline"])]),
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Timeline"]),
+            cardDescription(h, ["The bill's story, rolled up per period and per feature."]),
+          ],
+        ),
+      ]),
       ...(timeline.periods.length === 0
         ? []
         : [
@@ -1141,23 +1916,118 @@ const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   );
 };
 
-const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
-  if (Option.isNone(model.account)) {
-    return empty(h, {
-      title: "No account open",
-      description:
-        "Pick an account from the list to inspect its standing, allowances and event log.",
-    });
+const accountSummaryView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
+  const billing = Option.getOrNull(account.billing);
+  if (billing === null) {
+    return h.div(
+      [
+        h.Class("pk-stats"),
+        h.DataAttribute("paykit-summary", "account"),
+        h.AriaLabel("Account summary"),
+      ],
+      [
+        stat("Plan", "—", "Waiting for billing", "neutral", h),
+        stat("Status", "—", "Waiting for billing", "neutral", h),
+        stat("Credits", "—", "Waiting for billing", "neutral", h),
+        stat("Period ends", "—", "Waiting for billing", "neutral", h),
+      ],
+    );
   }
+  const statusTone: Tone =
+    billing.status === "grace"
+      ? "warning"
+      : standingValueOf(billing.status) === "good"
+        ? "success"
+        : "destructive";
+  const price =
+    billing.price === undefined
+      ? "Free plan"
+      : `${formatMoney(billing.price.amount, billing.price.currency)} / ${billing.price.interval}`;
+  return h.div(
+    [
+      h.Class("pk-stats"),
+      h.DataAttribute("paykit-summary", "account"),
+      h.AriaLabel("Account summary"),
+    ],
+    [
+      stat("Plan", billing.tier, price, "info", h),
+      stat("Status", billing.status, `Standing: ${standingValueOf(billing.status)}`, statusTone, h),
+      stat(
+        "Credits",
+        formatMoney(billing.credits, billing.currency),
+        "Available balance",
+        "neutral",
+        h,
+      ),
+      stat(
+        "Period ends",
+        formatDateTime(billing.periodEnd),
+        billing.cancelAtPeriodEnd ? "Cancels at period end" : `Every ${billing.interval}`,
+        "neutral",
+        h,
+      ),
+    ],
+  );
+};
 
-  const account = model.account.value;
+const accountView = (model: Model, account: AccountState, h: HtmlBuilder<Message>): Html => {
+  const pending =
+    account.pending.length === 0
+      ? h.empty
+      : card(
+          h,
+          [
+            cardHeader(h, [
+              h.div(
+                [],
+                [
+                  cardTitle(h, ["Pending commands"]),
+                  cardDescription(h, ["Writes waiting for the server to answer."]),
+                ],
+              ),
+            ]),
+            h.ul(
+              [h.Class("pk-pending-list")],
+              account.pending.map((value) => pendingView(value, h)),
+            ),
+          ],
+          { className: "pk-pending-card" },
+        );
+
+  const billingPanel = Option.match(account.billing, {
+    onNone: () =>
+      card(
+        h,
+        [
+          cardHeader(h, [
+            h.div(
+              [],
+              [
+                cardTitle(h, ["Plan & billing"]),
+                cardDescription(h, ["The standing this account is billed on."]),
+              ],
+            ),
+          ]),
+          h.p([h.Class("pk-muted")], ["Waiting for the billing snapshot…"]),
+        ],
+        { className: "pk-billing" },
+      ),
+    onSome: (value) => billingView(value, h),
+  });
+
+  const allowancesPanel = Option.match(account.entitlements, {
+    onNone: () => h.empty,
+    onSome: (value) => featureTable(value, h),
+  });
+
+  const usagePanel = Option.match(account.entitlements, {
+    onNone: () => h.empty,
+    onSome: (value) => usageView(value, h),
+  });
+
   return h.section(
     [h.Class("pk-account")],
     [
-      h.div(
-        [h.Class("pk-panel-head")],
-        [h.h2([], [account.id]), dangerButton("Close", Message.ClosedAccount(), h)],
-      ),
       Option.match(account.notice, {
         onNone: () => h.empty,
         onSome: (notice) =>
@@ -1166,36 +2036,42 @@ const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
             button("Dismiss", Message.DismissedNotice(), h, { variant: "ghost" }),
           ]),
       }),
-      account.pending.length === 0
-        ? h.empty
-        : card(h, [
-            cardHeader(h, [cardTitle(h, ["Pending commands"])]),
-            h.ul(
-              [h.Class("pk-pending-list")],
-              account.pending.map((pending) => pendingView(pending, h)),
-            ),
-          ]),
-      Option.match(account.draft, {
-        onNone: () => actionButtons(account, model.catalog, h),
-        onSome: (draft) => draftView(model, account, draft, h),
-      }),
-      Option.match(account.billing, {
-        onNone: () => h.p([h.Class("pk-muted")], ["Waiting for the billing snapshot…"]),
-        onSome: (billing) => billingView(billing, h),
-      }),
-      Option.match(account.entitlements, {
-        onNone: () => h.empty,
-        onSome: (entitlements) => featureTable(entitlements, h),
-      }),
-      Option.match(account.entitlements, {
-        onNone: () => h.empty,
-        onSome: (entitlements) => usageView(entitlements, h),
-      }),
-      timelineView(account, h),
-      holdsView(account, h),
-      previewView(model, account, h),
-      verifyView(account, h),
-      eventsView(account, h),
+      pending,
+      section(
+        "Overview",
+        "What the standing includes and what this period has recorded.",
+        [
+          accountSummaryView(account, h),
+          h.div([h.Class("pk-overview-grid")], [billingPanel, allowancesPanel, usagePanel]),
+        ],
+        h,
+      ),
+      section(
+        "Operator",
+        "Every write is a command; a preview asks the model without recording anything.",
+        [
+          Option.match(account.draft, {
+            onNone: () => actionButtons(account, model.catalog, h),
+            onSome: (draft) => draftView(model, account, draft, h),
+          }),
+          h.div(
+            [h.Class("pk-operator-grid")],
+            [previewView(model, account, h), verifyView(account, h)],
+          ),
+        ],
+        h,
+      ),
+      section(
+        "Activity",
+        "The live feed, the bill's timeline and the holds still waiting.",
+        [
+          h.div(
+            [h.Class("pk-activity-grid")],
+            [timelineView(account, h), holdsView(account, h), eventsView(account, h)],
+          ),
+        ],
+        h,
+      ),
     ],
   );
 };
@@ -1214,21 +2090,21 @@ const devToolsEventsView = (model: Model, h: HtmlBuilder<Message>): Html => {
       h.p(
         [h.Class("pk-devtools-note")],
         [
-          "Click an event to inspect its payload, then emit it. Emit every event walks the whole table. Nothing here reaches the server. Synthetic events update the feed only; the Timeline folds the live decoded feed.",
+          isAccountOpen
+            ? "Click an event to inspect its payload, then emit it. Emit every event walks the whole table. Nothing here reaches the server. Synthetic events update the feed only; the Timeline folds the live decoded feed."
+            : "No account is open. Emitting opens the lab account below, seeds a standing, and records the event against it. Nothing here reaches the server.",
         ],
       ),
       h.div(
         [h.Class("pk-devtools-actions")],
         [
-          button("Emit selected", Message.ClickedEmitDevToolsEvent(), h, {
-            isDisabled: !isAccountOpen,
-          }),
-          button("Emit every event", Message.ClickedEmitAllDevToolsEvents(), h, {
-            isDisabled: !isAccountOpen,
-          }),
+          button("Emit selected", Message.ClickedEmitDevToolsEvent(), h),
+          button("Emit every event", Message.ClickedEmitAllDevToolsEvents(), h),
           h.span(
             [h.Class("pk-devtools-meta")],
-            [`${model.devTools.emitted} emitted · next seq ${nextSeq}`],
+            [
+              `${model.devTools.emitted} emitted · next seq ${nextSeq}${isAccountOpen ? "" : " · opens the lab account"}`,
+            ],
           ),
         ],
       ),
@@ -1458,38 +2334,51 @@ const devToolsView = (model: Model, h: HtmlBuilder<Message>): Html =>
       )
     : h.empty;
 
-/** The console's single page: accounts on the left, the open account on the right. */
+const pageBodyView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  switch (model.route._tag) {
+    case "Accounts":
+      return accountsView(model, h);
+    case "Account":
+      return Option.match(model.account, {
+        onNone: () => accountsView(model, h),
+        onSome: (account) => accountView(model, account, h),
+      });
+    case "Plans":
+      return plansView(model, h);
+    case "Features":
+      return featuresView(model, h);
+  }
+};
+
+/** The console's shell: a navigation rail and one page of content. */
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Paykit admin",
   body: h.div(
     [h.Class("pk-admin")],
     [
-      h.header(
-        [h.Class("pk-header")],
+      sidebarView(model, h),
+      h.div(
+        [h.Class("pk-content")],
         [
-          h.div(
-            [],
+          topbarView(model, h),
+          h.main(
+            [h.Class("pk-main")],
             [
-              h.h1([], ["Paykit admin"]),
-              h.p([h.Class("pk-muted")], ["Billing and entitlement operations"]),
+              pageHeadView(model, h),
+              Option.match(model.catalogError, {
+                onNone: () => h.empty,
+                onSome: (error) =>
+                  alert(h, { variant: "destructive" }, [
+                    alertDescription(h, [
+                      `Catalog unavailable: ${error}. Actions that need the catalog are disabled.`,
+                    ]),
+                  ]),
+              }),
+              pageBodyView(model, h),
             ],
           ),
-          Option.match(model.actor, {
-            onNone: () => h.span([h.Class("pk-muted")], ["No actor seeded"]),
-            onSome: (actor) => h.span([h.Class("pk-muted")], [`${actor.kind}: ${actor.id}`]),
-          }),
         ],
       ),
-      Option.match(model.catalogError, {
-        onNone: () => h.empty,
-        onSome: (error) =>
-          alert(h, { variant: "destructive" }, [
-            alertDescription(h, [
-              `Catalog unavailable: ${error}. Actions that need the catalog are disabled.`,
-            ]),
-          ]),
-      }),
-      h.main([h.Class("pk-main")], [accountsView(model, h), accountView(model, h)]),
       devToolsView(model, h),
     ],
   ),

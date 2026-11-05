@@ -1,11 +1,8 @@
-import { Actor, ActorKind, type ActorValue, mayActOn } from "@potion.run/paykit/Auth/Actor";
-import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
-import { Admin, Session } from "@potion.run/paykit/Auth/Guards";
-import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
+import { type ActorResolver, Paykit } from "@potion.run/paykit";
+import { ActorKind, type ActorValue } from "@potion.run/paykit/Auth/Actor";
 import * as Effect from "effect/Effect";
 import * as Cookies from "effect/http/Cookies";
 import * as Headers from "effect/http/Headers";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -71,37 +68,18 @@ export const sessionCookies = (
  */
 export const exampleActor: ActorValue = { kind: "admin", id: "ops_1" };
 
-const targetOf = (payload: unknown): string | null => {
-  const target = (payload as { readonly target?: unknown } | null)?.target;
-  return typeof target === "string" ? target : null;
-};
-
-const unauthenticated = new Unauthenticated({ source: "session cookie" });
+const fromCookie: ActorResolver = ({ headers }) => Effect.sync(() => actorFromCookie(headers));
 
 /**
  * The cookie `Session` guard: the caller is the cookie's actor, and an
- * `account` caller may still only target itself. It is the same rule as
- * `SessionFromHeaders`, read from the one place a browser can put a session.
+ * `account` caller may still only target itself. It is `Paykit.SessionFrom`
+ * over the cookie resolver, the same guard the better-auth example builds over
+ * its session.
  */
-export const SessionFromCookie = Layer.succeed(Session, (effect, { headers, payload }) => {
-  const actor = actorFromCookie(headers);
-  if (actor === null) return Effect.fail(unauthenticated);
-  const target = targetOf(payload);
-  if (target !== null && !mayActOn(actor, target)) {
-    return Effect.fail(new Forbidden({ account: target, actor: actor.id, kind: actor.kind }));
-  }
-  return Effect.provideService(effect, Actor, actor);
-});
+export const SessionFromCookie = Paykit.SessionFrom(fromCookie, { source: "session cookie" });
 
 /** The cookie `Admin` guard: the cookie's actor must be an operator. */
-export const AdminFromCookie = Layer.succeed(Admin, (effect, { headers }) => {
-  const actor = actorFromCookie(headers);
-  if (actor === null) return Effect.fail(unauthenticated);
-  if (actor.kind !== "admin") {
-    return Effect.fail(new Forbidden({ account: actor.id, actor: actor.id, kind: actor.kind }));
-  }
-  return Effect.provideService(effect, Actor, actor);
-});
+export const AdminFromCookie = Paykit.AdminFrom(fromCookie, { source: "session cookie" });
 
 /** Both cookie guards, for the Worker that serves the admin surfaces. */
-export const CookieGuards = Layer.mergeAll(SessionFromCookie, AdminFromCookie);
+export const CookieGuards = Paykit.GuardsFrom(fromCookie, { source: "session cookie" });

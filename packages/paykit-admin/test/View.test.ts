@@ -52,16 +52,16 @@ const page = BillingReadPage.make({
   next: null,
 });
 
-const url: Url = {
+const url = (pathname = "/"): Url => ({
   protocol: "https:",
   host: "admin.test",
   port: Option.none(),
-  pathname: "/",
+  pathname,
   search: Option.none(),
   hash: Option.none(),
-};
+});
 
-const model = (devTools: boolean): Model =>
+const model = (devTools: boolean, pathname = "/"): Model =>
   init(
     Flags.make({
       session: "session-1",
@@ -69,7 +69,7 @@ const model = (devTools: boolean): Model =>
       catalog: Schema.encodeSync(Catalog)(testCatalog),
       accounts: Schema.encodeSync(BillingReadPage)(page),
     }),
-    url,
+    url(pathname),
   ).model;
 
 const render = (value: Model) => view(value, inertHtml as unknown as HtmlBuilder<Message>);
@@ -85,6 +85,11 @@ describe("the console view", () => {
       const selected = update(opened, Message.SelectedDevToolsTab({ tab })).model;
       expect(render(selected).title).toBe("Paykit admin");
     }
+  });
+
+  it("renders the catalog pages read only", () => {
+    expect(render(model(false, "/plans")).title).toBe("Paykit admin");
+    expect(render(model(false, "/features")).title).toBe("Paykit admin");
   });
 
   it("renders every lab tab with a seeded account", () => {

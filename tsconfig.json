@@ -40,6 +40,12 @@
     },
     {
       "path": "./examples/admin/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/auth"
+    },
+    {
+      "path": "./examples/auth/tsconfig.test.json"
     }
   ]
 }

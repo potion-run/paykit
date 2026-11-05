@@ -22,6 +22,7 @@ allowBuilds:
 # different line pins it locally and says why.
 catalog:
   "@alchemy.run/cloudflare": "2.0.0-beta.85"
+  "@alchemy.run/better-auth": "2.0.0-beta.85"
   "@alchemy.run/domain": "2.0.0-beta.85"
   "@alchemy.run/sql": "2.0.0-beta.85"
   "@alchemy.run/stripe": "2.0.0-beta.85"
@@ -43,6 +44,7 @@ catalog:
   "@types/node": "26.6.6"
   alchemy: "2.0.0-beta.85"
   blume: "^2.2.6"
+  better-auth: "^1.7.5"
   effect: "^4.1.2"
   foldkit: "^0.170.0"
   husky: "^9.1.7"

@@ -49,8 +49,10 @@ Two tools sit beside the app in development.
   `Flags.devTools: import.meta.env.DEV`, and its floating bottom-right trigger
   opens a panel with **Events**, **Reads** and **Feed** tabs. It emits every
   event in `Subscription.definition.events`, seeds a standing and open holds,
-  and simulates a failed feed or read. It never calls the server, so it is how
-  the console is exercised when the local store is empty. The shape follows
+  and simulates a failed feed or read. With no account open, emitting opens
+  the lab's own account and seeds it first, so a fresh console is never a
+  disabled dead end. It never calls the server, so it is how the console is
+  exercised when the local store is empty. The shape follows
   [rat-stack's devtools](https://github.com/joelhooks/rat-stack/tree/main), and
   the console's shadcn theme is carried through to the panel.
 - **`@foldkit/devtools`** is the
