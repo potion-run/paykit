@@ -57,6 +57,14 @@ export const BillingReadPage = Schema.Struct({
   rows: Schema.Array(BillingReadRow),
   /** `null` when this is the last page. */
   next: Schema.NullOr(Schema.String),
+  /**
+   * When the store answered this page. A list is a point-in-time read, not a
+   * subscription: `List` stamps this so a console can say how old the rows
+   * are instead of presenting them as live. Absent from a page built by hand
+   * (`queryRows`, a fixture), which is why the console treats "no stamp" as
+   * "provenance unknown" rather than as "now".
+   */
+  asOf: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type BillingReadPage = typeof BillingReadPage.Type;
 

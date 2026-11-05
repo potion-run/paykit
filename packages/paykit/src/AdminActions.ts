@@ -61,9 +61,17 @@ const changeTiers = (
       if (entitlements === undefined) return true;
       const allowances = allowancesOf(catalog, tier.id);
       if (allowances === null) return false;
+      // Mirror `ChangeTier`'s `DowngradeBelowUsage`, so the offered list can
+      // never include a move the model refuses. Only a `block` allowance can
+      // be oversubscribed: passing `included` is the ordinary state of a
+      // billed or allowed one. Units an open hold reserves are owed exactly
+      // like used ones, so they count against the target's included amount.
       return Object.values(allowances).every((allowance) => {
-        const used = entitlements.features[allowance.feature]?.used ?? 0;
-        return allowance.included === "unlimited" || used <= allowance.included;
+        if (allowance.overage !== "block" || allowance.included === "unlimited") return true;
+        const feature = entitlements.features[allowance.feature];
+        const used = feature?.used ?? 0;
+        const reserved = feature?.reserved ?? 0;
+        return used + reserved <= allowance.included;
       });
     })
     .map((tier) => tier.id);
@@ -74,8 +82,9 @@ const changeTiers = (
  *
  * `ChangeTier` is offered only when the catalog has a tier the account is not
  * on, the currency matches, and (when entitlements are supplied) the account's
- * usage fits the new tier's included amounts. The model still decides: this
- * function never replaces a rejection or a preview.
+ * used and reserved units fit the new tier's blocking allowances — the same
+ * rule `ChangeTier`'s `DowngradeBelowUsage` applies. The model still decides:
+ * this function never replaces a rejection or a preview.
  *
  * ### Offering actions from a billing snapshot
  * **Example:** What an operator may do with an account in grace
