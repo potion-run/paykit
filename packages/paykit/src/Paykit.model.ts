@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Layer from "effect/Layer";
+import { OutboundEvents, OutboundEventsLive } from "./Outbound.ts";
 import { AccountEvents } from "./Subscription/AccountEvents.stream.ts";
 import {
   AccountEventsLive,
@@ -25,7 +26,7 @@ export class PaykitModel extends Domain.Model("Paykit", {
   views: [Entitlements, BillingState],
   streams: [AccountEvents],
   projections: [AccountEventsProjection, BillingRead],
-  policies: [PeriodRollover, Dunning, HoldSweep, PeriodCloseUsage],
+  policies: [PeriodRollover, Dunning, HoldSweep, PeriodCloseUsage, OutboundEvents],
 }) {}
 
 /**
@@ -41,5 +42,6 @@ export const PaykitHandlers = Layer.mergeAll(
   PeriodRolloverLive,
   DunningLive,
   HoldSweepLive,
+  OutboundEventsLive,
   PeriodCloseUsageLive,
 );

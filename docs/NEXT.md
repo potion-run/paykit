@@ -15,9 +15,10 @@ What the catalog can express today: units with `block | bill | allow`, `"unlimit
 grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a
 postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do: `check` from local state, `track`,
 `hold`/`settle`/`release` as addressable entities, a policy that releases a hold on its own deadline,
-proration, dunning, trials, credits, bought packs whose credits survive a period close, postpaid
-usage priced per unit with a money cap, and a provider-port edge with webhook decoders for Stripe and
-Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
+proration, dunning, trials, credits, bought packs whose credits survive a period close and are
+spendable before a plan exists, postpaid usage priced per unit with a money cap, an outbound edge
+that signs and retries every committed event, and a provider-port edge with webhook decoders for
+Stripe and Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
 `PolarPrices` create the base prices and products its tiers are sold under, plus a meter and a
 metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.
@@ -28,7 +29,9 @@ catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-t
 (identity in the vendor's own field, replace on change, never delete), [0004](./adr/0004-a-hold-is-one-call-and-an-id.md)
 (a hold is an entity, one call settles it), [0005](./adr/0005-a-spend-cap-is-a-ceiling-in-units.md)
 (a cap is a count, not money), [0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md)
-(postpaid usage is a unit price in the catalog, and a money cap is a separate ceiling).
+(postpaid usage is a unit price in the catalog, and a money cap is a separate ceiling), and
+[0007](./adr/0007-outbound-events-are-a-policy-over-a-port.md) (outbound events are a policy over a
+delivery port; paykit signs and keys, the app sends).
 
 ## The queue
 
@@ -40,15 +43,10 @@ money, because the vendor applies its own metered price. `decide` still never re
 the push is a policy after the close. A mid-period price change still needs the report split per
 vendor price rather than one report at the standing's price.
 
-### 1. The surfaces the model already supports
+### 1. The remaining surfaces
 
-- **Outbound events** (ADR 0001 §Slice 3): an app that hears "this account upgraded" without polling
-  `AccountEvents`. Sign and retry like the inbound edge, reversed.
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
-- **Prepaid-only spending**: a pack bought before a plan is held on `Unsubscribed` and carried into
-  the first activation, but `check()` needs a plan's rate card to spend it. Teach the view to price
-  from the catalog without a standing, so a credits-only account can use what it bought.
 - **Archived prices** (ADR 0003): a retired Stripe price is retained but stays `active: true`, and a
   retired Polar product stays purchasable. Archiving needs a vendor write against a resource the
   stack no longer tracks — a sweep by lookup-key (Stripe) or name prefix (Polar) is the obvious
