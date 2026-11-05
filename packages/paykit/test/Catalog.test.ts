@@ -18,6 +18,13 @@ import {
   CatalogError,
   CatalogFlagNotGranted,
   CatalogInvalid,
+  CatalogOneOffCredits,
+  CatalogOneOffCreditsExpire,
+  CatalogOneOffGrant,
+  CatalogOneOffWithoutPrice,
+  CatalogMoneyCapWithoutUnitPrice,
+  CatalogUnitPriceCurrency,
+  CatalogUnitPriceWithoutBilling,
   CatalogUnknownFeature,
   CatalogUnlimitedOverage,
   allowancesOf,
@@ -322,6 +329,129 @@ describe("catalog", () => {
         expect(result.failure.tier).toBe(bad.id);
       }
     }
+  });
+
+  it("accepts a one-off credit pack, and refuses the shapes that are not one", () => {
+    const pack = tier({
+      id: "credits_1m",
+      kind: "one_off",
+      price: { amount: 9_900, currency: "usd", interval: "month" },
+      credits: 1_000_000,
+      grants: [],
+    });
+    const accepted = defineCatalog({ features: [messages], tiers: [pack] });
+    expect(Result.isSuccess(accepted)).toBe(true);
+    if (Result.isSuccess(accepted)) {
+      const declared = tierOf(accepted.success, "credits_1m");
+      expect(declared?.kind).toBe("one_off");
+      // The constructor defaults a pack's credits to never expiring.
+      expect(declared?.creditsExpire).toBe("never");
+    }
+
+    const refusal = (candidate: ReturnType<typeof tier>) => {
+      const result = defineCatalog({ features: [messages], tiers: [candidate] });
+      return Result.isFailure(result) ? result.failure : null;
+    };
+
+    expect(
+      refusal(
+        tier({
+          id: "granting_pack",
+          kind: "one_off",
+          price: { amount: 100, currency: "usd", interval: "month" },
+          credits: 10,
+          grants: [allowance(messages, { included: 1 })],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogOneOffGrant);
+
+    expect(
+      refusal(
+        tier({
+          id: "empty_pack",
+          kind: "one_off",
+          price: { amount: 100, currency: "usd", interval: "month" },
+          grants: [],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogOneOffCredits);
+
+    expect(
+      refusal(
+        tier({
+          id: "expiring_pack",
+          kind: "one_off",
+          price: { amount: 100, currency: "usd", interval: "month" },
+          credits: 10,
+          creditsExpire: "period",
+          grants: [],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogOneOffCreditsExpire);
+
+    expect(
+      refusal(tier({ id: "free_pack", kind: "one_off", credits: 10, grants: [] })),
+    ).toBeInstanceOf(CatalogOneOffWithoutPrice);
+  });
+
+  it("accepts a postpaid unit price, and refuses a price or cap that cannot be billed", () => {
+    const metered = tier({
+      id: "metered",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      grants: [
+        allowance(messages, {
+          included: 100,
+          overage: "bill",
+          unitPrice: { amount: 2, currency: "usd" },
+          moneyCap: 500,
+        }),
+      ],
+    });
+    expect(Result.isSuccess(defineCatalog({ features: [messages], tiers: [metered] }))).toBe(true);
+
+    const refusal = (candidate: ReturnType<typeof tier>) => {
+      const result = defineCatalog({ features: [messages], tiers: [candidate] });
+      return Result.isFailure(result) ? result.failure : null;
+    };
+
+    expect(
+      refusal(
+        tier({
+          id: "unbilled",
+          grants: [
+            allowance(messages, {
+              included: 100,
+              unitPrice: { amount: 2, currency: "usd" },
+            }),
+          ],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogUnitPriceWithoutBilling);
+
+    expect(
+      refusal(
+        tier({
+          id: "no_price",
+          grants: [allowance(messages, { included: 100, overage: "bill", moneyCap: 500 })],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogMoneyCapWithoutUnitPrice);
+
+    expect(
+      refusal(
+        tier({
+          id: "currency_mismatch",
+          price: { amount: 1_900, currency: "usd", interval: "month" },
+          grants: [
+            allowance(messages, {
+              included: 100,
+              overage: "bill",
+              unitPrice: { amount: 2, currency: "eur" },
+            }),
+          ],
+        }),
+      ),
+    ).toBeInstanceOf(CatalogUnitPriceCurrency);
   });
 
   it("rejects a feature declared twice", () => {

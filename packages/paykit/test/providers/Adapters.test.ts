@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "../../src/Payments.ts";
@@ -11,8 +12,8 @@ import type { StripeBindings } from "../../src/PaymentsStripe.ts";
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
 const stripeFixture: StripeBindings = {
-  createCheckoutSession: ({ priceId }) =>
-    Effect.succeed({ url: `https://stripe.test/checkout/${priceId}` }),
+  createCheckoutSession: ({ priceIds }) =>
+    Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
   createRefund: () => Effect.succeed({}),
@@ -44,12 +45,40 @@ describe("provider adapters", () => {
           const checkout = yield* (yield* Payments).createCheckout({
             account: "acct_1",
             tier: "pro",
+            kind: "subscription",
           });
           return checkout.url;
         }),
       );
       expect(url).toBe("https://stripe.test/checkout/price_1");
       expect(provider.prices).toEqual({ pro: price });
+    }),
+  );
+
+  it.effect("Stripe and Polar pass a one-off kind through to the purchase", () =>
+    Effect.gen(function* () {
+      const asked: Array<{ readonly kind: string }> = [];
+      const stripe = PaymentsStripe({
+        bindings: {
+          ...stripeFixture,
+          createCheckoutSession: ({ priceIds, kind }) => {
+            asked.push({ kind });
+            return Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` });
+          },
+        },
+        tiers: { credits: { price, priceId: "price_pack" } },
+      });
+      yield* withProvider(
+        stripe,
+        Effect.gen(function* () {
+          yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "credits",
+            kind: "one_off",
+          });
+        }),
+      );
+      expect(asked).toEqual([{ kind: "one_off" }]);
     }),
   );
 
@@ -60,7 +89,11 @@ describe("provider adapters", () => {
         withProvider(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );
@@ -83,6 +116,7 @@ describe("provider adapters", () => {
           const checkout = yield* (yield* Payments).createCheckout({
             account: "acct_1",
             tier: "pro",
+            kind: "subscription",
           });
           return checkout.url;
         }),
@@ -95,7 +129,11 @@ describe("provider adapters", () => {
         withProvider(
           PaymentsPolar({ bindings: polarBindings }),
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );
@@ -130,7 +168,11 @@ describe("provider adapters", () => {
           Effect.gen(function* () {
             const payments = yield* Payments;
             if (op === "createCheckout") {
-              return yield* payments.createCheckout({ account: "acct_1", tier: "pro" });
+              return yield* payments.createCheckout({
+                account: "acct_1",
+                tier: "pro",
+                kind: "subscription",
+              });
             }
             return yield* payments.createPortal({ account: "acct_1" });
           }).pipe(Effect.provide(manual.payments)) as Effect.Effect<never, unknown, never>,
@@ -157,6 +199,150 @@ describe("provider adapters", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("PaymentDeclined");
+    }),
+  );
+});
+
+describe("the usage adapter", () => {
+  const unitPrice = { amount: 2, currency: "usd" } as const;
+
+  it.effect("Stripe attaches the metered price and reports the period's units", () =>
+    Effect.gen(function* () {
+      const asked: Array<{
+        account: string;
+        quantities: Readonly<Record<string, number>>;
+        commandId: string;
+      }> = [];
+      const provider = PaymentsStripe({
+        bindings: {
+          ...stripeFixture,
+          reportUsage: (args) =>
+            Effect.sync(() => {
+              asked.push(args);
+              return {};
+            }),
+        },
+        tiers: {
+          pro: {
+            price,
+            priceId: "price_1",
+            usage: { messages: { unitPrice, priceId: "price_msg" } },
+          },
+        },
+      });
+
+      expect(provider.capabilities.has("usage")).toBe(true);
+      expect(provider.unitPrices).toEqual({ pro: { messages: unitPrice } });
+
+      const url = yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          const checkout = yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
+          return checkout.url;
+        }),
+      );
+      // The base price and the metered price are line items on one subscription.
+      expect(url).toBe("https://stripe.test/checkout/price_1,price_msg");
+
+      const periodStart = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
+      const periodEnd = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+      yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          yield* (yield* Payments).reportUsage({
+            account: "acct_1",
+            periodStart,
+            periodEnd,
+            quantities: { messages: 50 },
+            commandId: "period-usage:1:2",
+          });
+        }),
+      );
+      expect(asked).toEqual([
+        {
+          account: "acct_1",
+          periodStart,
+          periodEnd,
+          quantities: { messages: 50 },
+          commandId: "period-usage:1:2",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("Polar maps a tier's usage prices, and reportUsage reaches the binding", () =>
+    Effect.gen(function* () {
+      const asked: Array<{ quantities: Readonly<Record<string, number>> }> = [];
+      const provider = PaymentsPolar({
+        bindings: {
+          ...polarBindings,
+          reportUsage: (args) =>
+            Effect.sync(() => {
+              asked.push(args);
+              return {};
+            }),
+        },
+        tiers: { pro: { price, productId: "prod_1", usage: { messages: unitPrice } } },
+      });
+
+      expect(provider.capabilities.has("usage")).toBe(true);
+      expect(provider.unitPrices).toEqual({ pro: { messages: unitPrice } });
+
+      const url = yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          const checkout = yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
+          return checkout.url;
+        }),
+      );
+      expect(url).toBe("https://polar.test/checkout/prod_1");
+
+      yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          yield* (yield* Payments).reportUsage({
+            account: "acct_1",
+            periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
+            periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
+            quantities: { messages: 50 },
+            commandId: "period-usage:1:2",
+          });
+        }),
+      );
+      expect(asked[0]).toMatchObject({ quantities: { messages: 50 } });
+    }),
+  );
+
+  it.effect("a provider without a reporter refuses with a typed missing capability", () =>
+    Effect.gen(function* () {
+      const provider = PaymentsStripe({
+        bindings: stripeFixture,
+        tiers: { pro: { price, priceId: "price_1" } },
+      });
+      const error = yield* Effect.flip(
+        withProvider(
+          provider,
+          Effect.gen(function* () {
+            yield* (yield* Payments).reportUsage({
+              account: "acct_1",
+              periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
+              periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
+              quantities: { messages: 50 },
+              commandId: "period-usage:1:2",
+            });
+          }),
+        ),
+      );
+      expect(error).toBeInstanceOf(ProviderCapabilityMissing);
+      if (error._tag === "ProviderCapabilityMissing") expect(error.op).toBe("reportUsage");
     }),
   );
 });

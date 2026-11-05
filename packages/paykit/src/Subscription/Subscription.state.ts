@@ -6,6 +6,7 @@ import {
   type Allowance,
   type Included,
   type Overage,
+  type UnitPrice,
 } from "../Allowance.ts";
 import { CreditRateCards, type CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
@@ -89,8 +90,17 @@ export type HoldRecord = typeof HoldRecord.Type;
 export const Holds = Schema.Record(Schema.String, HoldRecord);
 export type Holds = typeof Holds.Type;
 
-/** What an account with no standing looks like: it may still hold checkout refs. */
-export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", { refs: Refs });
+/**
+ * What an account with no standing looks like: it may still hold checkout refs,
+ * and a one-off pack may already have put credits in its pool.
+ */
+export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
+  refs: Refs,
+  /** Credits a one-off pack bought before any plan existed. */
+  credits: Schema.optionalKey(Schema.Int),
+  /** The part of that pool a pack bought; with no plan, all of it. */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
+});
 export type UnsubscribedState = typeof UnsubscribedState.Type;
 
 /** What an account that has ever had a tier looks like. */
@@ -114,12 +124,23 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   cancelAtPeriodEnd: Schema.Boolean,
   /** The account's credit pool, shared by every credit-priced feature. */
   credits: Schema.Int,
-  /** Whether that pool expires at a period close. */
+  /**
+   * The part of `credits` a one-off pack bought. It never expires, however the
+   * standing's plan says its own credits do, so `0 <= prepaidCredits <= credits`
+   * and a period close returns only the difference.
+   */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
+  /** Whether the plan's own credits expire at a period close. */
   creditsExpire: CreditsExpire,
   /** Every credit-priced feature's rate card, copied from the event that set it. */
   rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
   usage: UsageCounts,
+  /**
+   * Money billed this period, per feature, in the standing's currency. A fold
+   * of `UsageRecorded.charge`, reset by `UsageReset`; never a second counter.
+   */
+  billed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
   remaining: Remaining,
   /** Every hold, open or closed. `reserved` and `reservedCredits` fold this. */
   holds: Holds,
@@ -191,6 +212,34 @@ export const periodFrom = (start: DateTime.Utc, interval: Interval, anchorTz = "
 /** Sum of a feature's usage. */
 export const usedOf = (state: SubscribedState, feature: string): number =>
   state.usage[feature] ?? 0;
+
+/** Money already billed for one feature this period, or `0`. */
+export const billedOf = (state: SubscribedState, feature: string): number =>
+  state.billed?.[feature] ?? 0;
+
+/**
+ * The part of one usage event that is past `included`, and so billable. An
+ * allowance with no count — unlimited, or a flag — has nothing billable.
+ */
+export const billableUnitsOf = (
+  included: number | "unlimited" | null,
+  used: number,
+  amount: number,
+): number => {
+  if (typeof included !== "number") return 0;
+  const before = Math.max(0, used - included);
+  const after = Math.max(0, used + amount - included);
+  return after - before;
+};
+
+/** The money one usage event bills: billable units × the unit price. */
+export const chargeOf = (
+  unitPrice: UnitPrice | undefined,
+  included: number | "unlimited" | null,
+  used: number,
+  amount: number,
+): number =>
+  unitPrice === undefined ? 0 : billableUnitsOf(included, used, amount) * unitPrice.amount;
 
 /**
  * A per-feature count as it was recorded: `undefined` when the record does not
@@ -305,6 +354,27 @@ export const spendHeadroomOf = (feature: {
     ? null
     : feature.remaining + feature.cap - (feature.carried ?? 0);
 
+/** The pool a standing actually holds, for a state that may predate the field. */
+export const creditsOf = (state: SubscriptionState): number =>
+  state._tag === "Subscribed" ? state.credits : (state.credits ?? 0);
+
+/** The part of the pool a one-off pack bought, on either kind of state. */
+export const prepaidCreditsOf = (state: SubscriptionState): number => state.prepaidCredits ?? 0;
+
+/**
+ * The credits a period close may expire: the plan's own credits, never the part
+ * a one-off pack bought. A pool that never expires has nothing to return.
+ */
+export const expiringCreditsOf = (state: SubscribedState): number =>
+  state.creditsExpire === "never" ? 0 : state.credits - prepaidCreditsOf(state);
+
+/**
+ * The protected portion after the balance moved down. Expiring credits are
+ * spent first, so a purchase is only touched once the plan's credits are gone.
+ */
+export const protectedAfterSpending = (state: SubscribedState, balanceAfter: number): number =>
+  Math.max(0, Math.min(prepaidCreditsOf(state), balanceAfter));
+
 /** The holds that are still waiting to settle or release. */
 export const openHoldsOf = (state: SubscribedState): ReadonlyArray<HoldRecord> =>
   Object.values(state.holds).filter((hold) => hold.status === "open");
@@ -364,6 +434,7 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "GraceEntered",
   "Recovered",
   "CreditsGranted",
+  "CreditsPurchased",
   "CreditsConsumed",
   "CancellationScheduled",
   "CancellationWithdrawn",

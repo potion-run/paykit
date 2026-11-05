@@ -95,7 +95,12 @@ threat model from a price id.
 
 ### 2c — Polar products
 
-The same three rules over `@distilled.cloud/polar`, once 2a has settled the shape.
+The same three rules over `@distilled.cloud/polar`, once 2a has settled the shape. Landed as
+`PolarPrices` in `packages/paykit-polar/src/Prices.ts`: each tier is a `Polar.Product` resource of
+ours (Polar has no Alchemy package), with `metadata.paykit_tier` and the stage-qualified name
+`paykit:<stage>:<tier>` as its identity. Polar embeds prices in the product, so a price change
+replaces the product and the old generation is retained; the `Polar.Product` provider adopts an
+existing product by that identity when state is lost, and its delete is a no-op.
 
 ## Consequences
 
@@ -107,8 +112,9 @@ The same three rules over `@distilled.cloud/polar`, once 2a has settled the shap
   from catalog to resources, not a second Stripe resource.
 - **`CatalogPriceMismatch` becomes a backstop rather than the gate.** With prices created from the
   catalog, a mismatch means someone edited the vendor by hand; the deploy still refuses it.
-- **Retained prices accumulate.** A stage that changes a price monthly leaves a trail of archived
-  prices. That is the desired record, but a console should be able to list them.
+- **Retained prices and products accumulate.** A stage that changes a price monthly leaves a trail
+  of retired prices and products. That is the desired record, but a console should be able to list
+  them.
 
 ## Alternatives considered
 

@@ -35,6 +35,8 @@ export class CreditExceeded extends Domain.Rejection("CreditExceeded", {
   cost: Schema.Int,
   /** The pool at the moment it was refused, untouched. */
   balance: Schema.Int,
+  /** Credits open holds reserved; `balance - reserved` is what could be spent. */
+  reserved: Schema.optionalKey(Schema.Int),
 }) {}
 
 /**
@@ -53,12 +55,30 @@ export class SpendCapExceeded extends Domain.Rejection("SpendCapExceeded", {
 }) {}
 
 /**
+ * The usage would bill more money than the allowance permits this period,
+ * `billed + charge > moneyCap`. Like a quantity ceiling this is the account
+ * running out of what it bought, so `standing` stays `good`.
+ */
+export class MoneyCapExceeded extends Domain.Rejection("MoneyCapExceeded", {
+  feature: Schema.String,
+  /** The most this feature may bill in one period, in minor units. */
+  cap: Schema.Int,
+  /** What this feature has already billed this period. */
+  billed: Schema.Int,
+  /** Money open holds have promised to bill, when any are open. */
+  reserved: Schema.optionalKey(Schema.Int),
+  /** What this event would add. */
+  charge: Schema.Int,
+}) {}
+
+/**
  * One usage fact. `remainingAfter` is the outcome `decide` worked out, and is
  * `null` when there is no count: an allowance that never runs out, or a
  * credit-priced feature whose count is the shared pool. `cost` is the credits
  * the usage spent (`0` for a feature counted in its own units), and
  * `creditsAfter` is the pool it left behind, so replaying the log reproduces
- * the balance.
+ * the balance. `charge` is the money this event billed, and `billedAfter` the
+ * feature's period total; both are absent when the allowance has no unit price.
  */
 export class UsageRecorded extends Domain.Event("UsageRecorded", {
   feature: Schema.String,
@@ -67,6 +87,10 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
   creditsAfter: Schema.Int,
   usedAfter: Schema.Int,
   remainingAfter: Schema.NullOr(Schema.Int),
+  /** Money this event billed, in minor units. Absent when there is no unit price. */
+  charge: Schema.optionalKey(Schema.Int),
+  /** The feature's billed total this period after this event. */
+  billedAfter: Schema.optionalKey(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
 }) {}
 
@@ -90,6 +114,7 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     FeatureNotMetered,
     CreditExceeded,
     SpendCapExceeded,
+    MoneyCapExceeded,
   ],
   middleware: [Session],
 }) {}

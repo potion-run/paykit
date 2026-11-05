@@ -1,8 +1,28 @@
 import * as Stripe from "@alchemy.run/stripe";
-import type { Price, TierId } from "@potion.run/paykit";
+import type { Price, TierId, TierKind, UnitPrice } from "@potion.run/paykit";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
+
+/**
+ * One metered price the catalog states: the billable unit price, the Stripe
+ * meter that aggregates the units, and the two vendor identities derived from
+ * the tier and feature.
+ */
+export interface UsagePriceDeclaration {
+  /** The catalog feature the meter counts. */
+  readonly feature: string;
+  /** What one billable unit costs, in minor units. */
+  readonly unitPrice: UnitPrice;
+  /** Logical id of the `BillingMeter` resource. */
+  readonly meterResource: string;
+  /** Logical id of the metered `Price` resource. */
+  readonly priceResource: string;
+  /** The meter event name, `paykit_<encoded stage>_<encoded feature>`. */
+  readonly eventName: string;
+  /** The lookup key for the metered price, `paykit:<stage>:<tier>:usage:<feature>`. */
+  readonly lookupKey: string;
+}
 
 /**
  * One price the catalog states, and the vendor identities derived from it.
@@ -13,28 +33,81 @@ import * as Effect from "effect/Effect";
 export interface PriceDeclaration {
   /** The tier the price belongs to, and the key of the returned map. */
   readonly tier: string;
+  /** A subscription repeats; a one-off pack is a single payment. */
+  readonly kind: TierKind;
   /** Logical id of the product resource, and of the price resource. */
   readonly productResource: string;
   readonly priceResource: string;
-  /** `<stage>:<tier>` under `paykit:` — findable after a restore, per environment. */
+  /** `paykit:<encoded stage>:<encoded tier>` — findable after a restore, per environment. */
   readonly lookupKey: string;
   readonly amount: number;
   readonly currency: string;
   /** The catalog's `month | annual`, in Stripe's spelling. */
   readonly interval: "month" | "year";
+  /** One metered price per billable feature, ordered by feature id. */
+  readonly usage: ReadonlyArray<UsagePriceDeclaration>;
 }
 
+/** A tier's price, optionally with the kind that says how it is sold and its meters. */
+export type TierPrice =
+  | Price
+  | {
+      readonly price: Price;
+      readonly kind?: TierKind;
+      /**
+       * One unit price per billable feature. `StripePrices` creates a meter and
+       * a metered price for each; a one-off pack has none, because Stripe does
+       * not attach metered prices to a one-time price.
+       */
+      readonly usage?: Readonly<Record<string, UnitPrice>>;
+    };
+
+const normalize = (
+  value: TierPrice,
+): {
+  readonly price: Price;
+  readonly kind: TierKind;
+  readonly usage: Readonly<Record<string, UnitPrice>>;
+} =>
+  "price" in value
+    ? {
+        price: value.price,
+        kind: value.kind ?? "subscription",
+        usage: value.usage ?? {},
+      }
+    : { price: value, kind: "subscription", usage: {} };
+
 /**
- * The lookup key a tier's price carries, and the only identity that survives a
- * lost state: a restored database reconciles to the same Stripe price instead of
- * creating a second one.
- *
- * The stage is in the key because a Stripe account is shared by every stage that
- * uses the same key pair. Without it, a `preview` stack's price would take the
- * lookup key from `prod`'s (`transfer_lookup_key` moves it), and the production
- * checkout would start charging the preview amount.
+ * An identity part as Stripe's lookup-key alphabet sees it: alphanumerics and
+ * dashes survive, everything else (including `:` and `_`) becomes a
+ * `_<hex>_` escape, so two parts can never forge the separator or each other.
  */
-export const lookupKeyOf = (stage: string, tier: string): string => `paykit:${stage}:${tier}`;
+const encodePart = (value: string): string => {
+  let encoded = "";
+  for (const char of value) {
+    encoded += /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`;
+  }
+  return encoded;
+};
+
+export const lookupKeyOf = (stage: string, tier: string): string =>
+  `paykit:${encodePart(stage)}:${encodePart(tier)}`;
+
+/**
+ * The lookup key of one tier's metered price for a feature. A tier may price
+ * the same feature differently, so the key carries both; the meter itself is
+ * per feature and shared by every tier.
+ */
+export const meteredLookupKeyOf = (stage: string, tier: string, feature: string): string =>
+  `paykit:${encodePart(stage)}:${encodePart(tier)}:usage:${encodePart(feature)}`;
+
+/**
+ * The meter event name for a feature. Stripe keeps event names unique per
+ * account (and reserves a deactivated meter's name), so the stage is in the
+ * name for the same reason it is in the lookup key: stages share one account.
+ */
+export const meterEventNameOf = (stage: string, feature: string): string =>
+  `paykit_${encodePart(stage)}_${encodePart(feature)}`;
 
 /** Stripe spells the annual interval `year`; the catalog says `annual`. */
 const intervalOf = (interval: Price["interval"]): "month" | "year" =>
@@ -42,33 +115,59 @@ const intervalOf = (interval: Price["interval"]): "month" | "year" =>
 
 /**
  * Turn the catalog's prices into the declarations `StripePrices` reconciles.
- * Ordered by tier id, so a deploy produces the same resources in the same order
- * however the catalog was written.
+ * Ordered by tier id and then feature id, so a deploy produces the same
+ * resources in the same order however the catalog was written.
  */
 export const priceDeclarations = (
-  tiers: Readonly<Record<string, Price>>,
+  tiers: Readonly<Record<string, TierPrice>>,
   stage: string,
 ): ReadonlyArray<PriceDeclaration> =>
   Object.entries(tiers)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([tier, price]) => ({
-      tier,
-      productResource: `Product_${tier}`,
-      priceResource: `Price_${tier}`,
-      lookupKey: lookupKeyOf(stage, tier),
-      amount: price.amount,
-      currency: price.currency,
-      interval: intervalOf(price.interval),
-    }));
+    .map(([tier, value]) => {
+      const { price, kind, usage } = normalize(value);
+      return {
+        tier,
+        kind,
+        productResource: `Product_${tier}`,
+        priceResource: `Price_${tier}`,
+        lookupKey: lookupKeyOf(stage, tier),
+        amount: price.amount,
+        currency: price.currency,
+        interval: intervalOf(price.interval),
+        // Charging a one-time price per metered unit is not a thing Stripe
+        // models, so a pack never declares a meter.
+        usage:
+          kind === "one_off"
+            ? []
+            : Object.entries(usage)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([feature, unitPrice]) => ({
+                  feature,
+                  unitPrice,
+                  meterResource: `Meter_${feature}`,
+                  priceResource: `Price_${tier}_Usage_${feature}`,
+                  eventName: meterEventNameOf(stage, feature),
+                  lookupKey: meteredLookupKeyOf(stage, tier, feature),
+                })),
+      };
+    });
 
 /**
- * What a stack gets back: the lookup key a tier is sold under.
- *
- * The key, not the price id, is what a provider config carries. A price id is
- * an output of one deploy; the key is the identity that survives a restore, a
- * second stage and a replaced price, and the provider resolves it to whichever
- * price currently answers for that tier.
+ * What a stack gets back from `StripePrices`: the base price per tier, the
+ * metered price per tier and feature, and the meter event name per feature.
+ * The event name is what `Stripe({ meters })` needs to report usage later.
  */
+export interface SoldPrices {
+  /** tier → base price lookup key */
+  readonly prices: Readonly<Record<string, string>>;
+  /** tier → feature → metered price lookup key */
+  readonly usage: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** feature → meter event name */
+  readonly meters: Readonly<Record<string, string>>;
+}
+
+/** The old single-price handle, kept as a name for a caller that reads the map. */
 export type SoldPrice = string;
 
 /**
@@ -77,15 +176,19 @@ export type SoldPrice = string;
  * Yielding this inside a stack creates, replaces and retires Stripe prices:
  *
  * - **create** when no price carries the tier's lookup key;
+ * - **create a meter and a metered price** for every `usage` feature, from the
+ *   same `unitPrice` the catalog states, so the vendor invoice and the local
+ *   ledger use one number;
  * - **replace** when the amount, currency or interval changes: those props are
  *   create-only, so Alchemy creates a new price and moves the lookup key onto it
  *   (`transfer_lookup_key`), because Stripe prices are immutable and a live
  *   subscription must not change what it is charged;
- * - **retire** when a tier leaves the catalog: both resources are declared with
- *   `RemovalPolicy.retain`, so the price object is left in place and only
- *   Alchemy's state row goes away. It is not archived — that is a vendor write
- *   against a resource the stack no longer tracks, and it is a follow-up
- *   rather than something this helper pretends to do.
+ * - **sell as a one-time price** when the tier is `kind: "one_off"`: no
+ *   recurring interval is sent, so checkout can use `mode=payment` instead of
+ *   starting a subscription;
+ * - **retire** when a tier leaves the catalog: every resource is declared with
+ *   `RemovalPolicy.retain`, so the price and meter are left in place and only
+ *   Alchemy's state row goes away.
  *
  * The vendor resources are `@alchemy.run/stripe`'s own, so ownership metadata,
  * adoption and drift are the vendor package's problem, not a second
@@ -94,17 +197,31 @@ export type SoldPrice = string;
  * ### Selling tiers
  * **Example:** A stack that creates the prices its catalog states
  * ```typescript
- * const prices = yield* StripePrices("Prices", {
- *   tiers: { pro: proPrice, scale: scalePrice },
+ * const sold = yield* StripePrices("Prices", {
+ *   tiers: {
+ *     pro: {
+ *       price: proPrice,
+ *       usage: { messages: { amount: 2, currency: "usd" } },
+ *     },
+ *   },
  * });
  *
  * const stripe = Stripe({
  *   secretKey: yield* Config.redacted("STRIPE_SECRET_KEY"),
  *   origin: "https://app.example.com",
  *   tiers: {
- *     pro: { price: proPrice, priceId: prices.pro.priceId },
- *     scale: { price: scalePrice, priceId: prices.scale.priceId },
+ *     pro: {
+ *       price: proPrice,
+ *       lookupKey: sold.prices.pro,
+ *       usage: {
+ *         messages: {
+ *           unitPrice: { amount: 2, currency: "usd" },
+ *           lookupKey: sold.usage.pro.messages,
+ *         },
+ *       },
+ *     },
  *   },
+ *   meters: sold.meters,
  * });
  * ```
  *
@@ -113,11 +230,32 @@ export type SoldPrice = string;
  */
 export const StripePrices = Effect.fn("Stripe.Prices")(function* (
   id: string,
-  props: { readonly tiers: Readonly<Record<string, Price>> },
+  props: { readonly tiers: Readonly<Record<string, TierPrice>> },
 ) {
   const stack = yield* Stack;
   const declarations = priceDeclarations(props.tiers, stack.stage);
-  const sold: Record<string, SoldPrice> = {};
+  const prices: Record<string, string> = {};
+  const usage: Record<string, Record<string, string>> = {};
+  const meters: Record<string, string> = {};
+
+  // One meter per feature, not per tier: a feature is one thing the customer
+  // does, however many tiers price it differently.
+  const features = [
+    ...new Set(declarations.flatMap((declaration) => declaration.usage.map((u) => u.feature))),
+  ].sort((left, right) => left.localeCompare(right));
+  const createdMeters = new Map<string, Stripe.BillingMeter>();
+  for (const feature of features) {
+    const eventName = meterEventNameOf(stack.stage, feature);
+    const meter = yield* Stripe.BillingMeter(`${id}Meter_${feature}`, {
+      displayName: eventName,
+      eventName,
+      defaultAggregation: { formula: "sum" },
+      customerMapping: { type: "by_id", eventPayloadKey: "stripe_customer_id" },
+      valueSettings: { eventPayloadKey: "value" },
+    }).pipe(RemovalPolicy.retain());
+    createdMeters.set(feature, meter);
+    meters[feature] = eventName;
+  }
 
   for (const declaration of declarations) {
     // One product per tier: a name an operator can read in the dashboard, and
@@ -126,19 +264,39 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       name: declaration.tier,
       metadata: { paykit_tier: declaration.tier },
     }).pipe(RemovalPolicy.retain());
-    // One price per tier, found by its lookup key, archived rather than deleted
-    // when the catalog moves on.
+    // One base price per tier, found by its lookup key, retained when the
+    // catalog moves on.
     yield* Stripe.Price(`${id}${declaration.priceResource}`, {
       product,
       currency: declaration.currency,
       unitAmount: declaration.amount,
-      recurring: { interval: declaration.interval },
+      // A one-off pack has no recurring price; Stripe rejects `mode=payment`
+      // for one, and a subscription cannot use the other.
+      ...(declaration.kind === "one_off" ? {} : { recurring: { interval: declaration.interval } }),
       lookupKey: declaration.lookupKey,
     }).pipe(RemovalPolicy.retain());
-    sold[declaration.tier] = declaration.lookupKey;
+    prices[declaration.tier] = declaration.lookupKey;
+
+    const metered: Record<string, string> = {};
+    for (const price of declaration.usage) {
+      const meter = createdMeters.get(price.feature)!;
+      yield* Stripe.Price(`${id}${price.priceResource}`, {
+        product,
+        currency: price.unitPrice.currency,
+        unitAmount: price.unitPrice.amount,
+        recurring: {
+          interval: declaration.interval,
+          usageType: "metered",
+          meter: meter.id,
+        },
+        lookupKey: price.lookupKey,
+      }).pipe(RemovalPolicy.retain());
+      metered[price.feature] = price.lookupKey;
+    }
+    usage[declaration.tier] = metered;
   }
 
-  return sold;
+  return { prices, usage, meters } as SoldPrices;
 });
 
 /** The tier id a declaration was built from, narrowed for a caller that reads it back. */

@@ -50,6 +50,7 @@ describe("replay", () => {
             case "UsageRecorded":
               return [value.creditsAfter as number];
             case "CreditsGranted":
+            case "CreditsPurchased":
             case "CreditsConsumed":
             case "CreditsExpired":
               return [value.balanceAfter as number];

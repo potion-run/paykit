@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -12,6 +13,8 @@ import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
+import { Script, walk } from "../properties/Arbitraries.ts";
+import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
 const freeTier = tier({
@@ -154,6 +157,46 @@ describe("doctor", () => {
       // A decode failure is the doctor's typed failure, not a defect out of a sync decoder.
       expect(String(exit.cause)).toContain("SchemaError");
     }),
+  );
+
+  it.effect("rebuilds a clean row for any generated event history", () =>
+    assertProperty(
+      Arbitrary.schema(Script),
+      (script) =>
+        Effect.gen(function* () {
+          const { events, now } = walk(script);
+          if (events.length === 0) return true;
+
+          const sql = sqliteExecutor();
+          yield* migrate(sql);
+          const log = SqlEventLog(sql, { now: () => now.epochMilliseconds });
+          for (const [index, event] of events.entries()) {
+            const cls = Subscription.definition.events.find(
+              (candidate) => candidate.tag === event._tag,
+            );
+            if (cls === undefined) return false;
+            yield* log.append({
+              aggregate: "Subscription",
+              account: "acct_doctor_gen",
+              commandId: `gen-${index}`,
+              at: now.epochMilliseconds,
+              events: [Schema.encodeUnknownSync(Schema.toCodecJson(cls as never) as never)(event)],
+              state: {},
+              receipt: {},
+              deliveries: [],
+            });
+          }
+
+          // The rebuild is the reference: doctor reports the missing read
+          // model, and once written it must agree with the log.
+          const first = yield* doctor(log);
+          if (first.length !== 1) return false;
+          yield* log.upsertReadModel(first[0]!.rebuilt);
+          const second = yield* doctor(log);
+          return second.length === 0;
+        }),
+      { runs: 20, size: 40 },
+    ),
   );
 
   it.effect("reports a read model row with no events as a mismatch", () =>

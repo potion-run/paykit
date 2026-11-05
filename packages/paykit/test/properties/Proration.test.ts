@@ -112,6 +112,37 @@ describe("proration", () => {
     ).toBe(null);
   });
 
+  it.effect("credits and charges never rise as the period advances", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          from: PriceInput,
+          to: Schema.optionalKey(PriceInput),
+          periodDays: PeriodDays,
+          first: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: -30, maximum: 120 }))),
+          second: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: -30, maximum: 120 }))),
+        }),
+      ),
+      ({ from, to, periodDays, first, second }) => {
+        const period = periodOf(periodDays);
+        const [earlier, later] = first <= second ? [first, second] : [second, first];
+        const before = DateTime.add(start, { days: earlier });
+        const after = DateTime.add(start, { days: later });
+
+        // The unused share only shrinks as the period is consumed.
+        if (unusedFraction(period, before) < unusedFraction(period, after)) return false;
+
+        const earlierValue = prorate({ from, to, period, at: before });
+        const laterValue = prorate({ from, to, period, at: after });
+        if (earlierValue === null || laterValue === null) {
+          return earlierValue === laterValue;
+        }
+        return earlierValue.credit >= laterValue.credit && earlierValue.charge >= laterValue.charge;
+      },
+      { runs: 120, size: 30 },
+    ),
+  );
+
   it("returns null when neither side has a price", () => {
     expect(prorate({ from: undefined, to: undefined, period: periodOf(31), at: start })).toBe(null);
   });

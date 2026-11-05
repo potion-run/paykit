@@ -153,8 +153,10 @@ the same feature twice, a tier with no grants, an unlimited allowance that also 
 (`CatalogCreditRateMissing`), a rate that is not a positive integer (`CatalogCreditRateInvalid`), an
 allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a rate card on a flag
 (`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), a `cap`
-where nothing is billed (`CatalogCapWithoutBilling`), and a price that is not positive whole minor
-units.
+where nothing is billed (`CatalogCapWithoutBilling`), a unit price where nothing is billed
+(`CatalogUnitPriceWithoutBilling`), a money cap with no unit price
+(`CatalogMoneyCapWithoutUnitPrice`), mixed unit-price currencies (`CatalogUnitPriceCurrency`), and a
+price that is not positive whole minor units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
 `{ allowed, remaining: null, resetsAt: null, standing }`, and `Track` and `Hold` refuse it with
@@ -164,7 +166,7 @@ units.
 `included + cap` units. `Track` and `Hold` both refuse past it with `SpendCapExceeded` — a hold
 counts, because a hold is a promise to bill — and `check()` answers `allowed: false` at the ceiling
 while the standing stays `good`, because the account is out of what it bought, not in trouble. It
-needs `overage: "bill"` (`CatalogCapWithoutBilling`): a money cap arrives with postpaid pricing.
+needs `overage: "bill"` (`CatalogCapWithoutBilling`).
 
 `carryOver: true` rolls what a period did not spend into the next one, at most `included`: the new
 period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`, and the read model
@@ -176,6 +178,25 @@ credit-priced feature reports the same `remaining`, `track({ feature, amount, di
 `check({ feature, amount, dimension })` prices the request before comparing it, so it answers from
 the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
 default) zeroes it at a period close while `"never"` keeps it.
+
+A postpaid allowance states a `unitPrice` in minor units and optionally a `moneyCap`. The billable
+part is only what is past `included`; `track()` records the charge and the feature's period total,
+and a request that would pass the money ceiling is refused with `MoneyCapExceeded` while the standing
+stays `good`. `check()` prices the requested amount from the same local read. A tier's unit prices
+share one currency.
+
+The vendor uses the same number: `StripePrices` and `PolarPrices` create a metered price from the
+allowance's `unitPrice`, `Stack` refuses a provider mapping that disagrees, and the
+`PeriodCloseUsage` policy sends the closing period's billable quantity (`used - included`) to the
+provider once, with the period as the idempotency key. A provider without a meter declares no
+`usage` capability, and the close fails with `ProviderCapabilityMissing` rather than billing only in
+local state.
+
+A `kind: "one_off"` tier is a prepaid pack: it grants credits, has no allowances, defaults
+`creditsExpire` to `"never"`, and must state a price. Buying it opens a one-time provider payment
+(Stripe `mode: "payment"`, a one-time Polar product) rather than a subscription, and
+`payment_succeeded` grants the credits. There is still one pool, but the part a pack bought is
+protected: a period close expires only the plan's credits, and spending drains the plan's first.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no
@@ -201,14 +222,19 @@ refuses a mapping whose amount, currency or interval disagrees with the catalog
 All money is `Schema.Int` minor units with a currency on every amount. A provider that does not
 implement an optional op fails with `ProviderCapabilityMissing`; nothing degrades silently.
 
+A `Hold` is an addressable reservation for work in flight: `Settle` bills what ran and returns the
+rest in the same call, `Release` returns all of it, and a hold left open is released by `HoldSweep`
+at its `expiresAt` (fifteen minutes by default). `reserved` on the read model is the fold of the
+open holds, not a counter a command writes.
+
 ## Providers
 
 | Provider | Kind | Required purchase path | Optional ops |
 | --- | --- | --- | --- |
-| `Paykit.Memory()` | memory | checkout + invoice | refund, portal |
+| `Paykit.Memory()` | memory | checkout + invoice | refund, portal, usage |
 | `Paykit.Manual()` | manual | invoice | refund |
-| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal |
-| `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal |
+| `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal, usage |
+| `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal, usage |
 
 `Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar), and
 `Stripe`'s is [`@potion.run/paykit-stripe`](../paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
@@ -225,6 +251,14 @@ capabilities it declares.
 The Stripe and Polar adapters take the bindings (`StripeBindings`, `PolarBindings`) a vendor
 package supplies: `@potion.run/paykit-stripe` and `@potion.run/paykit-polar`. Those own HTTP, auth,
 signatures and the webhook decoder; paykit owns the model.
+
+Each vendor package also provisions its side of the catalog. `StripePrices` creates one product and
+base price per priced tier, plus a billing meter and a metered price for every `usage` feature, and
+returns `{ prices, usage, meters }`; `PolarPrices` creates one product per tier with its fixed and
+metered prices, plus one meter per `usage` feature, and returns `{ products, meters }`. Hand the
+`meters` map and the per-tier `usage` prices to `Stripe({ tiers, meters })` or `Polar({ tiers, meters })`
+so the runtime can report the close. Both keep retired prices, products and meters in the vendor,
+and neither lets a provider id into the catalog.
 
 ## The model
 
@@ -250,13 +284,14 @@ exposes `Subscribe` or `ChangeTier` directly must put the same resolver behind i
 Implemented and tested:
 
 - M0 foundation: catalog, model, `Domain.InMemory` hosting, `Check`, payments memory.
-- M2 usage: allowances, overage modes, dedupe, scheduled period rollover and reset, replay and
-  allowance properties.
+- M2 usage: allowances, overage modes, dedupe, scheduled period rollover and reset, the
+  scheduled sweep of expired holds, replay and allowance properties.
 - M3 catalog and adapter shape: `Stack` validation, `Manual` reference provider, Stripe/Polar
   adapters over their bindings, one conformance suite, the `BillingStack` resource with a
   retain default, and the provider webhook edge (provider event id as the command id).
 - M4 money commands: checkout start/complete, payments, grace, scheduled grace expiry
-  (dunning), credits, proration property, cancellation and resume.
+  (dunning), credits, prepaid packs, postpaid money and money caps, the vendor meter at close,
+  proration property, cancellation and resume.
 - M5 admin and reads: `BillingAdminApi`, the `AccountEvents` stream, the `BillingRead`
   projection, and the three `Check` read paths (in-process, read model, HTTP transport).
 - M1 first half: the SQL event log with receipts, outbox, schedule and per-account locking,
@@ -273,8 +308,7 @@ Not shipped yet, and deliberately not faked:
   `doctor`) are ready for it.
 - The durable checkout saga (the checkout start/complete flow works today), mid-cycle
   proration charges, and scheduled dunning retries beyond the grace deadline.
-- A real `@potion.run/paykit-polar` vendor package (currently scaffolding) and the foldkit
-  console in `examples/`.
+- The foldkit console in `examples/`.
 
 ## Test layout
 

@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { HoldExceeded, HoldExpired, HoldSettled, HoldUnknown } from "./Hold.command.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { StandingBlocksUsage, UsageRecorded } from "./TrackUsage.command.ts";
+import { MoneyCapExceeded, StandingBlocksUsage, UsageRecorded } from "./TrackUsage.command.ts";
 
 /**
  * A hold became usage. `amount` units were billed and `released` returned, so
@@ -40,6 +40,13 @@ export class SettleHold extends Domain.Command("SettleHold", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded, UsageSettled],
-  rejects: [HoldUnknown, HoldSettled, HoldExpired, HoldExceeded, StandingBlocksUsage],
+  rejects: [
+    HoldUnknown,
+    HoldSettled,
+    HoldExpired,
+    HoldExceeded,
+    StandingBlocksUsage,
+    MoneyCapExceeded,
+  ],
   middleware: [Session],
 }) {}

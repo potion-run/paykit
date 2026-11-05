@@ -39,9 +39,9 @@ have recorded the usage.
 **4. The cap resets with the period**, because `used` does. Nothing else has to remember it.
 
 **5. Money caps arrive with postpaid pricing, not before.** The moment the catalog states a unit
-price — the postpaid slice of ADR 0001 — a cap can also be stated in money, as a derived ceiling
-(`cap.amount / unitPrice`). That is a change to what the catalog can express, and it gets its own
-record when there is a price to divide by.
+price — the postpaid slice of ADR 0001 — a cap can also be stated in money. [ADR
+0006](./0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) landed it as a separate
+`Allowance.moneyCap`, so `cap` stays the quantity ceiling and the money ceiling is explicit.
 
 ## Slices
 
@@ -62,9 +62,8 @@ number a customer asks about.
 
 ## Consequences
 
-- **A cap is not a spending limit in money**, and the docs must say so: it limits quantity, and the
-  money that quantity costs is the provider's price times the units billed. A user who wants a
-  money cap gets one when postpaid pricing lands.
+- **`cap` is not a spending limit in money**, and the docs must say so: it limits quantity. A
+  postpaid feature states `moneyCap` separately (ADR 0006); the stricter of the two binds.
 - **`included + cap` is per period.** A cap does not accumulate, unlike a carried allowance; a quiet
   month does not earn a louder one.
 - **Holds count.** A caller cannot hold past the cap and settle into a bill it was never allowed to
@@ -87,5 +86,6 @@ number a customer asks about.
 
 ## What would reopen this
 
-Postpaid pricing. Once a feature states a unit price, a money cap is a ceiling divided by a price,
-and the catalog can express what a buyer asks for in the words they ask for it.
+Nothing in this record. Postpaid pricing arrived with [ADR
+0006](./0006-postpaid-usage-is-a-unit-price-in-the-catalog.md), which added `moneyCap` beside `cap`
+rather than reinterpreting the quantity ceiling.

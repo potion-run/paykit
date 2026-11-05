@@ -15,7 +15,9 @@ import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
 import { GraceElapsed } from "../../src/Subscription/GraceElapsed.command.ts";
 import { GrantCredits } from "../../src/Subscription/GrantCredits.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
+import { HoldElapsed } from "../../src/Subscription/HoldElapsed.command.ts";
 import { PeriodEnded } from "../../src/Subscription/PeriodEnded.command.ts";
+import { PurchaseCredits } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "../../src/Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "../../src/Subscription/RecordPaymentFailure.command.ts";
 import { Recover } from "../../src/Subscription/Recover.command.ts";
@@ -106,10 +108,19 @@ export const CommandPlan = Schema.Union([
     amount: Amount,
     dimension: Schema.Literals(["default", "gpt-large"]),
   }),
-  Schema.TaggedStruct("Hold", { holdId: HoldId, amount: Amount, dedupeKey: DedupeKey }),
+  Schema.TaggedStruct("Hold", {
+    holdId: HoldId,
+    // A hold on `ai` spends the pool, so the generated scripts exercise
+    // reservations against credits, not only against a counted allowance.
+    feature: Schema.optionalKey(Schema.Literals(["messages", "ai"])),
+    amount: Amount,
+    dedupeKey: DedupeKey,
+  }),
   Schema.TaggedStruct("SettleHold", { holdId: HoldId, amount: Schema.optionalKey(Amount) }),
   Schema.TaggedStruct("ReleaseHold", { holdId: HoldId }),
+  Schema.TaggedStruct("HoldElapsed", { holdId: HoldId }),
   Schema.TaggedStruct("GrantCredits", { amount: Amount }),
+  Schema.TaggedStruct("PurchaseCredits", { amount: Amount }),
   Schema.TaggedStruct("ConsumeCredits", { amount: Amount }),
   Schema.TaggedStruct("RecordPayment", { amount: Amount }),
   Schema.TaggedStruct("RecordPaymentFailure", {}),
@@ -205,7 +216,7 @@ export const commandOf = (
     case "Hold":
       return new Hold({
         holdId: plan.holdId,
-        feature: "messages",
+        feature: plan.feature ?? "messages",
         amount: plan.amount,
         expiresAt: DateTime.add(now, { days: 365 }),
         ...(plan.dedupeKey === undefined ? {} : { dedupeKey: plan.dedupeKey }),
@@ -217,8 +228,12 @@ export const commandOf = (
       });
     case "ReleaseHold":
       return new ReleaseHold({ holdId: plan.holdId });
+    case "HoldElapsed":
+      return new HoldElapsed({ holdId: plan.holdId });
     case "GrantCredits":
       return new GrantCredits({ amount: plan.amount });
+    case "PurchaseCredits":
+      return new PurchaseCredits({ tier: "credits_1k", amount: plan.amount });
     case "ConsumeCredits":
       return new ConsumeCredits({ amount: plan.amount });
     case "RecordPayment":
@@ -254,6 +269,9 @@ export const commandOf = (
 
 const commandId = (index: number) => `cmd-${index}`;
 
+/** The account every generated script runs against. */
+export const propertyAccount = "acct_property";
+
 /** Run one command through the aggregate's pure `decide`. */
 export const decideAt = (
   state: SubscriptionState,
@@ -270,7 +288,7 @@ export const decideAt = (
         ctx: { readonly id: string; readonly commandId: string; readonly now: DateTime.Utc },
       ) => Decision
     >
-  )[command._tag]!(state, command, { id: "acct_property", commandId: id, now });
+  )[command._tag]!(state, command, { id: propertyAccount, commandId: id, now });
 
 /** Fold accepted events with their envelope, exactly as the kernel does. */
 export const evolveAt = (
@@ -287,8 +305,8 @@ export const evolveAt = (
       >
     )[event._tag]!;
     return handler(current, event, {
-      id: "acct_property",
-      stream: "Subscription/acct_property",
+      id: propertyAccount,
+      stream: `Subscription/${propertyAccount}`,
       seq: index + 1,
       at: now,
       commandId: id,

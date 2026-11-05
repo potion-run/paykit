@@ -67,7 +67,16 @@ export const billingLayers = (provider: MoneyProvider) =>
     Layer.provideMerge(DevGuards),
     // The store is provided to the handlers *and* merged outward, because
     // `Paykit.List` reads the projection directly rather than through a view.
-    Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),
+    Layer.provideMerge(
+      Model.layer(
+        PaykitHandlers.pipe(
+          Layer.provide(MemoryBillingReadStore),
+          // The close-time usage policy resolves the account's provider from
+          // this router; without it a postpaid close is local-only.
+          Layer.provideMerge(Paykit.paymentsRouter(provider)),
+        ),
+      ),
+    ),
     Layer.provideMerge(MemoryBillingReadStore),
   );
 

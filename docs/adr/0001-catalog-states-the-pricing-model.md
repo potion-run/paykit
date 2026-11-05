@@ -64,8 +64,8 @@ relaxing these three.
 | On/off feature | `Allowance.included: 0 \| 1` with `resets: "never"` is a workaround; add `kind: "flag"` | allowed or not, no counter | `allowed` only |
 | Unlimited | `included: "unlimited"` | never blocks; overage is moot | `remaining: null` means unbounded |
 | Credits with a rate card | `creditCost` per feature (or per dimension) — a message costs N credits | deducts `amount × cost`, not `amount` | remaining in credits, not units |
-| Prepaid pack | a tier that is `one_off` and grants credits once | grants on activation, no period | expiry and balance |
-| Postpaid usage | `overage: "bill"` plus a `metered` price on the tier | always allows under a cap, records usage | used this period, forecast |
+| Prepaid pack | a tier that is `one_off` and grants credits once | grants on payment, no period | expiry and balance |
+| Postpaid usage | `overage: "bill"` plus a `unitPrice` on the allowance | bills the part past `included`, refuses at a money cap | used this period, billed money, forecast |
 | Rollover | `Allowance.carryOver: boolean` | closes a period carrying `min(remaining, included)` | carried amount, visible |
 | Spend cap | `Allowance.cap: Int` — a ceiling in the feature's own unit; see [0005](./0005-a-spend-cap-is-a-ceiling-in-units.md) for why it is not money | refuses at the cap, not at the allowance | cap, and the units spent against it |
 

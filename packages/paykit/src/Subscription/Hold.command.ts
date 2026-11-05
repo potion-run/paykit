@@ -3,7 +3,12 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { FeatureNotMetered, SpendCapExceeded, StandingBlocksUsage } from "./TrackUsage.command.ts";
+import {
+  FeatureNotMetered,
+  MoneyCapExceeded,
+  SpendCapExceeded,
+  StandingBlocksUsage,
+} from "./TrackUsage.command.ts";
 
 /** How long a hold lives unless the caller says otherwise. */
 export const HOLD_TTL_MINUTES = 15;
@@ -88,6 +93,12 @@ export class Hold extends Domain.Command("Hold", {
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageReserved],
-  rejects: [HoldExceeded, StandingBlocksUsage, FeatureNotMetered, SpendCapExceeded],
+  rejects: [
+    HoldExceeded,
+    StandingBlocksUsage,
+    FeatureNotMetered,
+    SpendCapExceeded,
+    MoneyCapExceeded,
+  ],
   middleware: [Session],
 }) {}

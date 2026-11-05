@@ -54,6 +54,8 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
   return {
     createCheckoutSession: (request) =>
       Polar.checkoutsCreate({
+        // Polar sells a product, not a mode: a one-off tier is mapped to a
+        // one-time product, so the `kind` only documents the intent here.
         products: [request.productId],
         external_customer_id: request.customerExternalId,
         success_url: request.successUrl,
@@ -100,6 +102,23 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         amount: request.amount,
         reason: "customer_request",
       }).pipe(Effect.asVoid, Effect.mapError(declined("createRefund")), Effect.provide(live)),
+    // One event per feature. Polar's meter aggregates `metadata.units` with the
+    // filter the deploy created, and `external_id` is the dedupe key: a
+    // redelivered close is the same event rather than a second quantity.
+    reportUsage: (request) =>
+      Polar.eventsIngest({
+        events: [
+          {
+            name: request.eventName,
+            external_customer_id: request.externalCustomerId,
+            external_id: request.externalId,
+            timestamp: request.timestamp,
+            // The SDK's metadata type only names `_cost` / `_llm`; Polar
+            // accepts arbitrary keys, and the meter sums `metadata.units`.
+            metadata: { units: request.quantity } as Polar.EventMetadataInput,
+          },
+        ],
+      }).pipe(Effect.asVoid, Effect.mapError(declined("reportUsage")), Effect.provide(live)),
   };
 };
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { Payments, type MoneyProvider } from "../../src/Payments.ts";
@@ -10,8 +11,8 @@ import { PaymentsStripe, type StripeBindings } from "../../src/PaymentsStripe.ts
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
 const stripeBindings: StripeBindings = {
-  createCheckoutSession: ({ priceId }) =>
-    Effect.succeed({ url: `https://stripe.test/checkout/${priceId}` }),
+  createCheckoutSession: ({ priceIds }) =>
+    Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
   createRefund: () => Effect.succeed({}),
@@ -52,7 +53,11 @@ describe("Payments conformance", () => {
         () =>
           Effect.gen(function* () {
             const exit = yield* Effect.exit(
-              (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" }),
+              (yield* Payments).createCheckout({
+                account: "acct_1",
+                tier: "pro",
+                kind: "subscription",
+              }),
             );
             if (provider.capabilities.has("checkout")) {
               expect(Exit.isSuccess(exit)).toBe(true);
@@ -94,6 +99,26 @@ describe("Payments conformance", () => {
       );
 
       it.effect(
+        "reportUsage succeeds or is missing as declared",
+        () =>
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(
+              (yield* Payments).reportUsage({
+                account: "acct_1",
+                periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
+                periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
+                quantities: { messages: 50 },
+                commandId: "period-usage:1:2",
+              }),
+            );
+            expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("usage"));
+            if (!provider.capabilities.has("usage") && Exit.isFailure(exit)) {
+              expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
+            }
+          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
+      );
+
+      it.effect(
         "createPortal succeeds or is missing as declared",
         () =>
           Effect.gen(function* () {
@@ -114,6 +139,25 @@ describe("Payments conformance", () => {
     expect(manual.capabilities.has("checkout")).toBe(false);
   });
 
+  it.effect("Memory meters a period once, even when the same close is replayed", () =>
+    Effect.gen(function* () {
+      const memory = PaymentsMemory();
+      const args = {
+        account: "acct_1",
+        periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
+        periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
+        quantities: { messages: 50, seats: 2 },
+        commandId: "period-usage:1:2",
+      } as const;
+      yield* Effect.gen(function* () {
+        const payments = yield* Payments;
+        yield* payments.reportUsage(args);
+        yield* payments.reportUsage(args);
+      }).pipe(Effect.provide(memory.payments));
+      expect(memory.reports).toEqual([args]);
+    }),
+  );
+
   it("Stripe and Polar each declare the optional ops they implement", () => {
     const stripe = PaymentsStripe({
       bindings: stripeBindings,
@@ -129,6 +173,20 @@ describe("Payments conformance", () => {
     expect(stripe.capabilities.has("invoice")).toBe(false);
     expect(polar.capabilities.has("invoice")).toBe(false);
     expect(stripe.capabilities.has("portal")).toBe(true);
+    // Neither fixture supplies a reporter, so neither declares `usage`.
+    expect(stripe.capabilities.has("usage")).toBe(false);
+    expect(polar.capabilities.has("usage")).toBe(false);
+
+    const reporting = PaymentsStripe({
+      bindings: { ...stripeBindings, reportUsage: () => Effect.succeed({}) },
+      tiers: { pro: { price, priceId: "price_1" } },
+    });
+    const metering = PaymentsPolar({
+      bindings: { ...polarBindings, reportUsage: () => Effect.succeed({}) },
+      tiers: { pro: { price, productId: "prod_1" } },
+    });
+    expect(reporting.capabilities.has("usage")).toBe(true);
+    expect(metering.capabilities.has("usage")).toBe(true);
   });
 
   it.effect(
@@ -136,7 +194,11 @@ describe("Payments conformance", () => {
     () =>
       Effect.gen(function* () {
         const exit = yield* Effect.exit(
-          (yield* Payments).createCheckout({ account: "acct_1", tier: "missing" }),
+          (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "missing",
+            kind: "subscription",
+          }),
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("PaymentDeclined");

@@ -14,9 +14,18 @@ export {
   storage_gb,
 } from "./Feature.ts";
 export type { FeatureInput } from "./Feature.ts";
-export { Allowance, Allowances, Included, Overage, Resets, allowance, grant } from "./Allowance.ts";
+export {
+  Allowance,
+  Allowances,
+  Included,
+  Overage,
+  Resets,
+  UnitPrice,
+  allowance,
+  grant,
+} from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
-export { CreditsExpire, Interval, Price, Tier, TierId, tier } from "./Tier.ts";
+export { CreditsExpire, Interval, Price, Tier, TierId, TierKind, tier } from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
 export {
   Catalog,
@@ -35,6 +44,13 @@ export {
   CatalogError,
   CatalogFlagNotGranted,
   CatalogInvalid,
+  CatalogOneOffCredits,
+  CatalogOneOffCreditsExpire,
+  CatalogOneOffGrant,
+  CatalogOneOffWithoutPrice,
+  CatalogMoneyCapWithoutUnitPrice,
+  CatalogUnitPriceCurrency,
+  CatalogUnitPriceWithoutBilling,
   CatalogUnknownFeature,
   CatalogUnlimitedOverage,
   CatalogFlagOnMetered,
@@ -226,6 +242,11 @@ export { AccountId } from "./Subscription/Subscription.id.ts";
 export { AccountEvents } from "./Subscription/AccountEvents.stream.ts";
 export { AccountEventsProjection } from "./Subscription/AccountEventsProjection.ts";
 export { BillingRead } from "./Subscription/BillingRead.projection.ts";
+export {
+  PeriodCloseUsage,
+  billableQuantities,
+  periodUsageCommandId,
+} from "./Subscription/PeriodCloseUsage.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export { Dunning } from "./Subscription/Dunning.policy.ts";
 export {
@@ -255,6 +276,7 @@ export {
   AllowanceExceeded,
   CreditExceeded,
   FeatureNotMetered,
+  MoneyCapExceeded,
   SpendCapExceeded,
   StandingBlocksUsage,
   TrackUsage,
@@ -324,9 +346,15 @@ export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 
 // ── 4. providers ────────────────────────────────────────────────────────────
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
+export type { MemoryPayments, MemoryUsageReport } from "./PaymentsMemory.ts";
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
 export { PaymentsStripe, PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
-export type { StripeBindings, StripeProps, StripeTier } from "./PaymentsStripe.ts";
+export type {
+  StripeBindings,
+  StripeProps,
+  StripeTier,
+  StripeUsagePrice,
+} from "./PaymentsStripe.ts";
 export { PaymentsPolar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
@@ -342,4 +370,4 @@ export {
   providerFor,
 } from "./Payments.ts";
 export type { ProviderSet } from "./Payments.ts";
-export type { PaymentError, PaymentsService, MoneyProvider } from "./Payments.ts";
+export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from "./Payments.ts";

@@ -57,8 +57,8 @@ Spendable credit becomes `credits − reservedCredits`.
 
 **5. A hold expires.** Every hold records `expiresAt` (default 15 minutes). Settling after it is
 `HoldExpired`; releasing after it still returns the units, because a late release is a cleanup and
-not a charge. Sweeping expired holds automatically is a follow-up slice — it needs the scheduler,
-and until it exists a leaked hold is visible (it is in state) rather than silent.
+not a charge. A `HoldSweep` policy schedules a release for `expiresAt`, so a hold that nobody
+settles or releases returns its capacity on its own.
 
 **6. The old three commands are deleted, not deprecated.** Nothing is deployed; there is no state to
 migrate and no caller to keep working.
@@ -80,7 +80,9 @@ migrate and no caller to keep working.
 ### 2 — the sweep
 
 A policy that releases holds past `expiresAt`, scheduled the way `PeriodRollover` and `Dunning` are,
-so a caller that crashes between hold and settle does not keep capacity forever.
+so a caller that crashes between hold and settle does not keep capacity forever. Landed as
+`HoldSweep` in `src/Subscription/HoldSweep.policy.ts`: it schedules the schedulable `HoldElapsed`
+command at the hold's deadline, and the command releases the hold if it is still open.
 
 ### 3 — the console
 

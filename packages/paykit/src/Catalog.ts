@@ -3,7 +3,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Allowances, isFlagGrant, type Allowance } from "./Allowance.ts";
 import { CreditRateCards, Feature } from "./Feature.ts";
-import { CreditsExpire, Price, Tier } from "./Tier.ts";
+import { CreditsExpire, Price, Tier, type TierKind } from "./Tier.ts";
 
 /**
  * The deploy-time catalog: every declared feature and every purchasable tier.
@@ -157,6 +157,57 @@ export class CatalogCapWithoutBilling extends Schema.TaggedError<CatalogCapWitho
   { tier: Schema.String, feature: Schema.String },
 ) {}
 
+/**
+ * A one-off tier grants a feature. A pack sells credits, not a standing, so the
+ * allowance would describe an entitlement nothing activates.
+ */
+export class CatalogOneOffGrant extends Schema.TaggedError<CatalogOneOffGrant>()(
+  "CatalogOneOffGrant",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/** A one-off tier that sells no credits, or a negative number of them. */
+export class CatalogOneOffCredits extends Schema.TaggedError<CatalogOneOffCredits>()(
+  "CatalogOneOffCredits",
+  { tier: Schema.String },
+) {}
+
+/**
+ * A one-off tier's credits expire at a period close. A pack is bought ahead of
+ * any period, so a close must not wipe it.
+ */
+export class CatalogOneOffCreditsExpire extends Schema.TaggedError<CatalogOneOffCreditsExpire>()(
+  "CatalogOneOffCreditsExpire",
+  { tier: Schema.String },
+) {}
+
+/** A one-off tier with no price could not be bought. */
+export class CatalogOneOffWithoutPrice extends Schema.TaggedError<CatalogOneOffWithoutPrice>()(
+  "CatalogOneOffWithoutPrice",
+  { tier: Schema.String },
+) {}
+
+/** A unit price where nothing is billed. A unit price only prices an overage. */
+export class CatalogUnitPriceWithoutBilling extends Schema.TaggedError<CatalogUnitPriceWithoutBilling>()(
+  "CatalogUnitPriceWithoutBilling",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/** A money cap without a unit price. A ceiling in money needs a price to count it. */
+export class CatalogMoneyCapWithoutUnitPrice extends Schema.TaggedError<CatalogMoneyCapWithoutUnitPrice>()(
+  "CatalogMoneyCapWithoutUnitPrice",
+  { tier: Schema.String, feature: Schema.String },
+) {}
+
+/**
+ * A tier's postpaid prices do not agree on a currency, or disagree with the
+ * tier's own price. One standing has one currency, so the bill cannot mix.
+ */
+export class CatalogUnitPriceCurrency extends Schema.TaggedError<CatalogUnitPriceCurrency>()(
+  "CatalogUnitPriceCurrency",
+  { tier: Schema.String, currency: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -180,6 +231,13 @@ export const CatalogError = Schema.Union([
   CatalogCreditRatesOnFlag,
   CatalogCreditGrantInvalid,
   CatalogCapWithoutBilling,
+  CatalogOneOffGrant,
+  CatalogOneOffCredits,
+  CatalogOneOffCreditsExpire,
+  CatalogOneOffWithoutPrice,
+  CatalogUnitPriceWithoutBilling,
+  CatalogMoneyCapWithoutUnitPrice,
+  CatalogUnitPriceCurrency,
   CatalogInvalid,
 ]);
 export type CatalogError = typeof CatalogError.Type;
@@ -258,14 +316,54 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     creditPriced.add(feature.id);
   }
   for (const tier of catalog.tiers) {
-    if (tier.grants.length === 0) {
-      return Result.fail(new CatalogEmptyTier({ tier: tier.id }));
+    const kind = tier.kind ?? "subscription";
+    if (kind === "one_off") {
+      // A pack is a price and a number of credits, and nothing else: no
+      // allowance (nothing activates), no expiring pool (a close must not wipe
+      // it), and a price (otherwise there is no purchase).
+      const first = tier.grants[0];
+      if (first !== undefined) {
+        return Result.fail(new CatalogOneOffGrant({ tier: tier.id, feature: first.feature }));
+      }
+      if (tier.credits === undefined || tier.credits <= 0) {
+        return Result.fail(new CatalogOneOffCredits({ tier: tier.id }));
+      }
+      if (tier.creditsExpire !== "never") {
+        return Result.fail(new CatalogOneOffCreditsExpire({ tier: tier.id }));
+      }
+      if (tier.price === undefined) {
+        return Result.fail(new CatalogOneOffWithoutPrice({ tier: tier.id }));
+      }
+      continue;
     }
     if (
       (tier.credits !== undefined && tier.credits < 0) ||
       (tier.creditsExpire !== undefined && tier.credits === undefined)
     ) {
       return Result.fail(new CatalogCreditGrantInvalid({ tier: tier.id }));
+    }
+    if (tier.grants.length === 0) {
+      return Result.fail(new CatalogEmptyTier({ tier: tier.id }));
+    }
+    // One standing has one currency. Every unit price in the tier must agree
+    // with the tier's own price (when it has one) and with each other.
+    const unitCurrencies = new Set(
+      tier.grants.flatMap((grant) =>
+        grant.unitPrice === undefined ? [] : [grant.unitPrice.currency],
+      ),
+    );
+    const firstUnitCurrency = [...unitCurrencies][0];
+    if (
+      unitCurrencies.size > 1 ||
+      (firstUnitCurrency !== undefined &&
+        tier.price !== undefined &&
+        firstUnitCurrency !== tier.price.currency)
+    ) {
+      const offending =
+        unitCurrencies.size > 1
+          ? [...unitCurrencies][1]!
+          : (firstUnitCurrency ?? tier.price!.currency);
+      return Result.fail(new CatalogUnitPriceCurrency({ tier: tier.id, currency: offending }));
     }
     const granted = new Set<string>();
     for (const grant of tier.grants) {
@@ -312,6 +410,18 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       // bills past it cannot have one.
       if (grant.cap !== undefined && grant.overage !== "bill") {
         return Result.fail(new CatalogCapWithoutBilling({ tier: tier.id, feature: grant.feature }));
+      }
+      // A unit price prices the billable part, so it needs a bill; a money cap
+      // needs a unit price to turn units into money.
+      if (grant.unitPrice !== undefined && grant.overage !== "bill") {
+        return Result.fail(
+          new CatalogUnitPriceWithoutBilling({ tier: tier.id, feature: grant.feature }),
+        );
+      }
+      if (grant.moneyCap !== undefined && grant.unitPrice === undefined) {
+        return Result.fail(
+          new CatalogMoneyCapWithoutUnitPrice({ tier: tier.id, feature: grant.feature }),
+        );
       }
       if (grant.carryOver === true && grant.resets === "never") {
         return Result.fail(
@@ -362,6 +472,7 @@ export const creditRatesOf = (catalog: Catalog): CreditRateCards => {
 
 /** The credit terms a tier sells: its grant, when it expires, and every rate. */
 export interface TierCreditTerms {
+  readonly kind: TierKind;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
   readonly rates: CreditRateCards;
@@ -372,6 +483,7 @@ export const creditTermsOf = (catalog: Catalog, tierId: string): TierCreditTerms
   const tier = tierOf(catalog, tierId);
   if (tier === null) return null;
   return {
+    kind: tier.kind ?? "subscription",
     credits: tier.credits ?? 0,
     creditsExpire: tier.creditsExpire ?? "period",
     rates: creditRatesOf(catalog),

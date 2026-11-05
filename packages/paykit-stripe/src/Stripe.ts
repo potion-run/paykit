@@ -5,14 +5,17 @@ import {
   type Price,
   type StripeBindings,
   type StripeTier,
+  type StripeUsagePrice,
+  type TierKind,
 } from "@potion.run/paykit";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { distilledStripeClient } from "./StripeClient.ts";
 import { stripeWebhook } from "./Webhooks.ts";
 
 /** Where a tier lives in Stripe, and the price the catalog states. */
-export type { StripeTier };
+export type { StripeTier, StripeUsagePrice };
 
 /**
  * The Stripe calls this package makes, as an interface so a test can stand in.
@@ -22,8 +25,11 @@ export type { StripeTier };
 export interface StripeClient {
   /** A hosted Checkout Session for one price, tagged with its tier. */
   readonly createCheckoutSession: (request: {
-    readonly priceId: string;
+    /** The base price first, then one metered price per billable feature. */
+    readonly priceIds: ReadonlyArray<string>;
     readonly tier: string;
+    /** A subscription opens a period; a one-off pack is a single payment. */
+    readonly kind: TierKind;
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly cancelUrl: string;
@@ -56,6 +62,17 @@ export interface StripeClient {
     readonly chargeId: string;
     readonly amount: number;
   }) => Effect.Effect<{}, PaymentDeclined>;
+  /**
+   * Send one meter event. `identifier` is the vendor idempotency key, and
+   * `timestamp` is in seconds since the epoch, as Stripe's API expects.
+   */
+  readonly reportUsage?: (request: {
+    readonly eventName: string;
+    readonly customerExternalId: string;
+    readonly quantity: number;
+    readonly identifier: string;
+    readonly timestamp: number;
+  }) => Effect.Effect<{}, PaymentDeclined>;
 }
 
 /** What `Stripe()` needs to stand up a processor. */
@@ -68,6 +85,12 @@ export interface StripeProps {
   readonly origin: string;
   /** Tier → Stripe price, and the price the catalog already states. */
   readonly tiers?: Readonly<Record<string, StripeTier>>;
+  /**
+   * Feature → meter event name, from `StripePrices`. The meter is what the
+   * closing period's billable units are sent to; without it the provider
+   * declares no `usage` capability.
+   */
+  readonly meters?: Readonly<Record<string, string>>;
   /** Where a completed checkout returns to. Defaults to `/welcome`. */
   readonly successPath?: string;
   /** Where an abandoned checkout returns to. Defaults to `/pricing`. */
@@ -104,6 +127,8 @@ export interface StripeOrigin {
   readonly cancelPath?: string;
   readonly billingPath?: string;
   readonly invoiceDescription?: string;
+  /** Feature → meter event name, from `StripePrices`. */
+  readonly meters?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -121,11 +146,12 @@ export const stripeClientBindings = (
   const cancel = `${where.origin}${where.cancelPath ?? "/pricing"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
   const bindings: StripeBindings = {
-    createCheckoutSession: ({ account, tier, priceId }) =>
+    createCheckoutSession: ({ account, tier, priceIds, kind }) =>
       client
         .createCheckoutSession({
-          priceId,
+          priceIds,
           tier,
+          kind,
           customerExternalId: account,
           successUrl: success,
           cancelUrl: cancel,
@@ -166,6 +192,51 @@ export const stripeClientBindings = (
             client.createRefund!({ chargeId, amount }).pipe(
               Effect.mapError((cause) => declined("createRefund", cause)),
             ),
+        }),
+    ...(client.reportUsage === undefined || where.meters === undefined
+      ? {}
+      : {
+          reportUsage: ({
+            account,
+            periodStart: _periodStart,
+            periodEnd,
+            quantities,
+            commandId,
+          }: {
+            account: string;
+            periodStart: DateTime.Utc;
+            periodEnd: DateTime.Utc;
+            quantities: Readonly<Record<string, number>>;
+            commandId: string;
+          }) =>
+            Effect.forEach(
+              Object.entries(quantities),
+              ([feature, quantity]) => {
+                const eventName = where.meters?.[feature];
+                if (eventName === undefined) {
+                  return Effect.fail(
+                    new PaymentDeclined({
+                      provider: "stripe",
+                      code: "meter_not_configured",
+                      message: `no Stripe meter for ${feature}`,
+                    }),
+                  );
+                }
+                return client.reportUsage!({
+                  eventName,
+                  customerExternalId: account,
+                  quantity,
+                  // The period plus the account and feature: two accounts can
+                  // close the same period, and one report carries many features.
+                  identifier: `${commandId}:${account}:${feature}`,
+                  timestamp: Math.floor(DateTime.toEpochMillis(periodEnd) / 1000),
+                }).pipe(
+                  Effect.as({}),
+                  Effect.mapError((cause) => declined("reportUsage", cause)),
+                );
+              },
+              { concurrency: 1 },
+            ).pipe(Effect.as({})),
         }),
   };
   return { bindings };

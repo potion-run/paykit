@@ -8,6 +8,8 @@ import { AccountId } from "./Subscription.id.ts";
 export class CreditExceedsBalance extends Domain.Rejection("CreditExceedsBalance", {
   balance: Schema.Int,
   requested: Schema.Int,
+  /** Credits open holds reserved; `balance - reserved` is what could be spent. */
+  reserved: Schema.optionalKey(Schema.Int),
 }) {}
 
 /** Account credit was spent. */

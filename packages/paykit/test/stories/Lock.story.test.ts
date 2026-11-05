@@ -16,7 +16,6 @@ import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import {
   Hold,
   HoldExceeded,
-  HoldExpired,
   HoldSettled,
   HoldUnknown,
   UsageReserved,
@@ -282,21 +281,44 @@ it.effect("a settled hold cannot be released, and a late release still returns u
   ),
 );
 
-it.effect("a hold past its expiry cannot be settled", () =>
+it.effect("the sweep releases a hold at its deadline, so a settle is refused", () =>
   story(
     ...subscribed,
     Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
     Story.then(account, held),
     Story.clock(quarter),
-    Story.when(account, new SettleHold({ holdId: "hold_a" })),
-    Story.rejected(
-      new HoldExpired({
+    // The policy returns the units at `expiresAt`; nobody sends a release.
+    Story.then(
+      account,
+      new UsageReleased({
         holdId: "hold_a",
         feature: "messages",
-        expiresAt: quarter,
-        now: quarter,
+        amount: 400,
+        cost: 0,
+        remainingAfter: 2_000,
       }),
     ),
+    Story.view(Entitlements, account, {
+      features: {
+        messages: {
+          included: 2_000,
+          used: 0,
+          reserved: 0,
+          remaining: 2_000,
+          carried: 0,
+          allowed: true,
+          overage: "block",
+          resets: "month",
+          resetsAt: monthLater,
+        },
+      },
+    }),
+    // The work was never billed, so a late settle has nothing to bill.
+    Story.when(account, new SettleHold({ holdId: "hold_a" })),
+    Story.rejected(new HoldSettled({ holdId: "hold_a", feature: "messages" })),
+    // A late release is the same cleanup, recorded once.
+    Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
+    Story.then(account),
   ),
 );
 

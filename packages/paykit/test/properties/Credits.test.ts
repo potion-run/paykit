@@ -3,11 +3,16 @@ import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { tierTermsOf } from "../../src/Catalog.ts";
+import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
+import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
   initialSubscriptionState,
   creditRateOf,
+  prepaidCreditsOf,
+  reservedCreditsOf,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
+import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   Amount,
@@ -30,6 +35,7 @@ const Step = Schema.Union([
     dimension: Schema.Literals(["default", "gpt-large"]),
   }),
   Schema.TaggedStruct("Grant", { amount: Amount }),
+  Schema.TaggedStruct("Purchase", { amount: Amount }),
   Schema.TaggedStruct("Consume", { amount: Amount }),
   Schema.TaggedStruct("ChangeTier", { tier: TierName }),
   Schema.TaggedStruct("ClosePeriod", {}),
@@ -86,11 +92,13 @@ describe("credits", () => {
                 )
               : step._tag === "Grant"
                 ? commandOf({ _tag: "GrantCredits", amount: step.amount }, state, now)
-                : step._tag === "Consume"
-                  ? commandOf({ _tag: "ConsumeCredits", amount: step.amount }, state, now)
-                  : step._tag === "ChangeTier"
-                    ? commandOf({ _tag: "ChangeTier", tier: step.tier }, state, now)
-                    : commandOf({ _tag: "ClosePeriod" }, state, now);
+                : step._tag === "Purchase"
+                  ? commandOf({ _tag: "PurchaseCredits", amount: step.amount }, state, now)
+                  : step._tag === "Consume"
+                    ? commandOf({ _tag: "ConsumeCredits", amount: step.amount }, state, now)
+                    : step._tag === "ChangeTier"
+                      ? commandOf({ _tag: "ChangeTier", tier: step.tier }, state, now)
+                      : commandOf({ _tag: "ClosePeriod" }, state, now);
           const decision = decideAt(state, command, now, `step-${index}`);
 
           if (!isAccepted(decision)) {
@@ -144,18 +152,44 @@ describe("credits", () => {
               if (after.credits !== event.creditsAfter) return false;
               if ((after.usage.ai ?? 0) !== event.usedAfter) return false;
               if ((after.remaining.ai ?? null) !== event.creditsAfter) return false;
+              // Expiring credits are spent first; a purchased pack is protected.
+              if (
+                prepaidCreditsOf(after) !==
+                Math.max(0, Math.min(prepaidCreditsOf(before), event.creditsAfter))
+              ) {
+                return false;
+              }
               break;
             }
             case "Grant": {
               const event = decision[0] as unknown as { readonly balanceAfter: number };
               if (event.balanceAfter !== before.credits + step.amount) return false;
               if (after.credits !== event.balanceAfter) return false;
+              if (prepaidCreditsOf(after) !== prepaidCreditsOf(before)) return false;
+              break;
+            }
+            case "Purchase": {
+              const event = decision[0] as unknown as {
+                readonly balanceAfter: number;
+                readonly prepaidAfter: number;
+              };
+              if (event.balanceAfter !== before.credits + step.amount) return false;
+              if (event.prepaidAfter !== prepaidCreditsOf(before) + step.amount) return false;
+              if (after.credits !== event.balanceAfter) return false;
+              if (prepaidCreditsOf(after) !== event.prepaidAfter) return false;
               break;
             }
             case "Consume": {
               const event = decision[0] as unknown as { readonly balanceAfter: number };
               if (event.balanceAfter !== before.credits - step.amount) return false;
               if (after.credits !== event.balanceAfter) return false;
+              // Consuming spends the plan's credits before the pack.
+              if (
+                prepaidCreditsOf(after) !==
+                Math.max(0, Math.min(prepaidCreditsOf(before), event.balanceAfter))
+              ) {
+                return false;
+              }
               break;
             }
             case "ChangeTier": {
@@ -175,13 +209,21 @@ describe("credits", () => {
               if (!same(event.rates, terms.rates)) return false;
               if (after.creditsExpire !== terms.creditsExpire) return false;
               if (!same(after.rates, terms.rates)) return false;
+              // A tier change carries the balance and its protected part.
+              if (prepaidCreditsOf(after) !== prepaidCreditsOf(before)) return false;
               break;
             }
             case "ClosePeriod": {
-              const expired = decision.some((entry) => entry._tag === "CreditsExpired");
-              if (expired !== (before.creditsExpire === "period")) return false;
-              const expected = before.creditsExpire === "period" ? 0 : before.credits;
-              if (after.credits !== expected) return false;
+              const expired = decision.find((entry) => entry._tag === "CreditsExpired") as
+                | { readonly amount: number }
+                | undefined;
+              if ((expired !== undefined) !== (before.creditsExpire === "period")) return false;
+              const expiring =
+                before.creditsExpire === "period" ? before.credits - prepaidCreditsOf(before) : 0;
+              if (expired !== undefined && expired.amount !== expiring) return false;
+              if (after.credits !== before.credits - expiring) return false;
+              // A period close never touches what a pack bought.
+              if (prepaidCreditsOf(after) !== prepaidCreditsOf(before)) return false;
               break;
             }
           }
@@ -193,6 +235,58 @@ describe("credits", () => {
         return true;
       },
       { runs: 80, size: 40 },
+    ),
+  );
+
+  it.effect("a held pool cannot be spent twice", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          held: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 50_000 }))),
+          spent: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 50_000 }))),
+        }),
+      ),
+      ({ held, spent }) => {
+        let state = opened("pro");
+        // The hold takes its credits out of the spendable pool, not only out of
+        // `credits`: a second spend must see the difference.
+        const hold = decideAt(
+          state,
+          new Hold({
+            holdId: "probe-hold",
+            feature: "ai",
+            amount: held,
+            expiresAt: DateTime.add(start, { days: 1 }),
+          }),
+          start,
+          "hold",
+        );
+        if (!isAccepted(hold)) return false;
+        state = evolveAt(state, hold, start, "hold") as SubscribedState;
+
+        const track = decideAt(
+          state,
+          new TrackUsage({ feature: "ai", amount: spent }),
+          start,
+          "track",
+        );
+        if (isAccepted(track)) {
+          state = evolveAt(state, track, start, "track") as SubscribedState;
+          // Every open hold is still covered, and the pool never went negative.
+          if (state.credits < 0) return false;
+          if (state.credits < reservedCreditsOf(state)) return false;
+        }
+
+        const consume = decideAt(state, new ConsumeCredits({ amount: spent }), start, "consume");
+        if (isAccepted(consume)) {
+          state = evolveAt(state, consume, start, "consume") as SubscribedState;
+          if (state.credits < 0) return false;
+          if (state.credits < reservedCreditsOf(state)) return false;
+        }
+
+        return true;
+      },
+      { runs: 80, size: 20 },
     ),
   );
 });

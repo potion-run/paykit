@@ -60,8 +60,15 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 
 - `feature()` declares a meter once. `FeatureId` and `TierId` are branded; a tier quotes a
   feature by value through `allowance()`, never by a bare string.
-- `tier()` bundles at least one allowance. A missing `price` is free; prices are integer minor
-  units plus a currency.
+- `tier()` bundles at least one allowance for a subscription. A missing `price` is free; prices
+  are integer minor units plus a currency. A `kind: "one_off"` pack is the exception: it grants
+  credits, has no allowances, defaults `creditsExpire` to `"never"`, and must state a price. The
+  catalog refuses either shape the wrong way round.
+- A postpaid allowance states `unitPrice: { amount, currency }` and optionally `moneyCap`; both
+  need `overage: "bill"`, and a tier's unit prices share one currency (the tier price's, when it has
+  one). The catalog refuses a price with nothing to bill (`CatalogUnitPriceWithoutBilling`), a money
+  cap with no price, and mixed currencies. `check()` prices the requested amount; `Track` records
+  `charge` and `billedAfter` on the event and refuses past the money cap.
 - `catalog()` / `defineCatalog()` validate the graph and refuse with `CatalogError`, a
   `Schema.Union` with one tag per refusal. A new semantic rule gets a new tag carrying its
   evidence and a test; `CatalogInvalid` is only for a schema failure.
@@ -102,14 +109,24 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   calls and there is no third one to forget. Settling a settled hold records nothing (a replay);
   over-settling is `HoldExceeded`, releasing a settled hold is `HoldSettled`, an id nobody issued
   is `HoldUnknown`, and a hold past `expiresAt` is `HoldExpired` — a release still returns the
-  units, because a late release is a cleanup and not a charge. A hold on a credit-priced feature
-  reserves `amount × rate` at the rate captured when it was placed, so a catalog change mid-flight
-  does not reprice work already priced.
+  units, because a late release is a cleanup and not a charge. `HoldSweep` schedules `HoldElapsed`
+  at `expiresAt`, so a hold nobody settles or releases comes back on its own; the deadline is a
+  no-op for a hold that already closed, so the caller's release and the sweep cannot both act. A
+  hold on a credit-priced feature reserves `amount × rate` at the rate captured when it was placed,
+  so a catalog change mid-flight does not reprice work already priced.
 - A period close resets every allowance except `resets: "never"`, which keeps its usage, open
   holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
   further period, and `EnterGrace` is refused once the standing is terminal.
 - A trial opens on the cadence its price states: an annual trial converts into an annual period,
   not a monthly one.
+- Postpaid money is on the event. `UsageRecorded.charge` is this event's bill and `billedAfter` is
+  the feature's period total, so a replay reproduces the bill and a catalog price change never
+  reprices history. A money cap refuses in the same transaction as the usage and leaves the standing
+  `good`.
+- A one-off pack is a purchase, not a tier change: its credits arrive through `PurchaseCredits` /
+  `CreditsPurchased`, never `TierChanged`, and never create a second standing. The standing tracks
+  `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only
+  `credits - prepaidCredits`, and spending drains the plan's credits before the protected pool.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
@@ -282,6 +299,14 @@ would carry all of it to serve one adapter. If someone needs Stripe or Polar wit
 still uses the adapters directly: `PaymentsStripe({ bindings, tiers })` and
 `PaymentsPolar({ bindings, tiers })` are the port mappings the packages fill in.
 
+A vendor package also owns the deploy half: `StripePrices` and `PolarPrices` create the prices, or
+the products with their embedded prices, that the catalog states — and for each postpaid feature, a
+meter and a metered price from the same `unitPrice`. They return the meter event names and the
+metered handles the runtime provider needs, so `PeriodCloseUsage` can push the closing period's
+billable units. Both declare every resource with `RemovalPolicy.retain`, so a tier that leaves the
+catalog leaves a financial record rather than a deleted one. They are deploy-time helpers, not
+resources paykit reconciles; `BillingStack` records what they produced.
+
 Adding a provider touches the same places every time:
 
 1. **The vendor package** — `@potion.run/paykit-<vendor>` when no Alchemy provider fits what paykit
@@ -326,7 +351,7 @@ internal, whatever it is.
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar) |
+| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, read/write agreement, the catalog and guard contract, and delivery dedupe |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
 | `test/surfaces` | the MCP tool list and the CLI are derived from the Apis, not written twice |
 | `test/Api.test.ts` | each guard refuses what it should: no caller, another account, an operator command |

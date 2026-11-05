@@ -3,6 +3,9 @@
 Stripe for paykit: one call that returns a `Payments` provider, the webhook that moves a
 standing, and the three Stripe calls they need. Over `@distilled.cloud/stripe`.
 
+Resource-provider patterns (lifecycle, Reconciler doctrine, ownership, tests) live in the root
+[AGENTS.md](../../AGENTS.md#resource-providers).
+
 **This is a paykit package, not a general Alchemy provider.** It imports `@potion.run/paykit`,
 because its whole job is to be the shortest path from a catalog to a working Stripe processor.
 That is a deliberate maintenance choice: a general provider would need its own users, docs,
@@ -20,12 +23,28 @@ import { Stripe } from "@potion.run/paykit-stripe";
 import { Paykit } from "@potion.run/paykit";
 
 // The deploy creates the prices the catalog states and hands back the keys.
-const prices = yield* StripePrices("Prices", { tiers: { pro: proPrice } });
+const sold = yield* StripePrices("Prices", {
+  tiers: {
+    pro: {
+      price: proPrice,
+      usage: { messages: { amount: 2, currency: "usd" } },
+    },
+  },
+});
 
 const stripe = Stripe({
   secretKey: yield* Config.redacted("STRIPE_SECRET_KEY"),
   origin: "https://app.example.com",
-  tiers: { pro: { price: proPrice, lookupKey: prices.pro } },
+  tiers: {
+    pro: {
+      price: proPrice,
+      lookupKey: sold.prices.pro,
+      usage: {
+        messages: { unitPrice: { amount: 2, currency: "usd" }, lookupKey: sold.usage.pro.messages },
+      },
+    },
+  },
+  meters: sold.meters,
 });
 ```
 
@@ -38,7 +57,7 @@ const stripe = Stripe({
 | `distilledStripeClient` | `@distilled.cloud/stripe` behind those calls |
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
-| `StripePrices(id, { tiers })` | creates the products and prices the catalog states, and returns each tier's lookup key |
+| `StripePrices(id, { tiers })` | creates the products, base prices, meters and metered prices the catalog states, and returns `{ prices, usage, meters }` |
 | `priceDeclarations(tiers)` | the pure mapping: resource ids, lookup keys, amounts, intervals |
 | `lookupKeyOf(stage, tier)` | `paykit:<stage>:<tier>`, the only identity that survives a restore |
 
@@ -55,9 +74,12 @@ a redelivery replays instead of charging twice.
 
 ## The deploy provisions the prices
 
-`StripePrices` yields one `@alchemy.run/stripe` `Product` and `Price` per priced tier — the vendor
-package's own resources, not a second implementation — and returns `Record<tier, lookupKey>`. Three
-rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
+`StripePrices` yields one `@alchemy.run/stripe` `Product` and base `Price` per priced tier — the
+vendor package's own resources, not a second implementation — plus a `BillingMeter` and a metered
+`Price` for every `usage` feature. It returns `SoldPrices`: the base lookup key per tier, the metered
+lookup key per tier and feature, and the meter event name per feature. `Stripe({ meters })` carries
+the meter map to the runtime so the close can report usage. Three rules come with it, from
+[ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
 
 - **A price is never deleted.** A tier that leaves the catalog is archived, because invoices
   reference it. A changed amount creates a new price, moves the lookup key onto it
@@ -69,12 +91,15 @@ rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provision
   let a preview price take the key from production's.
 - **The catalog stays provider-free.** `StripePrices` takes prices and returns keys. Nothing about
   Stripe reaches the catalog, and a stack that runs two providers declares both from the same
-  prices.
+  prices. A tier entry can state `kind: "one_off"` so its price is one-time; the checkout then uses
+  Stripe's `mode: "payment"` instead of starting a subscription.
 
 `Stripe({ tiers })` accepts either handle: a `priceId` pins one price object, a `lookupKey` resolves
 to whichever price currently answers for the tier (through `resolvePrice`, which the distilled
 client implements with `GetPrices`). With a key, changing a price in the catalog needs no config
-change.
+change. The checkout carries the base price and every metered price as line items on one
+subscription, and `StripeProps.meters` is what lets `reportUsage` send one meter event per feature
+with the closing period as its identifier.
 
 ## Rules
 

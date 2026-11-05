@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
 import { tierOf, tierTermsOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
+import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "./Subscription/RecordPaymentFailure.command.ts";
 import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.command.ts";
@@ -83,6 +84,7 @@ export interface PaymentsWebhook {
 /** What the edge did with an event. */
 export const WebhookAction = Schema.Literals([
   "activated",
+  "purchased",
   "recovered",
   "failed",
   "canceled",
@@ -108,6 +110,29 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
     Effect.gen(function* () {
       const ref = Subscription.ref(event.account);
       const state = yield* subscription.state(ref);
+      // A one-off tier is a pack, not a standing: a payment for it adds
+      // never-expiring credits to the pool the account already holds. It does
+      // not activate, change the tier or create a second subscription.
+      const sold = event.tier === undefined ? null : tierOf(catalog, event.tier);
+      const oneOff = sold !== null && (sold.kind ?? "subscription") === "one_off";
+
+      const purchase = Effect.gen(function* () {
+        if (sold === null) {
+          return yield* new WebhookInvalid({ event: event.id, field: "tier" });
+        }
+        yield* asSystem(
+          subscription.send(
+            ref,
+            new PurchaseCredits({
+              tier: sold.id,
+              amount: sold.credits ?? 0,
+              ...(sold.price === undefined ? {} : { price: sold.price }),
+            }),
+            { commandId: event.id },
+          ),
+        );
+        return "purchased" as const satisfies WebhookAction;
+      });
 
       const activate = Effect.gen(function* () {
         if (event.tier === undefined) {
@@ -138,9 +163,11 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
 
       switch (event.kind) {
         case "checkout_completed":
+          if (oneOff) return yield* purchase;
           return yield* activate;
 
         case "payment_succeeded": {
+          if (oneOff) return yield* purchase;
           if (event.amount === undefined) {
             return yield* new WebhookInvalid({ event: event.id, field: "amount" });
           }

@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AllowanceKind, Included, Overage, Resets } from "../Allowance.ts";
+import { AllowanceKind, Included, Overage, Resets, UnitPrice } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
@@ -12,6 +12,7 @@ import { Subscription } from "./Subscription.aggregate.ts";
 import {
   SubscriptionStatus,
   Standing,
+  chargeOf,
   creditRateOf,
   includedRemainingOf,
   recordedCount,
@@ -63,6 +64,12 @@ export const FeatureEntitlement = Schema.Struct({
   cap: Schema.optionalKey(Schema.Int),
   resets: Resets,
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** What one billed unit costs, when the allowance is postpaid. */
+  unitPrice: Schema.optionalKey(UnitPrice),
+  /** The most this feature may bill in money this period, in minor units. */
+  moneyCap: Schema.optionalKey(Schema.Int),
+  /** Money billed for this feature this period, in the standing's currency. */
+  billed: Schema.optionalKey(Schema.Int),
 });
 export type FeatureEntitlement = typeof FeatureEntitlement.Type;
 
@@ -138,6 +145,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           periodStart: event.periodStart,
           periodEnd: event.periodEnd,
           cancelAtPeriodEnd: false,
+          dunningAttempts: 0,
           credits: event.credits,
           features: featuresOf(
             event.allowances,
@@ -163,6 +171,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           periodStart: event.periodStart,
           periodEnd: event.periodEnd,
           cancelAtPeriodEnd: false,
+          dunningAttempts: 0,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           credits: event.credits,
           features: featuresOf(
@@ -230,18 +239,23 @@ export class Entitlements extends Domain.View("Entitlements", {
           credits: event.creditsAfter,
           features: {
             ...view.features,
-            [event.feature]: {
-              ...feature,
-              used: event.usedAfter,
-              remaining: event.remainingAfter,
-              allowed: allowsOne(
-                view.standing,
-                feature.overage,
-                event.remainingAfter,
-                feature.cap,
-                feature.carried,
-              ),
-            },
+            [event.feature]: (() => {
+              const billed = event.billedAfter ?? feature.billed ?? 0;
+              return {
+                ...feature,
+                used: event.usedAfter,
+                remaining: event.remainingAfter,
+                ...(event.billedAfter === undefined ? {} : { billed: event.billedAfter }),
+                allowed: allowsOne(
+                  view.standing,
+                  feature.overage,
+                  event.remainingAfter,
+                  feature.cap,
+                  feature.carried,
+                  moneyOf(feature, { billed, used: event.usedAfter }),
+                ),
+              };
+            })(),
           },
         },
         context,
@@ -274,6 +288,7 @@ export class Entitlements extends Domain.View("Entitlements", {
                 event.remainingAfter,
                 feature.cap,
                 feature.carried,
+                moneyOf(feature, { reserved: feature.reserved + event.amount }),
               ),
             },
           },
@@ -309,6 +324,9 @@ export class Entitlements extends Domain.View("Entitlements", {
                 event.remainingAfter,
                 feature.cap,
                 feature.carried,
+                moneyOf(feature, {
+                  reserved: Math.max(0, feature.reserved - event.amount - event.released),
+                }),
               ),
             },
           },
@@ -340,6 +358,9 @@ export class Entitlements extends Domain.View("Entitlements", {
                 event.remainingAfter,
                 feature.cap,
                 feature.carried,
+                moneyOf(feature, {
+                  reserved: Math.max(0, feature.reserved - event.amount),
+                }),
               ),
             },
           },
@@ -386,8 +407,22 @@ export class Entitlements extends Domain.View("Entitlements", {
             Object.entries(view.features).map(([feature, value]) => {
               // A credit-priced feature has no allowance to reset: the pool is
               // shared, and only this feature's spend in the period restarts.
+              // Open holds are cleared by the reset too, so the spendable pool
+              // is the whole balance again. A period pool expires in the next
+              // event and updates this through `withCreditsOf`.
               if (value.creditRates !== undefined) {
-                return [feature, { ...value, used: 0, reserved: 0 }];
+                return [
+                  feature,
+                  {
+                    ...value,
+                    used: 0,
+                    reserved: 0,
+                    remaining: view.credits,
+                    allowed:
+                      view.standing !== "blocked" &&
+                      view.credits >= creditRateOf(value.creditRates, undefined),
+                  },
+                ];
               }
               // `resets: "never"` keeps its usage and open reservations: the
               // boundary moves the period, not this allowance.
@@ -405,12 +440,14 @@ export class Entitlements extends Domain.View("Entitlements", {
                   reserved: kept ? value.reserved : 0,
                   remaining: spendable,
                   carried: event.carried[feature] ?? 0,
+                  ...(value.unitPrice === undefined ? {} : { billed: 0 }),
                   allowed: allowsOne(
                     view.standing,
                     value.overage,
                     spendable,
                     value.cap,
-                    value.carried,
+                    event.carried[feature] ?? 0,
+                    moneyOf(value, { billed: 0, used: 0 }),
                   ),
                 },
               ];
@@ -442,6 +479,8 @@ export class Entitlements extends Domain.View("Entitlements", {
       ),
     CreditsGranted: (view, event, context): EntitlementsState =>
       withAccount(withPool(view, event.balanceAfter), context),
+    CreditsPurchased: (view, event, context): EntitlementsState =>
+      withAccount(withPool(view, event.balanceAfter), context),
     CreditsConsumed: (view, event, context): EntitlementsState =>
       withAccount(withPool(view, event.balanceAfter), context),
     CreditsExpired: (view, event, context): EntitlementsState =>
@@ -467,14 +506,40 @@ const withPool = (view: EntitlementsState, balance: number): EntitlementsState =
  * `check()` cannot disagree. A `null` remaining is unbounded, so it always has
  * room for one more.
  */
+/** The money context a feature's next unit is judged against. */
+const moneyOf = (
+  feature: FeatureEntitlement,
+  over: { readonly billed?: number; readonly used?: number; readonly reserved?: number } = {},
+) => ({
+  unitPrice: feature.unitPrice,
+  moneyCap: feature.moneyCap,
+  billed: over.billed ?? feature.billed ?? 0,
+  used: over.used ?? feature.used,
+  reserved: over.reserved ?? feature.reserved,
+  included: feature.included,
+});
+
 export const allowsOne = (
   standing: Standing,
   overage: Overage,
   remaining: number | null,
   cap?: number,
   carried?: number,
+  money?: {
+    readonly unitPrice?: UnitPrice;
+    readonly moneyCap?: number;
+    readonly billed?: number;
+    readonly used?: number;
+    readonly included?: Included | null;
+  },
 ): boolean => {
   if (standing === "blocked") return false;
+  // A money cap is a ceiling on money, not on units: the next unit is refused
+  // when its charge would pass what the feature may bill this period.
+  if (money?.moneyCap !== undefined) {
+    const charge = chargeOf(money.unitPrice, money.included ?? null, money.used ?? 0, 1);
+    if ((money.billed ?? 0) + charge > money.moneyCap) return false;
+  }
   if (overage === "block" && remaining !== null && remaining < 1) return false;
   // A capped feature answers from the ceiling, not from the standing: at the
   // ceiling the account is out of what it bought, not in trouble.
@@ -560,7 +625,15 @@ const featuresOf = (
   allowances: Readonly<
     Record<
       string,
-      { kind?: AllowanceKind; included: Included; overage: Overage; resets: Resets; cap?: number }
+      {
+        kind?: AllowanceKind;
+        included: Included;
+        overage: Overage;
+        resets: Resets;
+        cap?: number;
+        unitPrice?: UnitPrice;
+        moneyCap?: number;
+      }
     >
   >,
   rates: Readonly<Record<string, CreditRates>>,
@@ -576,6 +649,7 @@ const featuresOf = (
     Object.entries(allowances).map(([feature, allowance]) => {
       const used = keepUsage ? (previous[feature]?.used ?? 0) : 0;
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
+      const billed = keepUsage ? (previous[feature]?.billed ?? 0) : 0;
       const spendable = spendableOf(remaining, feature, allowance);
       return [
         feature,
@@ -587,9 +661,18 @@ const featuresOf = (
           remaining: spendable,
           // A period starts with no rollover; only `UsageReset` carries one in.
           carried: 0,
-          allowed: allowsOne(standing, allowance.overage, spendable, allowance.cap),
+          allowed: allowsOne(standing, allowance.overage, spendable, allowance.cap, undefined, {
+            unitPrice: allowance.unitPrice,
+            moneyCap: allowance.moneyCap,
+            billed,
+            used,
+            included: allowance.included,
+          }),
           overage: allowance.overage,
           ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
+          ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+          ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+          ...(billed === 0 ? {} : { billed }),
           resets: allowance.resets,
           resetsAt: allowance.resets === "never" ? null : periodEnd,
         },

@@ -6,6 +6,7 @@ import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price } from "../Tier.ts";
+import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import type { SubscriptionStatus } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -18,6 +19,8 @@ export class TrialStarted extends Domain.Event("TrialStarted", {
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   /** The credit pool this trial grants. */
   credits: Schema.Int,
+  /** The part of the pool a one-off pack already bought; absent when zero. */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
   creditsExpire: CreditsExpire,
   rates: CreditRateCards,
   periodStart: Schema.DateTimeUtc,
@@ -26,6 +29,8 @@ export class TrialStarted extends Domain.Event("TrialStarted", {
   trialEndsAt: Schema.DateTimeUtc,
   /** What the tier will cost when the trial converts. Absent on a free tier. */
   price: Schema.optionalKey(Price),
+  /** The money the tier's postpaid units are billed in, when it has any. */
+  currency: Schema.optionalKey(Schema.String),
   statusAfter: Schema.Literal("trialing"),
 }) {}
 
@@ -43,7 +48,7 @@ export class StartTrial extends Domain.Command("StartTrial", {
     price: Schema.optionalKey(Price),
   },
   events: [TrialStarted],
-  rejects: [TrialAlreadyUsed, TierNotInCatalog, CatalogMismatch],
+  rejects: [TrialAlreadyUsed, TierNotInCatalog, CatalogMismatch, CurrencyMismatch],
   middleware: [Session, CatalogGuard],
 }) {}
 

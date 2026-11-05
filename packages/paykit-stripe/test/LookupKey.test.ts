@@ -10,7 +10,7 @@ const client = (asked: Array<Record<string, unknown>> = []): StripeClient => ({
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
-      return { url: `https://checkout.stripe.test/${request.priceId}` };
+      return { url: `https://checkout.stripe.test/${request.priceIds.join(",")}` };
     }),
   createBillingPortalSession: () => Effect.succeed({ url: "https://billing.stripe.test/portal" }),
   createInvoice: () => Effect.succeed({ invoiceId: "in_proration" }),
@@ -35,13 +35,17 @@ describe("selling a tier by lookup key", () => {
       const checkout = yield* runWith(
         provider,
         Effect.gen(function* () {
-          return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+          return yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
         }),
       );
       // The id came from the resolver, not from config: a replaced price needs
       // no config change.
       expect(checkout.url).toContain("price_resolved");
-      expect(asked[0]).toMatchObject({ priceId: "price_resolved", tier: "pro" });
+      expect(asked[0]).toMatchObject({ priceIds: ["price_resolved"], tier: "pro" });
     }),
   );
 
@@ -57,7 +61,11 @@ describe("selling a tier by lookup key", () => {
       const checkout = yield* runWith(
         provider,
         Effect.gen(function* () {
-          return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+          return yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
         }),
       );
       expect(checkout.url).toContain("price_pinned");
@@ -81,7 +89,11 @@ describe("selling a tier by lookup key", () => {
         runWith(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );

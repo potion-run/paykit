@@ -18,7 +18,14 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
+const packTier = tier({
+  id: "credits_1k",
+  kind: "one_off",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  credits: 1_000,
+  grants: [],
+});
+const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, packTier] }));
 const pro = allowancesOf(testCatalog, "pro")!;
 const account = "acct_hook";
 const graceUntil = DateTime.makeUnsafe("2030-01-08T00:00:00Z");
@@ -69,6 +76,52 @@ describe("webhook edge", () => {
       expect(first).toBe("activated");
       expect(second).toBe("activated");
       expect(after).toEqual(before);
+    }).pipe(run),
+  );
+
+  it.effect("a one-off payment buys credits without changing the standing or replaying twice", () =>
+    Effect.gen(function* () {
+      yield* handleWebhook(
+        event({ id: "evt_pack_stand", kind: "checkout_completed", tier: "pro" }),
+      );
+      const action = yield* handleWebhook(
+        event({
+          id: "evt_pack",
+          kind: "payment_succeeded",
+          tier: "credits_1k",
+          amount: 9_900,
+          currency: "usd",
+        }),
+      );
+      expect(action).toBe("purchased");
+      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
+
+      // A redelivery is the same command id, so it records nothing again.
+      const redelivered = yield* handleWebhook(
+        event({
+          id: "evt_pack",
+          kind: "payment_succeeded",
+          tier: "credits_1k",
+          amount: 9_900,
+          currency: "usd",
+        }),
+      );
+      expect(redelivered).toBe("purchased");
+      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
+    }).pipe(run),
+  );
+
+  it.effect("a one-off checkout does not activate a second standing", () =>
+    Effect.gen(function* () {
+      yield* handleWebhook(
+        event({ id: "evt_pack_checkout_stand", kind: "checkout_completed", tier: "pro" }),
+      );
+      const action = yield* handleWebhook(
+        event({ id: "evt_pack_checkout", kind: "checkout_completed", tier: "credits_1k" }),
+      );
+      expect(action).toBe("purchased");
+      const current = yield* state;
+      expect(current).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
     }).pipe(run),
   );
 

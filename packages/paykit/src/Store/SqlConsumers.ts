@@ -216,9 +216,16 @@ export const SqlViewStore = (
           const snapshot = yield* read(key, generation);
           // Dedupe before applying: at-least-once delivery means the same event
           // can arrive twice, and a view that applied both would double it.
+          // The committed input log answers for earlier batches; a batch can
+          // also carry the same delivery twice, which no row has recorded yet.
           const fresh: Array<Delivery> = [];
+          const seen = new Set<string>();
           for (const delivery of deliveries) {
-            if (!(yield* alreadyApplied(key, delivery, generation))) fresh.push(delivery);
+            const identity = `${delivery.source}:${delivery.seq}`;
+            if (seen.has(identity)) continue;
+            if (yield* alreadyApplied(key, delivery, generation)) continue;
+            seen.add(identity);
+            fresh.push(delivery);
           }
           if (fresh.length === 0) return;
           const applied = yield* bound.apply(key, snapshot, fresh);

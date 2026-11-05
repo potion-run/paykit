@@ -43,12 +43,13 @@ const purchasePath = (
   provider: { readonly name: string; readonly capabilities: ReadonlySet<string> } | null,
   account: string,
   tier: string,
+  kind: "subscription" | "one_off",
   amount: number,
   currency: string,
 ): Effect.Effect<{ readonly url: string } | { readonly invoiceId: string }, PaymentError> => {
   if (provider !== null) {
     if (provider.capabilities.has("checkout")) {
-      return service.createCheckout({ account, tier });
+      return service.createCheckout({ account, tier, kind });
     }
     if (provider.capabilities.has("invoice")) {
       return service.createInvoice({ account, amount, currency });
@@ -58,7 +59,7 @@ const purchasePath = (
     );
   }
   return service
-    .createCheckout({ account, tier })
+    .createCheckout({ account, tier, kind })
     .pipe(
       Effect.catchTag("ProviderCapabilityMissing", () =>
         service.createInvoice({ account, amount, currency }),
@@ -100,11 +101,16 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
     if (tier === null || terms === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
-    const { allowances, credits, creditsExpire, rates } = terms;
+    const { kind, allowances, credits, creditsExpire, rates } = terms;
     const ref = Subscription.ref(input.account);
     const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
+    const standing = yield* subscription.state(ref);
 
     if (tier.price === undefined) {
+      // A one-off tier is a pack of credits; without a price there is nothing
+      // to buy. The catalog refuses this shape, so a runtime that sees it has
+      // a stale catalog rather than a caller mistake.
+      if (kind === "one_off") return yield* new TierNotInCatalog({ tier: input.tier });
       const receipt = yield* asSystem(
         subscription.send(
           ref,
@@ -122,12 +128,14 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
       return { activated: true } as const satisfies SubscribeResult;
     }
 
+    // A pack is a purchase, not an activation: the account keeps whatever
+    // standing it has (or has none yet), and the payment path is the only thing
+    // that runs. Buying one never creates a second standing.
     // Bound here: narrowing a property does not survive into the generator.
     const price = tier.price;
     // The standing says which provider this account already belongs to; a new
     // account starts on the router's fallback. One provider's layer is provided
     // for this call, because two providers are two services.
-    const standing = yield* subscription.state(ref);
     const chosen = Option.match(router, {
       onNone: () => null,
       onSome: (set) => providerFor(set, standing.refs),
@@ -148,6 +156,7 @@ export const Subscribe = Effect.fn("Paykit.Subscribe")(function* () {
         Option.getOrNull(provider),
         input.account,
         tier.id,
+        kind,
         price.amount,
         price.currency,
       );

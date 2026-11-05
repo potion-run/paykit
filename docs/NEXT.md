@@ -8,113 +8,67 @@ disagree, the ADR wins and this file is wrong.
 
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Three packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`) on one version line. The gates are green: `format:check`,
-`lint`, `typecheck`, `test` (409 tests across the four projects, one skipped), `build`,
+`lint`, `typecheck`, `test` (every project; the vendor live cases skip without a key), `build`,
 `exports:check`, `validate:publish-packages`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
-grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), and a spend cap
-(`cap`). What the runtime can do: `check` from local state, `track`, `hold`/`settle`/`release` as
-addressable entities, proration, dunning, trials, credits, and a provider-port edge with webhook
-decoders for Stripe and Polar. What the deploy does: validates the catalog into `BillingStack`, and
-`StripePrices` creates the prices its tiers are sold under.
+grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a
+postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do: `check` from local state, `track`,
+`hold`/`settle`/`release` as addressable entities, a policy that releases a hold on its own deadline,
+proration, dunning, trials, credits, bought packs whose credits survive a period close, postpaid
+usage priced per unit with a money cap, and a provider-port edge with webhook decoders for Stripe and
+Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
+`PolarPrices` create the base prices and products its tiers are sold under, plus a meter and a
+metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
+period's billable units to the account's provider once, with the period as the idempotency key.
 
-The five records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
+The six records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
 (credits are a unit of account, one pool per account), [0003](./adr/0003-the-deploy-provisions-the-vendor.md)
-(identity by lookup key, replace on change, never delete), [0004](./adr/0004-a-hold-is-one-call-and-an-id.md)
+(identity in the vendor's own field, replace on change, never delete), [0004](./adr/0004-a-hold-is-one-call-and-an-id.md)
 (a hold is an entity, one call settles it), [0005](./adr/0005-a-spend-cap-is-a-ceiling-in-units.md)
-(a cap is a count, not money).
+(a cap is a count, not money), [0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md)
+(postpaid usage is a unit price in the catalog, and a money cap is a separate ceiling).
 
 ## The queue
 
 Ordered by value per unit of work. Each is small enough to finish in one pass and leave green.
 
-### 1. Sweep expired holds — ADR 0004 §2
+The vendor meter landed in [ADR 0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) §2:
+the quantity pushed at close is the period's *billable* units (`used - included`), not `billed`
+money, because the vendor applies its own metered price. `decide` still never reads the provider;
+the push is a policy after the close. A mid-period price change still needs the report split per
+vendor price rather than one report at the standing's price.
 
-**Why.** A hold records `expiresAt` (15 minutes) and `Settle` refuses past it, but nothing returns
-the units. A caller that crashes between `Hold` and `Settle` keeps capacity until an operator
-releases it by hand.
-
-**Where.** A policy beside `PeriodRollover` and `Dunning` in `src/Subscription/`, registered in
-`PaykitModel`. It issues `ReleaseHold` for holds whose `expiresAt` has passed, using the same
-scheduled-command path the other policies use.
-
-**Done when.** A hold past its expiry is released by the policy without a caller doing anything; the
-release is idempotent (a late `Settle` still refuses, a late `Release` is a replay); a story test with
-a clock jump proves it; `reserved` and `reservedCredits` go back to zero afterwards.
-
-**Trap.** Do not release on a timer inside `decide` — `decide` is pure and time arrives as command
-data or from the supplied `Clock`. The policy reads the clock; the command does not.
-
-### 2. Price a Polar product from the catalog — ADR 0003 §2c
-
-**Why.** Provisioning is Stripe-only, so half of every "the deploy creates it" sentence is false for
-the merchant-of-record path.
-
-**Where.** `packages/paykit-polar/src/Prices.ts`, mirroring `packages/paykit-stripe/src/Prices.ts`:
-`priceDeclarations(tiers, stage)`, a `PolarPrices` helper that yields one product per tier and returns
-the tier → lookup-key map, `RemovalPolicy.retain()` on each resource, and a gated live test
-(`POLAR_ACCESS_TOKEN`) written the way `Prices.live.test.ts` is.
-
-**Done when.** The same three rules hold — identity in the vendor's own field (Polar has no lookup
-key; use `metadata.paykit_tier` and a stage-qualified name), replace on a price change, retain on
-retire — and the gated live case proves it against the sandbox.
-
-**Trap.** Polar embeds prices in the product where Stripe models a price as an object of its own. The
-difference must stop inside `paykit-polar`; `paykit`'s `PolarTier` keeps its `{ price, productId }`
-shape.
-
-### 3. Prepaid — ADR 0002 §2
-
-**Why.** `creditsExpire: "never"` already exists, but a tier that grants credits is still a
-subscription. Selling credits on their own is the first thing in this queue that crosses into the
-money plane, and it is what "buy 1M credits for $99" needs.
-
-**Where.** `Tier.kind: "subscription" | "one_off"` in `src/Tier.ts`; a purchase path in
-`src/Subscribe.ts` that opens a provider payment rather than a subscription; the provider `createCheckout`
-call gains a one-off mode on Stripe (`mode: "payment"`) and Polar.
-
-**Done when.** A one-off tier can be bought without creating a subscription, its credits are granted
-on `payment_succeeded`, and a period close does not touch them.
-
-**Trap.** `Catalog`'s "one standing per account" rule still holds: buying credits must not create a
-second subscription, and `TierChanged` must not be how credits arrive.
-
-### 4. Postpaid usage, and money caps with it
-
-**Why.** The last ADR 0001 row. It is also what unblocks a **money** cap: ADR 0005 says a cap is a
-count because the catalog has no unit price, and postpaid pricing is where a unit price legitimately
-enters.
-
-**Where.** A `unitPrice` on the feature or on the allowance, a metered price on the vendor side, and
-usage records pushed to the provider at period close. This is mostly money plane, not model.
-
-**Trap.** `decide` must stay pure: a unit price in the catalog is fine, a *provider read* to fetch it
-is not.
-
-### 5. The surfaces the model already supports
+### 1. The surfaces the model already supports
 
 - **Outbound events** (ADR 0001 §Slice 3): an app that hears "this account upgraded" without polling
   `AccountEvents`. Sign and retry like the inbound edge, reversed.
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
-- **Archived prices** (ADR 0003): a retired price is currently retained but stays `active: true`.
-  Archiving needs a vendor write against a resource the stack no longer tracks — a sweep by lookup-key
-  prefix is the obvious shape.
+- **Prepaid-only spending**: a pack bought before a plan is held on `Unsubscribed` and carried into
+  the first activation, but `check()` needs a plan's rate card to spend it. Teach the view to price
+  from the catalog without a standing, so a credits-only account can use what it bought.
+- **Archived prices** (ADR 0003): a retired Stripe price is retained but stays `active: true`, and a
+  retired Polar product stays purchasable. Archiving needs a vendor write against a resource the
+  stack no longer tracks — a sweep by lookup-key (Stripe) or name prefix (Polar) is the obvious
+  shape.
 
-## The one thing that has never been run
+## The live cases that have never been run
 
-`packages/paykit-stripe/test/Prices.live.test.ts` is gated on `STRIPE_API_KEY` and reports **skipped**
-in every run so far. It is the only proof that `StripePrices` works against a real API, and the only
-place the "replace keeps the old price" claim is actually tested.
+Both provisioning packages carry a live test that is gated on a vendor key and reports **skipped** in
+every run so far. They are the only proof each helper works against a real API, and the only place
+the "replace keeps the old one" claim is actually tested.
 
 ```sh
 STRIPE_API_KEY=sk_test_… pnpm --filter @potion.run/paykit-stripe test
+POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
 ```
 
-Run it before trusting provisioning, and before publishing anything that advertises it. Expect it to
-create and retire prices in that test account; it starts with `stack.destroy()` and leaves retained
-prices behind, which is the point of the rule and a mess in a shared account.
+Run them before trusting provisioning, and before publishing anything that advertises it. Expect
+them to create and retire prices/products in those test accounts; both start with `stack.destroy()`
+and leave retained objects behind, which is the point of the rule and a mess in a shared account.
+The Polar case is pinned to `server: "sandbox"`, so a production token cannot reach production.
 
 ## How the last slices were done
 
@@ -133,8 +87,18 @@ continues.
 - **`decide` is pure.** No clock, no provider, no ambient read; anything it needs travels in the
   command, then the event, then the state.
 - **One standing per account, one credit pool per account.** Credits are not per feature.
-- **Events carry the money.** `UsageRecorded.cost`, `Pricing`/`TierChanged` prices, the captured hold
-  rate — a replay must reproduce every number, and a catalog change must never reprice history.
-- **A cap is quantity, not standing.** `allowed: false` at a ceiling while `standing` stays `good`.
+- **Events carry the money.** `UsageRecorded.cost` and `.charge`/`.billedAfter`,
+  `Pricing`/`TierChanged` prices, the captured hold rate — a replay must reproduce every number, and
+  a catalog change must never reprice history.
+- **A cap is a ceiling, not a standing.** `allowed: false` at a quantity or money ceiling while
+  `standing` stays `good`.
+- **A deadline is a command, not a timer.** A policy schedules a command that never rejects, and
+  `decide` reads the clock from its context: past the deadline it acts, before it or after the entity
+  closed it records nothing. That is how `PeriodEnded`, `GraceElapsed` and `HoldElapsed` stay
+  replayable.
+- **A pack outlives the period.** Credits a one-off pack bought never expire, even on a plan whose
+  own credits do: `prepaidCredits` is protected, spent only after the plan's credits, and a close
+  returns only the difference.
 - **A missing capability is a tag.** `ProviderCapabilityMissing`, never a silent no-op.
-- **Nothing is deleted that a bill references.** Prices are retained; the event log is the record.
+- **Nothing is deleted that a bill references.** Prices and products are retained; the event log is
+  the record.

@@ -26,6 +26,10 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
       createInvoice: () => Effect.succeed({ invoiceId: `manual_invoice_${++sequence}` }),
       refund: () => Effect.succeed({}),
       createPortal: () => missing("createPortal"),
+      // A manual invoice can bill a period, but it has no meter to feed: the
+      // deploy can sell a postpaid tier, and the close refuses rather than
+      // pretending the usage reached a vendor.
+      reportUsage: () => missing("reportUsage"),
     }),
   );
   const payments = Layer.merge(

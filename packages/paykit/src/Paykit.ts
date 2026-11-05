@@ -11,6 +11,7 @@ import { feature } from "./Feature.ts";
 import { Hold, Release, Settle } from "./Hold.ts";
 import { List } from "./List.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
+import { paymentsRouter } from "./Payments.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
@@ -23,6 +24,7 @@ import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { Subscribe } from "./Subscribe.ts";
+import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { Track } from "./Track.ts";
 import { Verify, verifyState } from "./Verify.ts";
@@ -102,6 +104,7 @@ export const Paykit = {
   // model
   Model: PaykitModel,
   ModelHandlers: PaykitHandlers,
+  PeriodCloseUsage,
   BillingApi,
   BillingAdminApi,
   // providers
@@ -109,4 +112,5 @@ export const Paykit = {
   Manual: PaymentsManual,
   Stripe: PaymentsStripe,
   PaymentsPolar,
+  paymentsRouter,
 } as const;

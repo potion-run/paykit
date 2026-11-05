@@ -25,6 +25,13 @@ export const CreditsExpire = Schema.Literals(["period", "never"]);
 export type CreditsExpire = typeof CreditsExpire.Type;
 
 /**
+ * How a tier is bought: a subscription opens a period, while a one-off pack is
+ * a single payment that grants credits and never starts a period.
+ */
+export const TierKind = Schema.Literals(["subscription", "one_off"]);
+export type TierKind = typeof TierKind.Type;
+
+/**
  * A purchasable bundle: an id, what it grants, and optionally what it costs.
  * The catalog never carries provider ids, so the same tier runs on every
  * provider.
@@ -32,10 +39,12 @@ export type CreditsExpire = typeof CreditsExpire.Type;
 export const Tier = Schema.Struct({
   id: TierId,
   name: Schema.optionalKey(Schema.String),
+  /** @default "subscription" */
+  kind: Schema.optionalKey(TierKind),
   price: Schema.optionalKey(Price),
-  /** The credit pool this tier grants when it activates. */
+  /** The credit pool this tier grants when it activates or is bought. */
   credits: Schema.optionalKey(Schema.Int),
-  /** @default "period" */
+  /** @default "period" for a subscription, "never" for a one-off pack */
   creditsExpire: Schema.optionalKey(CreditsExpire),
   grants: Schema.Array(Allowance),
 });
@@ -46,14 +55,19 @@ export interface TierInput {
   readonly id: string;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
-  /** Omit for a free tier. */
+  /** @default "subscription" */
+  readonly kind?: TierKind;
+  /** Omit for a free subscription tier. A one-off pack must state one. */
   readonly price?: Price;
-  /** The credit pool this tier grants when it activates. */
+  /** The credit pool this tier grants when it activates or is bought. */
   readonly credits?: number;
-  /** @default "period" */
+  /** @default "period" for a subscription, "never" for a one-off pack */
   readonly creditsExpire?: CreditsExpire;
-  /** What the tier grants. A tier that grants nothing could never activate. */
-  readonly grants: readonly [Allowance, ...Allowance[]];
+  /**
+   * What a subscription tier grants. Empty for a one-off pack, which sells only
+   * credits; the catalog refuses either shape the wrong way round.
+   */
+  readonly grants: readonly Allowance[];
 }
 
 /**
@@ -74,13 +88,30 @@ export interface TierInput {
  *   price: { amount: 1900, currency: "usd", interval: "month" },
  *   grants: [allowance(messages, { included: 2_000, overage: "bill" })],
  * });
+ *
+ * // A one-off pack sells credits, not a period.
+ * const pack = tier({
+ *   id: "credits_1m",
+ *   kind: "one_off",
+ *   price: { amount: 9_900, currency: "usd", interval: "month" },
+ *   credits: 1_000_000,
+ *   grants: [],
+ * });
  * ```
  */
-export const tier = (input: TierInput): Tier => ({
-  id: input.id as TierId,
-  ...(input.name === undefined ? {} : { name: input.name }),
-  ...(input.price === undefined ? {} : { price: { ...input.price } }),
-  ...(input.credits === undefined ? {} : { credits: input.credits }),
-  ...(input.creditsExpire === undefined ? {} : { creditsExpire: input.creditsExpire }),
-  grants: input.grants.map((grant) => ({ ...grant })),
-});
+export const tier = (input: TierInput): Tier => {
+  const kind = input.kind ?? "subscription";
+  // A one-off pack's credits are what the buyer bought; they must outlive any
+  // plan the account happens to be on, so the default is the same `"never"`
+  // the catalog requires.
+  const creditsExpire = input.creditsExpire ?? (kind === "one_off" ? "never" : undefined);
+  return {
+    id: input.id as TierId,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.kind === undefined ? {} : { kind }),
+    ...(input.price === undefined ? {} : { price: { ...input.price } }),
+    ...(input.credits === undefined ? {} : { credits: input.credits }),
+    ...(creditsExpire === undefined ? {} : { creditsExpire }),
+    grants: input.grants.map((grant) => ({ ...grant })),
+  };
+};

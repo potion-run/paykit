@@ -18,6 +18,11 @@ export class DowngradeBelowUsage extends Domain.Rejection("DowngradeBelowUsage",
   feature: Schema.String,
   included: Schema.Int,
   used: Schema.Int,
+  /**
+   * Units open holds still owe this period. `used + reserved` is what the new
+   * tier has to cover; absent when nothing is held.
+   */
+  reserved: Schema.optionalKey(Schema.Int),
 }) {}
 
 /** The account is now on another tier; the prices it moved between, and any proration. */
@@ -30,6 +35,8 @@ export class TierChanged extends Domain.Event("TierChanged", {
    * so it is the balance the account already had.
    */
   credits: Schema.Int,
+  /** The part of the pool a one-off pack bought, which a change carries over. */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
   /** The new tier's expiry rule for the pool. */
   creditsExpire: CreditsExpire,
   /** The new tier's rate cards, so `check` prices from the standing. */

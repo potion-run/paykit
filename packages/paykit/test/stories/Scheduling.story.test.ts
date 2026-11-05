@@ -6,8 +6,8 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { messages } from "../../src/Feature.ts";
+import { allowancesOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
+import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import {
@@ -18,14 +18,18 @@ import {
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { SubscriptionExpired } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial, TrialExtended } from "../../src/Subscription/ExtendTrial.command.ts";
+import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
 import { PaymentRecorded, RecordPayment } from "../../src/Subscription/RecordPayment.command.ts";
 import {
   PaymentFailed,
   RecordPaymentFailure,
 } from "../../src/Subscription/RecordPaymentFailure.command.ts";
+import { UsageReleased } from "../../src/Subscription/ReleaseHold.command.ts";
+import { SettleHold, UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { StartTrial, TrialStarted } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 
 const proTier = tier({
@@ -33,8 +37,18 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
+const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });
+const creditsTier = tier({
+  id: "credits",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  credits: 50_000,
+  grants: [allowance(messages, { included: 100 })],
+});
+const testCatalog = Effect.runSync(
+  catalog({ features: [ai, messages], tiers: [proTier, creditsTier] }),
+);
 const pro = allowancesOf(testCatalog, "pro")!;
+const creditsTerms = creditTermsOf(testCatalog, "credits")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const annualPrice = { amount: 19_000, currency: "usd", interval: "annual" as const };
 const story = Story.make(PaykitModel, {
@@ -43,6 +57,7 @@ const story = Story.make(PaykitModel, {
 const account = Subscription.ref("acct_schedule");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
+const quarter = at("2030-01-01T00:15:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
 const march = at("2030-03-01T00:00:00Z");
 
@@ -60,6 +75,56 @@ const activated = new SubscriptionActivated({
   currency: "usd",
   price: proPrice,
   statusAfter: "active",
+});
+
+const creditsAllowances = allowancesOf(testCatalog, "credits")!;
+const creditsActivated = new SubscriptionActivated({
+  tier: "credits",
+  allowances: creditsAllowances,
+  remaining: { messages: 100 },
+  credits: creditsTerms.credits,
+  creditsExpire: creditsTerms.creditsExpire,
+  rates: creditsTerms.rates,
+  periodStart: start,
+  periodEnd: monthLater,
+  anchorTz: "UTC",
+  interval: "month",
+  currency: "usd",
+  price: proPrice,
+  statusAfter: "active",
+});
+
+const messagesFeature = (over: {
+  readonly used?: number;
+  readonly reserved?: number;
+  readonly remaining: number;
+}) => ({
+  included: 2_000,
+  used: over.used ?? 0,
+  reserved: over.reserved ?? 0,
+  remaining: over.remaining,
+  carried: 0,
+  allowed: true,
+  overage: "bill" as const,
+  resets: "month" as const,
+  resetsAt: monthLater,
+});
+
+const aiFeature = (over: {
+  readonly used?: number;
+  readonly reserved?: number;
+  readonly remaining: number;
+}) => ({
+  creditRates: { default: 1, "gpt-large": 10 },
+  included: null,
+  used: over.used ?? 0,
+  reserved: over.reserved ?? 0,
+  remaining: over.remaining,
+  carried: 0,
+  allowed: true,
+  overage: "block" as const,
+  resets: "never" as const,
+  resetsAt: null,
 });
 
 const closed = (periodStart: DateTime.Utc, periodEnd: DateTime.Utc, nextEnd: DateTime.Utc) =>
@@ -377,5 +442,171 @@ it.effect("counts payment failures on the billing page, and clears them on recov
     // two read models.
     Story.state(account, { dunningAttempts: 0 }),
     Story.view(BillingState, account, { status: "active", dunningAttempts: 0 }),
+  ),
+);
+
+it.effect("HoldSweep releases a counted hold when its deadline arrives, with no caller", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, activated),
+    Story.when(account, new Hold({ holdId: "hold_sweep", feature: "messages", amount: 400 })),
+    Story.then(
+      account,
+      new UsageReserved({
+        holdId: "hold_sweep",
+        feature: "messages",
+        amount: 400,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 1_600,
+      }),
+    ),
+    Story.view(Entitlements, account, {
+      features: { messages: messagesFeature({ reserved: 400, remaining: 1_600 }) },
+    }),
+    // The deadline is the policy's; nobody sends a release.
+    Story.clock(quarter),
+    Story.then(
+      account,
+      new UsageReleased({
+        holdId: "hold_sweep",
+        feature: "messages",
+        amount: 400,
+        cost: 0,
+        remainingAfter: 2_000,
+      }),
+    ),
+    Story.view(Entitlements, account, {
+      features: { messages: messagesFeature({ reserved: 0, remaining: 2_000 }) },
+    }),
+  ),
+);
+
+it.effect("HoldSweep returns a credit hold's credits to the one shared pool", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: creditsTerms.credits,
+        creditsExpire: creditsTerms.creditsExpire,
+        rates: creditsTerms.rates,
+        tier: "credits",
+        allowances: creditsAllowances,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, creditsActivated),
+    Story.when(
+      account,
+      new Hold({ holdId: "hold_ai", feature: "ai", amount: 100, dimension: "gpt-large" }),
+    ),
+    Story.then(
+      account,
+      new UsageReserved({
+        holdId: "hold_ai",
+        feature: "ai",
+        amount: 100,
+        dimension: "gpt-large",
+        rate: 10,
+        cost: 1_000,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 49_000,
+      }),
+    ),
+    Story.view(Entitlements, account, {
+      credits: 50_000,
+      features: { ai: aiFeature({ reserved: 1_000, remaining: 49_000 }) },
+    }),
+    Story.clock(quarter),
+    Story.then(
+      account,
+      new UsageReleased({
+        holdId: "hold_ai",
+        feature: "ai",
+        amount: 100,
+        cost: 1_000,
+        remainingAfter: 50_000,
+      }),
+    ),
+    Story.view(Entitlements, account, {
+      credits: 50_000,
+      features: { ai: aiFeature({ reserved: 0, remaining: 50_000 }) },
+    }),
+  ),
+);
+
+it.effect("a hold settled before its deadline makes the sweep a no-op", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    ),
+    Story.then(account, activated),
+    Story.when(account, new Hold({ holdId: "hold_sweep", feature: "messages", amount: 400 })),
+    Story.then(
+      account,
+      new UsageReserved({
+        holdId: "hold_sweep",
+        feature: "messages",
+        amount: 400,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: quarter,
+        remainingAfter: 1_600,
+      }),
+    ),
+    // 100 ran: 100 is billed and the other 300 returns in the same command.
+    Story.when(account, new SettleHold({ holdId: "hold_sweep", amount: 100 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "messages",
+        amount: 100,
+        cost: 0,
+        creditsAfter: 0,
+        usedAfter: 100,
+        remainingAfter: 1_900,
+      }),
+      new UsageSettled({
+        holdId: "hold_sweep",
+        feature: "messages",
+        amount: 100,
+        released: 300,
+        cost: 0,
+        remainingAfter: 1_900,
+      }),
+    ),
+    Story.clock(quarter),
+    Story.then(account),
+    Story.view(Entitlements, account, {
+      features: { messages: messagesFeature({ used: 100, reserved: 0, remaining: 1_900 }) },
+    }),
   ),
 );

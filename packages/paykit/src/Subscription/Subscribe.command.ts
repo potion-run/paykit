@@ -17,6 +17,11 @@ export class SubscriptionActivated extends Domain.Event("SubscriptionActivated",
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   /** The credit pool this activation grants. */
   credits: Schema.Int,
+  /**
+   * The part of the pool a one-off pack already bought, carried across the
+   * activation. Absent when it is zero.
+   */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
   /** Whether that pool expires at a period close or is kept. */
   creditsExpire: CreditsExpire,
   /** Every credit-priced feature's rate card, so `check` can price a request. */

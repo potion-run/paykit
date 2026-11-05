@@ -51,7 +51,7 @@ test.provider.skipIf(!hasKey)(
       yield* stack.destroy();
 
       const first = yield* stack.deploy(StripePrices("Prices", { tiers: { pro: proPrice } }));
-      const lookupKey = first.pro;
+      const lookupKey = first.prices.pro;
 
       // The key is the stage and the tier, not the id.
       expect(lookupKey.startsWith("paykit:")).toBe(true);
@@ -72,7 +72,7 @@ test.provider.skipIf(!hasKey)(
       const second = yield* stack.deploy(
         StripePrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
       );
-      expect(second.pro).toBe(lookupKey);
+      expect(second.prices.pro).toBe(lookupKey);
 
       const replaced = yield* GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
         Effect.provide(live(key)),
@@ -92,5 +92,65 @@ test.provider.skipIf(!hasKey)(
       yield* stack.deploy(StripePrices("Prices", { tiers: {} }));
       const retired = yield* GetPrice({ price: createdPrice!.id! }).pipe(Effect.provide(live(key)));
       expect(retired.id).toBe(createdPrice?.id);
+    }),
+);
+
+const packPrice = { amount: 9_900, currency: "usd", interval: "month" as const };
+
+test.provider.skipIf(!hasKey)("creates a one-time price for a one-off pack", (stack) =>
+  Effect.gen(function* () {
+    const key = apiKey!;
+    yield* stack.destroy();
+
+    const sold = yield* stack.deploy(
+      StripePrices("Prices", {
+        tiers: { credits: { price: packPrice, kind: "one_off" } },
+      }),
+    );
+    const creditKey = sold.prices.credits;
+
+    const created = yield* GetPrices({
+      lookup_keys: [creditKey],
+      active: true,
+      limit: 1,
+    }).pipe(Effect.provide(live(key)));
+    const price = created.data[0];
+    expect(price?.unit_amount).toBe(9_900);
+    // A pack is charged once; a recurring price would make `mode=payment`
+    // unusable and would start a subscription instead.
+    expect(price?.recurring).toBe(null);
+  }),
+);
+
+test.provider.skipIf(!hasKey)(
+  "creates a meter and a metered price from the catalog's unit price",
+  (stack) =>
+    Effect.gen(function* () {
+      const key = apiKey!;
+      yield* stack.destroy();
+
+      const sold = yield* stack.deploy(
+        StripePrices("Prices", {
+          tiers: {
+            pro: {
+              price: proPrice,
+              usage: { messages: { amount: 2, currency: "usd" } },
+            },
+          },
+        }),
+      );
+
+      const meteredKey = sold.usage.pro.messages;
+      const created = yield* GetPrices({
+        lookup_keys: [meteredKey],
+        active: true,
+        limit: 1,
+      }).pipe(Effect.provide(live(key)));
+      const price = created.data[0];
+      expect(price?.unit_amount).toBe(2);
+      expect(price?.currency).toBe("usd");
+      expect(price?.recurring?.usage_type).toBe("metered");
+      expect(price?.recurring?.meter).toBeDefined();
+      expect(sold.meters.messages.startsWith("paykit_")).toBe(true);
     }),
 );

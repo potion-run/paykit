@@ -87,25 +87,53 @@ export class BillingState extends Domain.View("BillingState", {
     }
   }),
   evolve: {
-    TrialStarted: (view, event, context): BillingStateView =>
-      withAccount(
+    // A trial starts a fresh standing: the previous price, proration, grace
+    // and dunning count do not survive it, and the pool is the one the event
+    // grants. The state's `TrialStarted` builds a new object, so this fold
+    // must drop the same fields rather than spread them forward.
+    TrialStarted: (view, event, context): BillingStateView => {
+      const {
+        price: _previousPrice,
+        proration: _previousProration,
+        prorationInvoice: _previousInvoice,
+        graceUntil: _previousGrace,
+        ...rest
+      } = view;
+      return withAccount(
         {
-          ...view,
+          ...rest,
           tier: event.tier,
           status: "trialing",
           periodStart: event.periodStart,
           periodEnd: event.periodEnd,
+          interval: "month",
           anchorTz: event.anchorTz,
           cancelAtPeriodEnd: false,
           trialEndsAt: event.trialEndsAt,
+          credits: event.credits,
+          dunningAttempts: 0,
           ...(event.price === undefined ? {} : { price: event.price }),
+          ...(event.currency === undefined ? {} : { currency: event.currency }),
         },
         context,
-      ),
-    SubscriptionActivated: (view, event, context): BillingStateView =>
-      withAccount(
+      );
+    },
+    // Activation is also a new standing. It drops the trial deadline, the
+    // previous tier's money and any grace window, and takes the pool the event
+    // records.
+    SubscriptionActivated: (view, event, context): BillingStateView => {
+      const {
+        price: _previousPrice,
+        proration: _previousProration,
+        prorationInvoice: _previousInvoice,
+        trialEndsAt: _previousTrial,
+        graceUntil: _previousGrace,
+        currency: _previousCurrency,
+        ...rest
+      } = view;
+      return withAccount(
         {
-          ...view,
+          ...rest,
           tier: event.tier,
           status: "active",
           periodStart: event.periodStart,
@@ -113,11 +141,14 @@ export class BillingState extends Domain.View("BillingState", {
           interval: event.interval,
           anchorTz: event.anchorTz,
           cancelAtPeriodEnd: false,
+          credits: event.credits,
+          dunningAttempts: 0,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           ...(event.price === undefined ? {} : { price: event.price }),
         },
         context,
-      ),
+      );
+    },
     TierChanged: (view, event, context): BillingStateView => {
       const {
         price: _previousPrice,
@@ -159,6 +190,8 @@ export class BillingState extends Domain.View("BillingState", {
       withoutGrace({ ...view, status: "active", dunningAttempts: 0 }, context),
     CreditsGranted: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
+    CreditsPurchased: (view, event, context): BillingStateView =>
+      withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsConsumed: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsExpired: (view, event, context): BillingStateView =>
@@ -182,9 +215,10 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, status: "expired" }, context),
     TrialExtended: (view, event, context): BillingStateView =>
       withAccount({ ...view, trialEndsAt: event.trialEndsAt, periodEnd: event.periodEnd }, context),
-    // Usage and vendor refs do not move a number the billing page shows, but
-    // applying them keeps this view's emitted log the whole subscription log.
-    UsageRecorded: (view, _event, context): BillingStateView => withAccount(view, context),
+    // A credit-priced feature spends the shared pool, so the billing page
+    // moves with it. A counted feature records the same balance it already had.
+    UsageRecorded: (view, event, context): BillingStateView =>
+      withAccount({ ...view, credits: event.creditsAfter }, context),
     UsageReserved: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageSettled: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReleased: (view, _event, context): BillingStateView => withAccount(view, context),

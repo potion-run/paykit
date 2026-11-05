@@ -79,6 +79,23 @@ A one-off tier grants credits with `creditsExpire: "never"`. Buying it is a purc
 period, so it needs a `one_off` tier and a grant that survives a period close — the shape
 already allowed by `creditsExpire`.
 
+Landed as `Tier.kind: "one_off"`: a pack has credits, a price, no grants, and a `creditsExpire` the
+catalog refuses to let be `"period"`. `Subscribe` opens the provider's purchase path with
+`kind: "one_off"` (Stripe `mode: "payment"`, a one-time price/product) and does not send a
+subscription command. The `payment_succeeded` / `checkout_completed` webhook sends `PurchaseCredits`,
+which records `CreditsPurchased` and grows the standing's pool. It never sends `Subscribe` or
+`TierChanged`.
+
+**One pool, two expiry rules.** The pool is still one number, but the part a pack bought is protected:
+the standing carries `prepaidCredits` (`0 <= prepaidCredits <= credits`), spending drains the plan's
+credits first, and a period close expires `credits - prepaidCredits` rather than the whole balance.
+The event log carries the protected amount, so a replay reproduces it.
+
+**A pack can exist before a plan.** `Unsubscribed` carries the same two fields, so a brand-new account
+can buy a pack and hold the pool; the first `Subscribe`/`StartTrial` carries it into the standing with
+its protected portion intact. Spending is still a plan's job: `check()` reads the rate cards copied at
+activation, so a prepaid-only account can hold credits before it can spend them.
+
 ## Consequences
 
 - **A credit-priced feature has no counter of its own.** Its `remaining` is the account's balance,

@@ -9,6 +9,7 @@ import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import {
   Standing,
   SubscriptionStatus,
+  chargeOf,
   creditRateOf,
   spendHeadroomOf,
 } from "./Subscription/Subscription.state.ts";
@@ -71,6 +72,18 @@ export const evaluateCheck = (
           readonly cap?: number;
           /** How much of `remaining` a rollover added, which a cap does not. */
           readonly carried?: number;
+          /** What one billed unit costs, when the allowance is postpaid. */
+          readonly unitPrice?: { readonly amount: number; readonly currency: string };
+          /** The money ceiling for this feature this period, in minor units. */
+          readonly moneyCap?: number;
+          /** Money already billed for this feature this period. */
+          readonly billed?: number;
+          /** Units held by open holds, whose charge is promised too. */
+          readonly reserved?: number;
+          /** The period's units so far, which decide where billing starts. */
+          readonly used?: number;
+          /** What the tier included, which bounds the billable part. */
+          readonly included?: number | "unlimited" | null;
         }
       >
     >;
@@ -96,12 +109,18 @@ export const evaluateCheck = (
     cap: feature.cap,
     carried: feature.carried,
   });
+  // Postpaid usage is judged in money too: only the part beyond `included` is
+  // billable, and a money ceiling refuses the same request a quantity cap would.
+  const charge = chargeOf(feature.unitPrice, feature.included ?? null, feature.used ?? 0, amount);
+  const moneyAllowed =
+    feature.moneyCap === undefined || (feature.billed ?? 0) + charge <= feature.moneyCap;
   // A `null` remaining is an allowance that never runs out: it always has room,
   // and the answer reports the absence of a count rather than a number.
   const allowed =
     state.standing !== "blocked" &&
     (feature.overage !== "block" || feature.remaining === null || needed <= feature.remaining) &&
-    (headroom === null || needed <= headroom);
+    (headroom === null || needed <= headroom) &&
+    moneyAllowed;
   return {
     allowed,
     remaining: feature.remaining,

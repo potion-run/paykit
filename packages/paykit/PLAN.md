@@ -127,6 +127,8 @@ yield* track({ account, feature: "messages", amount: 1, dedupeKey: requestId });
 const { holdId } = yield* Paykit.Hold({ account, feature: "messages", amount: 10, dedupeKey: turnId });
 yield* Paykit.Settle({ account, holdId, amount: 8 });              // => { billed: 8, released: 2 }
 yield* Paykit.Release({ account, holdId });                        // => { released: 10 }
+// A hold still open at its `expiresAt` (15 minutes by default) is released by
+// `HoldSweep`, so a crash between hold and settle returns the capacity.
 
 const subscribe = yield* Paykit.Subscribe();
 yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId } | { activated: true }
@@ -176,20 +178,27 @@ A catalog is three plain declarations, and every value it holds is serializable:
   resets: "never" }`. `kind` lives on the allowance because `decide` is pure and never sees the
   catalog, so the allowance has to say what kind of thing it is. A flag granted any other way — or
   a flag grant on a metered feature — is refused.
-- `tier({ id, name, price, grants })` bundles allowances. A tier with no `price` is free; a tier
-  must grant at least one allowance, because one that grants nothing could never activate.
+- `tier({ id, name, price, grants, kind })` bundles allowances. A tier with no `price` is free; a
+  subscription tier must grant at least one allowance, because one that grants nothing could never
+  activate. A `kind: "one_off"` pack is the exception: it sells credits only, has no grants, and
+  must state a price.
 - `feature({ id, name, kind, creditRates })` may declare a rate card, which makes the feature
   credit-priced: `track({ feature, amount, dimension })` then spends `amount × rate` from the pool,
   and `check({ feature, amount, dimension })` compares against it.
 - `allowance(feature, { ..., cap })` states a ceiling in the feature's own unit: the most a period
   may bill past `included`. It needs `overage: "bill"`, and `Track` and `Hold` both refuse past it
   with `SpendCapExceeded`.
+- `allowance(feature, { ..., unitPrice, moneyCap })` prices the billable part of usage: one unit
+  past `included` costs `unitPrice.amount` minor units, and `moneyCap` is the money ceiling for one
+  period. Both need `overage: "bill"`; a tier's unit prices share one currency. `Track` records the
+  charge on `UsageRecorded` and refuses past the money cap with `MoneyCapExceeded`; `check()` prices
+  the requested amount before comparing.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
   `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
   `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`,
-  `CatalogCapWithoutBilling`,
-  `CatalogCreditRateMissing`, `CatalogCreditRateInvalid`, `CatalogCreditFeatureHasAllowance`,
+  `CatalogCapWithoutBilling`, `CatalogUnitPriceWithoutBilling`, `CatalogMoneyCapWithoutUnitPrice`,
+  `CatalogUnitPriceCurrency`, `CatalogCreditRateMissing`, `CatalogCreditRateInvalid`, `CatalogCreditFeatureHasAllowance`,
   `CatalogCreditAllowanceOnFlag`, `CatalogCreditGrantInvalid`, or `CatalogInvalid` for a schema
   failure.
 
@@ -211,7 +220,8 @@ state: {
   tier, status: "trialing" | "active" | "grace" | "canceled" | "expired",
   period: { start, end, anchorTz }, trialEndsAt?, graceUntil?,
   price?,                                   // what this account was sold at
-  cancelAtPeriodEnd, credits,
+  cancelAtPeriodEnd, credits, prepaidCredits?,  // purchased credits stay when the plan's expire
+  billed?: { [feature]: number },              // money billed this period, a fold of UsageRecorded.charge
   usage: { [feature]: number },             // billed, a fold of UsageRecorded
   holds: { [holdId]: { feature, amount, dimension?, rate, cost, at, expiresAt, status } },
   // reserved: { [feature]: number } and reservedCredits: number are folds of the open holds
@@ -230,10 +240,11 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
-| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered`, `SpendCapExceeded`, `MoneyCapExceeded` | `Session` |
 | `Hold` | `UsageReserved` | `HoldExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
 | `SettleHold` | `UsageRecorded`, `UsageSettled` | `HoldUnknown`, `HoldSettled`, `HoldExpired`, `HoldExceeded`, `StandingBlocksUsage` | `Session` |
 | `ReleaseHold` | `UsageReleased` | `HoldUnknown`, `HoldSettled` | `Session` |
+| `HoldElapsed` | `UsageReleased` | — | — |
 | `ConsumeCredits` | `CreditsConsumed` | `NotSubscribed`, `CreditExceedsBalance` | `Session` |
 | `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled`, `NotSubscribed` | `Session` |
 | `Resume` | `CancellationWithdrawn` | `NotScheduled`, `NotSubscribed` | `Session` |
@@ -243,6 +254,7 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `Recover` | `Recovered` | `NotInGrace` | `Admin` |
 | `Expire` | `SubscriptionExpired` | `NotInGrace` | `Admin` |
 | `GrantCredits` | `CreditsGranted` | `NotSubscribed` | `Admin` |
+| `PurchaseCredits` | `CreditsPurchased` | `NotSubscribed` | `Admin` |
 | `ExtendTrial` | `TrialExtended` | `NotSubscribed`, `TrialNotActive` | `Admin` |
 | `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `NotSubscribed`, `PeriodNotClosed` | — |
 | `PeriodEnded` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | — | — |
@@ -250,10 +262,10 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `AttachProviderRef` | `ProviderRefAttached` | — | — |
 
 `decide` is pure. It cannot read the clock, a provider or an ambient context, so authorization
-lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed` and
-`AttachProviderRef` carry no guard because a policy, a scheduler or a webhook translator sends
-them as the deployment. `Proration` is a pure function in `src/Proration.ts` with its own
-properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
+lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed`,
+`HoldElapsed` and `AttachProviderRef` carry no guard because a policy, a scheduler or a webhook
+translator sends them as the deployment. `Proration` is a pure function in `src/Proration.ts` with
+its own properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
 `periodAfter`, `priceAfter`) instead of re-deriving a rule.
 
 ### The command carries its catalog fields
@@ -309,7 +321,7 @@ keeping the old one.
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
-| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, carried, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes, `carried` being how much of `remaining` rolled over |
+| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, carried, allowed, resetsAt, overage, unitPrice?, moneyCap?, billed? }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes, `carried` being how much of `remaining` rolled over, `billed` the period's money for a postpaid feature |
 | View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits, `dunningAttempts`, and the last tier change's `proration` with the invoice it was billed on |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
 | Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |
@@ -329,6 +341,11 @@ first issue will be "how do I list past-due".
   not over, so an early fire is a no-op rather than a rejection. A close that ends the standing
   (`canceled` or `expired`) opens no next period, and `EnterGrace` is refused once a standing is
   terminal.
+- `PeriodCloseUsage` — a policy on `PeriodClosed` reads the closing period's per-feature `used`
+  from `Entitlements`, sends the billable part (`used - included`) to the account's provider once,
+  and uses the period as the idempotency key. A provider without `usage` fails with
+  `ProviderCapabilityMissing`; an account with no vendor reference has no meter to feed and is left
+  to `Verify`.
 - `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
   account is still in grace. A recovery before the deadline makes it a no-op.
 
@@ -337,6 +354,11 @@ first issue will be "how do I list past-due".
   `PaymentFailed`, carried to `dunningAttempts` on both read models — and owns the grace window and
   the expiry. An operator sees the count on the billing page and decides whether to extend grace;
   the console is the reader, which is why the field is not write-only.
+- `HoldSweep` — a policy on `UsageReserved` schedules `HoldElapsed` at the hold's `expiresAt`, which
+  releases it if it is still open. A hold settled or released first makes it a no-op, so a caller
+  that crashes between hold and settle does not keep capacity forever. The release is the same
+  `UsageReleased` a caller's `Release` records, so a late settle is still `HoldSettled` and a late
+  release is a replay.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,
@@ -352,6 +374,7 @@ Payments = Domain.ExternalSystem("Payments", {
   refund:         Op<{ chargeId, amount }, {}>,
   // optional — declared per provider and surfaced as capabilities
   createPortal:   Op<{ account }, { url }>,
+  reportUsage:    Op<{ account, periodStart, periodEnd, quantities, commandId }, {}>, // one close's billable units
 });
 ```
 
@@ -618,7 +641,8 @@ potion/                          # pnpm workspace root (private)
           Entitlements.view.ts  BillingState.view.ts
           AccountEvents.stream.ts  BillingRead.projection.ts
           AccountEventsProjection.ts
-          PeriodRollover.policy.ts  Dunning.policy.ts
+          PeriodRollover.policy.ts  Dunning.policy.ts  HoldSweep.policy.ts
+          PeriodCloseUsage.policy.ts
         BillingApi.api.ts  BillingAdminApi.api.ts
         BillingReadStore.ts
         Payments.ts  PaymentsMemory.ts  PaymentsManual.ts
@@ -672,8 +696,20 @@ else. The root `pnpm typecheck` builds every package through project references,
   with its own name and its own users, and this one does not become it by accreting options.
 - **Events are the API.** Event names and their fields are public. Version from 0.1.0 and keep
   `Backfill`/`CatchUp` so a projection change is a rebuild, not a rewrite.
-- **A hold that leaks keeps capacity.** A hold is addressable and expires; until the sweep lands
-  (slice 2), a leaked one is visible in state rather than silent. Watch `reserved` in
+- **A prepaid-only account holds credits but cannot spend them yet.** The pool lives on
+  `Unsubscribed` and is carried into the first plan, and `prepaidCredits` protects it from a period
+  close. Spending needs the rate cards copied at activation, so a plan (or a catalog-rate fallback)
+  is still the next step for a credits-only customer.
+- **Postpaid bills in the model and at the vendor.** `unitPrice`/`moneyCap` price and enforce usage
+  locally and put the charge on the event. `StripePrices`/`PolarPrices` create the metered price from
+  the same `unitPrice`, and `PeriodCloseUsage` sends the closing period's billable quantity to the
+  provider once with the period as the idempotency key. A provider without a meter declares no
+  `usage` capability, so the close fails with `ProviderCapabilityMissing` instead of silently
+  billing only locally. A mid-period price change still needs a report split per vendor price; the
+  current policy sends one report for the period at the standing's price.
+- **A leaked hold returns its capacity.** A hold is addressable and expires, and `HoldSweep`
+  releases it at `expiresAt`, so `reserved` counts capacity in flight and goes back to zero on its
+  own. A hold whose work outlives its deadline is still a support question, so watch `reserved` in
   `BillingState` and alert on a hold older than its work.
 - **An MCP tool can spend money.** The tool list is derived from the Api, so an Api that serves a
   priced command publishes a destructive tool. Keep `GrantCredits` off the tenant Api, and

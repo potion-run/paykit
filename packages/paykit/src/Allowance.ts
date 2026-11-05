@@ -31,10 +31,21 @@ export const AllowanceKind = Schema.Literals(["metered", "flag"]);
 export type AllowanceKind = typeof AllowanceKind.Type;
 
 /**
- * What a tier grants of one feature, and what happens past it. `included`
- * is a count, never money: money on a feature lives in the provider's price
- * mapping, never in the catalog. `carryOver` says what happens to the part a
- * period did not spend.
+ * The money one billable unit costs: integer minor units and one currency.
+ * Unlike {@link Price} it has no interval — a postpaid unit is charged once,
+ * not on a cadence.
+ */
+export const UnitPrice = Schema.Struct({
+  amount: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  currency: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
+});
+export type UnitPrice = typeof UnitPrice.Type;
+
+/**
+ * What a tier grants of one feature, and what happens past it. `included` is a
+ * count in the feature's own unit; `unitPrice` is what a billable unit past it
+ * costs, and `moneyCap` is the money ceiling for one period. `carryOver` says
+ * what happens to the part a period did not spend.
  */
 export const Allowance = Schema.Struct({
   feature: FeatureId,
@@ -57,6 +68,18 @@ export const Allowance = Schema.Struct({
    * which the catalog enforces. Absent means no ceiling.
    */
   cap: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
+  /**
+   * What one unit past `included` costs, in minor units. Requires
+   * `overage: "bill"`; the catalog enforces it. Absent means usage is counted
+   * or blocked, never priced here.
+   */
+  unitPrice: Schema.optionalKey(UnitPrice),
+  /**
+   * The most money a period may bill for this feature, in minor units. Requires
+   * `unitPrice`; a money ceiling needs a unit price to compute. Absent means no
+   * money ceiling.
+   */
+  moneyCap: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
 });
 export type Allowance = typeof Allowance.Type;
 
@@ -82,9 +105,19 @@ export interface AllowanceInput {
   readonly carryOver?: boolean;
   /**
    * Bill at most this many units past `included` this period. Requires
-   * `overage: "bill"`: a cap limits quantity, not money.
+   * `overage: "bill"`.
    */
   readonly cap?: number;
+  /**
+   * What one billed unit costs, in minor units. Requires `overage: "bill"`.
+   * A tier's unit prices share one currency, and it must match the tier price.
+   */
+  readonly unitPrice?: UnitPrice;
+  /**
+   * The most money this feature may bill in one period, in minor units.
+   * Requires `unitPrice`; the stricter of `cap` and `moneyCap` binds.
+   */
+  readonly moneyCap?: number;
 }
 
 /**
@@ -109,6 +142,15 @@ export interface AllowanceInput {
  * allowance(messages, { included: 2_000, overage: "bill", cap: 10_000 });
  * // { feature: "messages", kind: "metered", included: 2_000, overage: "bill", resets: "month", carryOver: false, cap: 10_000 }
  *
+ * // Postpaid: $0.002 a call past the included 2,000, and no more than $50 of
+ * // overage in a period.
+ * allowance(messages, {
+ *   included: 2_000,
+ *   overage: "bill",
+ *   unitPrice: { amount: 2, currency: "usd" },
+ *   moneyCap: 5_000,
+ * });
+ *
  * // Unlimited: past the end of an allowance that never runs out there is
  * // nothing to block or to bill, so `overage` defaults to "allow".
  * allowance(messages, { included: "unlimited" });
@@ -123,6 +165,8 @@ export const allowance = (feature: Feature, input: AllowanceInput): Allowance =>
   resets: input.resets ?? "month",
   carryOver: input.carryOver ?? false,
   ...(input.cap === undefined ? {} : { cap: input.cap }),
+  ...(input.unitPrice === undefined ? {} : { unitPrice: { ...input.unitPrice } }),
+  ...(input.moneyCap === undefined ? {} : { moneyCap: input.moneyCap }),
 });
 
 /**
