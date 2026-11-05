@@ -10,41 +10,19 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "astro dev",
-    "build": "astro build",
-    "preview": "astro preview",
-    "typecheck": "astro check",
-    "lint:docs": "nimbus-docs lint",
-    "lint:docs:fix": "nimbus-docs lint --fix",
-    "predeploy": "astro check",
+    "dev": "blume dev",
+    "build": "blume build",
+    "preview": "blume preview",
+    "check": "blume check",
+    "validate": "blume validate --strict",
+    "doctor": "blume doctor",
     "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
-    "check": "nimbus-docs check",
-    "check:json": "nimbus-docs check --json"
+    "destroy": "alchemy destroy"
   },
   "dependencies": {
     "@alchemy.run/cloudflare": "catalog:",
-    "@alchemy.run/domain": "catalog:",
-    "@cloudflare/nimbus-docs": "catalog:",
-    "@fontsource-variable/inter": "catalog:",
-    "@fontsource-variable/jetbrains-mono": "catalog:",
-    "@iconify-json/ph": "catalog:",
-    "@resvg/resvg-js": "catalog:",
     "alchemy": "catalog:",
-    "astro": "catalog:",
-    "clsx": "catalog:",
-    "effect": "catalog:",
-    "satori": "catalog:",
-    "sharp": "catalog:",
-    "tailwind-merge": "catalog:"
-  },
-  "devDependencies": {
-    "@astrojs/check": "catalog:",
-    "@astrojs/language-server": "catalog:",
-    "@tailwindcss/vite": "catalog:",
-    "@types/node": "catalog:",
-    "pagefind": "catalog:",
-    "tailwindcss": "catalog:",
-    "typescript": "^5.8.3"
+    "blume": "catalog:",
+    "effect": "catalog:"
   }
 }

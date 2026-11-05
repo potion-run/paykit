@@ -1,8 +1,7 @@
 node_modules/
+.blume/
 dist/
-.astro/
 .wrangler/
-.nimbus/
 
 .env
 .env.local
