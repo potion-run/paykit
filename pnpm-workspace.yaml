@@ -6,11 +6,14 @@ ignoreWorkspaceCycles: true
 packages:
   - packages/*
   - examples/*
+  - website
 
 # Postinstall scripts from dependencies. `workerd` ships the emulated
 # Cloudflare runtime the stores and tests run against; everything else in this
 # dependency graph is prebuilt.
 allowBuilds:
+  esbuild: false
+  sharp: false
   workerd: true
 
 # One version per dependency for the whole scope. A package that needs a
@@ -29,6 +32,14 @@ catalog:
   # rewrites the installed `oxlint` and `oxlint-tsgolint` binaries, and a release
   # only supports the tool versions its README table names.
   "@effect/tsgo": "0.67.1"
+  "@astrojs/check": "^0.9.8"
+  "@astrojs/language-server": "2.16.13"
+  "@cloudflare/nimbus-docs": "^0.19.3"
+  "@fontsource-variable/inter": "^5.2.8"
+  "@fontsource-variable/jetbrains-mono": "^5.2.8"
+  "@iconify-json/ph": "^1.2.0"
+  "@resvg/resvg-js": "^2.6.2"
+  "@tailwindcss/vite": "^4.1.4"
   # Foldkit's UI components and DevTools overlay ship on the framework's
   # version line; keep them in step with `foldkit`.
   "@foldkit/devtools": "^0.170.0"
@@ -37,12 +48,19 @@ catalog:
   "@types/bun": "1.4.4"
   "@types/node": "26.6.6"
   alchemy: "2.0.0-beta.85"
+  astro: "7.3.3"
+  clsx: "^2.1.1"
   effect: "^4.1.2"
   foldkit: "^0.170.0"
   husky: "^9.1.7"
   oxfmt: "^0.76.0"
   oxlint: "^1.91.0"
   oxlint-tsgolint: "7.0.2005"
+  pagefind: "^1.5.2"
+  satori: "^0.26.0"
+  sharp: "^0.35.4"
+  tailwind-merge: "^3.5.0"
+  tailwindcss: "^4.1.4"
   # The TLA+ model checker behind `pnpm spec`. TLC without the JVM, so the gate
   # needs no toolchain beyond `pnpm install`.
   tla-ts: "0.0.8"
@@ -110,6 +128,7 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
   - tla-ts@0.0.8
+  - "@cloudflare/nimbus-docs@0.19.3"
 
 permissions:
   "@alchemy.run/domain":

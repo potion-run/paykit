@@ -1,5 +1,8 @@
 node_modules/
 lib/
+# The docs site keeps source under src/lib; only built package output is ignored.
+!website/src/lib/
+!website/src/lib/**
 dist/
 *.tsbuildinfo
 .env

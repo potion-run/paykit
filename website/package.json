@@ -1,0 +1,50 @@
+{
+  "name": "@potion.run/website",
+  "version": "0.0.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "website"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "typecheck": "astro check",
+    "lint:docs": "nimbus-docs lint",
+    "lint:docs:fix": "nimbus-docs lint --fix",
+    "predeploy": "astro check",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "check": "nimbus-docs check",
+    "check:json": "nimbus-docs check --json"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/domain": "catalog:",
+    "@cloudflare/nimbus-docs": "catalog:",
+    "@fontsource-variable/inter": "catalog:",
+    "@fontsource-variable/jetbrains-mono": "catalog:",
+    "@iconify-json/ph": "catalog:",
+    "@resvg/resvg-js": "catalog:",
+    "alchemy": "catalog:",
+    "astro": "catalog:",
+    "clsx": "catalog:",
+    "effect": "catalog:",
+    "satori": "catalog:",
+    "sharp": "catalog:",
+    "tailwind-merge": "catalog:"
+  },
+  "devDependencies": {
+    "@astrojs/check": "catalog:",
+    "@astrojs/language-server": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "pagefind": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "^5.8.3"
+  }
+}

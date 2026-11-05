@@ -1,0 +1,37 @@
+---
+title: Packages
+description: What ships together, and what each package owns.
+sidebar:
+  order: 2
+---
+
+The repo publishes four packages on one version line. They are released
+together, and an internal dependency is always the workspace version.
+
+| Package | What it is |
+| --- | --- |
+| [`@potion.run/paykit`](https://github.com/potion-run/paykit/tree/main/packages/paykit) | Billing and entitlement: catalog, model, store, providers |
+| [`@potion.run/paykit-polar`](https://github.com/potion-run/paykit/tree/main/packages/paykit-polar) | Polar as a paykit provider |
+| [`@potion.run/paykit-stripe`](https://github.com/potion-run/paykit/tree/main/packages/paykit-stripe) | Stripe as a paykit provider |
+| [`@potion.run/paykit-admin`](https://github.com/potion-run/paykit/tree/main/packages/paykit-admin) | The Foldkit ops console over `BillingAdminApi` |
+
+## What each one owns
+
+`@potion.run/paykit` owns the model: the event log, the standing, the
+entitlement read, the catalog guard, the policies and the provider port. A host
+declares a catalog, builds a `BillingStack`, and calls the typed commands.
+
+The provider packages own one vendor each. They create and reconcile the
+products, prices and meters the catalog describes, and they decode the vendor's
+webhooks. Money movement stays behind the `Payments` port.
+
+The admin package is a client of `BillingAdminApi`. It never owns billing state:
+the list, preview and verify are reads, and every write is a command with a
+command id.
+
+## Examples
+
+- [Billing example](https://github.com/potion-run/paykit/tree/main/examples/billing) — a runnable Worker with the memory store and the manual provider.
+- [Admin example](https://github.com/potion-run/paykit/tree/main/examples/admin) — the console, a cookie session and pushed live reads.
+
+<Render file="design-of-record" />
