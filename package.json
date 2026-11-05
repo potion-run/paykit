@@ -6,7 +6,12 @@
   "scripts": {
     "build": "pnpm -r --filter \"./packages/*\" run build:package",
     "build:packages": "pnpm -r --filter \"./packages/*\" run build:package",
-    "clean": "rm -rf packages/*/lib packages/*/*.tsbuildinfo tsconfig.tsbuildinfo",
+    "build:website": "pnpm --filter @potion.run/website build",
+    "check:website": "pnpm --filter @potion.run/website typecheck && pnpm --filter @potion.run/website check",
+    "clean": "rm -rf packages/*/lib packages/*/*.tsbuildinfo tsconfig.tsbuildinfo website/dist website/.astro website/.nimbus",
+    "deploy:website": "pnpm --filter @potion.run/website deploy",
+    "destroy:website": "pnpm --filter @potion.run/website destroy",
+    "dev:website": "pnpm --filter @potion.run/website dev",
     "exports:check": "node scripts/check-exports.ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

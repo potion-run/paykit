@@ -1,0 +1,84 @@
+---
+title: Quickstart
+description: From a catalog to a checked account.
+sidebar:
+  order: 1
+---
+
+This is the shortest path to a working billing model. It uses the in-memory
+store and the manual provider, so it needs no database and no provider key.
+
+## Declare the catalog
+
+The catalog is plain data beside the stack. It is validated when the stack is
+built: a priced tier nothing can sell is an error.
+
+```ts
+import { Paykit } from "@potion.run/paykit";
+
+const messages = Paykit.feature({ id: "messages", name: "Messages" });
+const seats = Paykit.feature({ id: "seats", name: "Seats" });
+
+const free = Paykit.tier({
+  id: "free",
+  grants: [Paykit.allowance(messages, { included: 100 })],
+});
+
+const pro = Paykit.tier({
+  id: "pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [
+    Paykit.allowance(messages, { included: 2_000, overage: "bill" }),
+    Paykit.allowance(seats, { included: 5, resets: "never" }),
+  ],
+});
+
+const catalog = { features: [messages, seats], tiers: [free, pro] };
+```
+
+## Build the stack
+
+```ts
+yield* Paykit.Stack("Billing", {
+  store: Paykit.MemoryStore(),
+  providers: [Paykit.Manual()],
+  catalog,
+});
+```
+
+The stack provisions the store and the provider objects the catalog describes,
+then exposes the billing Api and its typed reads.
+
+## Check an account
+
+`check()` is a read. It answers from the account's standing, not from the
+provider.
+
+```ts
+const check = yield* Paykit.Check();
+const answer = yield* check({ account, feature: "messages" });
+// { allowed, remaining, resetsAt, standing }
+```
+
+## Record usage
+
+```ts
+const track = yield* Paykit.Track();
+yield* track({ account, feature: "messages", dedupeKey: requestId });
+```
+
+A `dedupeKey` makes a retry the same usage record. A hold is an addressable
+entity, so work in flight is reserved, then settled or released:
+
+```ts
+const hold = yield* Paykit.Hold();
+const reservation = yield* hold({ account, feature: "messages", amount: 100 });
+
+const settle = yield* Paykit.Settle();
+yield* settle({ account, holdId: reservation.id, amount: 80 });
+```
+
+## Next
+
+- [Packages](/packages/) — the provider packages and the ops console.
+- [The design of record](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md).
