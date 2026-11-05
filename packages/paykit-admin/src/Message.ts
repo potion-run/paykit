@@ -5,6 +5,8 @@ import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
+import { UrlRequest } from "foldkit/navigation";
+import { Url } from "foldkit/url";
 
 export const Message = defineMessageUnion({
   ClickedRefresh: {},
@@ -14,6 +16,13 @@ export const Message = defineMessageUnion({
   UpdatedTierFilter: { value: Schema.String },
   ClickedAccount: { account: AccountId },
   ClosedAccount: {},
+
+  /** The runtime's `routing.onUrlChange`: a push, a replace, or a back button. */
+  ChangedUrl: { url: Url },
+  /** The runtime's `routing.onUrlRequest`: a link the console did not draw. */
+  ClickedLink: { request: UrlRequest },
+  CompletedReflectRoute: {},
+  CompletedLoadExternal: {},
 
   ReceivedAdminQuery: { message: AdminQueries.Message },
   ReceivedAdminResult: { message: BillingAdmin.Message },

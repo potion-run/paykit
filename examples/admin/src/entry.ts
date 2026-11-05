@@ -21,8 +21,9 @@ const headers = {
 /**
  * The development guard reads headers, and a browser cannot set headers on a
  * WebSocket. Use the HTTP protocol here so commands and live reads both carry
- * the header pair; a production app with a cookie session can use
- * `protocolWebSocket` instead.
+ * the header pair; a production app with a same-origin `HttpOnly` cookie should
+ * use `protocolWebSocket` instead and set no headers at all. See the package
+ * README, "A production session".
  */
 const Connection = BillingAdminApi.layerClient.pipe(
   Layer.provide(Domain.protocolHttp(`${location.origin}/admin`)),
