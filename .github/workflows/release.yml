@@ -84,13 +84,15 @@ jobs:
           node scripts/smoke-artifact.mjs packages/paykit/lib/index.js Paykit ChargeProration
           node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js Polar distilledPolarClient
           node scripts/smoke-artifact.mjs packages/paykit-stripe/lib/index.js Stripe distilledStripeClient
+          node scripts/smoke-artifact.mjs packages/paykit-admin/lib/index.js Console Flags decodeSnapshotFlags
 
-      - name: Pack both packages
+      - name: Pack every published package
         run: |
           set -euo pipefail
           mkdir -p release-packages
-          pnpm --filter @potion.run/paykit pack --pack-destination "$GITHUB_WORKSPACE/release-packages"
-          pnpm --filter @potion.run/paykit-polar pack --pack-destination "$GITHUB_WORKSPACE/release-packages"
+          for package in paykit paykit-polar paykit-stripe paykit-admin; do
+            pnpm --filter "@potion.run/$package" pack --pack-destination "$GITHUB_WORKSPACE/release-packages"
+          done
 
       # The tarballs are the record of what shipped, whether or not it is
       # published. A dry run stops here.

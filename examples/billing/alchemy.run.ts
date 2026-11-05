@@ -1,5 +1,5 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { BillingStackResource, Paykit } from "@potion.run/paykit";
+import { BillingStackResource, Paykit, providerDescriptor } from "@potion.run/paykit";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,13 +39,7 @@ export default Alchemy.Stack(
     // validate dies here rather than half-deploying.
     const recorded = yield* BillingStackResource("Billing", {
       catalog: billing.catalog,
-      providers: billing.providers.map((provider) => ({
-        name: provider.name,
-        kind: provider.kind,
-        webhook: provider.webhook !== undefined,
-        capabilities: [...provider.capabilities],
-        ...(provider.prices === undefined ? {} : { prices: provider.prices }),
-      })),
+      providers: billing.providers.map(providerDescriptor),
       store: billing.store,
     });
     const worker = yield* BillingWorker;
