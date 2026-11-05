@@ -1,22 +1,30 @@
-import { BillingReadPage } from "@potion.run/paykit/BillingReadStore";
-import { Catalog } from "@potion.run/paykit/Catalog";
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import type { Runtime } from "foldkit";
+import type { Url } from "foldkit/url";
 import { Flags } from "./Flags.ts";
 import { Message } from "./Message.ts";
-import { Model } from "./Model.ts";
+import { Model, openedAccount } from "./Model.ts";
 import type { ConsoleResources } from "./Requirements.ts";
+import { filterOf, queryOf, routeOf } from "./Route.ts";
+import { decodeSnapshotFlags } from "./Snapshot.ts";
 
 /**
- * Seed the first paint from Flags, then ask for whatever the host did not
- * seed. A stale snapshot falls back to a live read; it never blocks boot.
+ * Seed the first paint from the URL and Flags, then ask for whatever the host
+ * did not seed. The route decides what is on screen — the account, the filters
+ * — so a refresh, a shared link and a back button all boot the same view. A
+ * stale snapshot falls back to a live read; it never blocks boot.
  */
-export const init: Runtime.ApplicationInit<Model, Message, Flags, ConsoleResources> = (flags) => {
-  const catalog = Option.getOrNull(Schema.decodeUnknownOption(Catalog)(flags.catalog));
-  const page = Option.getOrNull(Schema.decodeUnknownOption(BillingReadPage)(flags.accounts));
+export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, ConsoleResources> = (
+  flags,
+  url: Url,
+) => {
+  const snapshots = decodeSnapshotFlags(flags);
+  const route = routeOf(url);
+  const filter = filterOf(route);
+  const catalog = Option.getOrNull(snapshots.catalog);
+  const page = Option.getOrNull(snapshots.accounts);
   const commands: Array<Command.Command<Message, never, ConsoleResources>> = [];
   let sent = 0;
 
@@ -32,11 +40,28 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags, ConsoleResourc
   if (listRequest !== null) {
     commands.push(
       Command.mapMessage(
-        AdminQueries.ListAccounts({ requestId: listRequest, query: {} }),
+        AdminQueries.ListAccounts({ requestId: listRequest, query: queryOf(filter) }),
         (message) => Message.ReceivedAdminQuery({ message }),
       ),
     );
   }
+
+  const snapshot =
+    route._tag === "Account" &&
+    Option.isSome(snapshots.account) &&
+    snapshots.account.value.account === route.account
+      ? snapshots.account.value
+      : null;
+
+  const account =
+    route._tag === "Account"
+      ? Option.some({
+          ...openedAccount(route.account),
+          billing: Option.fromNullishOr(snapshot?.billing),
+          entitlements: Option.fromNullishOr(snapshot?.entitlements),
+          cursor: Option.fromNullishOr(snapshot?.cursor),
+        })
+      : Option.none();
 
   const model = Model.make({
     session: flags.session,
@@ -45,19 +70,19 @@ export const init: Runtime.ApplicationInit<Model, Message, Flags, ConsoleResourc
     queryIds: { sent },
     catalog: Option.fromNullishOr(catalog),
     catalogError: Option.none(),
+    route,
     accounts: {
       rows: page?.rows ?? [],
       next: Option.fromNullishOr(page?.next ?? null),
-      filter: {
-        standing: Option.none(),
-        status: Option.none(),
-        tier: Option.none(),
-      },
+      filter,
       state: page !== null ? "Loaded" : "Loading",
       error: Option.none(),
       requestId: Option.fromNullishOr(listRequest),
+      // The seeded page carries the time the host read it; a hand-built page
+      // carries none, and the console says so rather than inventing one.
+      asOf: Option.fromNullishOr(page?.asOf),
     },
-    account: Option.none(),
+    account,
   });
 
   return commands.length === 0 ? { model } : { model, commands };

@@ -9,8 +9,17 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - **The console is a client, not a second billing model.** It does not store a
   copy of the subscription aggregate, entitlement arithmetic, or proration.
   `BillingState` and `Entitlements` are the truth; `AccountEvents` is the
-  history. The Model holds routes, filters, drafts, command ids, query ids and
-  pending outcomes.
+  history. The Model holds routes, filters, drafts, command ids, query ids,
+  read stamps and pending outcomes.
+- **The URL is the navigation state.** The route names the account and the
+  filters (`/accounts/:account`, `?standing=grace`); a navigation change is
+  reflected with `reflectRoute` and re-parsed with `routeOf`. Never keep a
+  selection the URL cannot reproduce. Applying a route naming another account
+  replaces the account state, which is what restarts its keyed reads.
+- **A seeded snapshot is the first frame of a live read, not a second source.**
+  `Flags` carries wire-encoded snapshots decoded by `decodeSnapshotFlags`; a
+  snapshot that no longer decodes falls back to the live read. A seeded account
+  starts `CatchingUp` and resumes its event stream after its cursor.
 - **Every write is a `BillingAdmin` command with a `commandId`.** The id comes
   from `next(model.commandIds)`. A retry of `Unknown` reuses it; a new attempt
   gets a new one. Never write billing state locally on success.
@@ -22,8 +31,10 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   response is applied only while its `requestId` is the one the Model is
   waiting for.
 - **The list is not live.** `ListAccounts` is a one-shot command over the
-  `BillingRead` projection. Refresh it when the operator asks or after a write;
-  do not turn it into a subscription or a fake view.
+  `BillingRead` projection. Its page carries the time the store answered
+  (`asOf`); the panel always says when the rows were read or that the read time
+  is unknown, and never presents them as live. Re-read it when the operator
+  asks, when a filter changes, or after the console's own write lands.
 - **Serve it through `AdminConsoleServer`.** It captures the `Admin` middleware
   the way `Domain.Api` captures an API's middleware. Do not hand-merge the RPC
   handler, serialization and auth layers.
@@ -56,6 +67,8 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 ## Tests
 
 `pnpm test` runs the update loop without a browser. Add a story for every
-action and every refusal, and a contract test when `BillingAdminApi` gains a
-command the console should expose. A new command that the console ignores is a
-review decision, not an accident.
+action and every refusal, a route test for every navigation the console can
+start, and a contract test when `BillingAdminApi` gains a command the console
+should expose. A new command that the console ignores is a review decision,
+not an accident. Every action the console offers is checked against
+`Subscription.predict` by a property test in `packages/paykit/test/admin`.

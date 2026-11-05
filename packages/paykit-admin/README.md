@@ -9,7 +9,7 @@ command id.
 
 | Entry point | What it gives |
 | --- | --- |
-| `@potion.run/paykit-admin` | The `Console` program: `Flags`, `Model`, `init`, `update`, `subscriptions`, `view` |
+| `@potion.run/paykit-admin` | The `Console` program: `Flags`, `Model`, `init`, `update`, `subscriptions`, `routing`, `view` |
 | `@potion.run/paykit-admin/Console` | The same program from its own module |
 | `@potion.run/paykit-admin/styles.css` | Optional default styles, scoped to `.pk-admin` |
 
@@ -27,6 +27,89 @@ never as a different charge.
 The console shows account ids and billing state only. paykit stores no customer
 records, so there is no name, email or profile to show.
 
+## Where you are lives in the URL
+
+The address bar is the navigation state, so a refresh, a shared link and a back
+button all land on the same view:
+
+| URL | View |
+| --- | --- |
+| `/` | The account list, unfiltered |
+| `/?standing=grace&tier=pro` | The list, filtered |
+| `/accounts/:account` | One account, with the list's filters preserved |
+
+`Console.routing` turns a URL change into `ChangedUrl` and a link click into
+`ClickedLink`; spreading `Console` into `Runtime.makeApplication` brings it
+along. A navigation command reflects the route through `reflectRoute`, and
+`init` parses the same string back through `routeOf`, so the Model follows the
+URL rather than the other way round. Selecting another account drops the
+previous account's state, which is what restarts its live reads under the new
+key: nothing from the account you left survives into the one you opened.
+
+Run the app on its own origin (`/` and `/accounts/...` are the console's
+paths), and keep `/admin` and `/console` for the Api and read surfaces.
+
+## The list is a point-in-time read
+
+`ListAccounts` is a one-shot command over the `BillingRead` projection, not a
+subscription. `List` stamps every page with the time it answered (`asOf`), and
+the panel always says when the rows were read — or that the read time is
+unknown, when a hand-built snapshot carried no stamp. It never presents the
+list as live.
+
+- **Refresh** re-reads the current filter, keeping the rows on screen and
+  labelling the panel as refreshing.
+- **A confirmed write** re-reads the list, because the row the operator just
+  changed (tier, standing, credits) is the one the snapshot has wrong.
+- **The account panel** is live: `Entitlements`, `BillingState` and
+  `AccountEvents` are watches, so only the list needs the label.
+
+## Seed the first paint
+
+`Flags` may carry three snapshots, each wire-encoded and decoded by
+`decodeSnapshotFlags`. A snapshot the current schema no longer matches is
+dropped and the live read fills the panel; a stale deployment costs a round
+trip, never boot.
+
+```ts
+import { AccountSnapshot, Console } from "@potion.run/paykit-admin";
+
+// On the server, for the request's URL: read the catalog, one page of the list
+// for the route's filters, and — when the route names an account — that
+// account's billing, entitlements and event cursor.
+const snapshots = {
+  catalog: Schema.encodeSync(Catalog)(catalog),
+  accounts: Schema.encodeSync(BillingReadPage)(page),
+  account: Schema.encodeSync(AccountSnapshot)({
+    account: "acct_1",
+    billing,
+    entitlements,
+    cursor: lastSeq,
+  }),
+};
+
+// In the browser, at boot.
+Runtime.run(
+  Runtime.makeApplication({
+    ...Console,
+    resources,
+    container: document.getElementById("root"),
+  }),
+  { flags: Console.Flags.make({ session: crypto.randomUUID(), ...snapshots }) },
+);
+```
+
+A seeded list must answer the filters in the page's URL; a seeded account is
+used only when the route selects that account. The seeded account starts with
+`feed: "CatchingUp"` and resumes its event stream after `cursor`, so it is the
+first frame of the live reads rather than a claim that nothing has happened
+since.
+
+The console is client-only: it ships no server entry, and snapshots are how a
+host buys a first paint. A server-rendered first paint would need the host's
+own entry beside `Cloudflare.Website.Foldkit`'s generated one, which is out of
+scope for this package.
+
 ## Mount it
 
 `Console` is a normal Foldkit application. The host provides the
@@ -41,7 +124,6 @@ import { Console } from "@potion.run/paykit-admin";
 import "@potion.run/paykit-admin/styles.css";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Socket from "effect/socket/Socket";
 import { Runtime } from "foldkit";
 import { FetchHttpClient } from "effect/http/FetchHttpClient";
 
@@ -50,9 +132,10 @@ const headers = {
   "x-paykit-kind": "admin",
 };
 
+// The development guard reads headers, and a browser cannot set headers on a
+// WebSocket. `protocolHttp` carries the header pair on every call.
 const Connection = BillingAdminApi.layerClient.pipe(
-  Layer.provide(Domain.protocolWebSocket(`${location.origin}/admin`)),
-  Layer.provide(Socket.layerWebSocketConstructorGlobal),
+  Layer.provide(Domain.protocolHttp(`${location.origin}/admin`)),
 );
 
 const resources = Layer.mergeAll(
@@ -78,13 +161,40 @@ Runtime.run(
 );
 ```
 
-`x-paykit-actor` and `x-paykit-kind` are the development guards. A production
-deployment provides its own session layer and should pass the headers its
-commands and reads need. The actor shown in the console is display-only; every
-authorization decision happens on the server.
+`x-paykit-actor` and `x-paykit-kind` are the development guards; a production
+deployment replaces them with a cookie session and WebSocket live reads (see
+[A production session](#a-production-session)). The actor shown in the console
+is display-only; every authorization decision happens on the server.
 
-Seeding `catalog` and `accounts` in `Flags` gives the console a first paint
-without a round trip. A stale snapshot falls back to the live query.
+## A production session
+
+The development example authenticates with headers, and a browser cannot set
+headers on a WebSocket: that is the only reason it uses `protocolHttp` for
+commands. A production host should use a same-origin `HttpOnly` cookie instead,
+serve the live reads over a WebSocket, and send no header config at all.
+
+```ts
+// Server: resolve the actor from the session cookie your host already sets,
+// then provide it as `Session` and `Admin` exactly as DevGuards does with
+// headers. The cookie is HttpOnly, SameSite=Lax, and scoped to the admin origin.
+const Connection = BillingAdminApi.layerClient.pipe(
+  Layer.provide(Domain.protocolWebSocket(`${location.origin}/admin`)),
+  Layer.provide(Socket.layerWebSocketConstructorGlobal),
+);
+
+const resources = Layer.mergeAll(
+  Connection,
+  AdminReadsClient(`${location.origin}/console`),
+  AdminChangeTierClient(`${location.origin}/console`),
+).pipe(Layer.provide(FetchHttpClient.layer));
+```
+
+A cookie is sent by the browser on `fetch`, on the RPC HTTP calls and on the
+WebSocket handshake, so `CommandHeaders` is not needed. Two consequences worth
+keeping: the guards must still check the cookie's actor kind on the server
+(the console's actor is display-only), and a same-site cookie plus the
+same-origin check is what stands in for the CSRF token the header pair gave
+you.
 
 ## Serve the reads beside the admin Api
 
@@ -157,6 +267,9 @@ The package ships headless state hooks and an optional stylesheet:
 
 - `data-paykit-standing`, `data-paykit-status`, `data-paykit-feed`,
   `data-paykit-pending` for state.
+- `data-paykit-consistency="snapshot"` and `data-paykit-as-of` (an ISO time, or
+  `unknown`) on the account list, so a host's own styles can mark the list as a
+  point-in-time read.
 - `pk-*` classes for the default layout, scoped under `.pk-admin`.
 - `--pk-*` custom properties for colors and spacing.
 
@@ -165,8 +278,12 @@ own design system. The stylesheet has no global resets, fonts or icons.
 
 ## Tests
 
-`pnpm test` covers the update loop: seeded flags, stale list responses,
-opening an account, parsing an intent, one command and one pending id,
-rejections, event confirmation, and retrying an `Unknown` outcome with the
-same id. The Api-side read port has its own tests in
-`packages/paykit/test/admin`.
+`pnpm test` covers the update loop: seeding the first paint from Flags and the
+URL, a snapshot that no longer decodes, opening an account from the route,
+following a reflected URL and a back button, one list read per filter change,
+the list's read stamp and its re-read after a write, stale list responses,
+parsing an intent, one command and one pending id, rejections, event
+confirmation, and retrying an `Unknown` outcome with the same id. The
+Api-side read port has its own tests in `packages/paykit/test/admin`, including
+a property test that every action `actionsFor` offers is one
+`Subscription.predict` accepts.

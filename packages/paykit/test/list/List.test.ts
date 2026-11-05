@@ -123,6 +123,9 @@ describe("the List binding", () => {
       const all = yield* list();
       expect(all.rows.length).toBe(accounts.length);
       expect(all.next).toBeNull();
+      // A page is a snapshot, so the binding stamps when it answered. The
+      // console shows this instead of presenting the list as live.
+      expect(all.asOf).toBeDefined();
     }).pipe(Effect.provide(Layer.mergeAll(MemoryBillingReadStore))),
   );
 });
