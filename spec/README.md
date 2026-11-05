@@ -19,22 +19,11 @@ gate needs nothing beyond `pnpm install`. A run must reach `success`.
 
 | Model | What it decides | Mirrors |
 | --- | --- | --- |
-| `PaykitReport` | A closed period's usage reaches the vendor once, with the quantity that period closed with. | `Subscription/PeriodCloseUsage.policy.ts`, `Subscription/PeriodRollover.policy.ts`, the outbox in `Store/SqlAggregateStore.ts` |
 | `PaykitStore` | The state row beside the log is always the log folded. | `Store/SqlAggregateStore.ts` (`send`), `Store/SqlEventLog.ts` (`append`) |
-| `PaykitReportSplit` | A period that billed two prices reports each unit at the price it was recorded at, and the vendor receives all of them. | `Subscription/PeriodCloseUsage.policy.ts` (`billableLines`), `Subscription/Entitlements.view.ts` (`priced`), `Subscription/TrackUsage.command.ts` (`UsageRecorded.billable`) |
+| `PaykitReportSplit` | A period that billed two prices reports each unit at the price it was recorded at, once, and the vendor receives all of them. | `Subscription/PeriodCloseUsage.policy.ts` (`billableLines`), `Subscription/Entitlements.view.ts` (`priced`), `Subscription/TrackUsage.command.ts` (`UsageRecorded.billable`), the outbox in `Store/SqlAggregateStore.ts` |
 | `PaykitCreditClose` | A close returns the plan's credits and keeps the pack, and open holds stay covered by the pool. | `Subscription/Subscription.aggregate.ts` (`Hold`, `SettleHold`, `closePeriodEvents`), `Subscription/Subscription.state.ts`, `Catalog.ts` (`CatalogCreditFeatureHasAllowance`) |
 
 ## The invariants that carry the weight
-
-`PaykitReport`
-
-- **`ReportedQuantityIsClosing`** — what the vendor is sent is `frozen[p]`, the
-  billable units the period closed with, not a later read of `used`.
-- **`OneQuantityPerPeriod`** — the period is the idempotency key, so a second
-  push for the same period is the same number. `PushThenCrash` is a push that
-  lands and a process that dies before the outbox marks the delivery done.
-- **`NoReportWithoutClose`**, **`OutboxIsClosed`** — the vendor never hears about
-  a period the aggregate did not close.
 
 `PaykitStore`
 
@@ -51,9 +40,14 @@ gate needs nothing beyond `pnpm install`. A run must reach `success`.
   period would have reported in one number. The free grant belongs to the
   period, not to the price: charging it per price gives the same grant away once
   per price and the total stops matching the usage.
-- **`MeterHoldsTheClosingQuantity`**, **`EveryBillableUnitArrived`** — every
-  report carries its own price's closing quantity, and nothing is lost on the
-  way. This is where the idempotency key decides the outcome.
+- **`ReportNamesEveryPrice`** — the meter never holds a number the period did
+  not close with, at any price. `PushThenCrash` is a push that lands and a
+  process that dies before the outbox marks the delivery done; the redelivery is
+  the same payload, so the number it wrote was already the right one.
+- **`EveryBillableUnitArrived`** — once the outbox has drained, every price the
+  period billed for is at the meter. One lost line is one unbilled unit.
+- **`NoReportWithoutClose`** — the vendor never hears about a period the
+  aggregate did not close.
 
 `PaykitCreditClose`
 
@@ -72,8 +66,6 @@ does not, the invariant above it is not load-bearing and should be rewritten or
 deleted.
 
 ```sh
-# PaykitReport: read usage when the delivery runs instead of when it closed
-sed 's/ReadsLiveUsage = FALSE/ReadsLiveUsage = TRUE/' spec/PaykitReport.cfg > /tmp/live.cfg
 # PaykitStore: append a decision without checking the version it was made on
 sed 's/ChecksVersion = TRUE/ChecksVersion = FALSE/' spec/PaykitStore.cfg > /tmp/stale.cfg
 # PaykitReportSplit: grant the free units once per price, not once per period
@@ -82,19 +74,17 @@ sed 's/SharesIncluded = TRUE/SharesIncluded = FALSE/' spec/PaykitReportSplit.cfg
 sed 's/KeepsHolds = FALSE/KeepsHolds = TRUE/' spec/PaykitCreditClose.cfg > /tmp/kept.cfg
 ```
 
-Every one of them produces a trace today: `ReportedQuantityIsClosing`,
-`StateIsFoldOfLog`, `MeterHoldsTheClosingQuantity`, `SplitConservesBillable` and
-`HoldsAreCovered`. The store one models what the code did before the fix
-described below, so it stays as the test of the invariant rather than as dead
-history.
+Every one of them produces a trace today: `StateIsFoldOfLog`,
+`SplitConservesBillable`, `HoldsAreCovered`. The store one models what the code
+did before the fix described below, so it stays as the test of the invariant
+rather than as dead history.
 
 ## What the model does not cover
 
 - **`decide` arithmetic.** It is pure and single-threaded, and
   `packages/paykit/test/{properties,stories,conformance}` already own it.
   Modelling numbers a test already pins is sunk cost; the model is for the
-  interleavings around them — the one exception is `PaykitReportSplit`, which
-  models arithmetic the code does not do yet.
+  interleavings around them.
 - **The vendor.** Anything about what Stripe or Polar actually does belongs in
   the gated live tests. The model checks paykit's side of the contract.
 - **Liveness.** The models are safety only. `ReportedQuantityIsClosing` says a
@@ -148,11 +138,12 @@ design and pinned a rule, which is the other half of what a spec is for.
 
 ### Splitting a period's report by price
 
-`PaykitReport` was the close before
+`PaykitReportSplit` is the close after
 [ADR 0008](../docs/adr/0008-a-report-names-the-price-each-unit-was-recorded-at.md):
-one quantity per period, priced at whatever the standing said at the close.
-`PaykitReportSplit` is the close after it — one report per period, carrying a
-line per price — and it decided one thing before anyone wrote it.
+one report per period, carrying a line per price. The model that preceded it —
+one quantity per period, priced at whatever the standing said when the close ran
+— was deleted when the split landed, because a model of a replaced design is a
+gate on nothing.
 
 **The free grant belongs to the period.** `Included` is units a period gives
 away, so with two prices it is still one grant. The model applies it to the

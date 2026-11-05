@@ -94,11 +94,20 @@ Deliver(p) ==
   /\ vendor' = [vendor EXCEPT ![p] = frozen[p]]
   /\ UNCHANGED <<clock, open, recorded, closed, frozen>>
 
+\* The push lands and the process dies before the outbox marks the delivery
+\* done, so the same report is handed over again. Harmless because the report is
+\* a function of the period: a redelivery is the same payload, not a second one.
+PushThenCrash(p) ==
+  /\ p \in outbox
+  /\ vendor' = [vendor EXCEPT ![p] = frozen[p]]
+  /\ UNCHANGED <<clock, open, recorded, closed, frozen, outbox, delivered>>
+
 Next ==
   \/ Tick
   \/ \E v \in Prices : TrackUsage(v)
   \/ ClosePeriod
   \/ \E p \in outbox : Deliver(p)
+  \/ \E p \in outbox : PushThenCrash(p)
 
 Spec == Init /\ [][Next]_vars
 
@@ -120,9 +129,11 @@ SplitConservesBillable ==
 \* Nothing reaches the meter for a period the aggregate did not close.
 NoReportWithoutClose == delivered \subseteq closed
 
-\* Every delivered report carries the period's closing quantity at each price.
+\* The meter never holds a number the period did not close with — including
+\* after a push whose delivery was never marked, because that number was the
+\* same one.
 ReportNamesEveryPrice ==
-  \A p \in delivered, v \in Prices : vendor[p][v] = frozen[p][v]
+  \A p \in closed, v \in Prices : vendor[p][v] = 0 \/ vendor[p][v] = frozen[p][v]
 
 \* Once a period is delivered, every price it billed for is at the meter — one
 \* lost line is one unbilled unit.
