@@ -22,6 +22,7 @@ import {
 
 const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const monthLater = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+const monthAfterThat = DateTime.makeUnsafe("2030-03-01T00:00:00Z");
 const id = Subscription.ref("acct_scheduled").id;
 const context = Context.make(Actor, system("test"));
 
@@ -256,22 +257,29 @@ describe("the pool at the boundary", () => {
     interval: "month" as const,
   };
 
-  const close = (state: SubscribedState) =>
+  const closeAt = (state: SubscribedState, now: DateTime.Utc) =>
     Subscription.predict(
       state,
       new ClosePeriod({
         periodEnd: state.period.end,
         input: { periodEnd: state.period.end },
       } as never),
-      { id, now: monthLater, context },
+      { id, now, context },
     );
 
-  it("grants the new tier's pool and expires it by the new tier's rule", () => {
+  const accepted = (verdict: ReturnType<typeof closeAt>): SubscribedState => {
+    expect(verdict._tag).toBe("Accepted");
+    return verdict._tag === "Accepted" ? (verdict.state as SubscribedState) : (undefined as never);
+  };
+
+  it("grants the new tier's pool, and expires it at the next close", () => {
     // The account is on a pool that does not expire and moves to one that does.
-    // The boundary is a new period, so it grants the new tier's credits and then
-    // expires them: reading the rule off the tier being left would keep a pool
-    // no period ever clears.
-    const verdict = close(subscribed({ credits: 0, creditsExpire: "never", pendingTier: monthly }));
+    // The boundary grants the new tier's credits for the period starting here;
+    // the old grant is replaced, so this close has nothing of its own to expire.
+    const verdict = closeAt(
+      subscribed({ credits: 0, creditsExpire: "never", pendingTier: monthly }),
+      monthLater,
+    );
     expect(verdict._tag).toBe("Accepted");
     if (verdict._tag !== "Accepted") return;
 
@@ -279,24 +287,33 @@ describe("the pool at the boundary", () => {
       | { readonly credits: number }
       | undefined;
     expect(changed?.credits).toBe(500);
-    const expired = verdict.events.find((event) => event._tag === "CreditsExpired") as
+    expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
+    expect((verdict.state as SubscribedState).credits).toBe(500);
+    expect((verdict.state as SubscribedState).creditsExpire).toBe("period");
+
+    // The new grant is for the new period, so its own rule applies at its close.
+    const next = closeAt(accepted(verdict), monthAfterThat);
+    expect(next._tag).toBe("Accepted");
+    if (next._tag !== "Accepted") return;
+    const expired = next.events.find((event) => event._tag === "CreditsExpired") as
       | { readonly amount: number; readonly balanceAfter: number }
       | undefined;
     expect(expired).toMatchObject({ amount: 500, balanceAfter: 0 });
-    expect((verdict.state as SubscribedState).credits).toBe(0);
+    expect((next.state as SubscribedState).credits).toBe(0);
   });
 
   it("keeps what a one-off pack bought, and keeps protecting it", () => {
-    // 100 of the 120 in the pool came from a pack. The grant replaces the plan's
-    // 20 and the close expires only that part, so the pack is still there and
-    // still the pool a close may not take.
-    const verdict = close(
+    // 100 of the 120 in the pool came from a pack. The new grant replaces the
+    // plan's 20 and keeps the pack; the new grant is not expired at the
+    // boundary it starts, so the pack stays protected for the next period.
+    const verdict = closeAt(
       subscribed({
         credits: 120,
         prepaidCredits: 100,
         creditsExpire: "period",
         pendingTier: monthly,
       }),
+      monthLater,
     );
     expect(verdict._tag).toBe("Accepted");
     if (verdict._tag !== "Accepted") return;
@@ -306,28 +323,58 @@ describe("the pool at the boundary", () => {
       | undefined;
     expect(changed?.credits).toBe(600);
     expect(changed?.prepaidCredits).toBe(100);
-    const expired = verdict.events.find((event) => event._tag === "CreditsExpired") as
+    expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
+
+    const after = verdict.state as SubscribedState;
+    expect(after.credits).toBe(600);
+    expect(after.prepaidCredits).toBe(100);
+
+    // The plan's part of the new pool expires next period; the pack does not.
+    const next = closeAt(after, monthAfterThat);
+    expect(next._tag).toBe("Accepted");
+    if (next._tag !== "Accepted") return;
+    const expired = next.events.find((event) => event._tag === "CreditsExpired") as
       | { readonly amount: number; readonly balanceAfter: number }
       | undefined;
     expect(expired).toMatchObject({ amount: 500, balanceAfter: 100 });
-
-    const after = verdict.state as SubscribedState;
-    expect(after.credits).toBe(100);
-    expect(after.prepaidCredits).toBe(100);
+    expect((next.state as SubscribedState).credits).toBe(100);
+    expect((next.state as SubscribedState).prepaidCredits).toBe(100);
   });
 
-  it("expires nothing when the tier it moves to keeps its pool", () => {
-    const verdict = close(
+  it("replaces the old plan's grant without expiring the new one", () => {
+    const verdict = closeAt(
       subscribed({
         credits: 40,
         creditsExpire: "period",
-        pendingTier: { ...monthly, creditsExpire: "never" },
+        pendingTier: monthly,
       }),
+      monthLater,
     );
     expect(verdict._tag).toBe("Accepted");
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
     expect((verdict.state as SubscribedState).credits).toBe(500);
+  });
+
+  it("grants nothing extra when the tier it moves to keeps its pool", () => {
+    const verdict = closeAt(
+      subscribed({
+        credits: 40,
+        creditsExpire: "period",
+        pendingTier: { ...monthly, creditsExpire: "never" },
+      }),
+      monthLater,
+    );
+    expect(verdict._tag).toBe("Accepted");
+    if (verdict._tag !== "Accepted") return;
+    expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
+    expect((verdict.state as SubscribedState).credits).toBe(500);
+
+    const next = closeAt(accepted(verdict), monthAfterThat);
+    expect(next._tag).toBe("Accepted");
+    if (next._tag !== "Accepted") return;
+    expect(next.events.map((event) => event._tag)).not.toContain("CreditsExpired");
+    expect((next.state as SubscribedState).credits).toBe(500);
   });
 });
 

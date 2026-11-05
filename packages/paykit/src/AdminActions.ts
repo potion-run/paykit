@@ -3,6 +3,7 @@ import { allowancesOf, type Catalog } from "./Catalog.ts";
 import type { BillingStateView } from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { spendCeilingOf } from "./Subscription/Subscription.state.ts";
+import type { Tier } from "./Tier.ts";
 
 /**
  * The commands a console may offer for one account. This is a UI aid, not an
@@ -51,6 +52,13 @@ const actionOrder: ReadonlyArray<AdminAction> = [
   "Resume",
 ];
 
+/**
+ * A pack is a purchase, not a tier: it grants credits, has no allowances, and
+ * never becomes a standing. A tier-change command that names one is refused, so
+ * the console must not offer it.
+ */
+const sellableTier = (tier: Tier): boolean => (tier.kind ?? "subscription") !== "one_off";
+
 const changeTiers = (
   state: Pick<BillingStateView, "tier" | "currency">,
   catalog: Catalog | undefined,
@@ -58,6 +66,7 @@ const changeTiers = (
 ): ReadonlyArray<string> => {
   if (catalog === undefined) return [];
   return catalog.tiers
+    .filter(sellableTier)
     .filter((tier) => tier.id !== state.tier)
     .filter(
       (tier) =>
@@ -114,6 +123,7 @@ const scheduleTiers = (
 ): ReadonlyArray<string> => {
   if (catalog === undefined) return [];
   return catalog.tiers
+    .filter(sellableTier)
     .filter((tier) => tier.id !== state.tier)
     .filter(
       (tier) =>

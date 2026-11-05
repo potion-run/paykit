@@ -423,6 +423,26 @@ describe("a change at the period end", () => {
     expect(offered.map((descriptor) => descriptor.action)).not.toContain("WithdrawTierChange");
   });
 
+  it("never offers a one-off pack as a tier", () => {
+    // A pack has no allowances, so both the mid-period change and the boundary
+    // change would be refused. The console must not render a button that can
+    // only return `TierNotInCatalog`.
+    const pack = tier({
+      id: "pack",
+      kind: "one_off",
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      credits: 10_000,
+      grants: [] as never,
+    });
+    const withPack = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, pack] }));
+    const offered = actionsFor(state("active"), { catalog: withPack });
+    for (const action of ["ChangeTier", "ScheduleTierChange"] as const) {
+      expect(offered.find((descriptor) => descriptor.action === action)?.tiers).not.toContain(
+        "pack",
+      );
+    }
+  });
+
   it("offers the withdrawal only while a change is scheduled", () => {
     const pendingTier = pending("free");
     const offered = actionsFor({ ...state("active"), pendingTier } as never, {

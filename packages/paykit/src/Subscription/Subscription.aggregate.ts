@@ -79,6 +79,7 @@ import {
   chargeOf,
   creditRateOf,
   creditsOf,
+  expiringCreditsOf,
   holdOf,
   includedRemainingOf,
   initialSubscriptionState,
@@ -258,11 +259,13 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const kept = Object.fromEntries(
     resets.filter(([, reset]) => reset.kept).map(([feature]) => [feature, true]),
   );
-  // A one-off pack bought from a period pool is never expired; only the plan's
-  // own credits go back. The rule follows the tier in force *after* the
-  // boundary: a move from a `"never"` pool onto a period one expires the grant
-  // it just made, and a move onto a `"never"` pool expires nothing.
-  const expiring = creditsExpire === "never" ? 0 : credits - prepaid;
+  // Expiry is a property of the grant that is ending. With no scheduled change,
+  // that is the plan's own credits for the period just closed: a one-off pack
+  // bought from a period pool is never expired, and a `"never"` pool has
+  // nothing to return. With a scheduled change the old grant is replaced by the
+  // new tier's grant at the boundary, so this close expires nothing of its own:
+  // the new grant's `creditsExpire` rule applies at the *next* close.
+  const expiring = pending === undefined ? expiringCreditsOf(state) : 0;
   return [
     ...moved,
     new PeriodClosed({
@@ -280,12 +283,13 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       ...(Object.keys(kept).length === 0 ? {} : { kept }),
     }),
     // Expiry is a property of the grant: a "never" pool survives the boundary,
-    // and a one-off pack bought from a period pool is never expired.
-    ...(creditsExpire === "period"
+    // a one-off pack bought from a period pool is never expired, and a scheduled
+    // change's new grant is for the period that starts here.
+    ...(pending === undefined && state.creditsExpire === "period"
       ? [
           new CreditsExpired({
             amount: expiring,
-            balanceAfter: credits - expiring,
+            balanceAfter: state.credits - expiring,
           }),
         ]
       : []),
