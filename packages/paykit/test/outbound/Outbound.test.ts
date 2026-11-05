@@ -3,7 +3,6 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import * as Schedule from "effect/Schedule";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
@@ -77,7 +76,13 @@ const subscribe = Effect.gen(function* () {
   );
 });
 
-const waitFor = Effect.repeat(Effect.sleep("5 millis"), Schedule.recurs(60));
+const waitFor = (done: () => boolean) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (done()) return;
+      yield* Effect.sleep("5 millis");
+    }
+  });
 
 const verify = (request: OutboundRequest): boolean => {
   const match = /^t=(\d+),v1=([0-9a-f]+)$/.exec(request.headers["x-paykit-signature"] ?? "");
@@ -93,7 +98,7 @@ describe("outbound events", () => {
     const requests: Array<OutboundRequest> = [];
     return Effect.gen(function* () {
       yield* subscribe;
-      yield* waitFor;
+      yield* waitFor(() => requests.length > 0);
       expect(requests.length).toBe(1);
 
       const request = requests[0]!;
@@ -117,7 +122,7 @@ describe("outbound events", () => {
     const requests: Array<OutboundRequest> = [];
     return Effect.gen(function* () {
       yield* subscribe;
-      yield* Effect.repeat(Effect.sleep("10 millis"), Schedule.recurs(80));
+      yield* waitFor(() => requests.length > 0);
       expect(requests.length).toBeGreaterThanOrEqual(1);
       expect(verify(requests[0]!)).toBe(true);
       expect(requests[0]!.idempotencyKey).toBe("acct_outbound:1");
@@ -127,7 +132,7 @@ describe("outbound events", () => {
   it.live("a deployment with no Outbound layer is a no-op", () =>
     Effect.gen(function* () {
       yield* subscribe;
-      yield* waitFor;
+      yield* Effect.sleep("20 millis");
     }).pipe(
       Effect.provide(
         PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(

@@ -161,13 +161,14 @@ const World = PaykitModel.layer(PaykitHandlers)
 
 it.live("check() allows a granted flag, refuses an ungranted one, and the read model agrees", () =>
   Effect.gen(function* () {
+    const readAccount = Subscription.ref("acct_flags_read");
     const subscription = yield* Subscription;
     const entitlements = yield* Entitlements;
     const inProcess = yield* CheckInProcess();
 
     // No grant at all: the existing missing-feature path, unchanged.
     const basicReceipt = yield* subscription.send(
-      Subscription.ref(account.id),
+      readAccount,
       new Subscribe({
         credits: 0,
         creditsExpire: "period",
@@ -175,16 +176,17 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
         tier: "basic",
         allowances: basic,
       }),
+      { commandId: "flags-basic" },
     );
-    yield* entitlements.query(Subscription.ref(account.id), { atLeast: basicReceipt });
+    yield* entitlements.query(readAccount, { atLeast: basicReceipt });
     yield* BillingRead.caughtUp(basicReceipt);
-    const ungranted = yield* inProcess({ account: account.id, feature: "sso" });
+    const ungranted = yield* inProcess({ account: readAccount.id, feature: "sso" });
     expect(ungranted.allowed).toBe(false);
     expect(ungranted.remaining).toBe(0);
 
     // A granted flag: allowed, with no count and no reset to wait for.
     const receipt = yield* subscription.send(
-      Subscription.ref(account.id),
+      readAccount,
       new Subscribe({
         credits: 0,
         creditsExpire: "period",
@@ -193,11 +195,16 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
         allowances: enterprise,
         price,
       }),
+      { commandId: "flags-enterprise" },
     );
-    yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
+    yield* entitlements.query(readAccount, { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);
 
-    const granted = yield* inProcess({ account: account.id, feature: "sso", amount: 1_000_000 });
+    const granted = yield* inProcess({
+      account: readAccount.id,
+      feature: "sso",
+      amount: 1_000_000,
+    });
     expect(granted).toEqual({
       allowed: true,
       remaining: null,
@@ -206,14 +213,14 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     });
 
     const readModel = yield* CheckReadModel();
-    expect(yield* readModel({ account: account.id, feature: "sso" })).toEqual(granted);
+    expect(yield* readModel({ account: readAccount.id, feature: "sso" })).toEqual(granted);
 
     // The row carries the flag's judgement, not a count it invented.
     const store = yield* BillingReadStore;
     const row = yield* waitForProjection(
       store,
-      account.id,
-      Option.getOrNull(yield* entitlements.query(Subscription.ref(account.id))),
+      readAccount.id,
+      Option.getOrNull(yield* entitlements.query(readAccount, { atLeast: receipt })),
     );
     expect(row?.features.sso?.allowed).toBe(true);
     expect(row?.features.sso?.remaining).toBeNull();
@@ -222,7 +229,9 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
 
     // And a Track still refuses it through the binding.
     const track = yield* Track();
-    const refused = yield* Effect.exit(track({ account: account.id, feature: "sso", amount: 1 }));
+    const refused = yield* Effect.exit(
+      track({ account: readAccount.id, feature: "sso", amount: 1 }),
+    );
     expect(refused._tag).toBe("Failure");
     expect(String(refused)).toContain("FeatureNotMetered");
   }).pipe(Effect.provide(World)),
