@@ -19,33 +19,49 @@ interface CatalogCarried {
 
 /**
  * A stable key for everything an allowance says. Every field is here on
- * purpose: a command that carries a different `kind` or `carryOver` than the
- * catalog states would record a standing the deploy never sold.
+ * purpose: a command that carries a different `kind`, `carryOver`, ceiling or
+ * price than the catalog states would record a standing the deploy never sold.
  */
+// JSON arrays rather than delimiter-joined strings: every value here is
+// caller-supplied, and a feature id or currency containing the separator must
+// not be able to forge a different allowance's key.
 const allowanceKey = (allowance: Allowance): string =>
-  `${allowance.feature}:${allowance.kind ?? "metered"}:${allowance.included}:${allowance.overage}:${allowance.resets}:${allowance.carryOver === true}`;
+  JSON.stringify([
+    allowance.feature,
+    allowance.kind ?? "metered",
+    allowance.included,
+    allowance.overage,
+    allowance.resets,
+    allowance.carryOver === true,
+    allowance.cap ?? null,
+    allowance.unitPrice === undefined
+      ? null
+      : [allowance.unitPrice.amount, allowance.unitPrice.currency],
+    allowance.moneyCap ?? null,
+  ]);
 
 const allowancesKey = (allowances: Readonly<Record<string, Allowance>>): string =>
-  Object.keys(allowances)
-    .sort()
-    .map((feature) => allowanceKey(allowances[feature]!))
-    .join("|");
+  JSON.stringify(
+    Object.keys(allowances)
+      .sort()
+      .map((feature) => allowanceKey(allowances[feature]!)),
+  );
 
 const priceKey = (price: Price | undefined): string =>
-  price === undefined ? "free" : `${price.amount}:${price.currency}:${price.interval}`;
+  price === undefined ? "free" : JSON.stringify([price.amount, price.currency, price.interval]);
 
 /** Every rate, dimension by dimension, in a stable order. */
 const ratesKey = (rates: Readonly<Record<string, Readonly<Record<string, number>>>>): string =>
-  Object.keys(rates)
-    .sort()
-    .map(
-      (feature) =>
-        `${feature}=${Object.keys(rates[feature]!)
+  JSON.stringify(
+    Object.keys(rates)
+      .sort()
+      .map((feature) => [
+        feature,
+        Object.keys(rates[feature]!)
           .sort()
-          .map((dimension) => `${dimension}:${rates[feature]![dimension]}`)
-          .join(",")}`,
-    )
-    .join("|");
+          .map((dimension) => [dimension, rates[feature]![dimension]]),
+      ]),
+  );
 
 /**
  * Compare a command's catalog-derived fields with what the catalog says, and

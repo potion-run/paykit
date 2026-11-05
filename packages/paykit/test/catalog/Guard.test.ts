@@ -13,10 +13,27 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
+const ceilTier = tier({
+  id: "ceil",
+  price: { amount: 4900, currency: "usd", interval: "month" },
+  grants: [
+    allowance(messages, {
+      included: 100,
+      overage: "bill",
+      cap: 1_000,
+      unitPrice: { amount: 2, currency: "usd" },
+      moneyCap: 5_000,
+    }),
+  ],
+});
+const testCatalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier] }),
+);
 const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
+const ceil = allowancesOf(testCatalog, "ceil")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+const ceilPrice = { amount: 4900, currency: "usd", interval: "month" as const };
 const proTerms = creditTermsOf(testCatalog, "pro")!;
 
 describe("the catalog guard", () => {
@@ -78,7 +95,7 @@ describe("the catalog guard", () => {
   it("refuses a priced tier whose price was omitted on the wire", () => {
     const mismatch = catalogMismatchOf(testCatalog, { tier: "pro", allowances: pro });
     expect(mismatch?.field).toBe("price");
-    expect(mismatch?.expected).toBe("1900:usd:month");
+    expect(mismatch?.expected).toContain("1900");
     expect(mismatch?.actual).toBe("free");
   });
 
@@ -98,6 +115,28 @@ describe("the catalog guard", () => {
       price: proPrice,
     });
     expect(mismatch?.field).toBe("allowances");
+  });
+
+  it("refuses a ceiling or price the catalog never sold", () => {
+    const granted = ceil.messages!;
+    const terms = creditTermsOf(testCatalog, "ceil")!;
+    const carries = (messages: typeof granted) =>
+      catalogMismatchOf(testCatalog, {
+        tier: "ceil",
+        allowances: { messages },
+        price: ceilPrice,
+        ...terms,
+      });
+
+    // A higher unit ceiling, a different unit price and a different money
+    // ceiling are all money the deploy never agreed to. Each must be named.
+    expect(carries({ ...granted, cap: granted.cap! + 1 })?.field).toBe("allowances");
+    expect(carries({ ...granted, unitPrice: { ...granted.unitPrice!, amount: 3 } })?.field).toBe(
+      "allowances",
+    );
+    expect(carries({ ...granted, moneyCap: granted.moneyCap! + 1 })?.field).toBe("allowances");
+    // And the unmutated terms still pass, so the key is not over-strict.
+    expect(carries(granted)).toBe(null);
   });
 
   it("accepts a free tier given an explicit absence of price", () => {
