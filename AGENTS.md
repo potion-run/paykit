@@ -234,7 +234,7 @@ and `cloudflare/src/Workers/Worker.ts`. Read one before writing a new lifecycle.
 
 ## Source-first
 
-Effect, Alchemy and Foldkit are read from source before their APIs are guessed. `pnpm
+Effect, Alchemy, Foldkit and tla-ts are read from source before their APIs are guessed. `pnpm
 vendor:agent-sources` shallow-clones them under `.agent_sources/github.com/<owner>/<repo>/` at
 the refs their catalog pins name, and writes `.agent-source.json` metadata beside each clone.
 Read the installed `packages/*/node_modules/effect/AGENTS.md` first when it exists: it ships with
@@ -245,6 +245,7 @@ the version, so it is never stale. Then the mirrors:
 | `.agent_sources/github.com/Effect-TS/effect/` | Effect v4 Schema, Context.Service, Config, platform, SQL, tests |
 | `.agent_sources/github.com/alchemy-run/alchemy/` | resources, Cloudflare and Stripe providers, Stack API |
 | `.agent_sources/github.com/foldkit/foldkit/` | Foldkit UI, effects and subscriptions |
+| `.agent_sources/github.com/aidenybai/tla-ts/` | the TLA+ checker behind `pnpm spec`: `packages/tla-ts/src/{check,config,evaluate}.ts` |
 
 ```sh
 pnpm vendor:agent-sources                        # clone the missing mirrors
