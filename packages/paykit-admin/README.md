@@ -90,31 +90,33 @@ without a round trip. A stale snapshot falls back to the live query.
 
 The account list spans keys, so it is not a Domain Api read. `AdminReadsRpcs`
 is an Effect RPC group with the same `Admin` middleware as the admin
-commands. Serve it beside `BillingAdminApi`:
+commands, and `AdminChangeTierRpcs` adds the tier-change write. Both are
+merged into `AdminConsoleRpcs`.
+
+`AdminConsoleServer` builds the Worker handler from the hosted model and
+captures the host’s middleware context once, the way `Domain.Api` serves an
+Api. A custom `Admin` layer or session service therefore cannot be dropped by
+forgetting a layer:
 
 ```ts
-import { AdminReadsHandlers, AdminReadsRpcs } from "@potion.run/paykit/Admin";
-import * as RpcSerialization from "effect/rpc/RpcSerialization";
-import * as RpcServer from "effect/rpc/RpcServer";
+import { AdminConsoleServer } from "@potion.run/paykit/Admin";
 
-const handlers = yield* AdminReadsHandlers;
-const reads = RpcServer.toHttpEffect(AdminReadsRpcs).pipe(
-  Effect.flatten,
-  Effect.provide(
-    Layer.mergeAll(
-      AdminReadsRpcs.toLayer(handlers),
-      RpcSerialization.layerNdjson,
-      DevGuards, // production: the Layer that implements `Admin`
-    ),
-  ),
-);
+const admin = yield* BillingAdminApi;
+const console = yield* AdminConsoleServer;
+
+fetch: Effect.gen(function* () {
+  const request = yield* HttpServerRequest;
+  const path = new URL(request.url, "http://localhost").pathname;
+  if (path.startsWith("/console")) return yield* console;
+  if (path.startsWith("/admin")) return yield* admin.fetch;
+  return HttpServerResponse.text("Not Found", { status: 404 });
+});
 ```
 
-A Worker then routes `/admin` to `BillingAdminApi` and `/console` to `reads`.
-The console also needs `AdminChangeTierClient` and a server group that merges
-`AdminConsoleRpcs`, which adds the tier-change write beside the reads. Serve the
-app and both surfaces on one origin, so the session cookie reaches commands and
-WebSocket live reads.
+Provide the hosted model’s `BillingReadStore`, `CatalogService`, `Subscription`
+and `Admin` guard while building `AdminConsoleServer`. The example’s
+`BillingLayers` does exactly that. Serve the app and both surfaces on one
+origin, so the session cookie reaches commands and WebSocket live reads.
 
 ## Deploy with Alchemy
 

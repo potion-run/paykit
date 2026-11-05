@@ -44,5 +44,6 @@ export {
   makeAdminChangeTier,
 } from "./Admin/ChangeTier.ts";
 export type { AdminChangeTierShape } from "./Admin/ChangeTier.ts";
+export { AdminConsoleServer } from "./Admin/Server.ts";
 export { AdminAction, actionsFor } from "./AdminActions.ts";
 export type { AdminActionDescriptor } from "./AdminActions.ts";

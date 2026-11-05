@@ -18,11 +18,9 @@ import { Admin } from "../Auth/Guards.ts";
 import { tierTermsOf } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
-import { Proration, prorate, sameProration } from "../Proration.ts";
-import {
-  ChangeTier as ChangeTierCommand,
-  DowngradeBelowUsage,
-} from "../Subscription/ChangeTier.command.ts";
+import { Proration, sameProration } from "../Proration.ts";
+import { DowngradeBelowUsage } from "../Subscription/ChangeTier.command.ts";
+import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
@@ -142,12 +140,14 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         }
 
         const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
-        const proration = prorate({
-          from: state.price,
-          to: terms.price,
-          period: { start: state.period.start, end: state.period.end },
-          at: now,
-        });
+        const plan = planChangeTier(catalog, input.tier, state, now);
+        if (plan === null) {
+          return ChangeTierRejected.make({
+            ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+            rejection: new TierNotInCatalog({ tier: input.tier }),
+          });
+        }
+        const proration = plan.proration;
 
         if (input.expected === undefined) {
           return ChangeTierQuoted.make({ tier: input.tier, proration });
@@ -158,17 +158,8 @@ export const makeAdminChangeTier = Effect.gen(function* () {
 
         const commandId =
           input.commandId ?? (yield* Effect.sync(() => globalThis.crypto.randomUUID()));
-        const command = new ChangeTierCommand({
-          tier: input.tier,
-          allowances: terms.allowances,
-          credits: terms.credits,
-          creditsExpire: terms.creditsExpire,
-          rates: terms.rates,
-          ...(terms.price === undefined ? {} : { price: terms.price }),
-          ...(proration === null ? {} : { proration }),
-        });
         const result = yield* Effect.result(
-          asSystem(subscription.send(ref, command, { commandId })),
+          asSystem(subscription.send(ref, plan.command, { commandId })),
         );
 
         if (Result.isFailure(result)) {

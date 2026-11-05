@@ -7,8 +7,9 @@ import type * as Schema from "effect/Schema";
 import { Actor, system } from "./Auth/Actor.ts";
 import { type Catalog, tierOf, tierTermsOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
-import { prorate, type Proration } from "./Proration.ts";
+import type { Proration } from "./Proration.ts";
 import { ChangeTier } from "./Subscription/ChangeTier.command.ts";
+import { planChangeTier } from "./Subscription/ChangeTier.plan.ts";
 import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.command.ts";
 import { Subscribe } from "./Subscription/Subscribe.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
@@ -73,24 +74,8 @@ const commandOf = (
   if (input.kind === "subscribe") {
     return new Subscribe({ tier: input.tier, allowances, credits, creditsExpire, rates, ...price });
   }
-  const midCycle =
-    state._tag === "Subscribed"
-      ? prorate({
-          from: state.price,
-          to: tier.price,
-          period: { start: state.period.start, end: state.period.end },
-          at: now,
-        })
-      : null;
-  return new ChangeTier({
-    tier: input.tier,
-    allowances,
-    credits,
-    creditsExpire,
-    rates,
-    ...price,
-    ...(midCycle === null ? {} : { proration: midCycle }),
-  });
+  const plan = planChangeTier(catalog, input.tier, state, now);
+  return plan === null ? null : plan.command;
 };
 
 const prorationOf = (events: ReadonlyArray<PreviewEvent>): Proration | undefined =>
