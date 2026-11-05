@@ -111,9 +111,17 @@ export const evaluateCheck = (
   });
   // Postpaid usage is judged in money too: only the part beyond `included` is
   // billable, and a money ceiling refuses the same request a quantity cap would.
-  const charge = chargeOf(feature.unitPrice, feature.included ?? null, feature.used ?? 0, amount);
+  // Open holds are promised units, so the ceiling judges this event and them
+  // as one run past `used`; counting each from the same base would give the
+  // included room away twice.
+  const promised = chargeOf(
+    feature.unitPrice,
+    feature.included ?? null,
+    feature.used ?? 0,
+    amount + (feature.reserved ?? 0),
+  );
   const moneyAllowed =
-    feature.moneyCap === undefined || (feature.billed ?? 0) + charge <= feature.moneyCap;
+    feature.moneyCap === undefined || (feature.billed ?? 0) + promised <= feature.moneyCap;
   // A `null` remaining is an allowance that never runs out: it always has room,
   // and the answer reports the absence of a count rather than a number.
   const allowed =

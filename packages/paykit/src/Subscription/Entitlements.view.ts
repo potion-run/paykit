@@ -551,6 +551,7 @@ export const allowsOne = (
     readonly moneyCap?: number;
     readonly billed?: number;
     readonly used?: number;
+    readonly reserved?: number;
     readonly included?: Included | null;
   },
 ): boolean => {
@@ -558,8 +559,14 @@ export const allowsOne = (
   // A money cap is a ceiling on money, not on units: the next unit is refused
   // when its charge would pass what the feature may bill this period.
   if (money?.moneyCap !== undefined) {
-    const charge = chargeOf(money.unitPrice, money.included ?? null, money.used ?? 0, 1);
-    if ((money.billed ?? 0) + charge > money.moneyCap) return false;
+    // One more unit plus every open hold, as one run past `used`.
+    const promised = chargeOf(
+      money.unitPrice,
+      money.included ?? null,
+      money.used ?? 0,
+      1 + (money.reserved ?? 0),
+    );
+    if ((money.billed ?? 0) + promised > money.moneyCap) return false;
   }
   if (overage === "block" && remaining !== null && remaining < 1) return false;
   // A capped feature answers from the ceiling, not from the standing: at the

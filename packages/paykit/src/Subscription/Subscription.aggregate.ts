@@ -525,10 +525,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // A postpaid feature prices only the part past `included`, and a money
       // cap refuses in the same transaction as the usage.
       const reservedUnits = reservedOf(state, command.feature);
-      // Open holds are promises to bill, and this event follows them, so the
-      // charges are counted in that order.
+      // The event bills the units it records now, at their own position after
+      // `used`; the open holds are a separate promise. A money cap judges both:
+      // the promised total from `used` over `reserved + amount`, so the
+      // included room is counted once, not once per bucket.
+      const charge = chargeOf(allowance.unitPrice, allowance.included, used, command.amount);
       const reservedCharge = chargeOf(allowance.unitPrice, allowance.included, used, reservedUnits);
-      const charge = chargeOf(
+      const promisedCharge = chargeOf(
         allowance.unitPrice,
         allowance.included,
         used + reservedUnits,
@@ -537,14 +540,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const billed = billedOf(state, command.feature);
       if (
         allowance.moneyCap !== undefined &&
-        billed + reservedCharge + charge > allowance.moneyCap
+        billed + reservedCharge + promisedCharge > allowance.moneyCap
       ) {
         return new MoneyCapExceeded({
           feature: command.feature,
           cap: allowance.moneyCap,
           billed,
           ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
-          charge,
+          charge: promisedCharge,
         });
       }
       // An allowance that never runs out never blocks: `used` keeps counting
@@ -668,17 +671,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           });
         }
       }
-      const charge = chargeOf(
-        allowance?.unitPrice,
-        allowance?.included ?? null,
-        used,
-        command.amount,
-      );
       const reservedCharge = chargeOf(
         allowance?.unitPrice,
         allowance?.included ?? null,
         used,
         reserved,
+      );
+      // The hold is promised after the holds already open, so the cap judges
+      // the same incremental charge a settle will eventually bill.
+      const charge = chargeOf(
+        allowance?.unitPrice,
+        allowance?.included ?? null,
+        used + reserved,
+        command.amount,
       );
       const billedMoney = billedOf(state, command.feature);
       if (

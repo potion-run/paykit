@@ -25,6 +25,11 @@ const IncludedSpec = Schema.Union([
   Schema.Literal("unlimited"),
 ]);
 
+const UnitPriceSpec = Schema.Struct({
+  amount: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+  currency: Schema.Literals(["usd", "eur"]),
+});
+
 const AllowanceSpec = Schema.Struct({
   included: IncludedSpec,
   overage: Schema.Literals(["block", "bill", "allow"]),
@@ -32,6 +37,10 @@ const AllowanceSpec = Schema.Struct({
   carryOver: Schema.optionalKey(Schema.Boolean),
   cap: Schema.optionalKey(
     Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
+  ),
+  unitPrice: Schema.optionalKey(UnitPriceSpec),
+  moneyCap: Schema.optionalKey(
+    Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))),
   ),
 });
 type AllowanceSpec = typeof AllowanceSpec.Type;
@@ -44,6 +53,13 @@ const TierSpec = Schema.Struct({
     Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 100_000 }))),
   ),
   creditsExpire: Schema.optionalKey(Schema.Literals(["period", "never"])),
+  /** A one-off pack: a price, credits, and no grants. */
+  pack: Schema.optionalKey(
+    Schema.Struct({
+      credits: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10_000 }))),
+      price: Money,
+    }),
+  ),
 });
 type TierSpec = typeof TierSpec.Type;
 
@@ -60,8 +76,13 @@ type CatalogSpec = typeof CatalogSpec.Type;
  * only ever allows, a cap only ever caps a billed allowance, and a carry only
  * happens where a period resets. The validator must accept every one.
  */
-const buildAllowance = (spec: AllowanceSpec): Allowance => {
-  const overage = spec.included === "unlimited" ? "allow" : spec.overage;
+const buildAllowance = (spec: AllowanceSpec, currency?: string): Allowance => {
+  const overage =
+    spec.included === "unlimited" ? "allow" : spec.unitPrice !== undefined ? "bill" : spec.overage;
+  const unitPrice =
+    spec.included === "unlimited" || spec.unitPrice === undefined
+      ? undefined
+      : { ...spec.unitPrice, currency: currency ?? spec.unitPrice.currency };
   return allowance(messages, {
     included: spec.included,
     overage,
@@ -70,12 +91,27 @@ const buildAllowance = (spec: AllowanceSpec): Allowance => {
     ...(spec.included !== "unlimited" && overage === "bill" && spec.cap !== undefined
       ? { cap: spec.cap }
       : {}),
+    ...(unitPrice === undefined ? {} : { unitPrice }),
+    ...(unitPrice !== undefined && spec.moneyCap !== undefined ? { moneyCap: spec.moneyCap } : {}),
   });
 };
 
+const buildPack = (
+  spec: { readonly credits: number; readonly price: typeof Money.Type },
+  index: number,
+): Tier =>
+  tier({
+    id: `tier_${index}`,
+    kind: "one_off",
+    price: spec.price,
+    credits: spec.credits,
+    grants: [] as unknown as [Allowance, ...Allowance[]],
+  });
+
 const buildTier = (spec: TierSpec, index: number): Tier => {
+  if (spec.pack !== undefined) return buildPack(spec.pack, index);
   const grants = [
-    ...(spec.messages === undefined ? [] : [buildAllowance(spec.messages)]),
+    ...(spec.messages === undefined ? [] : [buildAllowance(spec.messages, spec.price?.currency)]),
     ...(spec.sso ? [grant(sso)] : []),
   ];
   const atLeastOne = grants.length === 0 ? [allowance(messages, { included: 100 })] : grants;
@@ -164,7 +200,9 @@ describe("catalog properties", () => {
             field = "tier";
             break;
           case "allowances": {
-            const [feature, first] = Object.entries(terms.allowances)[0]!;
+            const entry = Object.entries(terms.allowances)[0];
+            if (entry === undefined) return true;
+            const [feature, first] = entry;
             carried.allowances = {
               ...terms.allowances,
               [feature]: {

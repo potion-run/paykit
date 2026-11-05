@@ -303,6 +303,76 @@ describe("credits", () => {
     ),
   );
 
+  it.effect("an activation carries the prepaid balance, and a close expires only the plan's", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          purchased: Amount,
+          spent: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 500 }))),
+        }),
+      ),
+      ({ purchased, spent }) => {
+        if (spent > purchased) return true;
+        const rates = creditRatesOf(testCatalog);
+        let initial = evolveAt(
+          initialSubscriptionState,
+          (() => {
+            const decision = decideAt(
+              initialSubscriptionState,
+              new PurchaseCredits({ tier: "credits_1k", amount: purchased, rates }),
+              start,
+              "buy",
+            );
+            if (!isAccepted(decision)) throw new Error("the pack was refused");
+            return decision;
+          })(),
+          start,
+          "buy",
+        );
+        if (initial._tag !== "Unsubscribed") return false;
+        if (spent === 0) {
+          // No usage: the activation carries the whole pack.
+        } else {
+          const tracked = decideAt(
+            initial,
+            new TrackUsage({ feature: "ai", amount: spent }),
+            start,
+            "spend",
+          );
+          if (!isAccepted(tracked)) return false;
+          initial = evolveAt(initial, tracked, start, "spend");
+          if (initial._tag !== "Unsubscribed") return false;
+        }
+        const prepaid = purchased - spent;
+
+        const decision = decideAt(
+          initial,
+          commandOf({ _tag: "Subscribe", tier: "pro" }, initial, start),
+          start,
+          "subscribe",
+        );
+        if (!isAccepted(decision)) return false;
+        const activated = evolveAt(initial, decision, start, "subscribe");
+        if (activated._tag !== "Subscribed") return false;
+        const plan = 50_000;
+        if (activated.credits !== plan + prepaid) return false;
+        if (prepaidCreditsOf(activated) !== prepaid) return false;
+
+        const closed = decideAt(
+          activated,
+          commandOf({ _tag: "ClosePeriod" }, activated, activated.period.end),
+          activated.period.end,
+          "close",
+        );
+        if (!isAccepted(closed)) return false;
+        const after = evolveAt(activated, closed, activated.period.end, "close");
+        if (after._tag !== "Subscribed") return false;
+        return after.credits === prepaid && prepaidCreditsOf(after) === prepaid;
+      },
+      { runs: 60, size: 20 },
+    ),
+  );
+
   it.effect("a held pool cannot be spent twice", () =>
     assertProperty(
       Arbitrary.schema(
