@@ -48,7 +48,14 @@ const subscribeToPro = Effect.gen(function* () {
   const subscription = yield* Subscription;
   yield* subscription.send(
     Subscription.ref(account),
-    new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice }),
+    new Subscribe({
+      tier: "pro",
+      allowances: proAllowances,
+      price: proPrice,
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+    }),
   );
 });
 

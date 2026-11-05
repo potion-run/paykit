@@ -61,9 +61,10 @@ const changeTiers = (
       if (entitlements === undefined) return true;
       const allowances = allowancesOf(catalog, tier.id);
       if (allowances === null) return false;
-      return Object.values(allowances).every(
-        (allowance) => (entitlements.features[allowance.feature]?.used ?? 0) <= allowance.included,
-      );
+      return Object.values(allowances).every((allowance) => {
+        const used = entitlements.features[allowance.feature]?.used ?? 0;
+        return allowance.included === "unlimited" || used <= allowance.included;
+      });
     })
     .map((tier) => tier.id);
 };

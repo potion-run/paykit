@@ -15,7 +15,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
 import { Admin } from "../Auth/Guards.ts";
-import { allowancesOf, tierOf } from "../Catalog.ts";
+import { tierTermsOf } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Proration, prorate, sameProration } from "../Proration.ts";
@@ -124,9 +124,8 @@ export const makeAdminChangeTier = Effect.gen(function* () {
   return {
     change: (input) =>
       Effect.gen(function* () {
-        const tier = tierOf(catalog, input.tier);
-        const allowances = allowancesOf(catalog, input.tier);
-        if (tier === null || allowances === null) {
+        const terms = tierTermsOf(catalog, input.tier);
+        if (terms === null || terms.kind === "one_off") {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             rejection: new TierNotInCatalog({ tier: input.tier }),
@@ -145,24 +144,27 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
         const proration = prorate({
           from: state.price,
-          to: tier.price,
+          to: terms.price,
           period: { start: state.period.start, end: state.period.end },
           at: now,
         });
 
         if (input.expected === undefined) {
-          return ChangeTierQuoted.make({ tier: tier.id, proration });
+          return ChangeTierQuoted.make({ tier: input.tier, proration });
         }
         if (!sameProration(input.expected, proration)) {
-          return ChangeTierRequote.make({ tier: tier.id, proration });
+          return ChangeTierRequote.make({ tier: input.tier, proration });
         }
 
         const commandId =
           input.commandId ?? (yield* Effect.sync(() => globalThis.crypto.randomUUID()));
         const command = new ChangeTierCommand({
-          tier: tier.id,
-          allowances,
-          ...(tier.price === undefined ? {} : { price: tier.price }),
+          tier: input.tier,
+          allowances: terms.allowances,
+          credits: terms.credits,
+          creditsExpire: terms.creditsExpire,
+          rates: terms.rates,
+          ...(terms.price === undefined ? {} : { price: terms.price }),
           ...(proration === null ? {} : { proration }),
         });
         const result = yield* Effect.result(
@@ -172,7 +174,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         if (Result.isFailure(result)) {
           const failure = result.failure;
           if (failure._tag === "ProrationMismatch") {
-            return ChangeTierRequote.make({ tier: tier.id, proration: failure.expected });
+            return ChangeTierRequote.make({ tier: input.tier, proration: failure.expected });
           }
           const rejection = Schema.decodeOption(ChangeTierRejection)(failure);
           return Option.isSome(rejection)
@@ -185,7 +187,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
 
         return ChangeTierApplied.make({
           commandId,
-          tier: tier.id,
+          tier: input.tier,
           proration,
           stream: result.success.stream,
           version: result.success.version,
