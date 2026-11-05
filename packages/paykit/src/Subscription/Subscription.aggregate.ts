@@ -420,7 +420,33 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     TrackUsage: (state, command) => {
       if (state._tag === "Unsubscribed") {
-        return new StandingBlocksUsage({ standing: "blocked", status: "none" });
+        // A pack can be spent before a plan exists. The purchase captured the
+        // catalog's rate cards, so this is the same credit math as a standing,
+        // with the whole pool spendable and no allowance to consult.
+        const rates = state.rates?.[command.feature];
+        if (rates === undefined) {
+          return new StandingBlocksUsage({ standing: "blocked", status: "none" });
+        }
+        if (command.amount <= 0) return [];
+        if (command.dedupeKey !== undefined && state.dedupeKeys?.[command.dedupeKey] === true) {
+          return [];
+        }
+        const cost = command.amount * creditRateOf(rates, command.dimension);
+        const balance = state.credits ?? 0;
+        if (cost > balance) {
+          return new CreditExceeded({ feature: command.feature, cost, balance });
+        }
+        return [
+          new UsageRecorded({
+            feature: command.feature,
+            amount: command.amount,
+            cost,
+            creditsAfter: balance - cost,
+            usedAfter: (state.usage?.[command.feature] ?? 0) + cost,
+            remainingAfter: balance - cost,
+            ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+          }),
+        ];
       }
       const standing = standingOf(state.status);
       if (!allowsUsage(state.status)) {
@@ -876,6 +902,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           tier: command.tier,
           amount: command.amount,
           ...(command.price === undefined ? {} : { price: command.price }),
+          ...(command.rates === undefined ? {} : { rates: command.rates }),
           balanceAfter: creditsOf(state) + command.amount,
           prepaidAfter: prepaidCreditsOf(state) + command.amount,
         }),
@@ -1056,7 +1083,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 ? state.dedupeKeys
                 : { ...state.dedupeKeys, [event.dedupeKey]: true },
           }
-        : state,
+        : {
+            ...state,
+            credits: event.creditsAfter,
+            prepaidCredits: Math.max(0, Math.min(prepaidCreditsOf(state), event.creditsAfter)),
+            usage: { ...state.usage, [event.feature]: event.usedAfter },
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            ...(event.dedupeKey === undefined
+              ? {}
+              : { dedupeKeys: { ...state.dedupeKeys, [event.dedupeKey]: true } }),
+          },
     UsageReserved: (state, event) =>
       state._tag === "Subscribed"
         ? {
@@ -1138,7 +1174,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     CreditsPurchased: (state, event) =>
       state._tag === "Subscribed"
         ? { ...state, credits: event.balanceAfter, prepaidCredits: event.prepaidAfter }
-        : { ...state, credits: event.balanceAfter, prepaidCredits: event.prepaidAfter },
+        : {
+            ...state,
+            credits: event.balanceAfter,
+            prepaidCredits: event.prepaidAfter,
+            ...(event.rates === undefined ? {} : { rates: event.rates }),
+          },
     CreditsConsumed: (state, event) =>
       state._tag === "Subscribed"
         ? {

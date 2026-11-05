@@ -100,6 +100,14 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   credits: Schema.optionalKey(Schema.Int),
   /** The part of that pool a pack bought; with no plan, all of it. */
   prepaidCredits: Schema.optionalKey(Schema.Int),
+  /** The catalog's rate cards, captured by a purchase before any plan. */
+  rates: Schema.optionalKey(CreditRateCards),
+  /** Per-feature usage, a fold of `UsageRecorded` even without a plan. */
+  usage: Schema.optionalKey(UsageCounts),
+  /** Per-feature spendable count, copied from the event that changed it. */
+  remaining: Schema.optionalKey(Remaining),
+  /** Usage keys already recorded, so a retry records once. */
+  dedupeKeys: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
 });
 export type UnsubscribedState = typeof UnsubscribedState.Type;
 

@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, creditRatesOf, tierTermsOf, type Catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { prorate } from "../../src/Proration.ts";
 import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.command.ts";
@@ -233,7 +233,11 @@ export const commandOf = (
     case "GrantCredits":
       return new GrantCredits({ amount: plan.amount });
     case "PurchaseCredits":
-      return new PurchaseCredits({ tier: "credits_1k", amount: plan.amount });
+      return new PurchaseCredits({
+        tier: "credits_1k",
+        amount: plan.amount,
+        rates: creditRatesOf(testCatalog),
+      });
     case "ConsumeCredits":
       return new ConsumeCredits({ amount: plan.amount });
     case "RecordPayment":
@@ -345,6 +349,40 @@ export const walk = (script: Script): Walked => {
     state = evolveAt(state, decision, now, commandId(index));
   }
   return { state, events, now };
+};
+
+/** A standing opened by subscribing to `tier`, without walking a script. */
+export const subscribedAt = (tier: TierName, now: DateTime.Utc = start): SubscribedState => {
+  const decision = decideAt(
+    initialSubscriptionState,
+    commandOf({ _tag: "Subscribe", tier }, initialSubscriptionState, now),
+    now,
+    "open",
+  );
+  if (!isAccepted(decision)) throw new Error(`the fixture catalog could not open ${tier}`);
+  const state = evolveAt(initialSubscriptionState, decision, now, "open");
+  if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
+  return state;
+};
+
+/** The same, against a catalog other than the fixture one. */
+export const subscribedIn = (
+  source: Catalog,
+  tier: string,
+  now: DateTime.Utc = start,
+): SubscribedState => {
+  const terms = tierTermsOf(source, tier);
+  if (terms === null) throw new Error(`the catalog is missing ${tier}`);
+  const decision = decideAt(
+    initialSubscriptionState,
+    new Subscribe({ tier, ...terms }),
+    now,
+    "open",
+  );
+  if (!isAccepted(decision)) throw new Error(`the catalog could not open ${tier}`);
+  const state = evolveAt(initialSubscriptionState, decision, now, "open");
+  if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
+  return state;
 };
 
 /** The subset of the state a rollover assertion reads. */

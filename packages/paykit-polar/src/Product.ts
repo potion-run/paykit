@@ -1,5 +1,5 @@
 import * as Polar from "@distilled.cloud/polar";
-import type { Price, TierKind, UnitPrice } from "@potion.run/paykit";
+import { encodeVendorPart, type Price, type TierKind, type UnitPrice } from "@potion.run/paykit";
 import { Unowned } from "alchemy/AdoptPolicy";
 import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
@@ -15,21 +15,8 @@ import {
 import type { Providers } from "./Providers.ts";
 
 /** The stage-qualified name a tier's Polar product carries, and its identity. */
-/**
- * An identity part as a vendor-safe name sees it: alphanumerics and dashes
- * survive, everything else (including `:` and `_`) becomes a `_<hex>_`
- * escape, so two parts can never forge the separator or each other.
- */
-const encodePart = (value: string): string => {
-  let encoded = "";
-  for (const char of value) {
-    encoded += /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`;
-  }
-  return encoded;
-};
-
 export const productNameOf = (stage: string, tier: string): string =>
-  `paykit:${encodePart(stage)}:${encodePart(tier)}`;
+  `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}`;
 
 /** The metadata key that names the paykit tier; Polar has no lookup key. */
 export const PAYKIT_TIER = "paykit_tier";

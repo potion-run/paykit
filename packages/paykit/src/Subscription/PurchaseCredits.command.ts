@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Admin } from "../Auth/Guards.ts";
+import { CreditRateCards } from "../Feature.ts";
 import { Price } from "../Tier.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -16,6 +17,11 @@ export class CreditsPurchased extends Domain.Event("CreditsPurchased", {
   amount: Schema.Int,
   /** What the pack cost. Absent when the provider did not report it. */
   price: Schema.optionalKey(Price),
+  /**
+   * The catalog's rate cards, captured so a credits-only account can price
+   * `check()` and `track()` before it has a plan.
+   */
+  rates: Schema.optionalKey(CreditRateCards),
   /** The pool after the purchase. */
   balanceAfter: Schema.Int,
   /** The part of the pool a one-off pack bought, and so never expires. */
@@ -38,6 +44,8 @@ export class PurchaseCredits extends Domain.Command("PurchaseCredits", {
     amount: Schema.Int,
     /** What the buyer was charged, when the provider reported it. */
     price: Schema.optionalKey(Price),
+    /** The catalog's rate cards, so the pool is spendable without a plan. */
+    rates: Schema.optionalKey(CreditRateCards),
   },
   events: [CreditsPurchased],
   rejects: [],

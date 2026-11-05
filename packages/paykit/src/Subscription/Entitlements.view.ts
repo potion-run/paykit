@@ -479,8 +479,29 @@ export class Entitlements extends Domain.View("Entitlements", {
       ),
     CreditsGranted: (view, event, context): EntitlementsState =>
       withAccount(withPool(view, event.balanceAfter), context),
-    CreditsPurchased: (view, event, context): EntitlementsState =>
-      withAccount(withPool(view, event.balanceAfter), context),
+    CreditsPurchased: (view, event, context): EntitlementsState => {
+      const pooled = withPool(view, event.balanceAfter);
+      const rates = event.rates;
+      if (rates === undefined) return withAccount(pooled, context);
+
+      // A purchase before any plan is the one time the view has a pool but no
+      // tier to describe it. The event carries the catalog's rate cards, so the
+      // features exist and `check()` can price them; a credits-only account is
+      // spendable (`standing: good`) while it has credits.
+      const standing = pooled.tier === "" && event.balanceAfter > 0 ? "good" : pooled.standing;
+      const held = heldOf(pooled.features);
+      const features = { ...pooled.features };
+      for (const [feature, card] of Object.entries(rates)) {
+        features[feature] = creditFeatureOf(
+          card,
+          event.balanceAfter,
+          held,
+          features[feature],
+          standing,
+        );
+      }
+      return withAccount({ ...pooled, standing, features }, context);
+    },
     CreditsConsumed: (view, event, context): EntitlementsState =>
       withAccount(withPool(view, event.balanceAfter), context),
     CreditsExpired: (view, event, context): EntitlementsState =>

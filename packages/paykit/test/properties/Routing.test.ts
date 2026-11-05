@@ -10,7 +10,7 @@ import {
 import { verifyState } from "../../src/Verify.ts";
 import { MissingProviderRef, OrphanProviderRef, TierHasNoPurchasePath } from "../../src/Verify.ts";
 import { assertProperty } from "../support/Property.ts";
-import { commandOf, decideAt, evolveAt, isAccepted, start, testCatalog } from "./Arbitraries.ts";
+import { subscribedAt, testCatalog } from "./Arbitraries.ts";
 
 /** A provider set keyed the way `paymentsRouter` keys it. */
 const setOf = (names: ReadonlyArray<string>): ProviderSet => {
@@ -78,17 +78,6 @@ const VerifyCase = Schema.Struct({
   refs: Schema.Array(Schema.Literals(["p", "q"])).pipe(Schema.check(Schema.isMaxLength(2))),
 });
 
-const opened = (tier: "free" | "pro"): SubscriptionState => {
-  const decision = decideAt(
-    initialSubscriptionState,
-    commandOf({ _tag: "Subscribe", tier }, initialSubscriptionState, start),
-    start,
-    "open",
-  );
-  if (!isAccepted(decision)) throw new Error(`the fixture catalog could not open ${tier}`);
-  return evolveAt(initialSubscriptionState, decision, start, "open");
-};
-
 const withRefs = (state: SubscriptionState, keys: ReadonlyArray<string>): SubscriptionState => ({
   ...state,
   refs: Object.fromEntries(keys.map((key) => [key, { customer: `cus_${key}` }])),
@@ -100,7 +89,7 @@ describe("standing verification", () => {
       Arbitrary.schema(VerifyCase),
       ({ connected, tier, provider, refs }) => {
         const state = connected
-          ? withRefs(opened(tier), refs)
+          ? withRefs(subscribedAt(tier), refs)
           : withRefs(initialSubscriptionState, refs);
         const target =
           provider === undefined

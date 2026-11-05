@@ -8,20 +8,20 @@ import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import {
   holdOf,
-  initialSubscriptionState,
   reservedOf,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   Amount,
-  commandOf,
   DedupeKey,
   decideAt,
   evolveAt,
   HoldId,
   isAccepted,
   start,
+  subscribedIn,
+  testCatalog,
 } from "./Arbitraries.ts";
 
 const Step = Schema.Union([
@@ -36,18 +36,7 @@ const HoldScript = Schema.Struct({
   steps: Schema.Array(Step).pipe(Schema.check(Schema.isMaxLength(60))),
 });
 
-const opened = (tier: "free" | "unlimited"): SubscribedState => {
-  const decision = decideAt(
-    initialSubscriptionState,
-    commandOf({ _tag: "Subscribe", tier }, initialSubscriptionState, start),
-    start,
-    "open",
-  );
-  if (!isAccepted(decision)) throw new Error("the fixture catalog could not open a standing");
-  const state = evolveAt(initialSubscriptionState, decision, start, "open");
-  if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
-  return state;
-};
+const opened = (tier: "free" | "unlimited"): SubscribedState => subscribedIn(testCatalog, tier);
 
 const commandFor = (step: Step) => {
   switch (step._tag) {

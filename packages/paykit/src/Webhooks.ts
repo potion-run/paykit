@@ -127,6 +127,7 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
         if (sold === null) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
+        const terms = tierTermsOf(catalog, sold.id);
         yield* asSystem(
           subscription.send(
             ref,
@@ -134,6 +135,7 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
               tier: sold.id,
               amount: sold.credits ?? 0,
               ...(sold.price === undefined ? {} : { price: sold.price }),
+              ...(terms === null ? {} : { rates: terms.rates }),
             }),
             { commandId: event.id },
           ),

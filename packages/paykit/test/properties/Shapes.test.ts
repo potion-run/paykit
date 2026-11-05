@@ -4,13 +4,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance, grant } from "../../src/Allowance.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog } from "../../src/Catalog.ts";
 import { evaluateCheck } from "../../src/Check.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
-import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import {
-  initialSubscriptionState,
   remainingOf,
   reservedOf,
   usedOf,
@@ -19,7 +17,7 @@ import {
 import { FeatureNotMetered, TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
-import { Amount, decideAt, evolveAt, isAccepted, start } from "./Arbitraries.ts";
+import { Amount, decideAt, evolveAt, isAccepted, start, subscribedIn } from "./Arbitraries.ts";
 
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
 
@@ -39,20 +37,7 @@ const shapes = Effect.runSync(
   }),
 );
 
-const opened = (tierId: "capped" | "enterprise"): SubscribedState => {
-  const terms = tierTermsOf(shapes, tierId);
-  if (terms === null) throw new Error(`the shape catalog is missing ${tierId}`);
-  const decision = decideAt(
-    initialSubscriptionState,
-    new Subscribe({ tier: tierId, ...terms }),
-    start,
-    "open",
-  );
-  if (!isAccepted(decision)) throw new Error(`the shape catalog could not open ${tierId}`);
-  const state = evolveAt(initialSubscriptionState, decision, start, "open");
-  if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
-  return state;
-};
+const opened = (tierId: "capped" | "enterprise"): SubscribedState => subscribedIn(shapes, tierId);
 
 const CEILING = 120;
 

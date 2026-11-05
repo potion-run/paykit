@@ -67,7 +67,12 @@ const invariantsHold = (
   state: SubscriptionState,
   bases: ReadonlyMap<string, number | null>,
 ): boolean => {
-  if (state._tag !== "Subscribed") return true;
+  if (state._tag !== "Subscribed") {
+    const credits = state.credits ?? 0;
+    const prepaid = state.prepaidCredits ?? 0;
+    if (credits < 0 || prepaid < 0 || prepaid > credits) return false;
+    return Object.values(state.usage ?? {}).every((used) => used >= 0);
+  }
 
   // The pool covers every open hold. A spend that ignores reservations would
   // otherwise leave settle with credits it cannot bill.

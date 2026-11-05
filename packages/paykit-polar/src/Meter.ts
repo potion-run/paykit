@@ -1,4 +1,5 @@
 import * as Polar from "@distilled.cloud/polar";
+import { encodeVendorPart } from "@potion.run/paykit";
 import { Unowned } from "alchemy/AdoptPolicy";
 import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
@@ -13,26 +14,13 @@ import {
 } from "./Metadata.ts";
 import type { Providers } from "./Providers.ts";
 
-/**
- * An identity part as a Polar name sees it: alphanumerics and dashes survive,
- * everything else (including `:` and `_`) becomes a `_<hex>_` escape, so two
- * parts can never forge the separator or each other.
- */
-const encodePart = (value: string): string => {
-  let encoded = "";
-  for (const char of value) {
-    encoded += /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`;
-  }
-  return encoded;
-};
-
 /** The stage-qualified meter name; with the feature in metadata, its identity. */
 export const meterNameOf = (stage: string, feature: string): string =>
-  `paykit:${encodePart(stage)}:meter:${encodePart(feature)}`;
+  `paykit:${encodeVendorPart(stage)}:meter:${encodeVendorPart(feature)}`;
 
 /** The event name a feature's usage is ingested under. */
 export const meterEventNameOf = (stage: string, feature: string): string =>
-  `paykit_${encodePart(stage)}_${encodePart(feature)}`;
+  `paykit_${encodeVendorPart(stage)}_${encodeVendorPart(feature)}`;
 
 /** The metadata key that names the paykit feature; Polar has no lookup key. */
 export const PAYKIT_FEATURE = "paykit_feature";

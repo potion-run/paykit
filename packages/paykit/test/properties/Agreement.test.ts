@@ -124,7 +124,18 @@ const inputOf = (probe: Probe) => ({
  * `reserved` is as wrong as a wrong `decide`.
  */
 const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): boolean => {
-  if (state._tag !== "Subscribed") return true;
+  if (state._tag !== "Subscribed") {
+    // A credits-only account has no tier, but a purchase still created the
+    // credit features from the catalog's rate cards.
+    if (view.credits !== (state.credits ?? 0)) return false;
+    for (const feature of Object.keys(state.rates ?? {})) {
+      const entry = view.features[feature];
+      if (entry === undefined) return false;
+      if (entry.remaining !== (state.credits ?? 0)) return false;
+      if (entry.used !== (state.usage?.[feature] ?? 0)) return false;
+    }
+    return true;
+  }
   if (view.tier !== state.tier) return false;
   if (view.status !== state.status) return false;
   if (view.standing !== standingOf(state.status)) return false;
@@ -196,6 +207,10 @@ const agree = (
     "probe-track",
   );
   if (asked.allowed !== isAccepted(tracked)) return false;
+
+  // A hold is a standing operation; a credits-only account can track its pack
+  // but cannot reserve against a period it does not have yet.
+  if (state._tag !== "Subscribed") return true;
 
   const held = decideAt(
     state,

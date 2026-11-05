@@ -355,6 +355,7 @@ export type {
   StripeTier,
   StripeUsagePrice,
 } from "./PaymentsStripe.ts";
+export { encodeVendorPart } from "./VendorId.ts";
 export { PaymentsPolar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {

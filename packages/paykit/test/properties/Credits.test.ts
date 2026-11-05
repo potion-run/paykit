@@ -2,12 +2,13 @@ import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { tierTermsOf } from "../../src/Catalog.ts";
+import { creditRatesOf, tierTermsOf } from "../../src/Catalog.ts";
 import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
+import { PurchaseCredits } from "../../src/Subscription/PurchaseCredits.command.ts";
 import {
-  initialSubscriptionState,
   creditRateOf,
+  initialSubscriptionState,
   prepaidCreditsOf,
   reservedCreditsOf,
   type SubscribedState,
@@ -22,6 +23,7 @@ import {
   evolveAt,
   isAccepted,
   start,
+  subscribedAt,
   testCatalog,
   TierName,
 } from "./Arbitraries.ts";
@@ -52,19 +54,6 @@ const CreditScript = Schema.Struct({
   ).pipe(Schema.check(Schema.isMaxLength(60))),
 });
 
-const opened = (tier: TierName): SubscribedState => {
-  const decision = decideAt(
-    initialSubscriptionState,
-    commandOf({ _tag: "Subscribe", tier }, initialSubscriptionState, start),
-    start,
-    "open",
-  );
-  if (!isAccepted(decision)) throw new Error("the fixture catalog could not open a standing");
-  const state = evolveAt(initialSubscriptionState, decision, start, "open");
-  if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
-  return state;
-};
-
 const rateFor = (state: SubscribedState, dimension: "default" | "gpt-large"): number =>
   creditRateOf(state.rates["ai"]!, dimension);
 
@@ -73,7 +62,7 @@ describe("credits", () => {
     assertProperty(
       Arbitrary.schema(CreditScript),
       (script) => {
-        let state = opened(script.startTier);
+        let state = subscribedAt(script.startTier);
         let now = start;
 
         for (const [index, { step, advanceDays }] of script.steps.entries()) {
@@ -238,6 +227,82 @@ describe("credits", () => {
     ),
   );
 
+  it.effect("a pack bought without a plan is spendable and never goes negative", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          seed: Amount,
+          steps: Schema.Array(
+            Schema.Struct({
+              amount: Amount,
+              dimension: Schema.Literals(["default", "gpt-large"]),
+            }),
+          ).pipe(Schema.check(Schema.isMaxLength(40))),
+        }),
+      ),
+      ({ seed, steps }) => {
+        const rates = creditRatesOf(testCatalog);
+        const purchased = decideAt(
+          initialSubscriptionState,
+          new PurchaseCredits({ tier: "credits_1k", amount: seed, rates }),
+          start,
+          "buy",
+        );
+        if (!isAccepted(purchased)) return false;
+        let state = evolveAt(initialSubscriptionState, purchased, start, "buy");
+        if (state._tag !== "Unsubscribed") return false;
+        if (state.credits !== seed || prepaidCreditsOf(state) !== seed) return false;
+
+        for (const [index, step] of steps.entries()) {
+          const cost = step.amount * creditRateOf(rates["ai"]!, step.dimension);
+          const decision = decideAt(
+            state,
+            new TrackUsage({
+              feature: "ai",
+              amount: step.amount,
+              dimension: step.dimension,
+            }),
+            start,
+            `prepaid-${index}`,
+          );
+
+          if (!isAccepted(decision)) {
+            if (decision._tag !== "CreditExceeded") return false;
+            const rejection = decision as unknown as {
+              readonly cost: number;
+              readonly balance: number;
+            };
+            if (rejection.cost !== cost || rejection.balance !== (state.credits ?? 0)) {
+              return false;
+            }
+            continue;
+          }
+
+          const event = decision[0] as unknown as {
+            readonly cost: number;
+            readonly creditsAfter: number;
+            readonly usedAfter: number;
+            readonly remainingAfter: number | null;
+          };
+          if (event.cost !== cost) return false;
+          if (event.creditsAfter !== (state.credits ?? 0) - cost) return false;
+          if (event.usedAfter !== (state.usage?.["ai"] ?? 0) + cost) return false;
+          if (event.remainingAfter !== event.creditsAfter) return false;
+
+          state = evolveAt(state, decision, start, `prepaid-${index}`);
+          if (state._tag !== "Unsubscribed") return false;
+          if ((state.credits ?? 0) < 0) return false;
+          // Without a plan the whole pool is the pack, spent first and never
+          // negative.
+          if (prepaidCreditsOf(state) !== state.credits) return false;
+        }
+
+        return true;
+      },
+      { runs: 80, size: 30 },
+    ),
+  );
+
   it.effect("a held pool cannot be spent twice", () =>
     assertProperty(
       Arbitrary.schema(
@@ -247,7 +312,7 @@ describe("credits", () => {
         }),
       ),
       ({ held, spent }) => {
-        let state = opened("pro");
+        let state = subscribedAt("pro");
         // The hold takes its credits out of the spendable pool, not only out of
         // `credits`: a second spend must see the difference.
         const hold = decideAt(

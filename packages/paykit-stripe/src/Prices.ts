@@ -1,5 +1,11 @@
 import * as Stripe from "@alchemy.run/stripe";
-import type { Price, TierId, TierKind, UnitPrice } from "@potion.run/paykit";
+import {
+  encodeVendorPart,
+  type Price,
+  type TierId,
+  type TierKind,
+  type UnitPrice,
+} from "@potion.run/paykit";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
@@ -77,21 +83,8 @@ const normalize = (
       }
     : { price: value, kind: "subscription", usage: {} };
 
-/**
- * An identity part as Stripe's lookup-key alphabet sees it: alphanumerics and
- * dashes survive, everything else (including `:` and `_`) becomes a
- * `_<hex>_` escape, so two parts can never forge the separator or each other.
- */
-const encodePart = (value: string): string => {
-  let encoded = "";
-  for (const char of value) {
-    encoded += /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`;
-  }
-  return encoded;
-};
-
 export const lookupKeyOf = (stage: string, tier: string): string =>
-  `paykit:${encodePart(stage)}:${encodePart(tier)}`;
+  `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}`;
 
 /**
  * The lookup key of one tier's metered price for a feature. A tier may price
@@ -99,7 +92,7 @@ export const lookupKeyOf = (stage: string, tier: string): string =>
  * per feature and shared by every tier.
  */
 export const meteredLookupKeyOf = (stage: string, tier: string, feature: string): string =>
-  `paykit:${encodePart(stage)}:${encodePart(tier)}:usage:${encodePart(feature)}`;
+  `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}:usage:${encodeVendorPart(feature)}`;
 
 /**
  * The meter event name for a feature. Stripe keeps event names unique per
@@ -107,7 +100,7 @@ export const meteredLookupKeyOf = (stage: string, tier: string, feature: string)
  * name for the same reason it is in the lookup key: stages share one account.
  */
 export const meterEventNameOf = (stage: string, feature: string): string =>
-  `paykit_${encodePart(stage)}_${encodePart(feature)}`;
+  `paykit_${encodeVendorPart(stage)}_${encodeVendorPart(feature)}`;
 
 /** Stripe spells the annual interval `year`; the catalog says `annual`. */
 const intervalOf = (interval: Price["interval"]): "month" | "year" =>
