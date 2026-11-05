@@ -39,7 +39,7 @@
     "build": "pnpm -r --filter \"{.}...\" run build:package",
     "build:package": "node scripts/build.ts",
     "test": "alchemy-test",
-    "schema": "bun run scripts/schema.ts",
+    "schema": "node scripts/schema.ts",
     "typecheck": "tsrs -b"
   },
   "dependencies": {

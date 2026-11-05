@@ -3,6 +3,7 @@ import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
@@ -10,6 +11,7 @@ import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { migrate } from "../../src/Migrations/index.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import type { SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlViewStore } from "../../src/Store/SqlConsumers.ts";
 import { SqlEventLog } from "../../src/Store/SqlEventLog.ts";
 import { SqlPlatform } from "../../src/Store/SqlPlatform.ts";
@@ -43,11 +45,35 @@ const world = Effect.gen(function* () {
   return { database, sql, log, clock, platform };
 });
 
-const hosted = (platform: Domain.Platform["Service"]) =>
-  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
+const hosted = (
+  platform: Domain.Platform["Service"],
+  options?: { readonly lazy?: ReadonlyArray<string> },
+) =>
+  PaykitModel.layer(
+    PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
+    options as never,
+  ).pipe(
+    // Merged outward so a test reads the same store the projection wrote.
+    Layer.provideMerge(MemoryBillingReadStore),
     Layer.provideMerge(Layer.succeed(Domain.Platform, platform)),
     Layer.provideMerge(Layer.succeed(Actor, system("test"))),
   );
+
+/** Drop every consumer row; `billing_event` is untouched. */
+const wipeConsumers = (sql: SqlExecutor) =>
+  sql.exec(`
+    DELETE FROM billing_rm_view_state;
+    DELETE FROM billing_rm_view_entry;
+    DELETE FROM billing_rm_view_input;
+    DELETE FROM billing_rm_view_outbox;
+    DELETE FROM billing_rm_projection_input;
+    DELETE FROM billing_rm_projection_cursor;
+    DELETE FROM billing_rm_policy_seen;
+    DELETE FROM billing_rm_stream_entry;
+    DELETE FROM billing_rm_stream_meta;
+    DELETE FROM billing_rm_billing_read;
+    DELETE FROM billing_rm_backfill;
+  `);
 
 describe("the model hosted on SQL", () => {
   it.live("writes the command's events, state and receipt to one database", () =>
@@ -252,7 +278,7 @@ describe("the model hosted on SQL", () => {
     }),
   );
 
-  it.live("rebuilding a consumer table and replaying the log reproduces it", () =>
+  it.live("rebuilds a dropped consumer and the projection that reads it", () =>
     Effect.gen(function* () {
       const { platform, sql } = yield* world;
       yield* Effect.gen(function* () {
@@ -278,11 +304,139 @@ describe("the model hosted on SQL", () => {
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(hosted(platform)));
 
-      // Every consumer row is a fold, so dropping it and replaying the log is
-      // always allowed — that is what replaces a backfill.
-      sql.exec("DELETE FROM billing_rm_view_state; DELETE FROM billing_rm_view_input;");
+      // A consumer is only a fold, so dropping every consumer row and
+      // rebuilding the model must reproduce the same answers from the log.
+      wipeConsumers(sql);
+      const rebuilt = yield* Effect.gen(function* () {
+        const entitlements = yield* Entitlements;
+        const view = Option.getOrNull(yield* entitlements.query(account));
+        const history = yield* entitlements.history;
+        const store = yield* BillingReadStore;
+        const row = yield* store.get(account.id);
+        return { view, history, row };
+      }).pipe(Effect.provide(hosted(platform)));
+
+      expect(rebuilt.view?.features.messages?.used).toBe(12);
+      expect(rebuilt.row?.features.messages?.used).toBe(12);
+      // The platform reports the history it just replayed, not a default.
+      expect(rebuilt.history.complete).toBe(true);
+      // The backfill that filled them is recorded, so a restart skips it.
       expect(
-        sql.get("SELECT * FROM billing_rm_view_state WHERE view = ? AND key = ?", [
+        sql.all<{ consumer: string }>("SELECT consumer FROM billing_rm_backfill").length,
+      ).toBeGreaterThan(0);
+    }),
+  );
+
+  it.live("a lazy view fills each key from its own history before a projection reads it", () =>
+    Effect.gen(function* () {
+      const { platform, sql } = yield* world;
+      yield* Effect.gen(function* () {
+        const subscription = yield* Subscription;
+        yield* subscription.send(
+          account,
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
+          { commandId: "subscribe-1" } as never,
+        );
+        yield* subscription.send(account, new TrackUsage({ feature: "messages", amount: 7 }), {
+          commandId: "track-1",
+        } as never);
+      }).pipe(Effect.provide(hosted(platform)));
+
+      wipeConsumers(sql);
+      // Entitlements is not backfilled by the deploy: its key reads its own
+      // source before answering. BillingRead reads it, so the projection's
+      // backfill is what forces the catch-up.
+      const rebuilt = yield* Effect.gen(function* () {
+        const entitlements = yield* Entitlements;
+        const view = Option.getOrNull(yield* entitlements.query(account));
+        const store = yield* BillingReadStore;
+        const row = yield* store.get(account.id);
+        return { view, row };
+      }).pipe(Effect.provide(hosted(platform, { lazy: ["Entitlements"] })));
+
+      expect(rebuilt.view?.features.messages?.used).toBe(7);
+      expect(rebuilt.row?.features.messages?.used).toBe(7);
+      expect(
+        sql.get("SELECT 1 AS one FROM billing_rm_backfill WHERE consumer = ?", [
+          "view:Entitlements",
+        ]),
+      ).toBeUndefined();
+    }),
+  );
+
+  it.live("a view finishes a downstream delivery a crash left pending", () =>
+    Effect.gen(function* () {
+      const { platform, sql } = yield* world;
+      yield* Effect.gen(function* () {
+        const subscription = yield* Subscription;
+        const entitlements = yield* Entitlements;
+        const receipt = yield* subscription.send(
+          account,
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
+          { commandId: "subscribe-1" } as never,
+        );
+        yield* entitlements.query(account, { atLeast: receipt });
+        const tracked = yield* subscription.send(
+          account,
+          new TrackUsage({ feature: "messages", amount: 12 }),
+          { commandId: "track-1" } as never,
+        );
+        yield* entitlements.query(account, { atLeast: tracked });
+      }).pipe(Effect.provide(hosted(platform)));
+
+      // Simulate a crash after the view committed its entry but before its
+      // downstream delivery reached the projection: drop the projection and
+      // leave one staged row. The backfill record stays, so a rebuild does not
+      // simply replay the projection on the deploy path.
+      sql.exec(
+        "DELETE FROM billing_rm_projection_input; DELETE FROM billing_rm_projection_cursor;",
+      );
+      const stored = sql.get<{ state: string }>(
+        "SELECT state FROM billing_rm_view_state WHERE view = ? AND key = ?",
+        ["Entitlements", account.id],
+      )!;
+      const entry = sql.get<{ seq: number; event: string; envelope: string }>(
+        "SELECT seq, event, envelope FROM billing_rm_view_entry WHERE view = ? AND key = ? ORDER BY seq DESC LIMIT 1",
+        ["Entitlements", account.id],
+      )!;
+      const event = JSON.parse(entry.event) as { readonly _tag: string };
+      const delivery = {
+        target: { kind: "projection", name: "BillingRead" },
+        key: account.id,
+        source: `Entitlements/${account.id}`,
+        seq: Number(entry.seq),
+        origin: "Entitlements",
+        tag: event._tag,
+        event,
+        envelope: JSON.parse(entry.envelope) as unknown,
+        state: JSON.parse(stored.state) as unknown,
+      };
+      sql.run(
+        "INSERT INTO billing_rm_view_outbox (view, key, entry_seq, delivery) VALUES (?, ?, ?, ?)",
+        ["Entitlements", account.id, entry.seq, JSON.stringify(delivery)],
+      );
+
+      const row = yield* Effect.gen(function* () {
+        // A read drains what the crash left behind before it answers.
+        yield* (yield* Entitlements).query(account);
+        return yield* (yield* BillingReadStore).get(account.id);
+      }).pipe(Effect.provide(hosted(platform)));
+
+      expect(row?.features.messages?.used).toBe(12);
+      expect(
+        sql.get("SELECT 1 AS one FROM billing_rm_view_outbox WHERE view = ? AND key = ?", [
           "Entitlements",
           account.id,
         ]),

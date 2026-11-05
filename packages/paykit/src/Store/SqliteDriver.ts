@@ -1,7 +1,18 @@
 import { Database } from "bun:sqlite";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import type { SqlAsync, SqlError, SqlExecutor, SqlValue } from "./Sql.ts";
+
+/**
+ * Whether the current fiber is already inside an `atomic` unit. A `Context`
+ * reference (not a counter) because two fibers may share the executor: one
+ * inside a transaction must join it, while another must wait for it to finish
+ * rather than silently run inside it.
+ */
+const InUnit = Context.Reference<boolean>("paykit/SqliteDriver/InUnit", {
+  defaultValue: () => false,
+});
 
 /** What a synchronous driver needs to open a database. */
 export interface SqliteDriverOptions {
@@ -83,68 +94,87 @@ export const fromDatabase = (database: Database): ClosableSqlExecutor => {
 
   // One writer at a time: `BEGIN IMMEDIATE` is not re-entrant, and the
   // executor is shared, so a semaphore keeps two transactions from interleaving
-  // their BEGIN/COMMIT on the same handle. `depth` says whether a statement is
-  // already inside a unit, so a batch joins it rather than opening a second.
+  // their BEGIN/COMMIT on the same handle. A fiber inside a unit holds the
+  // permit and its statements join the transaction; any other fiber waits.
   const writer = Semaphore.makeUnsafe(1);
-  let depth = 0;
+  const inUnit = Effect.service(InUnit);
+
+  // The connection is shared by every fiber, so an operation outside a unit
+  // must hold the writer's lock. Without it, a batch that starts while another
+  // fiber's transaction is open would run inside that transaction and commit
+  // (or roll back) with it. Operations inside a unit already hold the lock and
+  // join the open transaction.
+  const whenOutside = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(inUnit, (inside) => (inside ? effect : writer.withPermits(1)(effect)));
 
   const async: SqlAsync = {
     dialect: "sqlite",
     isolation: "serializable",
     atomic: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      writer.withPermits(1)(
-        Effect.acquireUseRelease(
-          Effect.try({
-            try: () => database.exec("BEGIN IMMEDIATE"),
-            catch: (cause) => fail("BEGIN IMMEDIATE", cause),
-          }),
-          () =>
-            Effect.suspend(() => {
-              depth += 1;
-              return effect.pipe(Effect.ensuring(Effect.sync(() => (depth -= 1))));
-            }),
-          (_, exit) =>
-            Effect.sync(() => {
-              // A failed effect rolls back; a successful one commits. Both
-              // release the writer's lock, which is the whole point of the
-              // acquire/release pair.
-              database.exec(exit._tag === "Success" ? "COMMIT" : "ROLLBACK");
-            }),
-        ),
+      Effect.flatMap(inUnit, (inside) =>
+        inside
+          ? Effect.die("SQLite atomic unit is not re-entrant; join the open unit instead")
+          : writer.withPermits(1)(
+              Effect.acquireUseRelease(
+                Effect.try({
+                  try: () => database.exec("BEGIN IMMEDIATE"),
+                  catch: (cause) => fail("BEGIN IMMEDIATE", cause),
+                }),
+                () => Effect.provideService(effect, InUnit, true),
+                (_, exit) =>
+                  Effect.sync(() => {
+                    // A failed effect rolls back; a successful one commits.
+                    // Both release the writer's lock, which is the whole point
+                    // of the acquire/release pair.
+                    database.exec(exit._tag === "Success" ? "COMMIT" : "ROLLBACK");
+                  }),
+              ),
+            ),
       ),
 
     query: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
-      Effect.try({
-        try: () => database.query(sql).all(...params) as ReadonlyArray<A>,
-        catch: (cause) => fail(sql, cause),
-      }),
+      whenOutside(
+        Effect.try({
+          try: () => database.query(sql).all(...params) as ReadonlyArray<A>,
+          catch: (cause) => fail(sql, cause),
+        }),
+      ),
     get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
-      Effect.try({
-        try: () => (database.query(sql).get(...params) ?? undefined) as A | undefined,
-        catch: (cause) => fail(sql, cause),
-      }),
+      whenOutside(
+        Effect.try({
+          try: () => (database.query(sql).get(...params) ?? undefined) as A | undefined,
+          catch: (cause) => fail(sql, cause),
+        }),
+      ),
     // Outside a unit this is a single statement; inside one it belongs to that
     // unit's transaction, and the store does not need to know which.
     write: (sql: string, params: ReadonlyArray<SqlValue> = []) =>
-      Effect.try({
-        try: () => {
-          database.query(sql).run(...params);
-        },
-        catch: (cause) => fail(sql, cause),
-      }),
+      whenOutside(
+        Effect.try({
+          try: () => {
+            database.query(sql).run(...params);
+          },
+          catch: (cause) => fail(sql, cause),
+        }),
+      ),
     batch: (statements: ReadonlyArray<string>) =>
-      Effect.try({
-        try: () => {
-          // Inside a unit the transaction is already open; outside one, this
-          // batch is itself the atomic unit.
-          const run = () => {
-            for (const statement of statements) database.exec(statement);
-          };
-          if (depth > 0) run();
-          else transaction(run);
-        },
-        catch: (cause) => fail(`${statements.length} statements`, cause),
-      }),
+      Effect.flatMap(inUnit, (inside) =>
+        whenOutside(
+          Effect.try({
+            try: () => {
+              // Inside a unit the transaction is already open; outside one,
+              // this batch is itself the atomic unit. `whenOutside` already
+              // holds the writer's lock in the second case.
+              const run = () => {
+                for (const statement of statements) database.exec(statement);
+              };
+              if (inside) run();
+              else transaction(run);
+            },
+            catch: (cause) => fail(`${statements.length} statements`, cause),
+          }),
+        ),
+      ),
   };
 
   return {

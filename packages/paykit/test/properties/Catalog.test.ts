@@ -181,6 +181,9 @@ describe("catalog properties", () => {
             "credits",
             "creditsExpire",
             "rates",
+            "cap",
+            "unitPrice",
+            "moneyCap",
           ]),
           tierIndex: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 2 }))),
         }),
@@ -210,6 +213,28 @@ describe("catalog properties", () => {
                 included: first.included === "unlimited" ? 1 : first.included + 1,
               },
             };
+            field = "allowances";
+            break;
+          }
+          case "cap":
+          case "unitPrice":
+          case "moneyCap": {
+            const entry = Object.entries(terms.allowances)[0];
+            if (entry === undefined) return true;
+            const [feature, first] = entry;
+            const mutated =
+              mutation === "cap"
+                ? { ...first, cap: (first.cap ?? 0) + 1 }
+                : mutation === "unitPrice"
+                  ? {
+                      ...first,
+                      unitPrice: {
+                        amount: (first.unitPrice?.amount ?? 0) + 1,
+                        currency: first.unitPrice?.currency ?? terms.price?.currency ?? "usd",
+                      },
+                    }
+                  : { ...first, moneyCap: (first.moneyCap ?? 0) + 1 };
+            carried.allowances = { ...terms.allowances, [feature]: mutated };
             field = "allowances";
             break;
           }

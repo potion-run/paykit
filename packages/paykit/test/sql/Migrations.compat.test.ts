@@ -6,7 +6,7 @@
 // Mirrored locally at .agent_sources/github.com/alchemy-run/alchemy/.
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
-import { migrate } from "../../src/Migrations/index.ts";
+import { migrate, migrationFiles } from "../../src/Migrations/index.ts";
 import type { SqlExecutor } from "../../src/Store/Sql.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
@@ -34,12 +34,24 @@ describe("Alchemy migration registry compatibility", () => {
       sql.exec(
         "INSERT INTO billing_schema_version (id, name, applied_at) VALUES ('00001', '0001_init', '2024-01-01 00:00:00');",
       );
+      // A real legacy deploy has the tables 0001 created; the history says so.
+      sql.exec(migrationFiles()[0]!.sql);
 
-      expect(yield* migrate(sql)).toEqual([]);
+      // 0001 is adopted, not replayed; only the new migrations apply.
+      expect(yield* migrate(sql)).toEqual([
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
 
       expect(columns(sql)).toEqual(ALCHEMY_COLUMNS);
       const rows = migrationRows(sql);
-      expect(rows.map((row) => row.name)).toEqual(["0001_init"]);
+      expect(rows.map((row) => row.name)).toEqual([
+        "0001_init",
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
       // Backfilled from the matching local record, not a placeholder.
       expect(rows[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
       // The original applied_at survives the rebuild.
@@ -56,11 +68,21 @@ describe("Alchemy migration registry compatibility", () => {
       sql.exec(
         "INSERT INTO billing_schema_version (id, applied_at) VALUES ('0001_init', '2024-01-01 00:00:00');",
       );
+      sql.exec(migrationFiles()[0]!.sql);
 
-      expect(yield* migrate(sql)).toEqual([]);
+      expect(yield* migrate(sql)).toEqual([
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
 
       expect(columns(sql)).toEqual(ALCHEMY_COLUMNS);
-      expect(migrationRows(sql).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(migrationRows(sql).map((row) => row.name)).toEqual([
+        "0001_init",
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
     }),
   );
 
@@ -74,12 +96,23 @@ describe("Alchemy migration registry compatibility", () => {
       sql.exec(
         "INSERT INTO d1_migrations (name, applied_at) VALUES ('0001_init', '2024-01-01 00:00:00');",
       );
+      sql.exec(migrationFiles()[0]!.sql);
 
       // The registry records the adopted history; it does not replay 0001.
-      expect(yield* migrate(sql)).toEqual(["0001_init"]);
+      expect(yield* migrate(sql)).toEqual([
+        "0001_init",
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
 
       const rows = migrationRows(sql);
-      expect(rows.map((row) => row.name)).toEqual(["0001_init"]);
+      expect(rows.map((row) => row.name)).toEqual([
+        "0001_init",
+        "0002_consumer_backfill",
+        "0003_outbox_sequence",
+        "0004_view_outbox",
+      ]);
       expect(rows[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
       expect(rows[0]!.applied_at).toContain("2024-01-01");
 

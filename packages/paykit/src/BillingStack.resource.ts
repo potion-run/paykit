@@ -29,22 +29,31 @@ export type BillingStackProps = typeof BillingStackProps.Type;
 
 /**
  * The shape of what a stack records. Bump it whenever `BillingStackAttrs`
- * changes in a way old state cannot read, and `read` refuses a version it does
- * not know instead of handing back a record it silently half-understands.
+ * changes.
+ *
+ * A read accepts every older shape: the next reconcile rewrites the record in
+ * the current one, which is how Alchemy upgrades resource state in place. A
+ * read of a *newer* shape is a typed refusal, because an older build must
+ * never move state it does not understand back to an older layout.
  *
  * State written before the field existed has no `version` and is version `0`.
  */
 export const BILLING_STACK_VERSION = 1;
 
-/** A stack's state was written by a shape this version cannot read. */
-export class BillingStackStateOutdated extends Schema.TaggedError<BillingStackStateOutdated>()(
-  "BillingStackStateOutdated",
+/** A stack's state was written by a newer shape this build cannot read. */
+export class BillingStackStateTooNew extends Schema.TaggedError<BillingStackStateTooNew>()(
+  "BillingStackStateTooNew",
   {
     /** The version found in state; `0` when the record predates the field. */
     found: Schema.Int,
+    /** The newest shape this build knows. */
     expected: Schema.Int,
   },
 ) {}
+
+/** The shape version recorded in state, or `0` for state from before the field. */
+export const billingStackVersionOf = (output: { readonly version?: number } | undefined): number =>
+  output?.version ?? 0;
 
 export const BillingStackAttrs = Schema.Struct({
   /** Absent on state written before the field existed; `read` treats that as 0. */
@@ -105,27 +114,44 @@ export const reconcileBillingStack = (
 
 /**
  * What a read returns: the attributes already in state, never a re-derive. A
- * read with no state is a resource that has not been created yet, and a read of
- * a version this package cannot interpret is a typed refusal — the alternative
- * is a run that diffs against attributes it only half understands.
+ * read with no state is a resource that has not been created yet — `undefined`,
+ * so the engine creates it. State from an older shape is returned as it is:
+ * the reconcile that follows rewrites it, so an upgrade does not need its
+ * state thrown away. A read of a newer shape is a typed refusal, because an
+ * older build would otherwise move that state back to a layout it does not
+ * understand.
  */
 export const readBillingStack = (
   output: BillingStackAttrs | undefined,
-): Effect.Effect<BillingStackAttrs, BillingStackStateOutdated> =>
+): Effect.Effect<BillingStackAttrs | undefined, BillingStackStateTooNew> =>
   output === undefined
-    ? Effect.die("BillingStack is read before it was reconciled")
+    ? Effect.succeed(undefined)
     : Effect.gen(function* () {
         // Read off the record rather than the type: state written before the
         // field existed still has to be judged, not trusted.
-        const found = (output as { readonly version?: number }).version ?? 0;
-        if (found !== BILLING_STACK_VERSION) {
-          return yield* new BillingStackStateOutdated({
+        const found = billingStackVersionOf(output);
+        if (found > BILLING_STACK_VERSION) {
+          return yield* new BillingStackStateTooNew({
             found,
             expected: BILLING_STACK_VERSION,
           });
         }
         return output;
       });
+
+/**
+ * Force an update when the recorded shape is older than this build. A deploy
+ * whose props did not change is otherwise a no-op, so the next reconcile would
+ * never rewrite the record in the current shape.
+ *
+ * Pure, so the version policy is testable without building a provider Layer.
+ */
+export const diffBillingStack = (
+  output: BillingStackAttrs | undefined,
+): { readonly action: "update" } | undefined =>
+  output !== undefined && billingStackVersionOf(output) < BILLING_STACK_VERSION
+    ? { action: "update" }
+    : undefined;
 
 /**
  * The Alchemy provider for `BillingStack`. Reconcile validates; read trusts
@@ -143,6 +169,7 @@ export const BillingStackProvider = () =>
     // generations of the same resource apart. It moves with the attrs.
     version: BILLING_STACK_VERSION,
     nuke: { singleton: true },
+    diff: ({ output }) => Effect.succeed(diffBillingStack(output)),
     reconcile: ({ news }) => reconcileBillingStack(news),
     read: ({ output }) => readBillingStack(output),
     delete: () => Effect.void,

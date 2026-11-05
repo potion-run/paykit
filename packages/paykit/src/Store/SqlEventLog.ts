@@ -8,7 +8,7 @@ import {
   type BillingReadRow,
 } from "../BillingReadStore.ts";
 import { BillingReadRow as BillingReadRowSchema } from "../BillingReadStore.ts";
-import { asyncOf, type SqlDialect, type SqlExecutor, type SqlValue } from "./Sql.ts";
+import { asyncOf, type SqlDialect, type SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
 
 /** One committed event, as a row. */
@@ -112,70 +112,120 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
   const schedule = tableName(BILLING_TABLES.schedule, scope);
   const readModels = tableName(BILLING_TABLES.readModel, scope);
 
+  // Claim the instance's state row, then lock it. On Postgres `FOR UPDATE`
+  // serializes two writers of one account; SQLite's `BEGIN IMMEDIATE` already
+  // does. Without the lock both would read the same `MAX(seq)` and one would
+  // fail on the primary key instead of taking the next sequence.
+  const claim =
+    executor.dialect === "postgres"
+      ? `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, 0, 'null') ON CONFLICT (aggregate, account) DO NOTHING`
+      : `INSERT OR IGNORE INTO ${state} (aggregate, account, version, state) VALUES (?, ?, 0, 'null')`;
+
+  /** A write lost a primary-key race: another writer claimed the same row. */
+  const uniqueViolation = (error: SqlError): boolean => {
+    const cause = error.cause as
+      | { readonly code?: unknown; readonly message?: unknown }
+      | undefined;
+    const asText = (value: unknown): string =>
+      typeof value === "string" ? value : value === undefined ? "" : (JSON.stringify(value) ?? "");
+    const text = `${error.message} ${asText(cause?.code)} ${asText(cause?.message)}`.toLowerCase();
+    return (
+      text.includes("unique constraint") ||
+      text.includes("duplicate key") ||
+      text.includes("sqlite_constraint") ||
+      text.includes("unique_violation")
+    );
+  };
+
   const append = (input: AppendInput) =>
-    sql.atomic(
-      Effect.gen(function* () {
-        const seen = yield* sql.get<{ version: number | string }>(
-          `SELECT version FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
-          [input.aggregate, input.account, input.commandId],
-        );
-        if (seen !== undefined) {
-          return { version: numberFrom(seen.version), duplicate: true, conflict: false };
-        }
+    sql
+      .atomic(
+        Effect.gen(function* () {
+          yield* sql.write(claim, [input.aggregate, input.account]);
+          yield* sql.get(
+            executor.dialect === "postgres"
+              ? `SELECT version FROM ${state} WHERE aggregate = ? AND account = ? FOR UPDATE`
+              : `SELECT version FROM ${state} WHERE aggregate = ? AND account = ?`,
+            [input.aggregate, input.account],
+          );
 
-        // The event log is the truth: the next sequence comes from it, not
-        // from a cached counter that a crash could leave stale. Reading it is
-        // also where a decision taken on a snapshot another writer spent is
-        // caught: the log has moved, so this decision is about a state that is
-        // no longer the instance's, and writing it would publish a number the
-        // events do not add up to.
-        const current = yield* sql.get<{ version: number | string }>(
-          `SELECT COALESCE(MAX(seq), 0) AS version FROM ${event} WHERE aggregate = ? AND account = ?`,
-          [input.aggregate, input.account],
-        );
-        let version = numberFrom(current?.version ?? 0);
-        if (input.expectedVersion !== undefined && version !== input.expectedVersion) {
-          return { version, duplicate: false, conflict: true };
-        }
-        const lastOutbox = yield* sql.get<{ seq: number | string }>(
-          `SELECT COALESCE(MAX(seq), 0) AS seq FROM ${outbox}`,
-        );
-        let outboxSeq = numberFrom(lastOutbox?.seq ?? 0);
+          // The receipt is re-read under the lock: a duplicate that raced this
+          // commit waited for it, so it sees the first receipt instead of both
+          // writers deciding the same command.
+          const seen = yield* sql.get<{ version: number | string }>(
+            `SELECT version FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
+            [input.aggregate, input.account, input.commandId],
+          );
+          if (seen !== undefined) {
+            return { version: numberFrom(seen.version), duplicate: true, conflict: false };
+          }
 
-        for (const record of input.events) {
-          version += 1;
+          // The event log is the truth: the next sequence comes from it, not
+          // from a cached counter that a crash could leave stale. Reading it is
+          // also where a decision taken on a snapshot another writer spent is
+          // caught: the log has moved, so this decision is about a state that is
+          // no longer the instance's, and writing it would publish a number the
+          // events do not add up to.
+          const current = yield* sql.get<{ version: number | string }>(
+            `SELECT COALESCE(MAX(seq), 0) AS version FROM ${event} WHERE aggregate = ? AND account = ?`,
+            [input.aggregate, input.account],
+          );
+          let version = numberFrom(current?.version ?? 0);
+          if (input.expectedVersion !== undefined && version !== input.expectedVersion) {
+            return { version, duplicate: false, conflict: true };
+          }
+
+          for (const record of input.events) {
+            version += 1;
+            yield* sql.write(
+              `INSERT INTO ${event} (aggregate, account, seq, command_id, at, event) VALUES (?, ?, ?, ?, ?, ?)`,
+              [
+                input.aggregate,
+                input.account,
+                version,
+                input.commandId,
+                input.at,
+                JSON.stringify(record),
+              ],
+            );
+            for (const delivery of input.deliveries) {
+              // `seq` is allocated by the database (see migration 0003), so two
+              // accounts committing at once never share a maximum.
+              yield* sql.write(
+                `INSERT INTO ${outbox} (aggregate, account, event_seq, delivery) VALUES (?, ?, ?, ?)`,
+                [input.aggregate, input.account, version, JSON.stringify(delivery)],
+              );
+            }
+          }
+
           yield* sql.write(
-            `INSERT INTO ${event} (aggregate, account, seq, command_id, at, event) VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, ?, ?)
+           ON CONFLICT (aggregate, account) DO UPDATE SET version = excluded.version, state = excluded.state`,
+            [input.aggregate, input.account, version, JSON.stringify(input.state)],
+          );
+          yield* sql.write(
+            `INSERT INTO ${receipt} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
             [
               input.aggregate,
               input.account,
-              version,
               input.commandId,
-              input.at,
-              JSON.stringify(record),
+              version,
+              JSON.stringify(input.receipt),
             ],
           );
-          for (const delivery of input.deliveries) {
-            outboxSeq += 1;
-            yield* sql.write(
-              `INSERT INTO ${outbox} (seq, aggregate, account, event_seq, delivery) VALUES (?, ?, ?, ?, ?)`,
-              [outboxSeq, input.aggregate, input.account, version, JSON.stringify(delivery)],
-            );
-          }
-        }
-
-        yield* sql.write(
-          `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, ?, ?)
-           ON CONFLICT (aggregate, account) DO UPDATE SET version = excluded.version, state = excluded.state`,
-          [input.aggregate, input.account, version, JSON.stringify(input.state)],
-        );
-        yield* sql.write(
-          `INSERT INTO ${receipt} (aggregate, account, command_id, version, receipt) VALUES (?, ?, ?, ?, ?)`,
-          [input.aggregate, input.account, input.commandId, version, JSON.stringify(input.receipt)],
-        );
-        return { version, duplicate: false, conflict: false };
-      }),
-    );
+          return { version, duplicate: false, conflict: false };
+        }),
+      )
+      .pipe(
+        // D1's deferred isolation and a Postgres writer that raced the lock can
+        // still reach a primary key first. That is the same condition as a
+        // version conflict: the caller re-reads and decides again.
+        Effect.catchTag("SqlError", (error) =>
+          uniqueViolation(error)
+            ? Effect.succeed({ version: 0, duplicate: false, conflict: true })
+            : Effect.fail(error),
+        ),
+      );
 
   return {
     append,

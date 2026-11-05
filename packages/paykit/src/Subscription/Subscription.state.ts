@@ -146,6 +146,15 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   proration: Schema.optionalKey(Proration),
   /** The provider invoice a proration was billed on, so it bills once. */
   prorationInvoice: Schema.optionalKey(Schema.String),
+  /**
+   * A stable id for the current `proration`, derived from how many prorations
+   * this standing has recorded. `ChargeProration` uses it as the idempotency
+   * key, so a retry is the same invoice. Absent when the current change moved
+   * no money.
+   */
+  prorationId: Schema.optionalKey(Schema.String),
+  /** How many prorated tier changes this standing has recorded. */
+  prorationSeq: Schema.optionalKey(Schema.Int),
   trialEndsAt: Schema.optional(Schema.DateTimeUtc),
   graceUntil: Schema.optional(Schema.DateTimeUtc),
   cancelAtPeriodEnd: Schema.Boolean,

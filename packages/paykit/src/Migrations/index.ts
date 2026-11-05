@@ -247,6 +247,87 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
 };
 
 /**
+ * Add the consumer generation and backfill bookkeeping the SQL platform needs
+ * to rebuild a view or projection from history.
+ *
+ * `billing_rm_view_entry` gains the generation that wrote each entry: a key
+ * rebuilt by a consumer version bump starts over, and its old entries must not
+ * be read as if they belonged to the new fold. `billing_rm_backfill` records
+ * which consumer generation has been caught up, so a restart does not replay
+ * the whole log and a changed plan without a version bump is caught.
+ */
+const backfillStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
+  const time = millisType(scope.dialect);
+  return [
+    `ALTER TABLE ${tableName(BILLING_TABLES.viewEntry, scope)} ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`,
+    createTable(scope, BILLING_TABLES.backfill, [
+      "consumer TEXT PRIMARY KEY",
+      "generation INTEGER NOT NULL",
+      "plan TEXT NOT NULL",
+      `completed_at ${time} NOT NULL`,
+    ]),
+  ];
+};
+
+/**
+ * Give the outbox a database-generated sequence. The first schema allocated
+ * `seq` with `MAX(seq) + 1`, which is correct only when one writer holds the
+ * database; two accounts committing concurrently on Postgres read the same
+ * maximum and collide. An identity column lets the database allocate it, so a
+ * commit needs no global lock.
+ */
+const outboxSequenceStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
+  const time = millisType(scope.dialect);
+  const seq =
+    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+  const outbox = tableName(BILLING_TABLES.outbox, scope);
+  const next = tableName("billing_outbox_next", scope);
+  return [
+    createTable(scope, "billing_outbox_next", [
+      `seq ${seq}`,
+      "aggregate TEXT NOT NULL",
+      "account TEXT NOT NULL",
+      "event_seq INTEGER NOT NULL",
+      "delivery TEXT NOT NULL",
+      `delivered_at ${time}`,
+    ]),
+    `INSERT INTO ${next} (aggregate, account, event_seq, delivery, delivered_at)
+       SELECT aggregate, account, event_seq, delivery, delivered_at FROM ${outbox} ORDER BY seq`,
+    `DROP TABLE ${outbox}`,
+    `ALTER TABLE ${next} RENAME TO ${tableName(BILLING_TABLES.outbox, { dialect: scope.dialect })}`,
+    createIndex(scope, "billing_outbox_pending", BILLING_TABLES.outbox, ["delivered_at", "seq"]),
+  ];
+};
+
+/**
+ * A view's downstream deliveries, persisted in the same unit that writes its
+ * entries. The upstream outbox retries the *input* delivery, not the output
+ * one, so without this row a crash between a view's commit and its target's
+ * acceptance would drop the downstream event permanently.
+ */
+const viewOutboxStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
+  const time = millisType(scope.dialect);
+  const seq =
+    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+  return [
+    createTable(scope, BILLING_TABLES.viewOutbox, [
+      `seq ${seq}`,
+      "view TEXT NOT NULL",
+      "key TEXT NOT NULL",
+      "entry_seq INTEGER NOT NULL",
+      "delivery TEXT NOT NULL",
+      `delivered_at ${time}`,
+    ]),
+    createIndex(scope, "billing_rm_view_outbox_pending", BILLING_TABLES.viewOutbox, [
+      "view",
+      "key",
+      "delivered_at",
+      "seq",
+    ]),
+  ];
+};
+
+/**
  * The migrations paykit ships, rendered for a dialect and schema. The list is
  * additive: a change appends a file, it never edits one already in the list.
  *
@@ -261,9 +342,19 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
  */
 export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<MigrationFile> => {
   const scope = scopeOf(input);
-  const statements = initStatements(scope);
-  return [{ id: "0001_init", statements, sql: statements.join(";\n") + ";" }];
+  return [
+    fileOf("0001_init", initStatements(scope)),
+    fileOf("0002_consumer_backfill", backfillStatements(scope)),
+    fileOf("0003_outbox_sequence", outboxSequenceStatements(scope)),
+    fileOf("0004_view_outbox", viewOutboxStatements(scope)),
+  ];
 };
+
+const fileOf = (id: string, statements: ReadonlyArray<string>): MigrationFile => ({
+  id,
+  statements,
+  sql: statements.join(";\n") + ";",
+});
 
 /**
  * Read the shipped migrations as `@alchemy.run/sql` records: content-hashed,
@@ -446,6 +537,22 @@ const normalizeScope = (
   return Effect.succeed(scope);
 };
 
+/**
+ * Whether a driver's failure is the registry's table (or the legacy `name`
+ * column) not existing yet. A permission or connection failure is not a fresh
+ * database and must surface.
+ */
+const recoverable = (cause: unknown): boolean => {
+  const message = describeCause(cause).toLowerCase();
+  return (
+    message.includes("no such table") ||
+    message.includes("no such column") ||
+    message.includes("undefined table") ||
+    message.includes("undefined column") ||
+    message.includes("does not exist")
+  );
+};
+
 const readAppliedNames = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
@@ -455,15 +562,19 @@ const readAppliedNames = (
     return sql
       .all<{ name: string }>(`SELECT name FROM ${table} ORDER BY name ASC`)
       .map((row) => row.name);
-  } catch {
+  } catch (cause) {
     // The registry creates the table; before the first run it does not exist.
+    // A permission or connection failure is not "fresh database" and must
+    // surface, or a migration run would replay over a database it cannot read.
+    if (!recoverable(cause)) throw cause;
     // The oldest Alchemy shape carries the name in `id`, so read that too —
     // otherwise a legacy upgrade would look like a fresh application.
     try {
       return sql
         .all<{ name: string }>(`SELECT id AS name FROM ${table} ORDER BY id ASC`)
         .map((row) => row.name);
-    } catch {
+    } catch (fallback) {
+      if (!recoverable(fallback)) throw fallback;
       return [];
     }
   }

@@ -83,6 +83,9 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
     // model records as a failed charge.
     createInvoice: (request) =>
       Effect.gen(function* () {
+        // Polar has no idempotency key for an order. A retry can therefore open
+        // a second draft; the order's metadata carries the change id so an
+        // operator can recognize the pair, and the caller still records once.
         const customer = yield* Polar.customersGetExternal({
           external_id: request.customerExternalId,
         });
@@ -92,6 +95,9 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
           amount: request.amount,
           currency: request.currency,
           description: request.description,
+          ...(request.commandId === undefined
+            ? {}
+            : { metadata: { paykit_command_id: request.commandId } }),
         });
         const paid = yield* Polar.ordersFinalize({ id: draft.id });
         return { invoiceId: paid.id };

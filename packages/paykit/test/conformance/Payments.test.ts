@@ -88,6 +88,24 @@ describe("Payments conformance", () => {
       );
 
       it.effect(
+        "reuses the invoice a command id already opened",
+        () =>
+          Effect.gen(function* () {
+            if (!provider.capabilities.has("invoice")) return;
+            const payments = yield* Payments;
+            const request = {
+              account: "acct_1",
+              amount: 1900,
+              currency: "usd",
+              commandId: "same-change",
+            } as const;
+            const first = yield* payments.createInvoice(request);
+            const second = yield* payments.createInvoice(request);
+            expect(second.invoiceId).toBe(first.invoiceId);
+          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
+      );
+
+      it.effect(
         "refund succeeds or is missing as declared",
         () =>
           Effect.gen(function* () {

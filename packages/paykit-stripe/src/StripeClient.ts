@@ -88,11 +88,26 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
     // and dunning chases; the invoice id is what the log keeps.
     createInvoice: (request) =>
       Effect.gen(function* () {
-        const draft = yield* CreateInvoice({
-          customer: request.customerExternalId,
-          collection_method: "charge_automatically",
-          auto_advance: false,
-        });
+        // A retry of the same change must land on the same draft, line item and
+        // finalization, so each call gets its own key derived from the change.
+        // Sharing one key across all three would be an idempotency conflict:
+        // Stripe keys a request by its key and its parameters.
+        const idempotent = <A, E, R>(step: string, effect: Effect.Effect<A, E, R>) =>
+          request.commandId === undefined
+            ? effect
+            : effect.pipe(
+                Stripe.withRequestOptions({
+                  idempotencyKey: `${request.commandId}:${step}`,
+                }),
+              );
+        const draft = yield* idempotent(
+          "draft",
+          CreateInvoice({
+            customer: request.customerExternalId,
+            collection_method: "charge_automatically",
+            auto_advance: false,
+          }),
+        );
         if (draft.id === undefined) {
           return yield* new PaymentDeclined({
             provider: "stripe",
@@ -100,17 +115,23 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             message: "createInvoice returned an invoice with no id",
           });
         }
-        yield* CreateInvoiceitem({
-          customer: request.customerExternalId,
-          invoice: draft.id,
-          amount: request.amount,
-          currency: request.currency,
-          description: request.description,
-        });
-        const finalized = yield* CreateInvoiceFinalize({
-          invoice: draft.id,
-          auto_advance: true,
-        });
+        yield* idempotent(
+          "item",
+          CreateInvoiceitem({
+            customer: request.customerExternalId,
+            invoice: draft.id,
+            amount: request.amount,
+            currency: request.currency,
+            description: request.description,
+          }),
+        );
+        const finalized = yield* idempotent(
+          "finalize",
+          CreateInvoiceFinalize({
+            invoice: draft.id,
+            auto_advance: true,
+          }),
+        );
         if (finalized.id === undefined) {
           return yield* new PaymentDeclined({
             provider: "stripe",

@@ -39,6 +39,8 @@ export interface MemoryPayments extends MoneyProvider<"memory"> {
 export const PaymentsMemory = (): MemoryPayments => {
   const checkouts = new Map<string, { account: string; tier: string }>();
   const invoices = new Map<string, { account: string; amount: number; currency: string }>();
+  /** The invoice a command id already opened, so a retry is the same charge. */
+  const invoiceFor = new Map<string, string>();
   const reports: Array<MemoryUsageReport> = [];
   const reported = new Set<string>();
   let sequence = 0;
@@ -64,10 +66,12 @@ export const PaymentsMemory = (): MemoryPayments => {
           account,
           amount,
           currency,
+          commandId,
         }: {
           account: string;
           amount: number;
           currency: string;
+          commandId?: string;
         }) => {
           if (amount <= 0) {
             return Effect.fail(
@@ -79,8 +83,13 @@ export const PaymentsMemory = (): MemoryPayments => {
             );
           }
           return Effect.sync(() => {
+            // The command id is the vendor's idempotency key: a retried charge
+            // is the invoice it already opened, not a second one.
+            const previous = commandId === undefined ? undefined : invoiceFor.get(commandId);
+            if (previous !== undefined) return { invoiceId: previous };
             const id = `in_${next()}`;
             invoices.set(id, { account, amount, currency });
+            if (commandId !== undefined) invoiceFor.set(commandId, id);
             return { invoiceId: id };
           });
         },

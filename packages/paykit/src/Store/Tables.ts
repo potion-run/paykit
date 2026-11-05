@@ -22,6 +22,10 @@ export const BILLING_TABLES = {
   viewState: "billing_rm_view_state",
   viewEntry: "billing_rm_view_entry",
   viewInput: "billing_rm_view_input",
+  /** Downstream deliveries a view committed, until their targets accept them. */
+  viewOutbox: "billing_rm_view_outbox",
+  /** Which consumer generations have been caught up from history. */
+  backfill: "billing_rm_backfill",
   projectionInput: "billing_rm_projection_input",
   projectionCursor: "billing_rm_projection_cursor",
   policySeen: "billing_rm_policy_seen",

@@ -36,6 +36,14 @@ const DEFAULT_POLL = 250;
  */
 const MAX_SEND_ATTEMPTS = 32;
 
+/**
+ * The store plus the one binding step the model performs once its kernel is
+ * built. Typed on the way out so `SqlPlatform` binds a kit without a cast.
+ */
+export type BindableAggregateStore = AggregateStore & {
+  readonly bind: (kit: AggregateKit) => AggregateStore;
+};
+
 const parse = (json: string): unknown => JSON.parse(json);
 
 /** What one attempt at a command settles to: an outcome, or the need to look again. */
@@ -80,7 +88,7 @@ type SendOutcome = SendResult | { readonly _tag: "Conflict" };
 export const SqlAggregateStore = (
   log: SqlEventLog,
   options: SqlAggregateStoreOptions,
-): Effect.Effect<AggregateStore, never, never> =>
+): Effect.Effect<BindableAggregateStore, never, never> =>
   Effect.sync(() => {
     const { aggregate } = options;
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
@@ -291,13 +299,12 @@ export const SqlAggregateStore = (
 
     // The kernel binds the store to its kit once the model is built; `store`
     // is the same object, so a caller that already holds it sees the binding.
-    Object.assign(store, {
+    return Object.assign(store, {
       bind: (built: AggregateKit) => {
         kit = built;
         return store;
       },
-    });
-    return store;
+    }) as BindableAggregateStore;
   });
 
 const storedEvent = (

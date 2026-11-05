@@ -18,8 +18,16 @@ import type {
 } from "@alchemy.run/domain/Platform";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { asyncOf, type SqlAsync, type SqlDialect, type SqlExecutor, type SqlValue } from "./Sql.ts";
+import {
+  asyncOf,
+  type SqlAsync,
+  type SqlDialect,
+  type SqlError,
+  type SqlExecutor,
+  type SqlValue,
+} from "./Sql.ts";
 import { BILLING_TABLES, tableName, type TableScope } from "./Tables.ts";
 
 /** What every consumer store needs beyond the executor. */
@@ -32,6 +40,16 @@ export interface SqlConsumerOptions {
   readonly pollMillis?: number;
   /** The Postgres schema. SQLite ignores it. */
   readonly schema?: string;
+  /**
+   * The stored rows of one source instance, for a view that fills its own keys.
+   * Only a view keyed by the one aggregate it reads receives `catchUp`, and its
+   * source is that aggregate, so the platform only has to answer for an
+   * aggregate instance's events.
+   */
+  readonly history?: (
+    source: string,
+    id: string,
+  ) => Effect.Effect<ReadonlyArray<unknown>, SqlError>;
 }
 
 const DEFAULT_POLL = 250;
@@ -84,10 +102,38 @@ export const SqlViewStore = (
     const state = table(BILLING_TABLES.viewState);
     const entry = table(BILLING_TABLES.viewEntry);
     const input = table(BILLING_TABLES.viewInput);
+    const outbox = table(BILLING_TABLES.viewOutbox);
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
     const view = options.name;
 
-    const read = (key: string, generation: number) =>
+    // A key's fold is single-writer. The lock also keeps a lazy key's catch-up
+    // from racing the live delivery that happens to arrive while it reads its
+    // source: both would read the same snapshot and the later write would drop
+    // the other's events.
+    const locks = new Map<string, Semaphore.Semaphore>();
+    const lockFor = (key: string): Semaphore.Semaphore => {
+      const found = locks.get(key);
+      if (found !== undefined) return found;
+      const made = Semaphore.makeUnsafe(1);
+      locks.set(key, made);
+      return made;
+    };
+    const withKey = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
+      lockFor(key).withPermits(1)(effect);
+
+    /** A key whose catch-up this process has already performed. */
+    const caughtUp = new Set<string>();
+
+    const storedGeneration = (key: string) =>
+      Effect.map(
+        sql.get<{ generation: number | string }>(
+          `SELECT generation FROM ${state} WHERE view = ? AND key = ?`,
+          [view, key],
+        ),
+        (row) => (row === undefined ? undefined : Number(row.generation)),
+      );
+
+    const readSnapshot = (key: string, generation: number) =>
       Effect.map(
         sql.get<{
           generation: number | string;
@@ -130,10 +176,33 @@ export const SqlViewStore = (
       after: ViewSnapshot,
       entries: ReadonlyArray<ViewEntry>,
       applied: ReadonlyArray<Delivery>,
+      downstream: ReadonlyArray<Delivery>,
       generation: number,
     ) =>
       sql.atomic(
         Effect.gen(function* () {
+          // A rebuilt key starts from an empty fold. Entries and inputs written
+          // by the previous generation are no longer part of it, so remove them
+          // in the same unit that writes the first new row. Without this a
+          // generation that emits fewer entries than its predecessor would keep
+          // serving the tail of the old one.
+          const previous = yield* storedGeneration(key);
+          yield* sql.write(`DELETE FROM ${entry} WHERE view = ? AND key = ? AND generation <> ?`, [
+            view,
+            key,
+            generation,
+          ]);
+          yield* sql.write(`DELETE FROM ${input} WHERE view = ? AND key = ? AND generation <> ?`, [
+            view,
+            key,
+            generation,
+          ]);
+          if (previous !== undefined && previous !== generation) {
+            // A pending downstream delivery from the old fold would describe an
+            // entry the new generation no longer has. Drop it; the rebuild
+            // emits its own.
+            yield* sql.write(`DELETE FROM ${outbox} WHERE view = ? AND key = ?`, [view, key]);
+          }
           for (const delivery of applied) {
             yield* sql.write(
               insertIgnore(executor.dialect, input, [
@@ -166,12 +235,13 @@ export const SqlViewStore = (
             yield* sql.write(
               upsert(
                 entry,
-                ["view", "key", "seq", "event", "envelope", "state"],
+                ["view", "key", "generation", "seq", "event", "envelope", "state"],
                 ["view", "key", "seq"],
               ),
               [
                 view,
                 key,
+                generation,
                 emitted.seq,
                 JSON.stringify(emitted.event),
                 JSON.stringify(emitted.envelope),
@@ -179,12 +249,21 @@ export const SqlViewStore = (
               ],
             );
           }
+          // The deliveries this commit emits are in the same unit as the
+          // entries that produced them. A retry of the *input* delivery will
+          // not produce them again, so they must survive the process.
+          for (const delivery of downstream) {
+            yield* sql.write(
+              `INSERT INTO ${outbox} (view, key, entry_seq, delivery) VALUES (?, ?, ?, ?)`,
+              [view, key, after.seq, JSON.stringify(delivery)],
+            );
+          }
         }),
       );
 
     let kit: ViewKit | undefined;
 
-    const entries = (key: string, after?: number) =>
+    const entries = (key: string, generation: number, after?: number) =>
       Effect.map(
         sql.query<{
           seq: number | string;
@@ -193,9 +272,9 @@ export const SqlViewStore = (
           state: string;
         }>(
           after === undefined
-            ? `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? ORDER BY seq ASC`
-            : `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? AND seq > ? ORDER BY seq ASC`,
-          after === undefined ? [view, key] : [view, key, after],
+            ? `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? AND generation = ? ORDER BY seq ASC`
+            : `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? AND generation = ? AND seq > ? ORDER BY seq ASC`,
+          after === undefined ? [view, key, generation] : [view, key, generation, after],
         ),
         (rows) =>
           rows.map((row): ViewEntry => ({
@@ -206,71 +285,196 @@ export const SqlViewStore = (
           })),
       );
 
+    /** Apply deliveries to one key, deduping against its committed input log. */
+    const applyBatch = (key: string, deliveries: ReadonlyArray<Delivery>) =>
+      Effect.gen(function* () {
+        const bound = kit;
+        if (bound === undefined) return yield* Effect.die("view store used before it was built");
+        const generation = bound.generation;
+        // A delivery routed to an earlier generation belongs to a rebuild that
+        // no longer exists. Absent means generation 0, not "any generation":
+        // a stale row committed before a version bump carries no suffix and
+        // must not be folded into the rebuilt fold.
+        const matching = deliveries.filter(
+          (delivery) => (delivery.target.generation ?? 0) === generation,
+        );
+        if (matching.length === 0) return;
+        const snapshot = yield* readSnapshot(key, generation);
+        // Dedupe before applying: at-least-once delivery means the same event
+        // can arrive twice, and a view that applied both would double it. The
+        // committed input log answers for earlier batches; a batch can also
+        // carry the same delivery twice, which no row has recorded yet.
+        const fresh: Array<Delivery> = [];
+        const seen = new Set<string>();
+        for (const delivery of matching) {
+          const identity = `${delivery.source}:${delivery.seq}`;
+          if (seen.has(identity)) continue;
+          if (yield* alreadyApplied(key, delivery, generation)) continue;
+          seen.add(identity);
+          fresh.push(delivery);
+        }
+        if (fresh.length === 0) {
+          // The input was already applied, but its downstream deliveries may
+          // still be pending from a crash after the commit. Finish them.
+          yield* drainOutbox(key);
+          return;
+        }
+        const applied = yield* bound.apply(key, snapshot, fresh);
+        if (applied.changed) {
+          yield* write(
+            key,
+            snapshot,
+            applied.snapshot,
+            applied.entries,
+            fresh,
+            applied.downstream,
+            generation,
+          );
+        }
+        yield* drainOutbox(key);
+      }).pipe(Effect.orDie);
+
+    /** Deliver what a committed fold emitted, then remove it from the outbox. */
+    const drainOutbox = (key: string) =>
+      Effect.gen(function* () {
+        const bound = kit;
+        if (bound === undefined) return yield* Effect.die("view store used before it was built");
+        while (true) {
+          const pending = yield* sql.query<{ seq: number | string; delivery: string }>(
+            `SELECT seq, delivery FROM ${outbox}
+             WHERE view = ? AND key = ? AND delivered_at IS NULL ORDER BY seq ASC LIMIT 100`,
+            [view, key],
+          );
+          if (pending.length === 0) return;
+          for (const row of pending) {
+            yield* bound.deliver(JSON.parse(row.delivery) as Delivery);
+            // After the target accepted it. A crash before this line redelivers
+            // a delivery the target dedupes by `(source, seq)`.
+            yield* sql.write(`DELETE FROM ${outbox} WHERE seq = ?`, [row.seq]);
+          }
+        }
+      }).pipe(Effect.orDie);
+
+    /**
+     * A view keyed by its one aggregate fills each key itself before answering
+     * (a lazy view, or a view whose version was bumped and is rebuilt in place).
+     * Its source rows are read from the log; `kit.history` routes them to the
+     * key exactly as the deploy's backfill would.
+     */
+    const ensureCaughtUp = (key: string) =>
+      Effect.gen(function* () {
+        const bound = kit;
+        if (bound === undefined) return yield* Effect.die("view store used before it was built");
+        const catchUp = bound.catchUp;
+        if (catchUp === undefined) return;
+        const marker = `${bound.generation}:${key}`;
+        if (caughtUp.has(marker)) return;
+
+        const generation = bound.generation;
+        if ((yield* storedGeneration(key)) === generation) {
+          const snapshot = yield* readSnapshot(key, generation);
+          if (snapshot.version > 0) {
+            caughtUp.add(marker);
+            return;
+          }
+        }
+        const rows =
+          options.history === undefined ? [] : yield* options.history(catchUp.source, key);
+        if (rows.length > 0) {
+          const routed = yield* bound.history(bound.target, catchUp.source, key, rows);
+          yield* applyBatch(
+            key,
+            routed.flatMap((row) => row.deliveries),
+          );
+        }
+        caughtUp.add(marker);
+      }).pipe(Effect.orDie);
+
     const store: ViewStore = {
       receive: (key, deliveries) =>
-        Effect.gen(function* () {
-          const bound = kit;
-          if (bound === undefined) return yield* Effect.die("view store used before it was built");
-          if (deliveries.length === 0) return;
-          const generation = bound.generation;
-          const snapshot = yield* read(key, generation);
-          // Dedupe before applying: at-least-once delivery means the same event
-          // can arrive twice, and a view that applied both would double it.
-          // The committed input log answers for earlier batches; a batch can
-          // also carry the same delivery twice, which no row has recorded yet.
-          const fresh: Array<Delivery> = [];
-          const seen = new Set<string>();
-          for (const delivery of deliveries) {
-            const identity = `${delivery.source}:${delivery.seq}`;
-            if (seen.has(identity)) continue;
-            if (yield* alreadyApplied(key, delivery, generation)) continue;
-            seen.add(identity);
-            fresh.push(delivery);
-          }
-          if (fresh.length === 0) return;
-          const applied = yield* bound.apply(key, snapshot, fresh);
-          if (applied.changed) {
-            yield* write(key, snapshot, applied.snapshot, applied.entries, fresh, generation);
-          }
-          yield* Effect.forEach(applied.downstream, (delivery) => bound.deliver(delivery), {
-            discard: true,
-          });
-        }).pipe(Effect.orDie),
+        withKey(
+          key,
+          Effect.gen(function* () {
+            yield* ensureCaughtUp(key);
+            yield* applyBatch(key, deliveries);
+          }),
+        ),
 
       read: (key) =>
-        Effect.gen(function* () {
-          const bound = kit;
-          if (bound === undefined) return yield* Effect.die("view store used before it was built");
-          return yield* read(key, bound.generation);
-        }).pipe(Effect.orDie),
+        withKey(
+          key,
+          Effect.gen(function* () {
+            const bound = kit;
+            if (bound === undefined)
+              return yield* Effect.die("view store used before it was built");
+            yield* ensureCaughtUp(key);
+            // A read makes progress on anything a crash left in the outbox,
+            // so a key nobody writes to again is not stuck waiting for a send.
+            yield* drainOutbox(key);
+            return yield* readSnapshot(key, bound.generation);
+          }),
+        ).pipe(Effect.orDie),
 
       changes: (key) =>
         poll(pollMillis).pipe(
           Stream.mapEffect(() =>
-            Effect.gen(function* () {
-              const bound = kit;
-              if (bound === undefined)
-                return yield* Effect.die("view store used before it was built");
-              return yield* read(key, bound.generation);
-            }),
+            withKey(
+              key,
+              Effect.gen(function* () {
+                const bound = kit;
+                if (bound === undefined)
+                  return yield* Effect.die("view store used before it was built");
+                yield* ensureCaughtUp(key);
+                return yield* readSnapshot(key, bound.generation);
+              }),
+            ),
           ),
           Stream.changesWith((left, right) => left.version === right.version),
           Stream.orDie,
         ),
 
-      list: (key) => entries(key).pipe(Effect.orDie),
+      list: (key) =>
+        withKey(
+          key,
+          Effect.gen(function* () {
+            const bound = kit;
+            if (bound === undefined)
+              return yield* Effect.die("view store used before it was built");
+            yield* ensureCaughtUp(key);
+            yield* drainOutbox(key);
+            return yield* entries(key, bound.generation);
+          }),
+        ).pipe(Effect.orDie),
 
       tail: (key, after) => {
         let seen = after;
-        return poll(pollMillis).pipe(
-          Stream.mapEffect(() =>
-            Effect.map(entries(key, seen), (rows) => {
-              if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
-              return rows;
+        return Stream.fromEffect(
+          withKey(
+            key,
+            Effect.gen(function* () {
+              const bound = kit;
+              if (bound === undefined)
+                return yield* Effect.die("view store used before it was built");
+              yield* ensureCaughtUp(key);
             }),
           ),
-          Stream.flatMap((rows) => Stream.fromIterable(rows)),
-          Stream.orDie,
+        ).pipe(
+          Stream.flatMap(() =>
+            poll(pollMillis).pipe(
+              Stream.mapEffect(() =>
+                Effect.gen(function* () {
+                  const bound = kit;
+                  if (bound === undefined)
+                    return yield* Effect.die("view store used before it was built");
+                  const rows = yield* entries(key, bound.generation, seen);
+                  if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
+                  return rows;
+                }),
+              ),
+              Stream.flatMap((rows) => Stream.fromIterable(rows)),
+              Stream.orDie,
+            ),
+          ),
         );
       },
     };
@@ -284,14 +488,6 @@ export const SqlViewStore = (
     };
   });
 
-/**
- * A projection's durable input log and cursor. `receive` accepts a delivery
- * once (by `source` and `seq`), appends it to the key's log, then runs what
- * the cursor has not marked done — so a crash mid-batch replays the batch
- * rather than skipping it.
- *
- * @primitive
- */
 export const SqlProjectionStore = (
   executor: SqlExecutor,
   options: SqlConsumerOptions,
@@ -318,8 +514,8 @@ export const SqlProjectionStore = (
             accepted_at: number | string;
           }>(
             `SELECT position, delivery, accepted_at FROM ${input}
-             WHERE projection = ? AND key = ? AND processed_at IS NULL ORDER BY position ASC`,
-            [projection, key],
+             WHERE projection = ? AND key = ? AND generation = ? AND processed_at IS NULL ORDER BY position ASC`,
+            [projection, key, bound.generation],
           ),
           (rows) =>
             rows.map((row): Accepted => ({
@@ -353,14 +549,31 @@ export const SqlProjectionStore = (
             return yield* Effect.die("projection store used before it was built");
           }
           // A delivery for another generation's rebuild does not belong here.
-          if (
-            delivery.target.generation !== undefined &&
-            delivery.target.generation !== bound.generation
-          ) {
+          // Absent is generation 0, so a stale delivery from before a version
+          // bump is dropped rather than appended to the new log.
+          if ((delivery.target.generation ?? 0) !== bound.generation) {
             return;
           }
           yield* sql.atomic(
             Effect.gen(function* () {
+              // A rebuilt projection starts a new input log. The old rows and
+              // cursor describe a fold this code no longer produces, and the
+              // primary key would drop the new generation's delivery for the
+              // same `(source, seq)` as a duplicate.
+              const existing = yield* sql.get<{ generation: number | string }>(
+                `SELECT generation FROM ${input} WHERE projection = ? AND key = ? LIMIT 1`,
+                [projection, delivery.key],
+              );
+              if (existing !== undefined && Number(existing.generation) !== bound.generation) {
+                yield* sql.write(`DELETE FROM ${input} WHERE projection = ? AND key = ?`, [
+                  projection,
+                  delivery.key,
+                ]);
+                yield* sql.write(`DELETE FROM ${cursors} WHERE projection = ? AND key = ?`, [
+                  projection,
+                  delivery.key,
+                ]);
+              }
               const last = yield* sql.get<{ position: number | string }>(
                 `SELECT COALESCE(MAX(position), 0) AS position FROM ${input} WHERE projection = ? AND key = ?`,
                 [projection, delivery.key],
@@ -394,16 +607,20 @@ export const SqlProjectionStore = (
         }).pipe(Effect.orDie),
 
       // What reached the handler, per source stream: the highest `source_seq`
-      // whose row is marked processed.
+      // whose row is marked processed in the current generation.
       checkpoints: (key) =>
-        Effect.map(
-          sql.query<{ source: string; seq: number | string }>(
+        Effect.gen(function* () {
+          const bound = kit;
+          if (bound === undefined) {
+            return yield* Effect.die("projection store used before it was built");
+          }
+          const rows = yield* sql.query<{ source: string; seq: number | string }>(
             `SELECT source, MAX(source_seq) AS seq FROM ${input}
-             WHERE projection = ? AND key = ? AND processed_at IS NOT NULL GROUP BY source`,
-            [projection, key],
-          ),
-          (rows) => Object.fromEntries(rows.map((row) => [row.source, Number(row.seq)])) as never,
-        ).pipe(Effect.orDie),
+             WHERE projection = ? AND key = ? AND generation = ? AND processed_at IS NOT NULL GROUP BY source`,
+            [projection, key, bound.generation],
+          );
+          return Object.fromEntries(rows.map((row) => [row.source, Number(row.seq)])) as never;
+        }).pipe(Effect.orDie),
     };
 
     return {

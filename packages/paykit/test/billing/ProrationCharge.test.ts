@@ -60,6 +60,7 @@ const downgrade = prorate({ from: scalePrice, to: undefined, period: { start, en
 interface Invoice {
   readonly amount: number;
   readonly currency: string;
+  readonly commandId?: string;
 }
 
 /** A provider that records the invoices it was asked to open. */
@@ -69,10 +70,19 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
       Effect.succeed({
         createCheckout: () =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "createCheckout" })),
-        createInvoice: (args: { account: string; amount: number; currency: string }) =>
+        createInvoice: (args: {
+          account: string;
+          amount: number;
+          currency: string;
+          commandId?: string;
+        }) =>
           failWith === undefined
             ? Effect.sync(() => {
-                asked.push({ amount: args.amount, currency: args.currency });
+                asked.push({
+                  amount: args.amount,
+                  currency: args.currency,
+                  ...(args.commandId === undefined ? {} : { commandId: args.commandId }),
+                });
                 return { invoiceId: `inv_${asked.length}` };
               })
             : Effect.fail(failWith),
@@ -151,7 +161,14 @@ describe("charging a proration", () => {
           amount: 8000,
           currency: "usd",
         });
-        expect(asked).toEqual([{ amount: 8000, currency: "usd" }]);
+        // The provider is handed the change (account, period and the change's
+        // sequence), not the invoice it opened, so a retry after a crash is
+        // the same charge rather than a second one.
+        expect(asked[0]?.amount).toBe(8000);
+        expect(asked[0]?.currency).toBe("usd");
+        // Account, period start and the change's sequence: stable across a
+        // retry, different for a second change in the same period.
+        expect(asked[0]?.commandId).toMatch(/^acct_proration:\d+:1$/);
       }),
       asked,
     );

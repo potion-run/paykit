@@ -6,10 +6,10 @@ disagree, the ADR wins and this file is wrong.
 
 ## Where it stands
 
-`@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Three packages publish together
-(`paykit`, `paykit-polar`, `paykit-stripe`) on one version line. The gates are green: `format:check`,
-`lint`, `typecheck`, `test` (every project; the vendor live cases skip without a key), `build`,
-`exports:check`, `validate:publish-packages`.
+`@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
+(`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
+`format:check`, `lint`, `typecheck`, `test` (every project; the vendor live cases skip without a
+key), `build`, `exports:check`, `validate:publish-packages`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a

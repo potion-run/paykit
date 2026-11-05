@@ -17,13 +17,23 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set(["invoice", "refund
  */
 export const PaymentsManual = (): MoneyProvider<"manual"> => {
   let sequence = 0;
+  const invoiceFor = new Map<string, string>();
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "manual", op }));
 
   const service = Payments.toLayer(
     Effect.succeed({
       createCheckout: () => missing("createCheckout"),
-      createInvoice: () => Effect.succeed({ invoiceId: `manual_invoice_${++sequence}` }),
+      createInvoice: ({ commandId }: { commandId?: string }) =>
+        Effect.sync(() => {
+          // A manual invoice is inferred from a transfer: the same command id
+          // must resolve to the invoice it already produced.
+          const previous = commandId === undefined ? undefined : invoiceFor.get(commandId);
+          if (previous !== undefined) return { invoiceId: previous };
+          const invoiceId = `manual_invoice_${++sequence}`;
+          if (commandId !== undefined) invoiceFor.set(commandId, invoiceId);
+          return { invoiceId };
+        }),
       refund: () => Effect.succeed({}),
       createPortal: () => missing("createPortal"),
       // A manual invoice can bill a period, but it has no meter to feed: the

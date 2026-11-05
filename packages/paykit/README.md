@@ -294,21 +294,23 @@ Implemented and tested:
   proration property, cancellation and resume.
 - M5 admin and reads: `BillingAdminApi`, the `AccountEvents` stream, the `BillingRead`
   projection, and the three `Check` read paths (in-process, read model, HTTP transport).
-- M1 first half: the SQL event log with receipts, outbox, schedule and per-account locking,
-  migrations through `@alchemy.run/sql/Migrations` (content hashes, drift detection, custom
-  schema, dry-run DDL), and `doctor` rebuilding the read model and naming the event ids that
-  disagree.
+- M1: the SQL event log with receipts, outbox, schedule and per-account locking; migrations through
+  `@alchemy.run/sql/Migrations` (content hashes, drift detection, custom schema, dry-run DDL); the
+  full `SqlPlatform` hosting aggregates, views, policies, projections and streams; `doctor`
+  rebuilding the read model and naming the event ids that disagree.
+- SQL history: a view or projection added later, or rebuilt by a version bump, is caught up from
+  `billing_event` by `SqlPlatform.start`; a view keyed by its one aggregate fills each key on first
+  touch, so a version bump does not need a deploy-time scan. `billing_rm_backfill` records the
+  generation and plan, so a restart skips a completed consumer and a changed plan without a version
+  bump fails the build. `SqlViewStore`/`SqlProjectionStore` reset storage from an earlier generation
+  and drop deliveries routed to it.
 
 Not shipped yet, and deliberately not faked:
 
-- The full SQL `Domain.Platform` (`ModelHost`, views/policies/projections, backfill). The
-  event-log core, migrations and `doctor` exist and are tested; Postgres/D1 driver adapters and
-  wiring the model onto them are next.
 - A `paykit migrate` / `paykit doctor` CLI; the library effects (`migrate`, `migrateDryRun`,
   `doctor`) are ready for it.
-- The durable checkout saga (the checkout start/complete flow works today), mid-cycle
-  proration charges, and scheduled dunning retries beyond the grace deadline.
-- The foldkit console in `examples/`.
+- The durable checkout saga (the checkout start/complete flow works today), scheduling a tier change
+  withdrawal, and scheduled dunning retries beyond the grace deadline.
 
 ## Test layout
 

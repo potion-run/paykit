@@ -5,10 +5,10 @@ same model over HTTP and MCP. The model runs on the D1 database declared beside 
 every read model and the entitlement a `check()` answers from are rows in one schema — and the
 provider is `Manual`, which sells through an invoice and needs no key.
 
-The tables come from `migrations/0001_init.sql`, generated from paykit's own DDL:
+The tables come from `migrations/*.sql`, generated from paykit's own DDL:
 
 ```sh
-pnpm --filter @potion.run/paykit schema > examples/billing/migrations/0001_init.sql
+node packages/paykit/scripts/schema.ts sqlite --file=0001_init > examples/billing/migrations/0001_init.sql
 ```
 
 so the schema a release applies and the schema a test applies cannot drift.
