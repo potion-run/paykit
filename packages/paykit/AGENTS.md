@@ -236,6 +236,17 @@ Two table classes, no more: `billing_event` (append-only, the only truth) and `b
   restores it afterwards, so it must be a dedicated session, not a pool that spreads statements.
 - `paykit doctor` rebuilds every read model into temp tables and prints the event ids that
   disagree. A store ships when `doctor` is clean.
+- A consumer's `Domain` version is its generation. `SqlPlatform.start` backfills every view and
+  projection that is new or whose generation changed, in source order, and records the generation
+  and plan in `billing_rm_backfill`; a view keyed by its one aggregate fills each key on first
+  touch through `ViewKit.catchUp`. `SqlViewStore`/`SqlProjectionStore` reset a key built by an
+  earlier generation and drop deliveries routed to it (absent generation is 0, so a pre-bump
+  delivery is stale). Bumping a consumer's version is the rebuild; never edit `billing_event` to
+  make a consumer agree with it.
+- A view's downstream deliveries are staged in `billing_rm_view_outbox` in the same unit that
+  writes its entries. The upstream outbox retries the *input* delivery, which no longer re-applies
+  once deduped, so the output row is what makes a crash between the fold and its target replay
+  instead of drop. A read drains it too, so a key nobody writes to again is not stuck.
 - `SqlAggregateStore` is the only thing that writes the log, and each of the five guarantees has
   one place in it. Do not add a path that writes `billing_event` without its state, receipt and
   deliveries in the same transaction, and do not deliver before the commit: the outbox row is what

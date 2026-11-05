@@ -737,8 +737,8 @@ else. The root `pnpm typecheck` builds every package through project references,
 
   What is missing is the vendor side of the money plane, not the store. The example's Worker runs on
   a hosted database: `billingOnSql(d1)` builds the platform from the binding, `SqlBillingReadStore`
-  puts the read models in the same schema, and `migrations/0001_init.sql` — generated from
-  `migrationFiles` — is the DDL. `examples/billing/test/sql.test.ts` runs that same wiring over SQLite
+  puts the read models in the same schema, and the generated `migrations/*.sql` files — rendered from
+  `migrationFiles` — are the DDL. `examples/billing/test/sql.test.ts` runs that same wiring over SQLite
   and asserts the event, the view row and the read-model page are rows in one database.
 - **Stripe and Polar are both paykit-shaped packages.** `@potion.run/paykit-stripe` and
   `@potion.run/paykit-polar` each build a client on their distilled SDK and return the provider the

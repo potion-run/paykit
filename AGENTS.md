@@ -122,6 +122,65 @@ type or constructor; these are the rules this repo follows. Paths below are rela
   runnable example and the tag a docs generator reads (`@primitive`, `@resource`, `@layer`); the
   source is the docs source of truth (`packages/stripe/src/Price.ts`, Alchemy AGENTS.md).
 
+## Versioning and history
+
+There are two different version stories in Alchemy, and mixing them up is how a deploy either
+rewrites data it cannot read or silently serves half a read model.
+
+### Resource state
+
+- **`provider.version` is the resource's own generation.** Alchemy persists it beside the state,
+  so the engine can tell two generations of the same resource apart. Bump it in the same change
+  that changes what state means, and keep it equal to the shape version in the attributes.
+- **Read accepts older, refuses newer.** An older record is upgraded by the next reconcile; a
+  record from a newer build is a typed refusal, because an older build must never move that state
+  back to an older layout. Alchemy's `DomainVersionTooNew` (`cloudflare/src/Domain/Version.ts`)
+  is the same rule for Domain layouts.
+- **A version bump forces the reconcile.** The engine only calls `reconcile` for an `update`; when
+  props did not change it would otherwise be a no-op. The provider's `diff` returns
+  `{ action: "update" }` whenever the recorded shape is older, so the new record is written.
+  Alchemy's `ProviderService.version` and `Apply.ts` persist the generation; the diff is ours.
+- **Never encode migration in `read`.** `read` observes and judges; `reconcile` converges and
+  writes the current shape.
+
+### Consumers (views, projections, streams)
+
+- **A consumer's `version` is its generation.** Alchemy folds a consumer's own version and the
+  generations of every view it reads into a target id: `view:Entitlements#2`,
+  `projection:BillingRead#1`, or `@<generation>` for a view rebuilt in place. That id is what
+  sources route history to; a changed id means a new consumer, not an old one with new code.
+- **Backfill is the deploy's job.** A platform that keeps events across deploys implements
+  `Platform.start(targets, planOf, backfill)`: it replays the sources of every target that is new
+  or whose generation changed, then records completion. A view keyed by the one aggregate it
+  reads is excluded from `backfill` and instead carries `ViewKit.catchUp`: each key reads its own
+  instance's history before it answers. Both are mechanical applications of
+  `kit.history(target, source, id, rows)` — never a hand-built fold.
+- **Order follows the graph.** A projection that reads a rebuilt view runs after that view. The
+  four roles that make this durable at scale (directory, run, scanners, relays) are in
+  `.agent_sources/github.com/alchemy-run/alchemy/packages/domain/src/Backfill.ts`; the
+  Cloudflare platform's `start` is the reference wiring.
+- **A changed plan needs a version bump.** The sources a consumer reads are part of its identity.
+  A platform that finds a different plan under the same target id refuses the build (Alchemy's
+  `Backfill.PlanChanged`), so a consumer is never silently rebuilt from the wrong history.
+- **`history(target)` reports completeness.** `{ complete: false }` means a read covers only part
+  of the log; a platform that has no `history` is claiming it keeps nothing across deploys.
+  Never report complete for a consumer the backfill has not finished.
+- **Generation is part of dedupe.** A consumer rebuilt from an earlier generation starts over:
+  drop deliveries routed to the old generation, reset its input log and cursor, and never count
+  an old generation's `(source, seq)` as already applied. `test/sql/ModelOnSql.test.ts` proves
+  the drop-and-rebuild path.
+
+### Events and migrations
+
+- **Events are append-only API.** Add a field; never rename or repurpose one. A projection change
+  is a rebuild through the consumer's `version`, not a rewrite of the log.
+- **SQL migrations are additive and forward-only.** Append a record; never edit one already in
+  `migrationFiles`. The registry (`@alchemy.run/sql/Migrations`) owns the bookkeeping table,
+  content hashes and the refusal of a rewritten or removed applied file.
+- **A money table is never dropped to migrate it.** A vendor object that a bill references is
+  retained or archived (ADR 0003), and state that a customer was sold is rewritten by reconcile,
+  not destroyed.
+
 ## Resource providers
 
 The vendor packages (`paykit-stripe`, `paykit-polar`) own Alchemy resources, so the rules in
@@ -285,7 +344,7 @@ must not sit in the path of a pull request from a fork.
 alchemy's `check.yml`: one job, steps in the order that makes each later step meaningful, every
 action pinned to a commit rather than a tag, and `cancel-in-progress` only for pull requests.
 `.github/workflows/release.yml` is a manual run on `main` that re-runs the gates, bumps the shared
-version (`scripts/release/bump.ts`), packs both tarballs, and publishes with provenance only when
+version (`scripts/release/bump.ts`), packs every published tarball, and publishes with provenance only when
 `dry-run` is off. Run
 `pnpm exports:check` and `pnpm validate:publish-packages` when you move a module out of `src/`,
 touch an export map, or bump a version. Formatting is fixable in place (`pnpm format`,
