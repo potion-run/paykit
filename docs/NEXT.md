@@ -64,8 +64,10 @@ standing no command could leave until the period reset.
   moving to small at the period end"; the console sends both. What is left is a `ChangeTier`-style
   quote screen for scheduling — the command needs none (a scheduled change carries no proration), so
   the console builds it from the catalog it already holds.
-- **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
-  open holds with their age, manual grant, refund.
+- **Console screens**: `paykit-admin` now shows balances, the period's priced usage, "why is this
+  account on X" (`Preview`), open holds with their deadlines, verification against the deploy and a
+  manual grant. The one left is **refund**, and it is not a screen: paykit has no refund command, so
+  it needs a decision record — which event, which money, which provider call — first.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
   purchasable. Both halves landed for Stripe — `retiredPrices` decides, `RetiredPrices` lists and

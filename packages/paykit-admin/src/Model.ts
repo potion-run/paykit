@@ -1,4 +1,5 @@
 import type { AdminAction } from "@potion.run/paykit/Admin";
+import { PreviewAnswer, PreviewCommandSchema } from "@potion.run/paykit/Admin";
 import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
 import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
 import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
@@ -8,7 +9,8 @@ import { CommandIds } from "@potion.run/paykit/Foldkit";
 import { Proration } from "@potion.run/paykit/Proration";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
-import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountId, HoldRecord } from "@potion.run/paykit/Subscription/Subscription.state";
+import { VerifyMismatch } from "@potion.run/paykit/Verify";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AccountFilter, ConsoleRoute } from "./Route.ts";
@@ -17,6 +19,10 @@ export { AccountFilter } from "./Route.ts";
 
 export const LoadState = Schema.Literals(["Idle", "Loading", "Loaded", "Failed"]);
 export type LoadState = typeof LoadState.Type;
+
+/** A one-shot question: asked, answered, or failed. */
+export const AnswerState = Schema.Literals(["Loading", "Answered", "Failed"]);
+export type AnswerState = typeof AnswerState.Type;
 
 export const FeedState = Schema.Literals(["CatchingUp", "Live", "Failed"]);
 export type FeedState = typeof FeedState.Type;
@@ -138,6 +144,42 @@ export const Pending = Schema.Struct({
 });
 export type Pending = typeof Pending.Type;
 
+/**
+ * One account's holds, as the aggregate records them. A hold is an entity, not
+ * a count: the views fold it into `reserved`, and this is what an operator can
+ * see by id, feature and deadline. A one-shot read, stamped like a list.
+ */
+export const HoldsState = Schema.Struct({
+  requestId: Schema.Int,
+  account: Schema.String,
+  state: LoadState,
+  asOf: Schema.Option(Schema.DateTimeUtc),
+  holds: Schema.Array(HoldRecord),
+  error: Schema.Option(Schema.String),
+});
+export type HoldsState = typeof HoldsState.Type;
+
+/** What `decide` would do with a command, asked without recording it. */
+export const PreviewState = Schema.Struct({
+  requestId: Schema.Int,
+  account: Schema.String,
+  command: PreviewCommandSchema,
+  state: AnswerState,
+  answer: Schema.Option(PreviewAnswer),
+  error: Schema.Option(Schema.String),
+});
+export type PreviewState = typeof PreviewState.Type;
+
+/** One account judged against the deploy's catalog and provider. */
+export const VerifyState = Schema.Struct({
+  requestId: Schema.Int,
+  account: Schema.String,
+  state: AnswerState,
+  mismatches: Schema.Array(VerifyMismatch),
+  error: Schema.Option(Schema.String),
+});
+export type VerifyState = typeof VerifyState.Type;
+
 export const AccountState = Schema.Struct({
   id: AccountId,
   billing: Schema.Option(BillingStateView),
@@ -150,6 +192,14 @@ export const AccountState = Schema.Struct({
   change: Schema.Option(ChangeTierQuote),
   pending: Schema.Array(Pending),
   notice: Schema.Option(Schema.String),
+  /** The holds the allowance view folds into `reserved` counts. */
+  holds: Schema.Option(HoldsState),
+  /** What the model would do, asked by the operator. */
+  preview: Schema.Option(PreviewState),
+  /** The tier the preview form would ask about, before it is asked. */
+  previewTier: Schema.Option(Schema.String),
+  /** Drift between this account and the deploy. */
+  verify: Schema.Option(VerifyState),
 });
 export type AccountState = typeof AccountState.Type;
 
@@ -196,6 +246,10 @@ export const openedAccount = (id: AccountId): AccountState => ({
   change: Option.none(),
   pending: [],
   notice: Option.none(),
+  holds: Option.none(),
+  preview: Option.none(),
+  previewTier: Option.none(),
+  verify: Option.none(),
 });
 
 /** The action names the console can currently send. `ChangeTier` waits for a server quote. */

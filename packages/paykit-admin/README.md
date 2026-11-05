@@ -13,11 +13,17 @@ command id.
 | `@potion.run/paykit-admin/Console` | The same program from its own module |
 | `@potion.run/paykit-admin/styles.css` | Optional default styles, scoped to `.pk-admin` |
 
-The console's first release covers the account list, the standing and
-allowance panels, the account event feed, and these actions: `GrantCredits`,
-`ExtendTrial`, `ChangeTier`, `EnterGrace`, `RecordPayment`,
-`RecordPaymentFailure`, `Recover`, `Expire`, `ScheduleCancellation` and
-`Resume`.
+The console covers the account list, the standing and allowance panels, the
+period's priced usage, open holds with their deadlines, the account event feed,
+and these actions: `GrantCredits`, `ExtendTrial`, `ChangeTier`, `EnterGrace`,
+`RecordPayment`, `RecordPaymentFailure`, `Recover`, `Expire`,
+`ScheduleCancellation` and `Resume`.
+
+Two panels ask questions instead of writing: **Ask the model** runs `Preview` —
+the same `decide` a write runs — and shows the events it would record or the
+rejection that stops it; **Verify** judges the standing against the deploy's
+catalog and provider. Neither allocates a command id, because neither is a
+write.
 
 `ChangeTier` is a two-step quote/apply: the server computes the proration with
 its own clock, the operator confirms that amount, and the server applies only
@@ -36,7 +42,8 @@ button all land on the same view:
 | --- | --- |
 | `/` | The account list, unfiltered |
 | `/?standing=grace&tier=pro` | The list, filtered |
-| `/accounts/:account` | One account, with the list's filters preserved |
+| `/?after=acct_50` | The next page, by the cursor the previous one returned |
+| `/accounts/:account` | One account, with the list's filters and page preserved |
 
 `Console.routing` turns a URL change into `ChangedUrl` and a link click into
 `ClickedLink`; spreading `Console` into `Runtime.makeApplication` brings it
@@ -44,7 +51,10 @@ along. A navigation command reflects the route through `reflectRoute`, and
 `init` parses the same string back through `routeOf`, so the Model follows the
 URL rather than the other way round. Selecting another account drops the
 previous account's state, which is what restarts its live reads under the new
-key: nothing from the account you left survives into the one you opened.
+key: nothing from the account you left survives into the one you opened. The
+page cursor is in the URL too, so a refresh keeps the page and back walks it;
+changing a filter drops the cursor, because a cursor from another filter names
+a row that filter may not have.
 
 Run the app on its own origin (`/` and `/accounts/...` are the console's
 paths), and keep `/admin` and `/console` for the Api and read surfaces.
@@ -63,6 +73,12 @@ list as live.
   changed (tier, standing, credits) is the one the snapshot has wrong.
 - **The account panel** is live: `Entitlements`, `BillingState` and
   `AccountEvents` are watches, so only the list needs the label.
+
+**Open holds** are the entities the allowance table folds into `reserved`
+counts, so they come from the aggregate through `AdminReads.holds`, once when
+the account opens and again when the event feed says a hold moved
+(`UsageReserved`, `UsageSettled`, `UsageReleased`). That panel says when it was
+read too; it shows the held-at and expiry times rather than a computed age.
 
 ## Seed the first paint
 
@@ -168,10 +184,12 @@ is display-only; every authorization decision happens on the server.
 
 ## A production session
 
-The development example authenticates with headers, and a browser cannot set
-headers on a WebSocket: that is the only reason it uses `protocolHttp` for
-commands. A production host should use a same-origin `HttpOnly` cookie instead,
-serve the live reads over a WebSocket, and send no header config at all.
+A browser cannot set headers on a WebSocket, so a header guard cannot carry a
+session into pushed live reads. Authenticate with a same-origin `HttpOnly`
+cookie instead, serve the live reads over a WebSocket, and send no header
+config at all. `examples/admin` does exactly this: it mints the cookie at
+`/session` (a development identity), reads it in its `Session` and `Admin`
+guards, and connects with a WebSocket.
 
 ```ts
 // Server: resolve the actor from the session cookie your host already sets,
@@ -190,7 +208,8 @@ const resources = Layer.mergeAll(
 ```
 
 A cookie is sent by the browser on `fetch`, on the RPC HTTP calls and on the
-WebSocket handshake, so `CommandHeaders` is not needed. Two consequences worth
+WebSocket handshake, so `CommandHeaders` is not needed. Mint it over HTTPS with
+`Secure` alongside `HttpOnly` and `SameSite=Lax`. Two consequences worth
 keeping: the guards must still check the cookie's actor kind on the server
 (the console's actor is display-only), and a same-site cookie plus the
 same-origin check is what stands in for the CSRF token the header pair gave
@@ -280,10 +299,13 @@ own design system. The stylesheet has no global resets, fonts or icons.
 
 `pnpm test` covers the update loop: seeding the first paint from Flags and the
 URL, a snapshot that no longer decodes, opening an account from the route,
-following a reflected URL and a back button, one list read per filter change,
-the list's read stamp and its re-read after a write, stale list responses,
-parsing an intent, one command and one pending id, rejections, event
-confirmation, and retrying an `Unknown` outcome with the same id. The
-Api-side read port has its own tests in `packages/paykit/test/admin`, including
-a property test that every action `actionsFor` offers is one
-`Subscription.predict` accepts.
+following a reflected URL and a back button, the page cursor in the URL and its
+re-read after a write, one list read per filter change, the list's read stamp,
+stale list and holds responses, opening an account's holds and re-reading them
+when the feed says one moved, a preview that allocates no command id and
+ignores a stale answer, verification, parsing an intent, one command and one
+pending id, rejections, event confirmation, and retrying an `Unknown` outcome
+with the same id. The Api-side read port has its own tests in
+`packages/paykit/test/admin`, including a property test that every action
+`actionsFor` offers is one `Subscription.predict` accepts, and a test that
+`holds` returns the entities the views fold into `reserved`.

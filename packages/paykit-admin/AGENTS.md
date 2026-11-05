@@ -11,11 +11,13 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   `BillingState` and `Entitlements` are the truth; `AccountEvents` is the
   history. The Model holds routes, filters, drafts, command ids, query ids,
   read stamps and pending outcomes.
-- **The URL is the navigation state.** The route names the account and the
-  filters (`/accounts/:account`, `?standing=grace`); a navigation change is
-  reflected with `reflectRoute` and re-parsed with `routeOf`. Never keep a
-  selection the URL cannot reproduce. Applying a route naming another account
-  replaces the account state, which is what restarts its keyed reads.
+- **The URL is the navigation state.** The route names the account, the
+  filters and the page cursor (`/accounts/:account`, `?standing=grace`,
+  `?after=acct_50`); a navigation change is reflected with `reflectRoute` and
+  re-parsed with `routeOf`. Never keep a selection the URL cannot reproduce.
+  Applying a route naming another account replaces the account state, which is
+  what restarts its keyed reads. A filter change drops the page cursor; opening
+  an account keeps both.
 - **A seeded snapshot is the first frame of a live read, not a second source.**
   `Flags` carries wire-encoded snapshots decoded by `decodeSnapshotFlags`; a
   snapshot that no longer decodes falls back to the live read. A seeded account
@@ -34,7 +36,16 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   `BillingRead` projection. Its page carries the time the store answered
   (`asOf`); the panel always says when the rows were read or that the read time
   is unknown, and never presents them as live. Re-read it when the operator
-  asks, when a filter changes, or after the console's own write lands.
+  asks, when a filter or page changes, or after the console's own write lands.
+- **Holds are entities, so they are read as entities.** The allowance table
+  folds a hold into a `reserved` count; the holds panel reads the aggregate's
+  holds through `AdminReads.holds` and re-reads them when the feed reports
+  `UsageReserved`, `UsageSettled` or `UsageReleased`. It is a stamped snapshot
+  like the list, not a subscription.
+- **A preview is a question, not a write.** `Preview` runs the same `decide` a
+  command runs and records nothing, so it allocates no command id and never
+  touches `pending`. The console's answers are `accepted`, `rejected` or
+  `unpredictable`; render exactly what came back.
 - **Serve it through `AdminConsoleServer`.** It captures the `Admin` middleware
   the way `Domain.Api` captures an API's middleware. Do not hand-merge the RPC
   handler, serialization and auth layers.

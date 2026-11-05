@@ -12,6 +12,7 @@ const reads = (overrides: Partial<AdminReadsShape> = {}): AdminReadsShape => ({
   list: () => Effect.succeed({ rows: [], next: null }),
   preview: () => Effect.die("unused"),
   verify: () => Effect.die("unused"),
+  holds: () => Effect.die("unused"),
   catalog: () => Effect.die("unused"),
   ...overrides,
 });

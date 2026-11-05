@@ -16,6 +16,7 @@ import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsProvider } from "../../src/Payments.ts";
+import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
@@ -112,6 +113,42 @@ describe("the admin read port", () => {
       if (answer._tag !== "accepted") return;
       expect(answer.events.map((event) => event._tag)).toEqual(["TierChanged"]);
       expect(answer.proration?.due).toBe(8000);
+    }).pipe(run),
+  );
+
+  it.live("reads an account's holds, newest first", () =>
+    Effect.gen(function* () {
+      yield* subscribeToPro;
+      const subscription = yield* Subscription;
+      const ref = Subscription.ref(account);
+      yield* subscription.send(
+        ref,
+        new Hold({
+          holdId: "hold-old",
+          feature: "messages",
+          amount: 100,
+          expiresAt: DateTime.add(at, { minutes: 15 }),
+        }),
+      );
+      yield* subscription.send(
+        ref,
+        new Hold({
+          holdId: "hold-new",
+          feature: "messages",
+          amount: 200,
+          expiresAt: DateTime.add(at, { minutes: 30 }),
+        }),
+      );
+
+      const reads = yield* AdminReads;
+      const answer = yield* reads.holds(account);
+      expect(answer.account).toBe(account);
+      expect(answer.holds.map((hold) => hold.id)).toEqual(["hold-new", "hold-old"]);
+      const open = answer.holds[0];
+      expect(open?.status).toBe("open");
+      expect(open?.amount).toBe(200);
+      // The entities the views fold into `reserved` counts are addressable.
+      expect(answer.asOf).toBeDefined();
     }).pipe(run),
   );
 

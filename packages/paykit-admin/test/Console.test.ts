@@ -10,7 +10,15 @@ import {
   messages,
   tier,
 } from "@potion.run/paykit";
-import { AdminReadFailed, ChangeTierApplied, ChangeTierQuoted } from "@potion.run/paykit/Admin";
+import {
+  AdminReadFailed,
+  ChangeTierApplied,
+  ChangeTierQuoted,
+  HoldsAnswer,
+  PreviewAccepted,
+  PreviewRejected,
+  PreviewUnpredictable,
+} from "@potion.run/paykit/Admin";
 import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -448,7 +456,8 @@ describe("the console model", () => {
       }),
       url(`/accounts/${account}`),
     );
-    expect(result.commands).toBeUndefined();
+    // The snapshots seed the views; holds are an entity and are read once.
+    expect(result.commands?.map((command) => command.name)).toEqual(["GetHolds"]);
     expect(result.model.route._tag).toBe("Account");
     if (Option.isNone(result.model.account)) return;
     const opened = result.model.account.value;
@@ -480,16 +489,26 @@ describe("the console model", () => {
     expect(Option.getOrNull(result.model.accounts.filter.standing)).toBe("grace");
     if (Option.isNone(result.model.account)) return;
     expect(result.model.account.value.id).toBe(account);
-    // The list and catalog are still asked for, with the URL's filter.
-    expect(result.commands?.map((command) => command.name)).toEqual(["GetCatalog", "ListAccounts"]);
+    // The list and catalog are still asked for, with the URL's filter, and the
+    // open account's holds are read for the first paint.
+    expect(result.commands?.map((command) => command.name)).toEqual([
+      "GetCatalog",
+      "ListAccounts",
+      "GetHolds",
+    ]);
     const list = result.commands?.find((command) => command.name === "ListAccounts");
     expect(list?.args?.query).toEqual({ standing: "grace" });
   });
 
   it("reflects the route it follows, and boots the same view from that URL", () => {
     const navigated = update(seeded(), Message.ClickedAccount({ account }));
-    expect(navigated.commands?.map((command) => command.name)).toEqual(["ReflectRoute"]);
-    const reflected = navigated.commands?.[0]?.args?.url;
+    // Opening an account reads its holds; the address bar follows the route.
+    expect(navigated.commands?.map((command) => command.name).sort()).toEqual([
+      "GetHolds",
+      "ReflectRoute",
+    ]);
+    const reflected = navigated.commands?.find((command) => command.name === "ReflectRoute")?.args
+      ?.url;
     expect(reflected).toBe(`/accounts/${account}`);
 
     const refreshed = init(
@@ -584,6 +603,264 @@ describe("the console model", () => {
       url(),
     ).model;
     expect(Option.isNone(model.accounts.asOf)).toBe(true);
+  });
+
+  it("keeps the page cursor in the URL, and re-reads the page it names", () => {
+    const paged = BillingReadPage.make({ rows: [row], next: "acct_b" });
+    const model = init(
+      flags({
+        catalog: Schema.encodeSync(Catalog)(testCatalog),
+        accounts: Schema.encodeSync(BillingReadPage)(paged),
+      }),
+      url(),
+    ).model;
+
+    const next = update(model, Message.ClickedNextPage());
+    expect(next.commands?.map((command) => command.name).sort()).toEqual([
+      "ListAccounts",
+      "ReflectRoute",
+    ]);
+    const reflected = next.commands?.find((command) => command.name === "ReflectRoute")?.args?.url;
+    expect(reflected).toBe("/?after=acct_b");
+    const list = next.commands?.find((command) => command.name === "ListAccounts");
+    expect(list?.args?.query).toEqual({ after: "acct_b" });
+
+    // Booting the reflected URL asks for the same page instead of page one.
+    const booted = init(flags(), url("/", "after=acct_b"));
+    expect(booted.model.route).toEqual(next.model.route);
+    const bootList = booted.commands?.find((command) => command.name === "ListAccounts");
+    expect(bootList?.args?.query).toEqual({ after: "acct_b" });
+  });
+
+  it("re-reads the page a write lands on, not the first page", () => {
+    const model = init(flags(), url("/", "after=acct_b")).model;
+    const openedAccount = update(model, Message.ClickedAccount({ account })).model;
+    const draft = update(openedAccount, Message.ClickedAction({ action: "GrantCredits" })).model;
+    const filled = update(
+      draft,
+      Message.UpdatedDraftField({ field: "amount", value: "250" }),
+    ).model;
+    const submitted = update(filled, Message.ClickedSubmitAction());
+    const commandId = submitted.model.account.pipe(
+      Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
+      Option.getOrThrow,
+    );
+    const settled = update(
+      submitted.model,
+      Message.ReceivedAdminResult({
+        message: BillingAdmin.Message.SucceededGrantCredits({
+          commandId,
+          reply: { balance: 250 },
+          receipt: { stream: "Subscription/acct_a", version: 2 },
+        }),
+      }),
+    );
+    const list = settled.commands?.find((command) => command.name === "ListAccounts");
+    expect(list?.args?.query).toEqual({ after: "acct_b" });
+  });
+
+  it("reads the open account's holds and applies only the current request", () => {
+    const model = update(withBilling(), Message.ClickedRefresh()).model;
+    const current = model.account.pipe(
+      Option.flatMap((value) => value.holds),
+      Option.getOrThrow,
+    );
+    const answer = HoldsAnswer.make({
+      account,
+      holds: [
+        {
+          id: "hold-a",
+          feature: "messages",
+          amount: 400,
+          rate: 0,
+          cost: 0,
+          at,
+          expiresAt: at,
+          status: "open",
+        },
+      ],
+      asOf: at,
+    });
+
+    const applied = update(
+      model,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededHolds({ requestId: current.requestId, answer }),
+      }),
+    ).model;
+    expect(
+      applied.account.pipe(
+        Option.flatMap((value) => value.holds),
+        Option.map((holds) => holds.holds.map((hold) => hold.id)),
+        Option.getOrThrow,
+      ),
+    ).toEqual(["hold-a"]);
+
+    const stale = update(
+      applied,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededHolds({
+          requestId: current.requestId + 1,
+          answer: HoldsAnswer.make({ account, holds: [], asOf: at }),
+        }),
+      }),
+    ).model;
+    expect(
+      stale.account.pipe(
+        Option.flatMap((value) => value.holds),
+        Option.map((holds) => holds.holds.length),
+        Option.getOrThrow,
+      ),
+    ).toBe(1);
+
+    // An answer for another account never reaches this account's panel.
+    const foreign = update(
+      applied,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededHolds({
+          requestId: current.requestId,
+          answer: HoldsAnswer.make({ account: "acct_other", holds: [], asOf: at }),
+        }),
+      }),
+    ).model;
+    expect(
+      foreign.account.pipe(
+        Option.flatMap((value) => value.holds),
+        Option.map((holds) => holds.holds.length),
+        Option.getOrThrow,
+      ),
+    ).toBe(1);
+  });
+
+  it("re-reads holds when the event feed says one moved", () => {
+    const model = update(withBilling(), Message.ClickedRefresh()).model;
+    const reserved = update(
+      model,
+      Message.ReceivedEvent({
+        seq: 1,
+        at,
+        commandId: "cmd_1",
+        tag: "UsageReserved",
+        body: "{}",
+      }),
+    );
+    expect(reserved.commands?.map((command) => command.name)).toEqual(["GetHolds"]);
+
+    const unrelated = update(
+      model,
+      Message.ReceivedEvent({ seq: 2, at, commandId: "cmd_2", tag: "CreditsGranted", body: "{}" }),
+    );
+    expect(unrelated.commands).toBeUndefined();
+  });
+
+  it("asks the model what a command would do, and records nothing", () => {
+    const model = update(withBilling(), Message.UpdatedPreviewTier({ value: "free" })).model;
+    const asked = update(
+      model,
+      Message.ClickedPreview({ command: { kind: "changeTier", tier: "free" } }),
+    );
+    expect(asked.commands?.map((command) => command.name)).toEqual(["PreviewCommand"]);
+    expect(asked.commands?.[0]?.args?.input).toEqual({
+      account,
+      command: { kind: "changeTier", tier: "free" },
+    });
+    // No command id was allocated: a preview never looks like a write.
+    expect(asked.model.commandIds.sent).toBe(0);
+
+    const requestId = asked.model.account.pipe(
+      Option.flatMap((value) => value.preview),
+      Option.map((preview) => preview.requestId),
+      Option.getOrThrow,
+    );
+    const rejected = update(
+      asked.model,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededPreview({
+          requestId,
+          answer: PreviewRejected.make({ rejection: new NotSubscribed({ account }) }),
+        }),
+      }),
+    ).model;
+    expect(
+      rejected.account.pipe(
+        Option.flatMap((value) => value.preview),
+        Option.map((preview) => preview.state),
+        Option.getOrThrow,
+      ),
+    ).toBe("Answered");
+
+    // A late answer to an earlier question is dropped.
+    const stale = update(
+      rejected,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededPreview({
+          requestId: requestId + 1,
+          answer: PreviewUnpredictable.make({ reason: "stale" }),
+        }),
+      }),
+    ).model;
+    expect(
+      stale.account.pipe(
+        Option.flatMap((value) => value.preview),
+        Option.flatMap((preview) => preview.answer),
+        Option.map((answer) => answer._tag),
+        Option.getOrThrow,
+      ),
+    ).toBe("rejected");
+  });
+
+  it("applies an accepted preview without turning it into a write", () => {
+    const asked = update(withBilling(), Message.ClickedPreview({ command: { kind: "cancel" } }));
+    const requestId = asked.model.account.pipe(
+      Option.flatMap((value) => value.preview),
+      Option.map((preview) => preview.requestId),
+      Option.getOrThrow,
+    );
+    const answered = update(
+      asked.model,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededPreview({
+          requestId,
+          answer: PreviewAccepted.make({
+            state: { _tag: "Unsubscribed", refs: {} },
+            events: [],
+          }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(answered.account)) return;
+    expect(answered.account.value.pending).toEqual([]);
+    expect(answered.commandIds.sent).toBe(0);
+  });
+
+  it("verifies the open account against the deploy", () => {
+    const asked = update(withBilling(), Message.ClickedVerify());
+    expect(asked.commands?.map((command) => command.name)).toEqual(["VerifyAccount"]);
+    const requestId = asked.model.account.pipe(
+      Option.flatMap((value) => value.verify),
+      Option.map((verify) => verify.requestId),
+      Option.getOrThrow,
+    );
+    const answered = update(
+      asked.model,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededVerify({ requestId, mismatches: [] }),
+      }),
+    ).model;
+    expect(
+      answered.account.pipe(
+        Option.flatMap((value) => value.verify),
+        Option.map((verify) => verify.state),
+        Option.getOrThrow,
+      ),
+    ).toBe("Answered");
+    expect(
+      answered.account.pipe(
+        Option.flatMap((value) => value.verify),
+        Option.map((verify) => verify.mismatches.length),
+        Option.getOrThrow,
+      ),
+    ).toBe(0);
   });
 });
 

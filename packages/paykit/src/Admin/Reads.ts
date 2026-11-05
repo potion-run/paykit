@@ -1,4 +1,6 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type * as Headers from "effect/http/Headers";
 import type * as HttpClient from "effect/http/HttpClient";
@@ -33,7 +35,8 @@ import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.t
 import { CancellationScheduled } from "../Subscription/ScheduleCancellation.command.ts";
 import { TierChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
 import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
-import { SubscriptionState } from "../Subscription/Subscription.state.ts";
+import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { HoldRecord, SubscriptionState } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { TierChangeWithdrawn } from "../Subscription/WithdrawTierChange.command.ts";
@@ -99,6 +102,20 @@ export const PreviewUnpredictable = Schema.TaggedStruct("unpredictable", {
 export const PreviewAnswer = Schema.Union([PreviewAccepted, PreviewRejected, PreviewUnpredictable]);
 export type PreviewAnswer = typeof PreviewAnswer.Type;
 
+/**
+ * One account's holds, as the aggregate records them. The two views fold a
+ * hold into `reserved` counts, so a console that needs the entity itself — its
+ * id, feature, price and deadline — reads them here.
+ */
+export const HoldsAnswer = Schema.Struct({
+  account: Schema.String,
+  /** Every hold the account has taken, open and closed, newest first. */
+  holds: Schema.Array(HoldRecord),
+  /** When the aggregate answered. A hold list is a snapshot, like the account list. */
+  asOf: Schema.DateTimeUtc,
+});
+export type HoldsAnswer = typeof HoldsAnswer.Type;
+
 /** The preview request schema, matching `PreviewInput`'s `kind` discriminant. */
 export const PreviewCommandSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("subscribe"), tier: Schema.String }),
@@ -159,6 +176,8 @@ export interface AdminReadsShape {
   readonly verify: (input: {
     readonly account: string;
   }) => Effect.Effect<ReadonlyArray<VerifyMismatch>, AdminReadError>;
+  /** An account's holds, which the views fold away into reserved counts. */
+  readonly holds: (account: string) => Effect.Effect<HoldsAnswer, AdminReadError>;
   /** The catalog the deployment validated, for tier choices and prices. */
   readonly catalog: () => Effect.Effect<Catalog, AdminReadError>;
 }
@@ -186,6 +205,7 @@ export const makeAdminReads = Effect.gen(function* () {
   const list = yield* List();
   const preview = yield* Preview();
   const verify = yield* Verify();
+  const subscription = yield* Subscription;
   const catalog = yield* CatalogService;
 
   return {
@@ -198,6 +218,22 @@ export const makeAdminReads = Effect.gen(function* () {
         ),
       ),
     verify: ({ account }) => verify({ account }),
+    holds: (account) =>
+      Effect.gen(function* () {
+        const state = yield* subscription.state(Subscription.ref(account));
+        const holds = state._tag === "Subscribed" ? Object.values(state.holds) : [];
+        return HoldsAnswer.make({
+          account,
+          // Newest first: an operator opens this panel to see what is still
+          // waiting, and the deadline is the number that matters.
+          holds: holds.toSorted(
+            (left, right) =>
+              DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at) ||
+              DateTime.toEpochMillis(right.expiresAt) - DateTime.toEpochMillis(left.expiresAt),
+          ),
+          asOf: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+        });
+      }),
     catalog: () => Effect.succeed(catalog),
   } satisfies AdminReadsShape;
 });
@@ -226,6 +262,11 @@ export const AdminReadsRpcs = RpcGroup.make(
   Rpc.make("Verify", {
     payload: VerifyInput,
     success: Schema.Array(VerifyMismatch),
+    error: AdminReadError,
+  }),
+  Rpc.make("Holds", {
+    payload: VerifyInput,
+    success: HoldsAnswer,
     error: AdminReadError,
   }),
   Rpc.make("Catalog", {
@@ -259,6 +300,7 @@ export const AdminReadsHandlers = Effect.map(makeAdminReads, (reads) =>
     ListAccounts: (query: BillingReadQuery) => reads.list(query),
     Preview: (input: AdminPreviewInput) => reads.preview(input),
     Verify: ({ account }: { readonly account: string }) => reads.verify({ account }),
+    Holds: ({ account }: { readonly account: string }) => reads.holds(account),
     Catalog: () => reads.catalog(),
   }),
 );
@@ -298,6 +340,7 @@ export const AdminReadsClient = (
         list: (query) => call(client.ListAccounts(query ?? {})),
         preview: (input) => call(client.Preview(input)),
         verify: ({ account }) => call(client.Verify({ account })),
+        holds: (account) => call(client.Holds({ account })),
         catalog: () => call(client.Catalog()),
       } satisfies AdminReadsShape;
     }),

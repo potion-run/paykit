@@ -56,11 +56,13 @@ export {
   AccountFilter,
   accountRoute,
   accountsRoute,
+  afterOf,
   ConsoleRoute,
   filterOf,
   noFilter,
   reflectRoute,
   routeOf,
+  withAfter,
   withFilter,
 } from "./Route.ts";
 export { AccountSnapshot, decodeSnapshotFlags } from "./Snapshot.ts";

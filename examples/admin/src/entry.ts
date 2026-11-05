@@ -2,40 +2,41 @@ import * as Domain from "@alchemy.run/domain";
 import { Console } from "@potion.run/paykit-admin";
 import { AdminChangeTierClient, AdminReadsClient } from "@potion.run/paykit/Admin";
 import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
-import { CommandHeaders } from "@potion.run/paykit/Foldkit";
 import "@potion.run/paykit-admin/styles.css";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
+import * as Socket from "effect/socket/Socket";
 import { Runtime } from "foldkit";
 
 /**
- * The development admin. A production deployment replaces the header pair
- * with its own session/CSRF headers, and the server replaces `DevGuards`.
+ * Ask the Worker for the session cookie before the app boots. The cookie is
+ * `HttpOnly`, so only the server can write it; from here on the browser sends
+ * it on `fetch`, on the console's RPC calls and on the WebSocket handshake, and
+ * the resource layers need no per-call headers.
+ *
+ * A production host replaces this with its own sign-in page. It should not
+ * mint a session for anyone who asks.
  */
-const headers = {
-  "x-paykit-actor": "ops_1",
-  "x-paykit-kind": "admin",
-};
+const session = await fetch(`${location.origin}/session`, {
+  method: "POST",
+  credentials: "same-origin",
+});
+if (!session.ok) console.error("Could not start an admin session:", session.status);
 
 /**
- * The development guard reads headers, and a browser cannot set headers on a
- * WebSocket. Use the HTTP protocol here so commands and live reads both carry
- * the header pair; a production app with a same-origin `HttpOnly` cookie should
- * use `protocolWebSocket` instead and set no headers at all. See the package
- * README, "A production session".
+ * The Api client over a WebSocket. The cookie authenticates the handshake, so
+ * live reads are pushed by the object that owns the key instead of polled.
  */
 const Connection = BillingAdminApi.layerClient.pipe(
-  Layer.provide(Domain.protocolHttp(`${location.origin}/admin`)),
+  Layer.provide(Domain.protocolWebSocket(`${location.origin}/admin`)),
+  Layer.provide(Socket.layerWebSocketConstructorGlobal),
 );
 
 const resources = Layer.mergeAll(
   Connection,
-  AdminReadsClient(`${location.origin}/console`, { headers }),
-  AdminChangeTierClient(`${location.origin}/console`, { headers }),
-  Layer.succeed(CommandHeaders, {
-    get: () => Effect.succeed(headers),
-  }),
+  AdminReadsClient(`${location.origin}/console`),
+  AdminChangeTierClient(`${location.origin}/console`),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
 Runtime.run(
