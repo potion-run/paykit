@@ -564,9 +564,17 @@ future `Payments` operation rather than something this function can see.
 
 Every one of these fails on purpose before it passes.
 
-1. Delivery permutations: any order, at most twice. State after any permutation equals state
-   after the canonical order. This is the largest bug class in every system that accepts
-   provider webhooks.
+1. Delivery permutations: a delivery may arrive twice, never out of order per `(source,
+   target)`. State after a duplicate delivery equals state after the canonical order. This is the
+   largest bug class in every system that accepts provider webhooks, and the idempotent command
+   id, not reordering facts, is what closes it.
+
+   Provider webhooks are facts, not deliveries. The edge applies a fact once by the provider
+   event id; a checkout for a standing that already exists is a replay, never a second
+   activation. A fact that arrives before the standing it describes — a failed payment before
+   checkout — is ignored rather than buffered: the provider's retry is the recovery, and the edge
+   never invents an order across facts. A cancellation and a failure commute once a standing
+   exists, so grace plus a scheduled cancellation is the same state whichever arrives first.
 2. Replay determinism: folding an account's events reproduces its stored state for any
    generated command sequence.
 3. Allowance: `used + reserved ≤ included` for `block`, never negative, and `remaining` is

@@ -96,6 +96,13 @@ export type WebhookAction = typeof WebhookAction.Type;
  * The webhook edge as a binding: the model's services resolved once, an event
  * applied per delivery. A Worker route builds this beside its other bindings, so
  * a delivery does not re-resolve the model on every call.
+ *
+ * The edge is idempotent, not a reorderer. A redelivery applies once by the
+ * provider event id; a checkout for a standing that already exists is a replay,
+ * never a second activation. A fact that arrives before the standing it
+ * describes — a failed payment before checkout — is ignored rather than
+ * buffered: the provider's retry is the recovery, and the edge never invents an
+ * order across facts.
  */
 export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
   const subscription = yield* Subscription;
@@ -162,9 +169,21 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
       });
 
       switch (event.kind) {
-        case "checkout_completed":
+        case "checkout_completed": {
           if (oneOff) return yield* purchase;
+          // A standing already exists: this is either a redelivery with a new
+          // provider id or a checkout that lost the race with a payment that
+          // activated the account. Activating again would reset the period and
+          // forget what was recorded in between, so it is a replay.
+          if (
+            state._tag === "Subscribed" &&
+            state.status !== "canceled" &&
+            state.status !== "expired"
+          ) {
+            return "ignored" as const satisfies WebhookAction;
+          }
           return yield* activate;
+        }
 
         case "payment_succeeded": {
           if (oneOff) return yield* purchase;
@@ -209,7 +228,14 @@ export const Webhook = Effect.fn("Paykit.Webhook")(function* () {
         }
 
         case "subscription_canceled": {
-          if (state._tag !== "Subscribed" || state.status !== "active") {
+          // A cancellation is a standing change, not only an active-account
+          // one: a customer may cancel while in grace or on a trial. Allowing
+          // it there is what lets a failure and a cancellation commute.
+          if (
+            state._tag !== "Subscribed" ||
+            state.status === "canceled" ||
+            state.status === "expired"
+          ) {
             return "ignored" as const satisfies WebhookAction;
           }
           return yield* asSystem(
