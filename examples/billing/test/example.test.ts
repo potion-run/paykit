@@ -173,9 +173,11 @@ describe("the example billing app", () => {
       const tenant = yield* BillingApi.clientInProcess;
       const entitlements = yield* Entitlements;
 
-      // A trial whose period ended a second ago, so the rollover policy closes
-      // it on its own and opens a period that is still in the future.
-      const ended = DateTime.makeUnsafe(Date.now() - 1_000);
+      // A trial whose period ends almost immediately, so the rollover policy
+      // closes it on its own and opens the next one. The deadline has to be
+      // ahead of now — a trial cannot begin after it ends — so the wait below
+      // is the policy's tick, not a fixed sleep.
+      const ended = DateTime.makeUnsafe(Date.now() + 250);
       yield* tenant.StartTrial(account.id, { ...pro, trialEndsAt: ended }, asAccount);
 
       const track = yield* Paykit.Track();
@@ -186,7 +188,7 @@ describe("the example billing app", () => {
       yield* entitlements.query(account).pipe(
         Effect.repeat({
           schedule: Schedule.spaced("10 millis"),
-          times: 200,
+          times: 500,
           until: (queried) =>
             Option.match(queried, {
               onNone: () => false,
