@@ -109,6 +109,23 @@ export const testCatalog = Effect.runSync(
           }),
         ],
       }),
+      // A money ceiling small enough to be passed by ordinary usage, so a
+      // generated script can reach a standing that a tier change would put over
+      // its money cap. Without one, "no reachable state is past a ceiling"
+      // could never be made to fail.
+      tier({
+        id: "cheap",
+        price: { amount: 1_900, currency: "usd", interval: "month" },
+        credits: 0,
+        grants: [
+          allowance(messages, {
+            included: 10,
+            overage: "bill",
+            unitPrice: { amount: 1, currency: "usd" },
+            moneyCap: 50,
+          }),
+        ],
+      }),
       // A `resets: "never"` postpaid allowance keeps its use, holds and billed
       // money across a period boundary, so a close must not reset what the
       // standing is still accounting for.
@@ -140,6 +157,7 @@ export const TierName = Schema.Literals([
   "prepaid",
   "metered",
   "capped",
+  "cheap",
   "recurring",
 ]);
 export type TierName = typeof TierName.Type;
