@@ -55,10 +55,11 @@ prices. What is still open there is a money ceiling already passed by `billed` �
 
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
-- **Archived prices** (ADR 0003): a retired Stripe price is retained but stays `active: true`, and a
-  retired Polar product stays purchasable. Archiving needs a vendor write against a resource the
-  stack no longer tracks — a sweep by lookup-key (Stripe) or name prefix (Polar) is the obvious
-  shape.
+- **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
+  a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
+  purchasable. The decision and the deterministic half landed — `retiredPrices` says which of the
+  stage's prices the catalog no longer declares. What is left is the write: a `RetiredPrices` resource
+  that lists, sweeps and deactivates, with a live test as the authority, and the Polar half beside it.
 
 ## The live cases that have never been run
 

@@ -102,6 +102,63 @@ export const meteredLookupKeyOf = (stage: string, tier: string, feature: string)
 export const meterEventNameOf = (stage: string, feature: string): string =>
   `paykit_${encodeVendorPart(stage)}_${encodeVendorPart(feature)}`;
 
+/**
+ * The prefix every lookup key this stage owns starts with. `paykit` is the
+ * library's, the stage is what keeps two stacks in one Stripe account apart, and
+ * the trailing colon is what stops `prod` from matching `production`.
+ */
+export const lookupKeyPrefixOf = (stage: string): string => `paykit:${encodeVendorPart(stage)}:`;
+
+/** A price the vendor holds, reduced to what the sweep decides on. */
+export interface FoundPrice {
+  readonly id: string;
+  readonly lookupKey: string | null;
+  readonly active: boolean;
+}
+
+/** Every lookup key the catalog currently sells: the base prices and the metered ones. */
+export const declaredLookupKeys = (
+  declarations: ReadonlyArray<PriceDeclaration>,
+): ReadonlySet<string> => {
+  const keys = new Set<string>();
+  for (const declaration of declarations) {
+    keys.add(declaration.lookupKey);
+    for (const usage of declaration.usage) keys.add(usage.lookupKey);
+  }
+  return keys;
+};
+
+/**
+ * The prices this stage owns that the catalog no longer declares, and that are
+ * still active.
+ *
+ * A retired tier or a dropped `usage` feature leaves its vendor price behind:
+ * every resource is declared with `RemovalPolicy.retain`, which is what keeps a
+ * bill you already sent reproducible. What it does not do is stop the price
+ * being sellable, because a Stripe price that is merely detached from a stack is
+ * still `active: true`. This is the half that says which ones to archive.
+ *
+ * Pure, so the decision is testable without a Stripe account: everything it
+ * needs is the catalog's declarations and the prices the account holds.
+ */
+export const retiredPrices = (
+  declarations: ReadonlyArray<PriceDeclaration>,
+  found: ReadonlyArray<FoundPrice>,
+  stage: string,
+): ReadonlyArray<FoundPrice> => {
+  const prefix = lookupKeyPrefixOf(stage);
+  const declared = declaredLookupKeys(declarations);
+  return found.filter(
+    (price) =>
+      price.active &&
+      price.lookupKey !== null &&
+      price.lookupKey.startsWith(prefix) &&
+      // A price of another stage is still ours, and still not this stack's to
+      // archive.
+      !declared.has(price.lookupKey),
+  );
+};
+
 /** Stripe spells the annual interval `year`; the catalog says `annual`. */
 const intervalOf = (interval: Price["interval"]): "month" | "year" =>
   interval === "annual" ? "year" : "month";

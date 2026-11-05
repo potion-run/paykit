@@ -13,8 +13,11 @@ export { distilledStripeClient, STRIPE_API_BASE_URL, stripeBaseUrl } from "./Str
 export {
   StripePrices,
   lookupKeyOf,
+  declaredLookupKeys,
   meterEventNameOf,
   meteredLookupKeyOf,
+  retiredPrices,
+  lookupKeyPrefixOf,
   priceDeclarations,
   tierOfDeclaration,
 } from "./Prices.ts";
