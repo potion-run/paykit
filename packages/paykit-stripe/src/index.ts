@@ -26,3 +26,5 @@ export type { StripeClientConfig } from "./StripeClient.ts";
 // The other half of a deployment: the webhook that activates a standing.
 export { stripeWebhook } from "./Webhooks.ts";
 export type { StripeWebhookError, StripeWebhookProps, StripeWebhookRequest } from "./Webhooks.ts";
+export { RetiredPrices } from "./RetiredPrices.ts";
+export type { ArchivedPrices } from "./RetiredPrices.ts";
