@@ -1,11 +1,15 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { WebhookInvalid, WebhookSignatureInvalid } from "@potion.run/paykit";
+import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { polarWebhook } from "../src/Webhooks.ts";
-import { request, secret, tiers } from "./support/Webhook.ts";
+import { assertProperty } from "./support/Property.ts";
+import { request, secret, sign, tiers } from "./support/Webhook.ts";
 
 const webhook = polarWebhook({ secret: Redacted.make(secret), tiers });
 
@@ -201,6 +205,66 @@ describe("Polar webhooks", () => {
       );
       expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
+  );
+
+  it.effect("a body or signature changed after signing is refused", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          suffix: Schema.Literals(["x", " ", "}", "\n"]),
+          flip: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 43 }))),
+        }),
+      ),
+      ({ suffix, flip }) =>
+        Effect.gen(function* () {
+          const body = JSON.stringify(orderPaid);
+          const signature = sign({ id: "msg_1", timestamp: atSeconds, body });
+
+          const valid = yield* Effect.result(translate({ body, signature }));
+          if (Result.isFailure(valid) || Option.isNone(valid.success)) return false;
+
+          const bodyTampered = yield* Effect.result(translate({ body: body + suffix, signature }));
+          if (
+            !Result.isFailure(bodyTampered) ||
+            bodyTampered.failure._tag !== "WebhookSignatureInvalid"
+          ) {
+            return false;
+          }
+
+          // One character of the base64 tag, changed after signing.
+          const start = "v1,".length;
+          const index = start + flip;
+          const replacement = signature[index] === "A" ? "B" : "A";
+          const flipped = `${signature.slice(0, index)}${replacement}${signature.slice(index + 1)}`;
+          const signatureTampered = yield* Effect.result(translate({ body, signature: flipped }));
+          return (
+            Result.isFailure(signatureTampered) &&
+            signatureTampered.failure._tag === "WebhookSignatureInvalid"
+          );
+        }),
+      { runs: 40, size: 10 },
+    ),
+  );
+
+  it.effect("any valid v1 entry in a multi-signature header is accepted", () =>
+    assertProperty(
+      Arbitrary.schema(Schema.Literals(["valid-last", "valid-first", "garbage-first"])),
+      (order) =>
+        Effect.gen(function* () {
+          const body = JSON.stringify(orderPaid);
+          const valid = sign({ id: "msg_1", timestamp: atSeconds, body });
+          const invalid = "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+          const signature =
+            order === "valid-last"
+              ? `${invalid} ${valid}`
+              : order === "valid-first"
+                ? `${valid} ${invalid}`
+                : `garbage ${valid}`;
+          const result = yield* Effect.result(translate({ body, signature }));
+          return !Result.isFailure(result) && Option.isSome(result.success);
+        }),
+      { runs: 3, size: 1 },
+    ),
   );
 
   it.effect("refuses an order with no external customer id, naming the field", () =>

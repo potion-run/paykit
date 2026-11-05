@@ -1,9 +1,13 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { WebhookSignatureInvalid } from "@potion.run/paykit";
+import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { stripeWebhook } from "../src/Webhooks.ts";
+import { assertProperty } from "./support/Property.ts";
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const tiers = { pro: { price: proPrice, priceId: "price_123" } };
@@ -195,10 +199,49 @@ describe("Stripe webhooks", () => {
     }),
   );
 
-  it.effect("refuses a body the signature cannot be checked over", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(webhook(request({ body: "{not json" })));
-      expect(String(error._tag)).toContain("WebhookInvalid");
-    }),
+  it.effect("a body or signature changed after signing is refused", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          suffix: Schema.Literals(["x", " ", "}", "\n"]),
+          flip: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 63 }))),
+        }),
+      ),
+      ({ suffix, flip }) =>
+        Effect.gen(function* () {
+          const body = JSON.stringify(session());
+          const timestamp = String(Math.floor(nowSeconds()));
+          const signature = sign(body, timestamp);
+
+          // The untampered request is the control: the generated fault must be
+          // what fails, not the fixture.
+          const valid = yield* Effect.result(webhook(request({ body, timestamp, signature })));
+          if (Result.isFailure(valid) || Option.isNone(valid.success)) return false;
+
+          const bodyTampered = yield* Effect.result(
+            webhook(request({ body: body + suffix, timestamp, signature })),
+          );
+          if (
+            !Result.isFailure(bodyTampered) ||
+            bodyTampered.failure._tag !== "WebhookSignatureInvalid"
+          ) {
+            return false;
+          }
+
+          // One hex digit of the v1 tag, changed after signing.
+          const start = signature.indexOf("v1=") + "v1=".length;
+          const at = start + flip;
+          const replacement = signature[at] === "a" ? "b" : "a";
+          const flipped = `${signature.slice(0, at)}${replacement}${signature.slice(at + 1)}`;
+          const signatureTampered = yield* Effect.result(
+            webhook(request({ body, timestamp, signature: flipped })),
+          );
+          return (
+            Result.isFailure(signatureTampered) &&
+            signatureTampered.failure._tag === "WebhookSignatureInvalid"
+          );
+        }),
+      { runs: 40, size: 10 },
+    ),
   );
 });

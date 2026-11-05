@@ -8,9 +8,18 @@
 import { MigrationError, RewrittenMigrationHistoryError } from "@alchemy.run/sql/Migrations";
 import { describe, expect, it } from "@alchemy.run/test";
 import { sha256 } from "alchemy/Util/sha256";
+import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
-import { migrate, migrateDryRun, readMigrationFiles } from "../../src/Migrations/index.ts";
+import * as Schema from "effect/Schema";
+import {
+  migrate,
+  migrateDryRun,
+  migrationFiles,
+  readMigrationFiles,
+  schemaStatements,
+} from "../../src/Migrations/index.ts";
 import type { SqlExecutor } from "../../src/Store/Sql.ts";
+import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
 const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
@@ -62,6 +71,85 @@ describe("migrations", () => {
       expect(records[0]!.statements[0]).toContain("CREATE TABLE IF NOT EXISTS");
       expect(records[0]!.statements.join(";\n")).toContain("billing_rm_billing_read");
     }));
+
+  it.effect("renders deterministic, qualified DDL for every scope", () => {
+    const Scope = Schema.Struct({
+      dialect: Schema.Literals(["sqlite", "postgres"]),
+      schema: Schema.Literals(["billing", "billing_2026", "paykit", "workspace"]),
+      table: Schema.Literals(["billing_schema_version", "billing_migrations"]),
+    });
+
+    return assertProperty(
+      Arbitrary.schema(Scope),
+      ({ dialect, schema, table }) => {
+        const files = migrationFiles({ dialect, schema, table });
+        if (files.length === 0) return false;
+
+        const ids = files.map((file) => file.id);
+        if (new Set(ids).size !== ids.length) return false;
+        if ([...ids].sort().join() !== ids.join()) return false;
+
+        for (const file of files) {
+          if (file.statements.length === 0) return false;
+          if (file.statements.some((statement) => statement.trim().endsWith(";"))) return false;
+          if (file.sql !== `${file.statements.join(";\n")};`) return false;
+          if (file.sql.includes('"public"')) return false;
+          if (!file.statements.every((statement) => statement.includes("billing_"))) return false;
+
+          const ddl = file.statements.filter(
+            (statement) =>
+              statement.startsWith("CREATE TABLE") || statement.startsWith("CREATE INDEX"),
+          );
+          if (dialect === "postgres") {
+            // Every table and index is qualified with the chosen schema.
+            if (!ddl.every((statement) => statement.includes(`"${schema}".`))) return false;
+          } else if (ddl.some((statement) => statement.includes(`"${schema}".`))) {
+            return false;
+          }
+        }
+
+        const created = schemaStatements({ dialect, schema, table });
+        if (dialect === "postgres") {
+          if (created.length !== 1 || !created[0]!.includes(`"${schema}"`)) return false;
+        } else if (created.length !== 0) {
+          return false;
+        }
+
+        const dry = migrateDryRun({ dialect, schema, table });
+        if (!ids.every((id) => dry.includes(`-- ${id}`))) return false;
+        if (!dry.includes(table)) return false;
+        return dry === migrateDryRun({ dialect, schema, table });
+      },
+      { runs: 24, size: 8 },
+    );
+  });
+
+  it.effect("reads the same files as content-hashed records", () => {
+    const Scope = Schema.Struct({
+      dialect: Schema.Literals(["sqlite", "postgres"]),
+      schema: Schema.Literals(["billing", "billing_2026", "paykit", "workspace"]),
+    });
+
+    return assertProperty(
+      Arbitrary.schema(Scope),
+      ({ dialect, schema }) =>
+        Effect.gen(function* () {
+          const files = migrationFiles({ dialect, schema });
+          const records = yield* readMigrationFiles({ dialect, schema });
+          if (records.length !== files.length) return false;
+          return records.every((record, index) => {
+            const file = files[index]!;
+            return (
+              record.name === file.id &&
+              record.sql === file.sql &&
+              record.statements.length === file.statements.length &&
+              /^[0-9a-f]{64}$/.test(record.hash)
+            );
+          });
+        }),
+      { runs: 16, size: 8 },
+    );
+  });
 
   it.effect("creates the table and applies migrations in order", () =>
     Effect.gen(function* () {
