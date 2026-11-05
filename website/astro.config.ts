@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import nimbus, { defineConfig as defineNimbusConfig } from "@cloudflare/nimbus-docs";
 import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 import tailwindcss from "@tailwindcss/vite";
@@ -29,6 +30,14 @@ export default defineConfig({
   // Astro 7's Vite 8 bundler).
   vite: {
     plugins: [tailwindcss()],
+    // The Nimbus components import through the `@/` alias declared in
+    // tsconfig. Vite does not read tsconfig paths on its own, so make the alias
+    // explicit or a clean CI build cannot resolve `@/lib/cn`.
+    resolve: {
+      alias: {
+        "@": fileURLToPath(new URL("./src", import.meta.url)),
+      },
+    },
   },
   // Hover-prefetch link targets so full-page navigations feel instant without
   // a client-side router.
