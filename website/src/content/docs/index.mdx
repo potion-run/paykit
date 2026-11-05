@@ -1,0 +1,61 @@
+---
+title: Paykit
+description: Billing and entitlement for Alchemy, on Effect.
+sidebar:
+  order: 0
+---
+
+Paykit is billing and entitlement for [Alchemy](https://alchemy.run), on
+[Effect](https://effect.website). You declare a catalog beside your stack, the
+library keeps each account's **standing**, and `check()` answers from local
+state in one read.
+
+The provider owns the money plane. Paykit never decides an entitlement by
+calling a payment provider.
+
+## What it gives you
+
+- A catalog is a validated declaration: features, tiers, allowances, prices and
+  credit rates.
+- A standing is the truth for one account: status, period, credits, usage,
+  holds and the events that produced them.
+- `check()` is local: it reads a row your stack already has and never calls a
+  provider.
+- Commands are the only writes, and every command carries a command id.
+- The event log is the source of truth. Counters, balances and read models are
+  folds of it.
+
+## Start here
+
+<Steps>
+  <Step title="Install">
+    ```sh
+    pnpm add @potion.run/paykit alchemy effect
+    ```
+  </Step>
+  <Step title="Declare a catalog">
+    ```ts
+    import { Paykit } from "@potion.run/paykit";
+
+    const messages = Paykit.feature({ id: "messages", name: "Messages" });
+    const pro = Paykit.tier({
+      id: "pro",
+      price: { amount: 1900, currency: "usd", interval: "month" },
+      grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+    });
+    ```
+  </Step>
+  <Step title="Read the standing">
+    ```ts
+    const check = yield* Paykit.Check();
+    const answer = yield* check({ account, feature: "messages" });
+    ```
+  </Step>
+</Steps>
+
+Go to the [quickstart](/quickstart/) for the full loop, or the [packages](/packages/)
+for the provider packages and the ops console.
+
+<Aside type="tip" title="The design of record">
+  <Render file="design-of-record" />
+</Aside>

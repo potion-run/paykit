@@ -59,6 +59,15 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # The docs site is an app, not a published package. Build it after the
+      # library gates so a broken package fails first, then run Nimbus's
+      # preflight against the built output.
+      - name: Build the docs site
+        run: pnpm --filter @potion.run/website build
+
+      - name: Typecheck and check the docs site
+        run: pnpm check:website
+
       # The four gates above never compile `lib/`. A published artifact is a
       # different question, and answering it here is what caught a `bun:` import
       # reaching the root export of a package that built cleanly and could not
