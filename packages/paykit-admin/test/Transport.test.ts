@@ -7,6 +7,7 @@ import {
   AdminChangeTierClient,
   AdminChangeTierHandlers,
   AdminConsoleRpcs,
+  AdminConsoleServer,
   AdminReads,
   AdminReadsClient,
   AdminReadsHandlers,
@@ -33,6 +34,7 @@ const World = Layer.mergeAll(
     .pipe(Layer.provideMerge(MemoryBillingReadStore)),
   catalogLayer(testCatalog),
   Layer.succeed(Actor, system("test")),
+  DevGuards,
 );
 
 const admin = {
@@ -58,6 +60,13 @@ const serverLayer = (handlers: {
       Layer.provide(DevGuards),
     ),
   );
+
+it.live("builds the console server from the hosted model and admin guard", () =>
+  Effect.gen(function* () {
+    const server = yield* AdminConsoleServer;
+    expect(server).toBeDefined();
+  }).pipe(Effect.provide(World)),
+);
 
 it.live("serves the admin reads over HTTP with the Admin guard", () =>
   Effect.gen(function* () {

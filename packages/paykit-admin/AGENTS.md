@@ -20,6 +20,9 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - **The list is not live.** `ListAccounts` is a one-shot command over the
   `BillingRead` projection. Refresh it when the operator asks or after a write;
   do not turn it into a subscription or a fake view.
+- **Serve it through `AdminConsoleServer`.** It captures the `Admin` middleware
+  the way `Domain.Api` captures an API's middleware. Do not hand-merge the RPC
+  handler, serialization and auth layers.
 - **Actions are intents.** A form produces an `AdminIntent` after parsing, and
   only then becomes a command.
 - **A tier change is a quote, then an apply.** The server computes the
