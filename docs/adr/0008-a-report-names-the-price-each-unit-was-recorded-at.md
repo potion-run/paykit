@@ -57,19 +57,16 @@ binding can resolve its own metered price. A binding that does not recognise one
 `PaymentDeclined`; a provider without `usage` fails `ProviderCapabilityMissing`. Neither silently
 meters at the standing's price, which is the bug this ADR exists to remove.
 
-## What this does not fix
+## What this did not fix, and what did
 
-A price change is only reachable mid-period while the account is still inside the *new* tier's
-`included`: `ChangeTier` refuses a downgrade below what is already used (`DowngradeBelowUsage`), and
-that check applies to a billed allowance as well as a blocking one. So today a period can bill at
-two prices only in the narrow case where the first price billed nothing, and in practice the report
-carries one line.
+A price change was only reachable mid-period while the account was still inside the *new* tier's
+`included`: `ChangeTier` refused a downgrade below what was already used, and that check applied to a
+billed allowance as well as a blocking one. So a period could bill at two prices only where the first
+price billed nothing.
 
-That is a separate decision. `used > included` is ordinary life for a `bill` allowance — it is the
-overage — so refusing a price change there is arguably the rule that is wrong, not the report. This
-ADR removes the report's dependency on the rule: whatever the rule becomes, the close reports what
-the log recorded. Changing `DowngradeBelowUsage` (and the proration that would go with it) is the
-slice that makes the split observable, and it is not in this one.
+[ADR 0009](./0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md) narrows that rule to
+the case it was written for — an oversubscribed *blocking* allowance — and a mid-period price change
+now reaches the standing. This ADR removed the report's dependency on that rule; 0009 is the rule.
 
 ## Slices
 

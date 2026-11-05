@@ -178,32 +178,33 @@ it.effect("reports the closing period's billable units once, at the close", () =
   });
 });
 
-it.effect("reports a unit at the price it was recorded at, not the price at the close", () => {
+it.effect("splits one period's report across the prices its units were recorded at", () => {
   const player = PaymentsMemory();
   const story = storyWith(player);
   const commandId = periodUsageCommandId(start, monthLater);
   return Effect.gen(function* () {
     yield* story(
       ...subscribed,
-      // Under the grant, so nothing bills at the first price yet.
-      Story.when(account, new TrackUsage({ feature: "messages", amount: 50 })),
+      // 50 past the grant, billed at the first price.
+      Story.when(account, new TrackUsage({ feature: "messages", amount: 150 })),
       Story.then(
         account,
         new UsageRecorded({
           feature: "messages",
-          amount: 50,
+          amount: 150,
           cost: 0,
           creditsAfter: 0,
-          usedAfter: 50,
-          remainingAfter: 50,
-          charge: 0,
-          billedAfter: 0,
+          usedAfter: 150,
+          remainingAfter: -50,
+          charge: 100,
+          billedAfter: 100,
           unitPrice,
-          billable: 0,
+          billable: 50,
         }),
       ),
-      // The price changes mid-period; the grant does not move, so the change is
-      // allowed and the standing keeps the usage it already recorded.
+      // The price changes mid-period. A billed allowance is past its count by
+      // design, so the change is allowed and the usage already recorded stays
+      // where it is — priced at the price it was recorded at.
       Story.when(
         account,
         new ChangeTier({
@@ -221,7 +222,7 @@ it.effect("reports a unit at the price it was recorded at, not the price at the 
         new TierChanged({
           tier: "retuned",
           allowances: retuned,
-          remaining: { messages: 50 },
+          remaining: { messages: -50 },
           credits: 0,
           creditsExpire: "period",
           rates: {},
@@ -232,29 +233,30 @@ it.effect("reports a unit at the price it was recorded at, not the price at the 
           proration: { currency: "usd", credit: 1900, charge: 1900, due: 0 },
         }),
       ),
-      // 150 more units: the first 50 spend the rest of the grant, the other 100
-      // bill. They are the only ones past `included`, so the report has one line
-      // and it names the second price.
-      Story.when(account, new TrackUsage({ feature: "messages", amount: 150 })),
+      // 50 more units, all past the grant: they bill at the second price.
+      Story.when(account, new TrackUsage({ feature: "messages", amount: 50 })),
       Story.then(
         account,
         new UsageRecorded({
           feature: "messages",
-          amount: 150,
+          amount: 50,
           cost: 0,
           creditsAfter: 0,
           usedAfter: 200,
           remainingAfter: -100,
-          charge: 300,
-          billedAfter: 300,
+          charge: 150,
+          billedAfter: 250,
           unitPrice: repriced,
-          billable: 100,
+          billable: 50,
         }),
       ),
       Story.clock(monthLater),
       Story.call(Payments.reportUsage, {
         account: "acct_period_usage",
-        lines: [{ feature: "messages", unitPrice: repriced, quantity: 100 }],
+        lines: [
+          { feature: "messages", unitPrice, quantity: 50 },
+          { feature: "messages", unitPrice: repriced, quantity: 50 },
+        ],
         commandId,
       }),
       Story.returned(Payments.reportUsage, {}),
@@ -263,7 +265,8 @@ it.effect("reports a unit at the price it was recorded at, not the price at the 
 
     expect(player.reports).toHaveLength(1);
     expect(player.reports[0]!.lines).toEqual([
-      { feature: "messages", unitPrice: repriced, quantity: 100 },
+      { feature: "messages", unitPrice, quantity: 50 },
+      { feature: "messages", unitPrice: repriced, quantity: 50 },
     ]);
   });
 });
