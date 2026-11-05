@@ -13,7 +13,7 @@ const at = "2030-01-01T00:00:00.000Z";
 
 const deliveryOf = (seq: number) =>
   ({
-    target: { kind: "view", name: "Entitlements" },
+    target: { kind: "view", name: "Entitlements", generation: 1 },
     key: "acct_delivery",
     source: "Subscription/acct_delivery",
     seq,

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "@alchemy.run/test";
 import {
   BillingApi,
@@ -61,7 +61,14 @@ const d1Over = (database: Database): D1Like => ({
  */
 const migrated = () => {
   const database = new Database(":memory:");
-  database.exec(readFileSync(new URL("../migrations/0001_init.sql", import.meta.url), "utf8"));
+  const directory = new URL("../migrations/", import.meta.url);
+  // Apply what a deploy applies, in the order D1 walks the directory: a stale
+  // or missing file fails here instead of in a release.
+  for (const file of readdirSync(directory)
+    .filter((name) => name.endsWith(".sql"))
+    .sort()) {
+    database.exec(readFileSync(new URL(file, directory), "utf8"));
+  }
   return database;
 };
 
@@ -159,6 +166,8 @@ describe("the example on a SQL database", () => {
       expect(names).toContain("billing_receipt");
       expect(names).toContain("billing_rm_view_state");
       expect(names).toContain("billing_rm_stream_entry");
+      expect(names).toContain("billing_rm_backfill");
+      expect(names).toContain("billing_rm_view_outbox");
       // The catalog the example declares is one `catalog()` validates.
       const validated = yield* catalog(billingCatalog);
       expect(Catalog.tiers.map((tier) => tier.id)).toEqual(validated.tiers.map((tier) => tier.id));

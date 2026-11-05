@@ -10,6 +10,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import { sha256 } from "alchemy/Util/sha256";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
   migrate,
@@ -18,9 +19,16 @@ import {
   readMigrationFiles,
   schemaStatements,
 } from "../../src/Migrations/index.ts";
-import type { SqlExecutor } from "../../src/Store/Sql.ts";
+import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
 import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
+
+const shipped = [
+  "0001_init",
+  "0002_consumer_backfill",
+  "0003_outbox_sequence",
+  "0004_view_outbox",
+] as const;
 
 const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
   sql.all<{
@@ -43,8 +51,12 @@ describe("migrations", () => {
   it("prints the DDL before anyone runs it", () => {
     const sql = migrateDryRun();
     expect(sql).toContain("-- 0001_init");
+    expect(sql).toContain("-- 0002_consumer_backfill");
+    expect(sql).toContain("-- 0003_outbox_sequence");
+    expect(sql).toContain("-- 0004_view_outbox");
     expect(sql).toContain("billing_event");
     expect(sql).toContain("billing_outbox");
+    expect(sql).toContain("billing_rm_backfill");
     expect(sql).toContain("billing_rm_billing_read");
     expect(sql).toContain("billing_schema_version");
     expect(sql).toBe(migrateDryRun());
@@ -61,15 +73,19 @@ describe("migrations", () => {
   it("carries every migration as statements and a canonical SQL string", () =>
     Effect.gen(function* () {
       const records = yield* readMigrationFiles({ dialect: "sqlite" });
-      expect(records.length).toBe(1);
-      expect(records[0]!.name).toBe("0001_init");
-      expect(records[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(records.length).toBe(2);
+      expect(records.map((record) => record.name)).toEqual(["0001_init", "0002_consumer_backfill"]);
+      for (const record of records) {
+        expect(record.hash).toMatch(/^[0-9a-f]{64}$/);
+        expect(record.statements.length).toBeGreaterThan(0);
+        expect(record.statements.every((statement) => !statement.trim().endsWith(";"))).toBe(true);
+      }
       expect(records[0]!.statements.length).toBeGreaterThan(5);
-      expect(records[0]!.statements.every((statement) => !statement.trim().endsWith(";"))).toBe(
-        true,
-      );
       expect(records[0]!.statements[0]).toContain("CREATE TABLE IF NOT EXISTS");
       expect(records[0]!.statements.join(";\n")).toContain("billing_rm_billing_read");
+      expect(records[1]!.statements.join(";\n")).toContain("billing_rm_backfill");
+      expect(records[2]!.statements.join(";\n")).toContain("billing_outbox_next");
+      expect(records[3]!.statements.join(";\n")).toContain("billing_rm_view_outbox");
     }));
 
   it.effect("renders deterministic, qualified DDL for every scope", () => {
@@ -154,12 +170,12 @@ describe("migrations", () => {
   it.effect("creates the table and applies migrations in order", () =>
     Effect.gen(function* () {
       const sql = store();
-      expect(yield* migrate(sql)).toEqual(["0001_init"]);
+      const applied = [...shipped];
+      expect(yield* migrate(sql)).toEqual(applied);
       expect(yield* migrate(sql)).toEqual([]);
 
       const rows = migrationRows(sql);
-      expect(rows.length).toBe(1);
-      expect(rows[0]!.name).toBe("0001_init");
+      expect(rows.map((row) => row.name)).toEqual(applied);
       expect(rows[0]!.hash).toBe((yield* readMigrationFiles())[0]!.hash);
       expect(rows[0]!.created_at).toBe(null);
       expect(rows[0]!.applied_at).not.toBe(null);
@@ -168,6 +184,7 @@ describe("migrations", () => {
         "billing_event",
         "billing_outbox",
         "billing_receipt",
+        "billing_rm_backfill",
         "billing_rm_billing_read",
         "billing_rm_policy_seen",
         "billing_rm_projection_cursor",
@@ -176,6 +193,7 @@ describe("migrations", () => {
         "billing_rm_stream_meta",
         "billing_rm_view_entry",
         "billing_rm_view_input",
+        "billing_rm_view_outbox",
         "billing_rm_view_state",
         "billing_schedule",
         "billing_schema_version",
@@ -201,8 +219,8 @@ describe("migrations", () => {
   it.effect("honours a custom applied-migrations table", () =>
     Effect.gen(function* () {
       const sql = store();
-      expect(yield* migrate(sql, { table: "paykit_migrations" })).toEqual(["0001_init"]);
-      expect(migrationRows(sql, "paykit_migrations").map((row) => row.name)).toEqual(["0001_init"]);
+      expect(yield* migrate(sql, { table: "paykit_migrations" })).toEqual([...shipped]);
+      expect(migrationRows(sql, "paykit_migrations").map((row) => row.name)).toEqual([...shipped]);
       expect(tables(sql)).not.toContain("billing_schema_version");
     }),
   );
@@ -245,6 +263,22 @@ describe("migrations", () => {
     }),
   );
 
+  it.effect("refuses to read an unreadable registry as a fresh database", () =>
+    Effect.gen(function* () {
+      const base = store();
+      const denied: SqlExecutor = {
+        ...base,
+        all: (statement: string, params?: ReadonlyArray<SqlValue>) => {
+          if (statement.includes("billing_schema_version")) throw new Error("permission denied");
+          return base.all(statement, params);
+        },
+      };
+      // A permission failure is not "no table yet": swallowing it would replay
+      // every migration over a database whose history nobody can read.
+      expect(Exit.isFailure(yield* Effect.exit(migrate(denied)))).toBe(true);
+    }),
+  );
+
   it.effect("fails when an already-applied migration's contents changed", () =>
     Effect.gen(function* () {
       const sql = store();
@@ -258,7 +292,7 @@ describe("migrations", () => {
       expect(error._tag).toBe("RewrittenMigrationHistoryError");
       if (error._tag !== "RewrittenMigrationHistoryError") throw error;
       expect(error.changed).toEqual(["0001_init"]);
-      expect(migrationRows(sql).length).toBe(1);
+      expect(migrationRows(sql).length).toBe(shipped.length);
     }),
   );
 
@@ -268,14 +302,14 @@ describe("migrations", () => {
       yield* migrate(sql);
       sql.run("INSERT INTO billing_schema_version (hash, name, applied_at) VALUES (?, ?, ?)", [
         "b".repeat(64),
-        "0002_gone",
+        "0003_gone",
         "2030-01-01T00:00:00Z",
       ]);
       const error = yield* Effect.flip(migrate(sql));
       expect(error).toBeInstanceOf(RewrittenMigrationHistoryError);
       expect(error._tag).toBe("RewrittenMigrationHistoryError");
       if (error._tag !== "RewrittenMigrationHistoryError") throw error;
-      expect(error.removed).toEqual(["0002_gone"]);
+      expect(error.removed).toEqual(["0003_gone"]);
     }),
   );
 
@@ -301,8 +335,8 @@ describe("migrations", () => {
     Effect.gen(function* () {
       const base = store();
       const transactional: SqlExecutor = { ...base };
-      expect(yield* migrate(transactional)).toEqual(["0001_init"]);
-      expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(yield* migrate(transactional)).toEqual([...shipped]);
+      expect(migrationRows(base).map((row) => row.name)).toEqual([...shipped]);
       expect(tables(base)).toContain("billing_event");
     }),
   );
@@ -341,8 +375,8 @@ describe("migrations", () => {
         transaction: db.transaction,
         lock: db.lock,
       };
-      expect(yield* migrate(fakePostgres, { schema: "billing" })).toEqual(["0001_init"]);
-      expect(migrationRows(db).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(yield* migrate(fakePostgres, { schema: "billing" })).toEqual([...shipped]);
+      expect(migrationRows(db).map((row) => row.name)).toEqual([...shipped]);
       expect(tables(db)).toContain("billing_event");
     }),
   );
@@ -369,8 +403,8 @@ describe("migrations", () => {
       // converges on exactly one history row.
       const error = yield* Effect.flip(migrate(flaky));
       expect(error).toBeInstanceOf(MigrationError);
-      expect(yield* migrate(base)).toEqual(["0001_init"]);
-      expect(migrationRows(base).map((row) => row.name)).toEqual(["0001_init"]);
+      expect(yield* migrate(base)).toEqual([...shipped]);
+      expect(migrationRows(base).map((row) => row.name)).toEqual([...shipped]);
       expect(tables(base)).toContain("billing_event");
     }),
   );
