@@ -147,6 +147,56 @@ describe("proration", () => {
     expect(prorate({ from: undefined, to: undefined, period: periodOf(31), at: start })).toBe(null);
   });
 
+  /**
+   * A tier change is money that moves between two prices. It does not matter
+   * whether the account goes there in one hop or two at the same instant: the
+   * `due` telescopes, so an operator who routes a change through a third tier
+   * cannot change what the account owes.
+   *
+   * The credit and the charge do not add up the same way, and they must not:
+   * the price in the middle is credited on the way out and charged on the way
+   * in, so it appears on both sides. Only the difference is conserved.
+   */
+  it.effect("a hop through a third tier costs what going there directly costs", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          currency: Schema.Literals(["usd", "eur"]),
+          interval: Schema.Literals(["month", "annual"]),
+          from: Amount,
+          /** Absent is the free tier: the account is quoted without a price. */
+          via: Schema.optionalKey(Amount),
+          to: Amount,
+          periodDays: PeriodDays,
+          offsetDays: Schema.Int.pipe(
+            Schema.check(Schema.isBetween({ minimum: -30, maximum: 120 })),
+          ),
+        }),
+      ),
+      ({ currency, interval, from, via, to, periodDays, offsetDays }) => {
+        const period = periodOf(periodDays);
+        const at = DateTime.add(start, { days: offsetDays });
+        const priceOf = (amount: number | undefined) =>
+          amount === undefined ? undefined : { amount, currency, interval };
+
+        const direct = prorate({ from: priceOf(from), to: priceOf(to), period, at });
+        const first = prorate({ from: priceOf(from), to: priceOf(via), period, at });
+        const second = prorate({ from: priceOf(via), to: priceOf(to), period, at });
+        // `from` and `to` are always priced, so every leg is a real proration.
+        if (direct === null || first === null || second === null) return false;
+
+        return (
+          direct.currency === currency &&
+          direct.due === first.due + second.due &&
+          // Each leg still states its own money: a credit for what it leaves
+          // unused and a charge for what it takes on.
+          first.charge === second.credit
+        );
+      },
+      { runs: 120, size: 30 },
+    ),
+  );
+
   it("charges the full price at the start and nothing at the end", () => {
     const period = periodOf(31);
     expect(
