@@ -253,6 +253,11 @@ export {
   ScheduleTierChange,
   TierChangeScheduled,
 } from "./Subscription/ScheduleTierChange.command.ts";
+export {
+  NoTierChangeScheduled,
+  TierChangeWithdrawn,
+  WithdrawTierChange,
+} from "./Subscription/WithdrawTierChange.command.ts";
 export type { PendingTier } from "./Subscription/Subscription.state.ts";
 export { Dunning } from "./Subscription/Dunning.policy.ts";
 export {

@@ -17,6 +17,8 @@ export class BillingApi extends Domain.Api("BillingApi", {
     "ReleaseHold",
     "ConsumeCredits",
     "ChangeTier",
+    "ScheduleTierChange",
+    "WithdrawTierChange",
     "ScheduleCancellation",
     "Resume",
   ],

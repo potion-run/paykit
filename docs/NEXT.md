@@ -56,11 +56,14 @@ standing no command could leave until the period reset.
 
 ### 1. The remaining surfaces
 
-- **Scheduled tier changes**: `ScheduleTierChange` landed
-  ([ADR 0012](./adr/0012-a-tier-change-can-be-scheduled-for-the-boundary.md)) — the standing carries
-  `pendingTier`, and the close applies it before the reset so the smaller allowance starts on a clean
-  period. What is missing is the withdrawal command beside `Resume`, and the admin/preview surfaces that
-  would offer it.
+- **Scheduled tier changes**: done
+  ([ADR 0012](./adr/0012-a-tier-change-can-be-scheduled-for-the-boundary.md)). The standing carries
+  `pendingTier`, the close applies it before the reset, and `WithdrawTierChange` takes it back.
+  `actionsFor` offers the schedule for tiers `ChangeTier` refuses and the withdrawal only while one is
+  pending; `Preview` decides both; `BillingState` carries `pendingTier` so a page can say "on pro,
+  moving to small at the period end"; the console sends both. What is left is a `ChangeTier`-style
+  quote screen for scheduling — the command needs none (a scheduled change carries no proration), so
+  the console builds it from the catalog it already holds.
 - **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
   open holds with their age, manual grant, refund.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):

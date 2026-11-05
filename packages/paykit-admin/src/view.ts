@@ -441,8 +441,10 @@ const draftView = (
       case "Expire":
       case "ScheduleCancellation":
       case "Resume":
+      case "WithdrawTierChange":
         return [h.p([h.Class("pk-muted")], [`Send ${draft.kind} for this account?`])];
-      case "ChangeTier": {
+      case "ChangeTier":
+      case "ScheduleTierChange": {
         const currentTier = Option.match(account.billing, {
           onNone: () => undefined,
           onSome: (billing) => billing.tier,

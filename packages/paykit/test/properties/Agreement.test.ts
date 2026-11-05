@@ -97,6 +97,10 @@ const billingMatchesState = (state: SubscriptionState, view: BillingStateView): 
   if (!sameDate(view.graceUntil, state.graceUntil)) return false;
   if (JSON.stringify(view.price) !== JSON.stringify(state.price)) return false;
   if (JSON.stringify(view.proration) !== JSON.stringify(state.proration)) return false;
+  // A scheduled change is on the page, so a page that trails it offers the wrong
+  // action: "withdraw" with nothing to withdraw, or no way to leave a move the
+  // account no longer wants.
+  if (JSON.stringify(view.pendingTier) !== JSON.stringify(state.pendingTier)) return false;
   return view.prorationInvoice === state.prorationInvoice;
 };
 

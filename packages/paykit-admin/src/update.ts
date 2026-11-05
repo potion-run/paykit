@@ -1,3 +1,4 @@
+import { tierTermsOf } from "@potion.run/paykit/Catalog";
 import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
 import {
   AccountId,
@@ -160,9 +161,15 @@ const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, string> => {
     case "Expire":
     case "ScheduleCancellation":
     case "Resume":
+    case "WithdrawTierChange":
       return Result.succeed({ kind: draft.kind });
     case "ChangeTier":
       return Result.map(nonEmpty(draft.tier, "tier"), (tier) => ({ kind: "ChangeTier", tier }));
+    case "ScheduleTierChange":
+      return Result.map(nonEmpty(draft.tier, "tier"), (tier) => ({
+        kind: "ScheduleTierChange",
+        tier,
+      }));
   }
 };
 
@@ -186,8 +193,10 @@ const draftFor = (kind: ActionDraft["kind"], billing: AccountState["billing"]): 
     case "Expire":
     case "ScheduleCancellation":
     case "Resume":
+    case "WithdrawTierChange":
       return { kind };
     case "ChangeTier":
+    case "ScheduleTierChange":
       return { kind, tier: "" };
   }
 };
@@ -216,9 +225,12 @@ const updatedDraft = (draft: ActionDraft, field: string, value: string): ActionD
     case "Expire":
     case "ScheduleCancellation":
     case "Resume":
+    case "WithdrawTierChange":
       return draft;
     case "ChangeTier":
       return field === "tier" ? { kind: "ChangeTier", tier: value } : draft;
+    case "ScheduleTierChange":
+      return field === "tier" ? { kind: "ScheduleTierChange", tier: value } : draft;
   }
 };
 
@@ -238,7 +250,7 @@ const failureReason = (failure: CommandFailure): string =>
 
 type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" }>;
 
-const send = (target: AccountId, intent: BillingAdminIntent, commandId: string) => {
+const send = (model: Model, target: AccountId, intent: BillingAdminIntent, commandId: string) => {
   const wrap = (message: typeof BillingAdmin.Message.Type) =>
     Message.ReceivedAdminResult({ message });
   switch (intent.kind) {
@@ -290,6 +302,47 @@ const send = (target: AccountId, intent: BillingAdminIntent, commandId: string) 
       );
     case "Resume":
       return Command.mapMessage(BillingAdmin.Resume({ target, input: {}, commandId }), wrap);
+    case "WithdrawTierChange":
+      return Command.mapMessage(
+        BillingAdmin.WithdrawTierChange({ target, input: {}, commandId }),
+        wrap,
+      );
+    case "ScheduleTierChange": {
+      // A scheduled change carries no proration (the period it was scheduled in
+      // has ended), so the console builds it from the catalog it holds rather
+      // than asking the server for a quote. The command's `CatalogGuard` is what
+      // refuses a payload that disagrees with the deploy's catalog.
+      const terms = Option.match(model.catalog, {
+        onNone: () => null,
+        onSome: (catalog) => tierTermsOf(catalog, intent.tier),
+      });
+      return Command.mapMessage(
+        BillingAdmin.ScheduleTierChange({
+          target,
+          input:
+            terms === null
+              ? // No catalog, or no such tier: send an empty grant so the model
+                // answers `TierNotInCatalog` instead of the console guessing.
+                {
+                  tier: intent.tier,
+                  allowances: {},
+                  credits: 0,
+                  creditsExpire: "period" as const,
+                  rates: {},
+                }
+              : {
+                  tier: intent.tier,
+                  allowances: terms.allowances,
+                  credits: terms.credits,
+                  creditsExpire: terms.creditsExpire,
+                  rates: terms.rates,
+                  ...(terms.price === undefined ? {} : { price: terms.price }),
+                },
+          commandId,
+        }),
+        wrap,
+      );
+    }
   }
 };
 
@@ -402,7 +455,7 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
           }),
         ),
     }),
-    commands: [send(account.id, parsed.success, allocation.commandId)],
+    commands: [send(model, account.id, parsed.success, allocation.commandId)],
   };
 };
 
@@ -895,7 +948,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
       return {
         model: retried,
-        commands: [send(account.id, pending.value.intent, commandId)],
+        commands: [send(model, account.id, pending.value.intent, commandId)],
       };
     },
 

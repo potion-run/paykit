@@ -8,7 +8,7 @@ import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { SubscriptionStatus } from "./Subscription.state.ts";
+import { PendingTier, SubscriptionStatus } from "./Subscription.state.ts";
 
 /** What a billing page shows. */
 export const BillingStateView = Schema.Struct({
@@ -39,6 +39,12 @@ export const BillingStateView = Schema.Struct({
   prorationInvoice: Schema.optionalKey(Schema.String),
   trialEndsAt: Schema.optionalKey(Schema.DateTimeUtc),
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
+   * The tier this standing moves to when the period ends. Absent when nothing
+   * is scheduled, so a console renders the button that schedules one or the
+   * one that withdraws it, never both.
+   */
+  pendingTier: Schema.optionalKey(PendingTier),
 });
 export type BillingStateView = typeof BillingStateView.Type;
 
@@ -97,6 +103,7 @@ export class BillingState extends Domain.View("BillingState", {
         proration: _previousProration,
         prorationInvoice: _previousInvoice,
         graceUntil: _previousGrace,
+        pendingTier: _previousPending,
         ...rest
       } = view;
       return withAccount(
@@ -129,6 +136,7 @@ export class BillingState extends Domain.View("BillingState", {
         trialEndsAt: _previousTrial,
         graceUntil: _previousGrace,
         currency: _previousCurrency,
+        pendingTier: _previousPending,
         ...rest
       } = view;
       return withAccount(
@@ -154,6 +162,10 @@ export class BillingState extends Domain.View("BillingState", {
         price: _previousPrice,
         proration: _previous,
         prorationInvoice: _invoiced,
+        // A move — now or at the boundary — consumes whatever was scheduled:
+        // applying it is why the close emitted this event, and a mid-period
+        // `ChangeTier` clears it in the aggregate for the same reason.
+        pendingTier: _previousPending,
         ...rest
       } = view;
       return withAccount(
@@ -161,6 +173,10 @@ export class BillingState extends Domain.View("BillingState", {
           ...rest,
           tier: event.tier,
           interval: event.interval ?? view.interval,
+          // A change at the boundary grants the new period's pool, so the page
+          // takes the credits the event records. A mid-period change carries the
+          // balance it already had.
+          credits: event.credits,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
@@ -200,6 +216,29 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, cancelAtPeriodEnd: true }, context),
     CancellationWithdrawn: (view, _event, context): BillingStateView =>
       withAccount({ ...view, cancelAtPeriodEnd: false }, context),
+    // The scheduled tier is part of the page: "on pro, moving to small at the
+    // period end" is one sentence an operator, and the button beside it, needs.
+    TierChangeScheduled: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          pendingTier: {
+            tier: event.tier,
+            allowances: event.allowances,
+            ...(event.price === undefined ? {} : { price: event.price }),
+            credits: event.credits,
+            creditsExpire: event.creditsExpire,
+            rates: event.rates,
+            ...(event.currency === undefined ? {} : { currency: event.currency }),
+            ...(event.interval === undefined ? {} : { interval: event.interval }),
+          },
+        },
+        context,
+      ),
+    TierChangeWithdrawn: (view, _event, context): BillingStateView => {
+      const { pendingTier: _withdrawn, ...rest } = view;
+      return withAccount(rest, context);
+    },
     PeriodClosed: (view, event, context): BillingStateView =>
       withAccount(
         {
