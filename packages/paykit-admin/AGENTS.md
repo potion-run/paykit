@@ -14,6 +14,10 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - **Every write is a `BillingAdmin` command with a `commandId`.** The id comes
   from `next(model.commandIds)`. A retry of `Unknown` reuses it; a new attempt
   gets a new one. Never write billing state locally on success.
+- **Keep the evidence.** A pending command stores the typed `AdminFailure`
+  (`Rejected`, `Denied`, `Unknown`), not only its tag or a message string, so an
+  operator can see `DowngradeBelowUsage`'s feature and numbers. Transport
+  failures keep the RPC reason tag as well as the message.
 - **A read has a `requestId`, not a `commandId`.** A list/preview/verify
   response is applied only while its `requestId` is the one the Model is
   waiting for.

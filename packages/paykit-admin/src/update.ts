@@ -19,6 +19,9 @@ import {
   type AccountState,
   type ActionDraft,
   AccountState as AccountStateSchema,
+  AdminFailure,
+  AdminRejected,
+  AdminUnknown,
   type AdminIntent,
   ChangeTierApplying,
   type ChangeTierQuote,
@@ -70,13 +73,18 @@ const settle = (
   commandId: string,
   status: Pending["status"],
   reason: Option.Option<string>,
+  failure: Option.Option<AdminFailure> = Option.none(),
 ): Model =>
   withAccount(model, (account) =>
     modifyFields(account, {
       pending: () =>
         Array.map(account.pending, (pending) =>
           pending.commandId === commandId
-            ? modifyFields(pending, { status: () => status, reason: () => reason })
+            ? modifyFields(pending, {
+                status: () => status,
+                reason: () => reason,
+                failure: () => failure,
+              })
             : pending,
         ),
     }),
@@ -315,6 +323,7 @@ const applyChangeTier = (
     intent: { kind: "ChangeTier", tier: quote.tier },
     status: "Sending",
     reason: Option.none(),
+    failure: Option.none(),
   });
   return {
     model: modifyFields(model, {
@@ -374,6 +383,7 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
     intent: parsed.success,
     status: "Sending",
     reason: Option.none(),
+    failure: Option.none(),
   });
   return {
     model: modifyFields(model, {
@@ -516,9 +526,18 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           "FailedExpire",
           "FailedScheduleCancellation",
           "FailedResume",
-          ({ commandId, failure }) => ({
-            model: settle(model, commandId, failure._tag, Option.some(failureReason(failure))),
-          }),
+          ({ commandId, failure }) => {
+            const typed = Schema.decodeOption(AdminFailure)(failure);
+            return {
+              model: settle(
+                model,
+                commandId,
+                failure._tag,
+                Option.some(failureReason(failure)),
+                Option.isSome(typed) ? Option.some(typed.value) : Option.none(),
+              ),
+            };
+          },
         ),
         Match.orElse(() => ({ model })),
       ),
@@ -562,6 +581,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                       commandId,
                       "Unknown",
                       Option.some("The amount moved; confirm the new quote."),
+                      Option.some(AdminUnknown.make({})),
                     );
               return updateAccount(next, (value) =>
                 modifyFields(value, {
@@ -584,7 +604,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               const next =
                 commandId === undefined
                   ? model
-                  : settle(model, commandId, "Rejected", Option.some(rejection._tag));
+                  : settle(
+                      model,
+                      commandId,
+                      "Rejected",
+                      Option.some(rejection._tag),
+                      Option.some(AdminRejected.make({ rejection })),
+                    );
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
@@ -597,7 +623,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               const next =
                 commandId === undefined
                   ? model
-                  : settle(model, commandId, "Unknown", Option.some(reason));
+                  : settle(
+                      model,
+                      commandId,
+                      "Unknown",
+                      Option.some(reason),
+                      Option.some(AdminUnknown.make({})),
+                    );
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   ...(commandId === undefined ? { change: () => Option.none() } : {}),
@@ -618,7 +650,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           const next =
             commandId === undefined
               ? model
-              : settle(model, commandId, "Unknown", Option.some(error._tag));
+              : settle(
+                  model,
+                  commandId,
+                  "Unknown",
+                  Option.some(error._tag),
+                  Option.some(AdminUnknown.make({})),
+                );
           return updateAccount(next, (value) =>
             modifyFields(value, {
               ...(commandId === undefined ? { change: () => Option.none() } : {}),
@@ -739,6 +777,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     ? modifyFields(candidate, {
                         status: () => "Sending",
                         reason: () => Option.none(),
+                        failure: () => Option.none(),
                       })
                     : candidate,
                 ),

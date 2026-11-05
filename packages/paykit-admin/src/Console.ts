@@ -5,6 +5,7 @@ export type {
   AccountFilter,
   AccountState,
   ActionDraft,
+  AdminFailure,
   AdminIntent,
   EventRow,
   Pending,

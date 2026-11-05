@@ -34,6 +34,8 @@ import { Verify, VerifyMismatch } from "../Verify.ts";
 
 /** A preview that could not be turned into a wire value. */
 export class AdminReadFailed extends Schema.TaggedError<AdminReadFailed>()("AdminReadFailed", {
+  /** The transport failure as a tag: offline, timeout, protocol mismatch, … */
+  reason: Schema.String,
   message: Schema.String,
 }) {}
 
@@ -250,7 +252,7 @@ export const AdminReadsHandlers = Effect.map(makeAdminReads, (reads) =>
 );
 
 const transportFailure = (error: RpcClientError.RpcClientError): AdminReadFailed =>
-  new AdminReadFailed({ message: error.message });
+  new AdminReadFailed({ reason: error.reason._tag, message: error.message });
 
 /**
  * The browser/Worker client for `AdminReadsRpcs`, over Effect RPC's HTTP

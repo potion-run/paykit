@@ -46,7 +46,7 @@ describe("the Foldkit adapter", () => {
         Effect.provideService(
           AdminReads,
           reads({
-            list: () => Effect.fail(new AdminReadFailed({ message: "offline" })),
+            list: () => Effect.fail(new AdminReadFailed({ reason: "offline", message: "offline" })),
           }),
         ),
       );

@@ -4,6 +4,7 @@ import type { Catalog } from "@potion.run/paykit/Catalog";
 import type { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
 import { formatDateTime, formatMoney, formatOptionalDateTime } from "./format.ts";
@@ -12,6 +13,7 @@ import {
   type AccountState,
   type ActionDraft,
   ConsoleAction,
+  type AdminFailure,
   type Model,
   type Pending,
 } from "./Model.ts";
@@ -465,6 +467,19 @@ const draftView = (
   );
 };
 
+const failureView = (failure: AdminFailure, h: HtmlBuilder<Message>): Html =>
+  Match.value(failure).pipe(
+    Match.withReturnType<Html>(),
+    Match.tag("Rejected", ({ rejection }) =>
+      h.pre([h.Class("pk-failure")], [JSON.stringify(rejection, null, 2)]),
+    ),
+    Match.tag("Denied", ({ error }) =>
+      h.pre([h.Class("pk-failure")], [JSON.stringify(error, null, 2)]),
+    ),
+    Match.tag("Unknown", () => h.empty),
+    Match.exhaustive,
+  );
+
 const pendingView = (pending: Pending, h: HtmlBuilder<Message>): Html =>
   h.li(
     [h.Class("pk-pending"), h.DataAttribute("paykit-pending", pending.status)],
@@ -475,6 +490,10 @@ const pendingView = (pending: Pending, h: HtmlBuilder<Message>): Html =>
       Option.match(pending.reason, {
         onNone: () => h.empty,
         onSome: (reason) => h.span([h.Class("pk-muted")], [reason]),
+      }),
+      Option.match(pending.failure, {
+        onNone: () => h.empty,
+        onSome: (failure) => failureView(failure, h),
       }),
       pending.status === "Unknown"
         ? button("Retry", Message.ClickedRetryPending({ commandId: pending.commandId }), h)

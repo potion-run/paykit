@@ -4,6 +4,7 @@ import {
   BillingAdminApi,
   BillingReadPage,
   Catalog,
+  NotSubscribed,
   allowance,
   catalog,
   messages,
@@ -165,6 +166,36 @@ describe("the console model", () => {
     expect(Option.isSome(result.model.account.value.notice)).toBe(true);
     expect(Option.isSome(result.model.account.value.draft)).toBe(true);
     expect(result.model.account.value.pending).toEqual([]);
+  });
+
+  it("keeps the typed rejection as evidence when a command is refused", () => {
+    const submitted = update(withDraft("250"), Message.ClickedSubmitAction());
+    if (Option.isNone(submitted.model.account)) return;
+    const pending = submitted.model.account.value.pending[0];
+    if (pending === undefined) return;
+
+    const refused = update(
+      submitted.model,
+      Message.ReceivedAdminResult({
+        message: BillingAdmin.Message.FailedGrantCredits({
+          commandId: pending.commandId,
+          failure: {
+            _tag: "Rejected",
+            rejection: new NotSubscribed({ account }),
+          },
+        }),
+      }),
+    ).model;
+    if (Option.isNone(refused.account)) return;
+    const settled = refused.account.value.pending[0];
+    expect(settled?.status).toBe("Rejected");
+    expect(Option.isSome(settled?.failure ?? Option.none())).toBe(true);
+    if (settled !== undefined && Option.isSome(settled.failure)) {
+      expect(settled.failure.value._tag).toBe("Rejected");
+      if (settled.failure.value._tag === "Rejected") {
+        expect(settled.failure.value.rejection._tag).toBe("NotSubscribed");
+      }
+    }
   });
 
   it("settles a pending command from the Api reply", () => {
@@ -336,7 +367,7 @@ describe("the console model", () => {
       Message.ReceivedAdminChange({
         message: AdminChangeCommands.Message.FailedChangeTier({
           requestId,
-          error: new AdminReadFailed({ message: "offline" }),
+          error: new AdminReadFailed({ reason: "offline", message: "offline" }),
         }),
       }),
     ).model;

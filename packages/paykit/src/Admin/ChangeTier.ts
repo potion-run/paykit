@@ -213,7 +213,7 @@ export const AdminChangeTierHandlers = Effect.map(makeAdminChangeTier, (change) 
 export const AdminConsoleRpcs = AdminReadsRpcs.merge(AdminChangeTierRpcs);
 
 const transportFailure = (error: RpcClientError.RpcClientError): AdminReadFailed =>
-  new AdminReadFailed({ message: error.message });
+  new AdminReadFailed({ reason: error.reason._tag, message: error.message });
 
 /**
  * The browser/Worker client for the tier-change RPC. It shares the console's

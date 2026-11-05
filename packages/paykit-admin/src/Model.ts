@@ -1,4 +1,7 @@
 import type { AdminAction } from "@potion.run/paykit/Admin";
+import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
+import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
+import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
 import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import { Catalog } from "@potion.run/paykit/Catalog";
 import { CommandIds } from "@potion.run/paykit/Foldkit";
@@ -116,11 +119,26 @@ export const PendingStatus = Schema.Literals([
 ]);
 export type PendingStatus = typeof PendingStatus.Type;
 
+/** The typed evidence a command failed with, kept for the operator to read. */
+export const AdminRejected = Schema.TaggedStruct("Rejected", {
+  rejection: BillingAdminApi.rejections,
+});
+
+export const AdminDenied = Schema.TaggedStruct("Denied", {
+  error: Schema.Union([Unauthenticated, Forbidden]),
+});
+
+export const AdminUnknown = Schema.TaggedStruct("Unknown", {});
+
+export const AdminFailure = Schema.Union([AdminRejected, AdminDenied, AdminUnknown]);
+export type AdminFailure = typeof AdminFailure.Type;
+
 export const Pending = Schema.Struct({
   commandId: Schema.String,
   intent: AdminIntent,
   status: PendingStatus,
   reason: Schema.Option(Schema.String),
+  failure: Schema.Option(AdminFailure),
 });
 export type Pending = typeof Pending.Type;
 
