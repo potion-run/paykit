@@ -1,4 +1,4 @@
-import { AdminAction } from "@potion.run/paykit/Admin";
+import { AdminAction, PreviewCommandSchema } from "@potion.run/paykit/Admin";
 import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
@@ -48,5 +48,11 @@ export const Message = defineMessageUnion({
   ClickedCancelAction: {},
   ClickedRetryPending: { commandId: Schema.String },
   DismissedNotice: {},
+
+  UpdatedPreviewTier: { value: Schema.String },
+  ClickedPreview: { command: PreviewCommandSchema },
+  DismissedPreview: {},
+  ClickedVerify: {},
+  DismissedVerify: {},
 });
 export type Message = typeof Message.Type;

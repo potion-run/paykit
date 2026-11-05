@@ -5,7 +5,13 @@ import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import { defineMessageUnion } from "foldkit/message";
 import { AdminChangeTier, ChangeTierAnswer, ChangeTierRequest } from "./Admin/ChangeTier.ts";
-import { AdminPreviewInput, AdminReadError, AdminReads, PreviewAnswer } from "./Admin/Reads.ts";
+import {
+  AdminPreviewInput,
+  AdminReadError,
+  AdminReads,
+  HoldsAnswer,
+  PreviewAnswer,
+} from "./Admin/Reads.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingReadPage, BillingReadQuery } from "./BillingReadStore.ts";
 import { Catalog } from "./Catalog.ts";
@@ -48,6 +54,8 @@ export const AdminQueryMessage = defineMessageUnion({
   FailedVerify: { requestId: Schema.Int, error: AdminReadError },
   SucceededGetCatalog: { requestId: Schema.Int, catalog: Catalog },
   FailedGetCatalog: { requestId: Schema.Int, error: AdminReadError },
+  SucceededHolds: { requestId: Schema.Int, answer: HoldsAnswer },
+  FailedHolds: { requestId: Schema.Int, error: AdminReadError },
 });
 export type AdminQueryMessage = typeof AdminQueryMessage.Type;
 
@@ -103,6 +111,24 @@ export const VerifyAccount = Command.define("VerifyAccount", {
   }),
 });
 
+/**
+ * One account's holds. The keyed views fold a hold into a `reserved` count, so
+ * a console that needs the entity — its id, deadline and price — asks for it
+ * here. One-shot: a hold changes when the account's events say it did.
+ */
+export const GetHolds = Command.define("GetHolds", {
+  args: { requestId: Schema.Int, account: Schema.String },
+  messages: [AdminQueryMessage],
+  execute: Effect.fn(function* ({ requestId, account }) {
+    const reads = yield* AdminReads;
+    return yield* withResult(
+      reads.holds(account),
+      (answer) => AdminQueryMessage.SucceededHolds({ requestId, answer }),
+      (error) => AdminQueryMessage.FailedHolds({ requestId, error }),
+    );
+  }),
+});
+
 /** The catalog the deployment validated, for tier choices and prices. */
 export const GetCatalog = Command.define("GetCatalog", {
   args: { requestId: Schema.Int },
@@ -154,6 +180,7 @@ export const AdminQueries = {
   ListAccounts,
   Preview: PreviewCommand,
   Verify: VerifyAccount,
+  Holds: GetHolds,
   Catalog: GetCatalog,
 };
 

@@ -17,6 +17,7 @@ import {
   type AdminFailure,
   type Model,
   type Pending,
+  type PreviewState,
 } from "./Model.ts";
 
 const button = (label: string, message: Message, h: HtmlBuilder<Message>) =>
@@ -326,6 +327,370 @@ const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>):
     ],
   );
 
+/** A point-in-time read's label: never claims to be live. */
+const readLabel = (asOf: Option.Option<DateTime.Utc>, loading: boolean, live = false): string => {
+  if (loading) return "Refreshing…";
+  const value = Option.getOrUndefined(asOf);
+  if (value === undefined) return "Snapshot · read time unknown";
+  return `Read ${formatDateTime(value)} · ${live ? "live reads follow" : "not live"}`;
+};
+
+/**
+ * The holds the allowance table folded into `reserved` counts. A hold is an
+ * entity with a deadline, and the operator's question is which ones are still
+ * waiting.
+ */
+const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
+  if (Option.isNone(account.holds)) return h.empty;
+  const holds = account.holds.value;
+  const open = holds.holds.filter((hold) => hold.status === "open");
+  const asOf = Option.getOrUndefined(holds.asOf);
+  return h.section(
+    [h.Class("pk-panel pk-holds"), h.DataAttribute("paykit-holds", String(open.length))],
+    [
+      h.div(
+        [h.Class("pk-panel-head")],
+        [
+          h.div(
+            [],
+            [
+              h.h2([], ["Open holds"]),
+              h.p(
+                [
+                  h.Class("pk-muted pk-as-of"),
+                  h.DataAttribute(
+                    "paykit-as-of",
+                    asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
+                  ),
+                ],
+                [readLabel(holds.asOf, holds.state === "Loading", true)],
+              ),
+            ],
+          ),
+          badge("holds", String(open.length), h),
+        ],
+      ),
+      Option.match(holds.error, {
+        onNone: () => h.empty,
+        onSome: (error) => h.p([h.Class("pk-error")], [`Could not load holds: ${error}`]),
+      }),
+      open.length === 0
+        ? h.p(
+            [h.Class("pk-muted")],
+            [
+              "No open holds. A hold appears from the moment it is taken until it settles or is released.",
+            ],
+          )
+        : h.div(
+            [h.Class("pk-table-wrap")],
+            [
+              h.table(
+                [h.Class("pk-table")],
+                [
+                  h.thead(
+                    [],
+                    [
+                      h.tr(
+                        [],
+                        [
+                          h.th([], ["Hold"]),
+                          h.th([], ["Feature"]),
+                          h.th([], ["Amount"]),
+                          h.th([], ["Credits"]),
+                          h.th([], ["Held at"]),
+                          h.th([], ["Expires"]),
+                        ],
+                      ),
+                    ],
+                  ),
+                  h.tbody(
+                    [],
+                    open.map((hold) =>
+                      h.keyed("tr")(
+                        hold.id,
+                        [],
+                        [
+                          h.td([h.Class("pk-account-id")], [hold.id]),
+                          h.td([], [hold.feature]),
+                          h.td([], [String(hold.amount)]),
+                          h.td([], [hold.cost === 0 ? "—" : `${hold.cost} credits`]),
+                          h.td([], [formatDateTime(hold.at)]),
+                          h.td([], [formatDateTime(hold.expiresAt)]),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+    ],
+  );
+};
+
+/**
+ * What this period recorded at each price, and what it billed. The allowance
+ * table says what is left; this says what the period has cost so far.
+ */
+const usageView = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Html => {
+  const rows = Object.entries(entitlements.features).flatMap(([feature, entry]) => {
+    const priced = Object.values(entry.priced ?? {});
+    return priced.length === 0 && entry.billed === undefined ? [] : [{ feature, entry, priced }];
+  });
+  if (rows.length === 0) return h.empty;
+  return h.section(
+    [h.Class("pk-panel pk-usage")],
+    [
+      h.h2([], ["Usage this period"]),
+      h.div(
+        [h.Class("pk-table-wrap")],
+        [
+          h.table(
+            [h.Class("pk-table")],
+            [
+              h.thead(
+                [],
+                [
+                  h.tr(
+                    [],
+                    [
+                      h.th([], ["Feature"]),
+                      h.th([], ["Recorded at"]),
+                      h.th([], ["Billed"]),
+                      h.th([], ["Ceiling"]),
+                    ],
+                  ),
+                ],
+              ),
+              h.tbody(
+                [],
+                rows.map(({ feature, entry, priced }) =>
+                  h.keyed("tr")(
+                    feature,
+                    [],
+                    [
+                      h.td([], [feature]),
+                      h.td(
+                        [],
+                        [
+                          priced.length === 0
+                            ? "—"
+                            : priced
+                                .map(
+                                  (units) =>
+                                    `${units.quantity} @ ${formatMoney(units.unitPrice.amount, units.unitPrice.currency)}`,
+                                )
+                                .join(" · "),
+                        ],
+                      ),
+                      h.td(
+                        [],
+                        [
+                          entry.billed === undefined
+                            ? "—"
+                            : formatMoney(entry.billed, entitlements.currency),
+                        ],
+                      ),
+                      h.td(
+                        [],
+                        [
+                          [
+                            entry.cap === undefined ? null : `${entry.cap} units`,
+                            entry.moneyCap === undefined
+                              ? null
+                              : formatMoney(entry.moneyCap, entitlements.currency),
+                          ]
+                            .filter((part): part is string => part !== null)
+                            .join(" / ") || "—",
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+};
+
+const previewAnswerView = (preview: PreviewState, h: HtmlBuilder<Message>): Html => {
+  if (preview.state === "Loading") return h.p([h.Class("pk-muted")], ["Asking the model…"]);
+  if (Option.isSome(preview.error)) {
+    return h.p([h.Class("pk-error")], [`Preview failed: ${preview.error.value}`]);
+  }
+  if (Option.isNone(preview.answer)) return h.empty;
+  return Match.value(preview.answer.value).pipe(
+    Match.withReturnType<Html>(),
+    Match.tag("accepted", ({ state, events, proration }) =>
+      h.div(
+        [h.Class("pk-verdict pk-verdict-accepted")],
+        [
+          h.p([h.Class("pk-muted")], ["Accepted. The model would record:"]),
+          h.ul(
+            [h.Class("pk-events")],
+            events.map((event) =>
+              h.keyed("li")(event._tag, [h.Class("pk-event")], [h.code([], [event._tag])]),
+            ),
+          ),
+          ...(proration === undefined ? [] : [prorationPanel(proration, h)]),
+          h.p(
+            [h.Class("pk-muted")],
+            [
+              state._tag === "Subscribed"
+                ? `Result: ${state.status} on ${state.tier}`
+                : "Result: no standing",
+            ],
+          ),
+        ],
+      ),
+    ),
+    Match.tag("rejected", ({ rejection }) =>
+      h.div(
+        [],
+        [
+          h.p([h.Class("pk-error")], [`Rejected: ${rejection._tag}`]),
+          h.pre([h.Class("pk-failure")], [JSON.stringify(rejection, null, 2)]),
+        ],
+      ),
+    ),
+    Match.tag("unpredictable", ({ reason }) =>
+      h.p([h.Class("pk-muted")], [`Only the server can decide this one: ${reason}`]),
+    ),
+    Match.exhaustive,
+  );
+};
+
+/**
+ * Ask `decide` what it would do, without recording anything. This is the
+ * console's answer to "why is this account on pro": the events a command would
+ * write, or the rejection that keeps it from writing.
+ */
+const previewView = (model: Model, account: AccountState, h: HtmlBuilder<Message>): Html => {
+  const tiers = Option.match(model.catalog, {
+    onNone: () => [] as ReadonlyArray<string>,
+    onSome: (catalog) => catalog.tiers.map((entry) => entry.id),
+  });
+  const tier = Option.getOrElse(account.previewTier, () => "");
+  const options = [
+    { value: "", label: "Choose a tier" },
+    ...tiers.map((value) => ({ value, label: value })),
+  ];
+  const preview = Option.getOrUndefined(account.preview);
+  return h.section(
+    [h.Class("pk-panel pk-preview")],
+    [
+      h.div(
+        [h.Class("pk-panel-head")],
+        [
+          h.div(
+            [],
+            [
+              h.h2([], ["Ask the model"]),
+              h.p(
+                [h.Class("pk-muted")],
+                ["Runs the same decision the write runs, and records nothing."],
+              ),
+            ],
+          ),
+          preview === undefined ? h.empty : button("Dismiss", Message.DismissedPreview(), h),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-filters")],
+        [select(tier, options, (value) => Message.UpdatedPreviewTier({ value }), h)],
+      ),
+      h.div(
+        [h.Class("pk-actions")],
+        [
+          ...(tier === ""
+            ? []
+            : [
+                button(
+                  "Preview tier change",
+                  Message.ClickedPreview({ command: { kind: "changeTier", tier } }),
+                  h,
+                ),
+                button(
+                  "Preview subscribe",
+                  Message.ClickedPreview({ command: { kind: "subscribe", tier } }),
+                  h,
+                ),
+              ]),
+          button(
+            "Preview cancellation",
+            Message.ClickedPreview({ command: { kind: "cancel" } }),
+            h,
+          ),
+        ],
+      ),
+      tier === "" && preview === undefined
+        ? h.p([h.Class("pk-muted")], ["Pick a tier to preview a change or a subscribe."])
+        : h.empty,
+      preview === undefined ? h.empty : previewAnswerView(preview, h),
+    ],
+  );
+};
+
+/** Judge the standing against the deploy: catalog, prices and provider refs. */
+const verifyView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
+  h.section(
+    [h.Class("pk-panel pk-verify")],
+    [
+      h.div(
+        [h.Class("pk-panel-head")],
+        [
+          h.div(
+            [],
+            [
+              h.h2([], ["Verify"]),
+              h.p(
+                [h.Class("pk-muted")],
+                ["Checks this standing against the catalog and provider the deploy runs."],
+              ),
+            ],
+          ),
+          button("Verify", Message.ClickedVerify(), h),
+        ],
+      ),
+      Option.match(account.verify, {
+        onNone: () => h.empty,
+        onSome: (verify) =>
+          verify.state === "Loading"
+            ? h.p([h.Class("pk-muted")], ["Verifying…"])
+            : Option.isSome(verify.error)
+              ? h.p([h.Class("pk-error")], [`Verify failed: ${verify.error.value}`])
+              : verify.mismatches.length === 0
+                ? h.p([h.Class("pk-ok")], ["No drift: the catalog and provider agree."])
+                : h.ul(
+                    [h.Class("pk-events")],
+                    verify.mismatches.map((mismatch) =>
+                      h.keyed("li")(
+                        `${mismatch._tag}:${JSON.stringify(mismatch)}`,
+                        [h.Class("pk-failure")],
+                        [
+                          h.code([], [mismatch._tag]),
+                          h.pre([], [JSON.stringify(mismatch, null, 2)]),
+                          mismatch._tag === "MissingProviderRef" ||
+                          mismatch._tag === "TierHasNoPurchasePath"
+                            ? h.p(
+                                [h.Class("pk-muted")],
+                                ["The money path never completed; check this account's checkout."],
+                              )
+                            : h.p(
+                                [h.Class("pk-muted")],
+                                ["A vendor reference outlived the standing it described."],
+                              ),
+                        ],
+                      ),
+                    ),
+                  ),
+      }),
+    ],
+  );
+
 const actionButtons = (
   account: AccountState,
   catalog: Option.Option<Catalog>,
@@ -616,6 +981,13 @@ const accountView = (model: Model, h: HtmlBuilder<Message>): Html => {
         onNone: () => h.empty,
         onSome: (entitlements) => featureTable(entitlements, h),
       }),
+      Option.match(account.entitlements, {
+        onNone: () => h.empty,
+        onSome: (entitlements) => usageView(entitlements, h),
+      }),
+      holdsView(account, h),
+      previewView(model, account, h),
+      verifyView(account, h),
       eventsView(account, h),
     ],
   );

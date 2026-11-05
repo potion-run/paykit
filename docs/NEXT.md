@@ -61,8 +61,10 @@ standing no command could leave until the period reset.
   `pendingTier`, and the close applies it before the reset so the smaller allowance starts on a clean
   period. What is missing is the withdrawal command beside `Resume`, and the admin/preview surfaces that
   would offer it.
-- **Console screens**: balances, usage timeline, "why is this account on pro" (`Preview` answers it),
-  open holds with their age, manual grant, refund.
+- **Console screens**: `paykit-admin` now shows balances, the period's priced usage, "why is this
+  account on X" (`Preview`), open holds with their deadlines, verification against the deploy and a
+  manual grant. The one left is **refund**, and it is not a screen: paykit has no refund command, so
+  it needs a decision record — which event, which money, which provider call — first.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
   purchasable. Both halves landed for Stripe — `retiredPrices` decides, `RetiredPrices` lists and

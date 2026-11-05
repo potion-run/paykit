@@ -6,10 +6,12 @@ import {
   AccountFilter,
   accountRoute,
   accountsRoute,
+  afterOf,
   ConsoleRoute,
   noFilter,
   reflectRoute,
   routeOf,
+  withAfter,
   withFilter,
 } from "../src/Route.ts";
 
@@ -42,8 +44,10 @@ describe("the console route", () => {
       accountsRoute(noFilter),
       accountsRoute(filter({ standing: Option.some("grace") })),
       accountsRoute(filter({ status: Option.some("canceled"), tier: Option.some("pro") })),
+      accountsRoute(noFilter, Option.some("acct_b")),
       accountRoute(account, noFilter),
       accountRoute(account, filter({ standing: Option.some("blocked") })),
+      accountRoute(account, noFilter, Option.some("acct_b")),
     ];
     for (const route of routes) {
       expect(routeOfHref(reflectRoute(route))).toEqual(route);
@@ -58,6 +62,9 @@ describe("the console route", () => {
     expect(reflectRoute(accountRoute(account, filter({ tier: Option.some("pro") })))).toBe(
       "/accounts/acct_a?tier=pro",
     );
+    // The page cursor is in the URL too, so a refresh keeps the page.
+    expect(reflectRoute(accountsRoute(noFilter, Option.some("acct_b")))).toBe("/?after=acct_b");
+    expect(afterOf(accountsRoute(noFilter, Option.some("acct_b")))).toEqual(Option.some("acct_b"));
   });
 
   it("keeps the filters when the page changes, and the page when the filters do", () => {
@@ -68,6 +75,22 @@ describe("the console route", () => {
     const accountPage = accountRoute(account, filter({ tier: Option.some("pro") }));
     expect(withFilter(accountPage, filter({ status: Option.some("active") }))).toEqual(
       accountRoute(account, filter({ status: Option.some("active") })),
+    );
+  });
+
+  it("drops the page cursor when a filter changes, and keeps the page on a new cursor", () => {
+    const paged = accountRoute(
+      account,
+      filter({ tier: Option.some("pro") }),
+      Option.some("acct_b"),
+    );
+    // A cursor from another filter names a row that filter may not have.
+    expect(withFilter(paged, filter({ standing: Option.some("grace") }))).toEqual(
+      accountRoute(account, filter({ standing: Option.some("grace") })),
+    );
+    // A new cursor keeps the page and the filters.
+    expect(withAfter(paged, Option.none())).toEqual(
+      accountRoute(account, filter({ tier: Option.some("pro") })),
     );
   });
 
