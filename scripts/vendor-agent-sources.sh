@@ -2,9 +2,10 @@
 # Vendor shallow git source mirrors under .agent_sources/github.com/<owner>/<repo>.
 # Reference-only — never a runtime dependency. Refresh: ./scripts/vendor-agent-sources.sh --refresh
 #
-# The only sources are the three libraries this repo is built on: Effect, Alchemy and Foldkit.
-# Refs are derived from the catalog in pnpm-workspace.yaml, so bumping a pin and re-running the
-# script keeps the mirrors matched. A pin with no upstream tag fails instead of vendoring a guess.
+# The only sources are the libraries this repo is built on: Effect, Alchemy, Foldkit, and tla-ts,
+# which model-checks spec/. Refs are derived from the catalog in pnpm-workspace.yaml, so bumping a
+# pin and re-running the script keeps the mirrors matched. A pin with no upstream tag fails instead
+# of vendoring a guess.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -115,14 +116,17 @@ EOF
 EFFECT_VERSION="$(catalog_version effect)"
 ALCHEMY_VERSION="$(catalog_version alchemy)"
 FOLDKIT_VERSION="$(catalog_version foldkit)"
+TLA_TS_VERSION="$(catalog_version tla-ts)"
 
 EFFECT_REF="effect@${EFFECT_VERSION}"
 ALCHEMY_REF="v${ALCHEMY_VERSION}"
 FOLDKIT_REF="foldkit@${FOLDKIT_VERSION}"
+TLA_TS_REF="tla-ts@${TLA_TS_VERSION}"
 
 require_tag Effect-TS effect https://github.com/Effect-TS/effect.git "${EFFECT_REF}"
 require_tag alchemy-run alchemy https://github.com/alchemy-run/alchemy.git "${ALCHEMY_REF}"
 require_tag foldkit foldkit https://github.com/foldkit/foldkit.git "${FOLDKIT_REF}"
+require_tag aidenybai tla-ts https://github.com/aidenybai/tla-ts.git "${TLA_TS_REF}"
 
 clone_source Effect-TS effect https://github.com/Effect-TS/effect.git "${EFFECT_REF}" \
   "Effect v4 monorepo matching the catalog effect pin ${EFFECT_VERSION}. Read packages/effect/src/ and AGENTS.md."
@@ -130,9 +134,12 @@ clone_source alchemy-run alchemy https://github.com/alchemy-run/alchemy.git "${A
   "Alchemy matching the catalog alchemy pin ${ALCHEMY_VERSION}. Read packages/alchemy/src/ and packages/cloudflare/."
 clone_source foldkit foldkit https://github.com/foldkit/foldkit.git "${FOLDKIT_REF}" \
   "Foldkit matching the catalog foldkit pin ${FOLDKIT_VERSION}. Read packages/foldkit/src/."
+clone_source aidenybai tla-ts https://github.com/aidenybai/tla-ts.git "${TLA_TS_REF}" \
+  "tla-ts matching the catalog tla-ts pin ${TLA_TS_VERSION}. Read packages/tla-ts/src/ for the checker, the config parser and the evaluator."
 
 require_version Effect-TS effect packages/effect "${EFFECT_VERSION}"
 require_version alchemy-run alchemy packages/alchemy "${ALCHEMY_VERSION}"
 require_version foldkit foldkit packages/foldkit "${FOLDKIT_VERSION}"
+require_version aidenybai tla-ts packages/tla-ts "${TLA_TS_VERSION}"
 
 echo "done — agent sources under ${PREFIX}"

@@ -63,6 +63,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Model check
+        run: pnpm spec
+
       - name: Test
         run: pnpm test
 

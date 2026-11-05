@@ -15,6 +15,7 @@
     "prepare:hooks": "husky",
     "prepare:patch": "effect-tsgo patch --oxlint --no-typescript",
     "prepare": "pnpm prepare:hooks && pnpm prepare:patch",
+    "spec": "node scripts/check-spec.ts",
     "test": "pnpm -r --filter \"./packages/*\" --filter \"./examples/*\" run test",
     "typecheck": "tsrs -b",
     "validate:publish-packages": "node scripts/validate-publish-packages.ts",
@@ -30,6 +31,7 @@
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "tla-ts": "catalog:",
     "tsrs": "catalog:",
     "typescript": "catalog:"
   },
