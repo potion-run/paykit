@@ -101,7 +101,9 @@ describe("Polar as a paykit provider", () => {
             account: "acct_1",
             periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
             periodEnd,
-            quantities: { messages: 50 },
+            lines: [
+              { feature: "messages", unitPrice: { amount: 2, currency: "usd" }, quantity: 50 },
+            ],
             commandId: "period-usage:1:2",
           });
         }),
@@ -110,7 +112,7 @@ describe("Polar as a paykit provider", () => {
         eventName: "paykit_prod_messages",
         externalCustomerId: "acct_1",
         quantity: 50,
-        externalId: "period-usage:1:2:acct_1:messages",
+        externalId: "period-usage:1:2:acct_1:messages:usd:2",
         timestamp: DateTime.formatIso(periodEnd),
       });
     }),

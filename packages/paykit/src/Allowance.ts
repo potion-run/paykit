@@ -42,6 +42,14 @@ export const UnitPrice = Schema.Struct({
 export type UnitPrice = typeof UnitPrice.Type;
 
 /**
+ * The identity of a unit price in a log or a read model. Two prices are the
+ * same price exactly when this is, so a mid-period change — an amount, or a
+ * currency — is a different key and the close reports the units separately.
+ */
+export const unitPriceKey = (unitPrice: UnitPrice): string =>
+  `${unitPrice.currency}:${unitPrice.amount}`;
+
+/**
  * What a tier grants of one feature, and what happens past it. `included` is a
  * count in the feature's own unit; `unitPrice` is what a billable unit past it
  * costs, and `moneyCap` is the money ceiling for one period. `carryOver` says

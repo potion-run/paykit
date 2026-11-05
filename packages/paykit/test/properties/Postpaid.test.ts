@@ -9,7 +9,7 @@ import { evaluateCheck } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
-  billableQuantities,
+  billableLines,
   periodUsageCommandId,
 } from "../../src/Subscription/PeriodCloseUsage.policy.ts";
 import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
@@ -126,24 +126,24 @@ describe("period billing", () => {
         }),
       ),
       ({ features: specs, start: startMillis, end: endMillis }) => {
+        // The view carries the split, not the raw counters: a price the period
+        // recorded nothing at is not a line in the report.
         const features = Object.fromEntries(
           specs.map((spec, index) => [
             `f${index}`,
             {
-              used: spec.used,
-              included: spec.included,
-              unitPrice: spec.priced ? unitPrice : undefined,
+              priced: spec.priced
+                ? { "usd:2": { unitPrice, quantity: Math.max(0, spec.used - spec.included) } }
+                : undefined,
             } as never,
           ]),
         );
-        const quantities = billableQuantities(features as never);
-        const expected = Object.fromEntries(
-          specs.flatMap((spec, index) => {
-            const quantity = spec.priced ? Math.max(0, spec.used - spec.included) : 0;
-            return quantity === 0 ? [] : [[`f${index}`, quantity]];
-          }),
-        );
-        if (JSON.stringify(quantities) !== JSON.stringify(expected)) return false;
+        const lines = billableLines(features as never);
+        const expected = specs.flatMap((spec, index) => {
+          const quantity = spec.priced ? Math.max(0, spec.used - spec.included) : 0;
+          return quantity === 0 ? [] : [{ feature: `f${index}`, unitPrice, quantity }];
+        });
+        if (JSON.stringify(lines) !== JSON.stringify(expected)) return false;
 
         const start = DateTime.makeUnsafe(startMillis);
         const end = DateTime.makeUnsafe(startMillis + endMillis);

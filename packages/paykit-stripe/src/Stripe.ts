@@ -7,6 +7,8 @@ import {
   type StripeTier,
   type StripeUsagePrice,
   type TierKind,
+  type UsageLine,
+  unitPriceKey,
 } from "@potion.run/paykit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -200,35 +202,38 @@ export const stripeClientBindings = (
             account,
             periodStart: _periodStart,
             periodEnd,
-            quantities,
+            lines,
             commandId,
           }: {
             account: string;
             periodStart: DateTime.Utc;
             periodEnd: DateTime.Utc;
-            quantities: Readonly<Record<string, number>>;
+            lines: ReadonlyArray<UsageLine>;
             commandId: string;
           }) =>
             Effect.forEach(
-              Object.entries(quantities),
-              ([feature, quantity]) => {
-                const eventName = where.meters?.[feature];
+              lines,
+              (line) => {
+                const eventName = where.meters?.[line.feature];
                 if (eventName === undefined) {
                   return Effect.fail(
                     new PaymentDeclined({
                       provider: "stripe",
                       code: "meter_not_configured",
-                      message: `no Stripe meter for ${feature}`,
+                      message: `no Stripe meter for ${line.feature}`,
                     }),
                   );
                 }
                 return client.reportUsage!({
                   eventName,
                   customerExternalId: account,
-                  quantity,
-                  // The period plus the account and feature: two accounts can
-                  // close the same period, and one report carries many features.
-                  identifier: `${commandId}:${account}:${feature}`,
+                  quantity: line.quantity,
+                  // The period plus the account, feature and price. Two accounts
+                  // can close the same period, and one period can record a
+                  // feature at two prices after a mid-period change: without the
+                  // price in the key the second line is a redelivery of the
+                  // first and its units never arrive.
+                  identifier: `${commandId}:${account}:${line.feature}:${unitPriceKey(line.unitPrice)}`,
                   timestamp: Math.floor(DateTime.toEpochMillis(periodEnd) / 1000),
                 }).pipe(
                   Effect.as({}),

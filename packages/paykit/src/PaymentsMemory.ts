@@ -7,6 +7,7 @@ import {
   PaymentsProvider,
   type PaymentCapability,
   type MoneyProvider,
+  type UsageLine,
 } from "./Payments.ts";
 
 const capabilities: ReadonlySet<PaymentCapability> = new Set([
@@ -22,7 +23,7 @@ export interface MemoryUsageReport {
   readonly account: string;
   readonly periodStart: DateTime.Utc;
   readonly periodEnd: DateTime.Utc;
-  readonly quantities: Readonly<Record<string, number>>;
+  readonly lines: ReadonlyArray<UsageLine>;
   readonly commandId: string;
 }
 
@@ -97,7 +98,7 @@ export const PaymentsMemory = (): MemoryPayments => {
           account: string;
           periodStart: DateTime.Utc;
           periodEnd: DateTime.Utc;
-          quantities: Readonly<Record<string, number>>;
+          lines: ReadonlyArray<UsageLine>;
           commandId: string;
         }) =>
           Effect.sync(() => {
@@ -110,7 +111,7 @@ export const PaymentsMemory = (): MemoryPayments => {
               account: args.account,
               periodStart: args.periodStart,
               periodEnd: args.periodEnd,
-              quantities: { ...args.quantities },
+              lines: args.lines,
               commandId: args.commandId,
             });
             return {};

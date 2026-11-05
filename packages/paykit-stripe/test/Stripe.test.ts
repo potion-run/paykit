@@ -123,17 +123,20 @@ describe("Stripe as a paykit provider", () => {
             account: "acct_1",
             periodStart,
             periodEnd,
-            quantities: { messages: 50 },
+            lines: [
+              { feature: "messages", unitPrice: { amount: 2, currency: "usd" }, quantity: 50 },
+            ],
             commandId: "period-usage:1:2",
           });
         }),
       );
-      // One meter event per feature, with the period as its idempotency key.
+      // One meter event per line, keyed by the period, the account, the feature
+      // and the price: one period can record a feature at two prices.
       expect(asked.at(-1)).toMatchObject({
         eventName: "paykit_prod_messages",
         customerExternalId: "acct_1",
         quantity: 50,
-        identifier: "period-usage:1:2:acct_1:messages",
+        identifier: "period-usage:1:2:acct_1:messages:usd:2",
         timestamp: Math.floor(DateTime.toEpochMillis(periodEnd) / 1000),
       });
     }),

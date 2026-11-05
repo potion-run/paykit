@@ -107,7 +107,9 @@ describe("Payments conformance", () => {
                 account: "acct_1",
                 periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
                 periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
-                quantities: { messages: 50 },
+                lines: [
+                  { feature: "messages", unitPrice: { amount: 2, currency: "usd" }, quantity: 50 },
+                ],
                 commandId: "period-usage:1:2",
               }),
             );
@@ -146,7 +148,10 @@ describe("Payments conformance", () => {
         account: "acct_1",
         periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
         periodEnd: DateTime.makeUnsafe("2030-02-01T00:00:00Z"),
-        quantities: { messages: 50, seats: 2 },
+        lines: [
+          { feature: "messages", unitPrice: { amount: 2, currency: "usd" }, quantity: 50 },
+          { feature: "seats", unitPrice: { amount: 500, currency: "usd" }, quantity: 2 },
+        ],
         commandId: "period-usage:1:2",
       } as const;
       yield* Effect.gen(function* () {

@@ -23,6 +23,7 @@ export {
   UnitPrice,
   allowance,
   grant,
+  unitPriceKey,
 } from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
 export { CreditsExpire, Interval, Price, Tier, TierId, TierKind, tier } from "./Tier.ts";
@@ -244,7 +245,7 @@ export { AccountEventsProjection } from "./Subscription/AccountEventsProjection.
 export { BillingRead } from "./Subscription/BillingRead.projection.ts";
 export {
   PeriodCloseUsage,
-  billableQuantities,
+  billableLines,
   periodUsageCommandId,
 } from "./Subscription/PeriodCloseUsage.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
@@ -374,3 +375,5 @@ export {
 } from "./Payments.ts";
 export type { ProviderSet } from "./Payments.ts";
 export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from "./Payments.ts";
+export { UsageLine } from "./Payments.ts";
+export type { PricedUnits } from "./Subscription/Entitlements.view.ts";

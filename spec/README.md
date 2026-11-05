@@ -21,7 +21,7 @@ gate needs nothing beyond `pnpm install`. A run must reach `success`.
 | --- | --- | --- |
 | `PaykitReport` | A closed period's usage reaches the vendor once, with the quantity that period closed with. | `Subscription/PeriodCloseUsage.policy.ts`, `Subscription/PeriodRollover.policy.ts`, the outbox in `Store/SqlAggregateStore.ts` |
 | `PaykitStore` | The state row beside the log is always the log folded. | `Store/SqlAggregateStore.ts` (`send`), `Store/SqlEventLog.ts` (`append`) |
-| `PaykitReportSplit` | A period that billed two prices reports each unit at the price it was recorded at, and the vendor receives all of them. | `Subscription/PeriodCloseUsage.policy.ts`, and the mid-period price change in [`docs/NEXT.md`](../docs/NEXT.md) |
+| `PaykitReportSplit` | A period that billed two prices reports each unit at the price it was recorded at, and the vendor receives all of them. | `Subscription/PeriodCloseUsage.policy.ts` (`billableLines`), `Subscription/Entitlements.view.ts` (`priced`), `Subscription/TrackUsage.command.ts` (`UsageRecorded.billable`) |
 | `PaykitCreditClose` | A close returns the plan's credits and keeps the pack, and open holds stay covered by the pool. | `Subscription/Subscription.aggregate.ts` (`Hold`, `SettleHold`, `closePeriodEvents`), `Subscription/Subscription.state.ts`, `Catalog.ts` (`CatalogCreditFeatureHasAllowance`) |
 
 ## The invariants that carry the weight
@@ -76,8 +76,6 @@ deleted.
 sed 's/ReadsLiveUsage = FALSE/ReadsLiveUsage = TRUE/' spec/PaykitReport.cfg > /tmp/live.cfg
 # PaykitStore: append a decision without checking the version it was made on
 sed 's/ChecksVersion = TRUE/ChecksVersion = FALSE/' spec/PaykitStore.cfg > /tmp/stale.cfg
-# PaykitReportSplit: key the vendor report by the period alone
-sed 's/KeyIncludesPrice = TRUE/KeyIncludesPrice = FALSE/' spec/PaykitReportSplit.cfg > /tmp/key.cfg
 # PaykitReportSplit: grant the free units once per price, not once per period
 sed 's/SharesIncluded = TRUE/SharesIncluded = FALSE/' spec/PaykitReportSplit.cfg > /tmp/free.cfg
 # PaykitCreditClose: let an open hold survive the close, which the catalog forbids
@@ -150,9 +148,11 @@ design and pinned a rule, which is the other half of what a spec is for.
 
 ### Splitting a period's report by price
 
-`PaykitReport` models the close as it is: one quantity per period.
-`PaykitReportSplit` models what a mid-period price change needs, and it decides
-two things before anyone writes them.
+`PaykitReport` was the close before
+[ADR 0008](../docs/adr/0008-a-report-names-the-price-each-unit-was-recorded-at.md):
+one quantity per period, priced at whatever the standing said at the close.
+`PaykitReportSplit` is the close after it — one report per period, carrying a
+line per price — and it decided one thing before anyone wrote it.
 
 **The free grant belongs to the period.** `Included` is units a period gives
 away, so with two prices it is still one grant. The model applies it to the
@@ -168,16 +168,15 @@ one the model uses is the simplest that consumes the grant once. Charging
 `Included` per price (`SharesIncluded = FALSE`) is what fails, because it makes
 the period give the grant away twice.
 
-**The idempotency key has to name the price.** `periodUsageCommandId` returns
-`period-usage:<start>:<end>` today. Split the report and the second one for a
-period is a redelivery of the first: the meter keeps the first quantity and the
-second price's units never arrive. `KeyIncludesPrice = FALSE` shows it — a
-period that billed 2 units at one price and 1 at the other ends with 2 at the
-meter, and one unit is unbilled.
-
-So the queue item needs `period-usage:<start>:<end>:<price>`; a split close that
-reuses the current key is worse than not splitting at all, because it loses a
-report silently instead of reporting it at the wrong price.
+**One report, not one per price.** The first version of this model put a report
+per `(period, price)` in the outbox, keyed by a price-qualified command id. That
+works, and it is what a vendor meter suggests, but it moves the idempotency
+guarantee from "the payload is a function of the period" to "the key is a
+function of the period and the price" — and a caller that forgets the second
+half gets a silent loss, because the second report dedupes into the first and
+its units never arrive. The code took the other shape: one report per period
+whose payload is the split. Redelivery is then the same payload by construction,
+which is what `ReportNamesEveryPrice` checks.
 
 ### Why a credit-priced feature cannot carry an allowance
 
