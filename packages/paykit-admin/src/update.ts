@@ -1,3 +1,4 @@
+import type { AdminPreviewInput } from "@potion.run/paykit/Admin";
 import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
 import {
   AccountId,
@@ -26,22 +27,31 @@ import {
   type ChangeTierQuote,
   ChangeTierQuoted,
   ChangeTierQuoting,
+  type HoldsState,
+  HoldsState as HoldsStateSchema,
   type Model,
   openedAccount,
   type Pending,
   Pending as PendingSchema,
+  type PreviewState,
+  PreviewState as PreviewStateSchema,
+  type VerifyState,
+  VerifyState as VerifyStateSchema,
 } from "./Model.ts";
 import type { UpdateReturn } from "./Requirements.ts";
 import {
   type AccountFilter,
   accountRoute,
   accountsRoute,
+  afterOf,
   type ConsoleRoute,
   filterOf,
   queryOf,
   reflectRoute,
   routeOf,
   sameFilter,
+  samePage,
+  withAfter,
   withFilter,
 } from "./Route.ts";
 
@@ -108,6 +118,156 @@ const isCurrentRequest = (model: Model, requestId: number): boolean =>
     onNone: () => false,
     onSome: (current) => current === requestId,
   });
+
+/** The account the Model has open, without the `Option` wrapper. */
+const openAccount = (model: Model): AccountState | null => Option.getOrNull(model.account);
+
+/**
+ * Read one account's holds. A hold is an entity, not a count, so it comes from
+ * the aggregate rather than a view; the previous rows stay on screen and the
+ * panel says it is refreshing, exactly like the list.
+ */
+const startHolds = (model: Model, account: AccountState): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  const previous = Option.getOrNull(account.holds);
+  const next: HoldsState = HoldsStateSchema.make({
+    requestId,
+    account: account.id,
+    state: "Loading",
+    asOf: previous?.asOf ?? Option.none(),
+    holds: previous?.holds ?? [],
+    error: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      account: () => Option.some(modifyFields(account, { holds: () => Option.some(next) })),
+    }),
+    commands: [
+      Command.mapMessage(AdminQueries.Holds({ requestId, account: account.id }), (message) =>
+        Message.ReceivedAdminQuery({ message }),
+      ),
+    ],
+  };
+};
+
+/** Ask what `decide` would do with a command, without recording anything. */
+const startPreview = (
+  model: Model,
+  account: AccountState,
+  command: AdminPreviewInput["command"],
+): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            preview: () =>
+              Option.some(
+                PreviewStateSchema.make({
+                  requestId,
+                  account: account.id,
+                  command,
+                  state: "Loading",
+                  answer: Option.none(),
+                  error: Option.none(),
+                }),
+              ),
+          }),
+        ),
+    }),
+    commands: [
+      Command.mapMessage(
+        AdminQueries.Preview({ requestId, input: { account: account.id, command } }),
+        (message) => Message.ReceivedAdminQuery({ message }),
+      ),
+    ],
+  };
+};
+
+/** Judge the account's standing against the deploy's catalog and provider. */
+const startVerify = (model: Model, account: AccountState): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            verify: () =>
+              Option.some(
+                VerifyStateSchema.make({
+                  requestId,
+                  account: account.id,
+                  state: "Loading",
+                  mismatches: [],
+                  error: Option.none(),
+                }),
+              ),
+          }),
+        ),
+    }),
+    commands: [
+      Command.mapMessage(AdminQueries.Verify({ requestId, account: account.id }), (message) =>
+        Message.ReceivedAdminQuery({ message }),
+      ),
+    ],
+  };
+};
+
+/** Combine two updates that both produce commands, keeping the first's model as the base. */
+const andThen = (first: UpdateReturn, second: UpdateReturn): UpdateReturn => {
+  const commands = [...(first.commands ?? []), ...(second.commands ?? [])];
+  return commands.length === 0 ? { model: second.model } : { model: second.model, commands };
+};
+
+/** The events that can move a hold, so the panel re-reads them. */
+const holdEvent = (tag: string): boolean =>
+  tag === "UsageReserved" || tag === "UsageSettled" || tag === "UsageReleased";
+
+/** Apply a holds answer only while its request is the one the open account waits for. */
+const updateCurrentHolds = (
+  model: Model,
+  requestId: number,
+  change: (current: HoldsState) => HoldsState,
+): UpdateReturn => {
+  const account = openAccount(model);
+  const current = account === null ? null : Option.getOrNull(account.holds);
+  if (account === null || current === null || current.requestId !== requestId) return { model };
+  return updateAccount(model, (value) =>
+    modifyFields(value, { holds: () => Option.some(change(current)) }),
+  );
+};
+
+/** Apply a preview answer only while its request is the open preview. */
+const updateCurrentPreview = (
+  model: Model,
+  requestId: number,
+  change: (current: PreviewState) => PreviewState,
+): UpdateReturn => {
+  const account = openAccount(model);
+  const current = account === null ? null : Option.getOrNull(account.preview);
+  if (account === null || current === null || current.requestId !== requestId) return { model };
+  return updateAccount(model, (value) =>
+    modifyFields(value, { preview: () => Option.some(change(current)) }),
+  );
+};
+
+/** Apply a verify answer only while its request is the open verify. */
+const updateCurrentVerify = (
+  model: Model,
+  requestId: number,
+  change: (current: VerifyState) => VerifyState,
+): UpdateReturn => {
+  const account = openAccount(model);
+  const current = account === null ? null : Option.getOrNull(account.verify);
+  if (account === null || current === null || current.requestId !== requestId) return { model };
+  return updateAccount(model, (value) =>
+    modifyFields(value, { verify: () => Option.some(change(current)) }),
+  );
+};
 
 const positiveInt = (value: string): Result.Result<number, string> => {
   const parsed = Number(value);
@@ -427,14 +587,16 @@ const LoadExternal = Command.define("LoadExternal", {
 /**
  * Make the Model follow a route. The open account is keyed by the route, so a
  * route naming another account drops the old state and its live reads restart
- * at the new account; a route that changed the filter starts one read for it.
- * Applying the route the Model already holds is a no-op, which is what makes
- * the runtime's echo after a push harmless.
+ * at the new account; a route that changed the filter or the page starts one
+ * read for it, and opening an account reads its holds. Applying the route the
+ * Model already holds is a no-op, which is what makes the runtime's echo after
+ * a push harmless.
  */
 const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
   const filter = filterOf(route);
+  const after = afterOf(route);
   const account = route._tag === "Account" ? route.account : null;
-  const open = Option.isSome(model.account) ? model.account.value : null;
+  const open = openAccount(model);
   const sameAccount = open !== null && account !== null && open.id === account;
   const followed = modifyFields(model, {
     route: () => route,
@@ -446,9 +608,16 @@ const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
           ? Option.none()
           : Option.some(openedAccount(account)),
   });
-  return sameFilter(filter, model.accounts.filter)
-    ? { model: followed }
-    : startList(followed, filter);
+  const listChanged =
+    !sameFilter(filter, model.accounts.filter) || !samePage(after, afterOf(model.route));
+  const listRead = listChanged
+    ? startList(followed, filter, Option.getOrUndefined(after))
+    : ({ model: followed } satisfies UpdateReturn);
+  // A newly opened account has no holds snapshot yet; the previous account's
+  // state is gone, so there is nothing to preserve.
+  const opened = sameAccount ? null : openAccount(listRead.model);
+  const holdsRead = opened === null ? null : startHolds(listRead.model, opened);
+  return holdsRead === null ? listRead : andThen(listRead, holdsRead);
 };
 
 /** Follow a route and reflect it into the address bar. */
@@ -469,7 +638,15 @@ const navigate = (model: Model, route: ConsoleRoute, history: "push" | "replace"
  * point-in-time read, not a subscription; a write the console itself made is
  * the one moment it knows the snapshot is older than the account.
  */
-const afterWrite = (model: Model): UpdateReturn => startList(model, model.accounts.filter);
+const afterWrite = (model: Model): UpdateReturn =>
+  startList(model, model.accounts.filter, Option.getOrUndefined(afterOf(model.route)));
+
+/** Re-read the list's current page and, when one is open, the account's holds. */
+const refresh = (model: Model): UpdateReturn => {
+  const list = afterWrite(model);
+  const account = openAccount(list.model);
+  return account === null ? list : andThen(list, startHolds(list.model, account));
+};
 
 /**
  * The console's update. Every write is a `BillingAdmin` command with a
@@ -478,12 +655,14 @@ const afterWrite = (model: Model): UpdateReturn => startList(model, model.accoun
  */
 export const update = (model: Model, message: Message): UpdateReturn =>
   Message.match<UpdateReturn>(message, {
-    ClickedRefresh: () => startList(model, model.accounts.filter),
+    ClickedRefresh: () => refresh(model),
 
     ClickedNextPage: () =>
       Option.match(model.accounts.next, {
         onNone: () => ({ model }),
-        onSome: (after) => startList(model, model.accounts.filter, after),
+        // The page cursor is navigation, so it goes in the URL: a refresh
+        // keeps the page, and back walks it.
+        onSome: (after) => navigate(model, withAfter(model.route, Option.some(after)), "push"),
       }),
 
     UpdatedStandingFilter: ({ value }) =>
@@ -517,9 +696,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ),
 
     ClickedAccount: ({ account }) =>
-      navigate(model, accountRoute(account, model.accounts.filter), "push"),
+      // Opening an account keeps the list's filters and the page it was on, so
+      // closing it (and stepping back) returns to the same list.
+      navigate(model, accountRoute(account, model.accounts.filter, afterOf(model.route)), "push"),
 
-    ClosedAccount: () => navigate(model, accountsRoute(model.accounts.filter), "push"),
+    ClosedAccount: () =>
+      navigate(model, accountsRoute(model.accounts.filter, afterOf(model.route)), "push"),
 
     ChangedUrl: ({ url }) => applyRoute(model, routeOf(url)),
 
@@ -581,6 +763,58 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 }),
               }
             : { model },
+        ),
+        Match.tag("SucceededHolds", ({ requestId, answer }) =>
+          updateCurrentHolds(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Loaded",
+              asOf: () => Option.some(answer.asOf),
+              holds: () => (answer.account === current.account ? answer.holds : current.holds),
+              error: () => Option.none(),
+            }),
+          ),
+        ),
+        Match.tag("FailedHolds", ({ requestId, error }) =>
+          updateCurrentHolds(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Failed",
+              error: () => Option.some(error._tag),
+            }),
+          ),
+        ),
+        Match.tag("SucceededPreview", ({ requestId, answer }) =>
+          updateCurrentPreview(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Answered",
+              answer: () => Option.some(answer),
+              error: () => Option.none(),
+            }),
+          ),
+        ),
+        Match.tag("FailedPreview", ({ requestId, error }) =>
+          updateCurrentPreview(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Failed",
+              error: () => Option.some(error._tag),
+            }),
+          ),
+        ),
+        Match.tag("SucceededVerify", ({ requestId, mismatches }) =>
+          updateCurrentVerify(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Answered",
+              mismatches: () => mismatches,
+              error: () => Option.none(),
+            }),
+          ),
+        ),
+        Match.tag("FailedVerify", ({ requestId, error }) =>
+          updateCurrentVerify(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Failed",
+              error: () => Option.some(error._tag),
+            }),
+          ),
         ),
         Match.orElse(() => ({ model })),
       ),
@@ -774,11 +1008,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         cursor: () => Option.some(seq),
       });
       const nextModel = modifyFields(model, { account: () => Option.some(nextAccount) });
-      return {
-        model: Array.some(account.pending, (candidate) => candidate.commandId === commandId)
-          ? accepted(nextModel, commandId)
-          : nextModel,
-      };
+      const settled = Array.some(account.pending, (candidate) => candidate.commandId === commandId)
+        ? accepted(nextModel, commandId)
+        : nextModel;
+      // A hold event is the one thing the allowance view's `reserved` count
+      // cannot date, so the panel re-reads the entity it folded away.
+      const opened = openAccount(settled);
+      return holdEvent(tag) && opened !== null ? startHolds(settled, opened) : { model: settled };
     },
 
     CaughtUpEvents: ({ cursor }) =>
@@ -901,4 +1137,27 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     DismissedNotice: () =>
       updateAccount(model, (account) => modifyFields(account, { notice: () => Option.none() })),
+
+    UpdatedPreviewTier: ({ value }) =>
+      updateAccount(model, (account) =>
+        modifyFields(account, {
+          previewTier: () => (value === "" ? Option.none() : Option.some(value)),
+        }),
+      ),
+
+    ClickedPreview: ({ command }) => {
+      const account = openAccount(model);
+      return account === null ? { model } : startPreview(model, account, command);
+    },
+
+    DismissedPreview: () =>
+      updateAccount(model, (account) => modifyFields(account, { preview: () => Option.none() })),
+
+    ClickedVerify: () => {
+      const account = openAccount(model);
+      return account === null ? { model } : startVerify(model, account);
+    },
+
+    DismissedVerify: () =>
+      updateAccount(model, (account) => modifyFields(account, { verify: () => Option.none() })),
   });
