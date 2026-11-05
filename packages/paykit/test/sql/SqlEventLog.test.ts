@@ -352,6 +352,46 @@ describe("SqlEventLog", () => {
     }),
   );
 
+  it.effect("round-trips the money a postpaid feature billed through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const postpaid = {
+        ...readModelRow,
+        features: {
+          messages: {
+            included: 100,
+            used: 250,
+            reserved: 0,
+            carried: 0,
+            allowed: false,
+            remaining: -150,
+            overage: "bill" as const,
+            resets: "month" as const,
+            resetsAt: later,
+            cap: 2_000,
+            unitPrice: { amount: 5, currency: "usd" },
+            moneyCap: 1_000,
+            billed: 750,
+            // The split the close reports: one entry per price the period
+            // recorded a unit at, keyed by `unitPriceKey`.
+            priced: {
+              "usd:5": { unitPrice: { amount: 5, currency: "usd" }, quantity: 150 },
+            },
+          },
+        },
+      };
+      yield* log.upsertReadModel(postpaid);
+      const read = yield* log.readModel("acct_1");
+      // The counters, the ceilings and the per-price split all survive the
+      // JSON column: the edge decides whether to bill from the row alone, and
+      // the close reports the split it finds there.
+      expect(read?.features.messages?.billed).toBe(750);
+      expect(read?.features.messages?.moneyCap).toBe(1_000);
+      expect(read?.features.messages?.priced?.["usd:5"]?.quantity).toBe(150);
+      expect(read).toEqual(postpaid);
+    }),
+  );
+
   it.effect("refuses to read a corrupt read model", () =>
     Effect.gen(function* () {
       const { sql, log } = yield* store;

@@ -118,7 +118,10 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
   further period, and `EnterGrace` is refused once the standing is terminal.
 - A trial opens on the cadence its price states: an annual trial converts into an annual period,
-  not a monthly one.
+  not a monthly one. Its deadline is the first period's end, so it only moves forward:
+  `StartTrial` refuses one that is not after `now` and `ExtendTrial` one that is not after the
+  deadline already in force (`TrialDeadlineNotLater`). A deadline behind the start would open a
+  period the next tick closes.
 - Postpaid money is on the event. `UsageRecorded.charge` is this event's bill and `billedAfter` is
   the feature's period total, so a replay reproduces the bill and a catalog price change never
   reprices history. A money cap refuses in the same transaction as the usage and leaves the standing
@@ -355,7 +358,7 @@ internal, whatever it is.
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, read/write agreement, the catalog and guard contract, and delivery dedupe |
+| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, money as a fold of the log, read/write agreement, the catalog and guard contract, and delivery dedupe |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
 | `test/surfaces` | the MCP tool list and the CLI are derived from the Apis, not written twice |
 | `test/Api.test.ts` | each guard refuses what it should: no caller, another account, an operator command |

@@ -406,33 +406,35 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     PaymentFailed: (view, event, context): EntitlementsState =>
       withAccount(
-        { ...view, status: "grace", standing: "grace", dunningAttempts: event.attempt },
+        { ...withStanding(view, "grace", "grace"), dunningAttempts: event.attempt },
         context,
       ),
     GraceEntered: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "grace", standing: "grace" }, context),
+      withAccount(withStanding(view, "grace", "grace"), context),
     PaymentRecorded: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "active", standing: "good", dunningAttempts: 0 }, context),
+      withAccount({ ...withStanding(view, "active", "good"), dunningAttempts: 0 }, context),
     Recovered: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "active", standing: "good", dunningAttempts: 0 }, context),
+      withAccount({ ...withStanding(view, "active", "good"), dunningAttempts: 0 }, context),
     SubscriptionExpired: (view, _event, context): EntitlementsState =>
-      withAccount({ ...view, status: "expired", standing: "blocked" }, context),
+      withAccount(withStanding(view, "expired", "blocked"), context),
     PeriodClosed: (view, event, context): EntitlementsState =>
       withAccount(
-        {
-          ...view,
-          status: event.statusAfter,
-          standing: event.standingAfter,
-          periodStart: event.nextPeriodStart,
-          periodEnd: event.nextPeriodEnd,
-          cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
-          features: Object.fromEntries(
-            Object.entries(view.features).map(([feature, value]) => [
-              feature,
-              { ...value, resetsAt: value.resets === "never" ? null : event.nextPeriodEnd },
-            ]),
-          ),
-        },
+        withStanding(
+          {
+            ...view,
+            periodStart: event.nextPeriodStart,
+            periodEnd: event.nextPeriodEnd,
+            cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
+            features: Object.fromEntries(
+              Object.entries(view.features).map(([feature, value]) => [
+                feature,
+                { ...value, resetsAt: value.resets === "never" ? null : event.nextPeriodEnd },
+              ]),
+            ),
+          },
+          event.statusAfter,
+          event.standingAfter,
+        ),
         context,
       ),
     UsageReset: (view, event, context): EntitlementsState =>
@@ -468,7 +470,15 @@ export class Entitlements extends Domain.View("Entitlements", {
               // number to report.
               const recorded = recordedCount(event.remaining, feature);
               const spendable = recorded === undefined ? includedRemainingOf(value) : recorded;
-              const { priced: recordedPrices, ...carried } = value;
+              // A boundary clears the money a feature billed. `resets: "never"`
+              // keeps it, exactly as it keeps `used` and the `priced` split: the
+              // feature is still accounting for the period that did not end for
+              // it. The reset follows `kept` and not whether the allowance in
+              // force has a `unitPrice`: a tier change can move a feature that
+              // billed this period onto an allowance that states no price, and
+              // the counter belongs to the period, not to the new allowance.
+              const { priced: recordedPrices, billed: recordedBilled, ...carried } = value;
+              const billed = kept ? recordedBilled : undefined;
               return [
                 feature,
                 {
@@ -478,14 +488,17 @@ export class Entitlements extends Domain.View("Entitlements", {
                   reserved: kept ? value.reserved : 0,
                   remaining: spendable,
                   carried: event.carried[feature] ?? 0,
-                  ...(value.unitPrice === undefined ? {} : { billed: 0 }),
+                  ...(billed === undefined ? {} : { billed }),
                   allowed: allowsOne(
                     view.standing,
                     value.overage,
                     spendable,
                     value.cap,
                     event.carried[feature] ?? 0,
-                    moneyOf(value, { billed: 0, used: 0 }),
+                    moneyOf(value, {
+                      billed: billed ?? 0,
+                      used: kept ? value.used : 0,
+                    }),
                   ),
                 },
               ];
@@ -494,6 +507,10 @@ export class Entitlements extends Domain.View("Entitlements", {
         },
         context,
       ),
+    // A scheduled change is a fact about the next period, so it moves nothing
+    // now: the counters and `remaining` stay the current tier's until the close
+    // applies the change and resets them onto the new allowances.
+    TierChangeScheduled: (view, _event, context): EntitlementsState => withAccount(view, context),
     CancellationScheduled: (view, _event, context): EntitlementsState =>
       withAccount({ ...view, cancelAtPeriodEnd: true }, context),
     CancellationWithdrawn: (view, _event, context): EntitlementsState =>
@@ -665,6 +682,46 @@ const creditFeatureOf = (
   overage: "block",
   resets: "never",
   resetsAt: null,
+});
+
+/**
+ * Rejudge one feature for a standing. `allowed` is documented as the answer
+ * `check({ amount: 1 })` gives, and it is carried so a caller reading the row
+ * does not have to do the arithmetic — which means every command that moves the
+ * standing has to move it too. A row that still says yes after the standing
+ * went `blocked` offers work the write path refuses.
+ */
+const rejudged = (value: FeatureEntitlement, standing: Standing): FeatureEntitlement => ({
+  ...value,
+  allowed:
+    value.creditRates === undefined
+      ? allowsOne(
+          standing,
+          value.overage,
+          value.remaining,
+          value.cap,
+          value.carried,
+          moneyOf(value),
+        )
+      : // A credit-priced feature spends the shared pool, so one more unit costs
+        // the default rate of its card.
+        standing !== "blocked" &&
+        value.remaining !== null &&
+        value.remaining >= creditRateOf(value.creditRates, undefined),
+});
+
+/** Move the standing, and rejudge every feature against it. */
+const withStanding = (
+  view: EntitlementsState,
+  status: SubscriptionStatus,
+  standing: Standing,
+): EntitlementsState => ({
+  ...view,
+  status,
+  standing,
+  features: Object.fromEntries(
+    Object.entries(view.features).map(([feature, value]) => [feature, rejudged(value, standing)]),
+  ),
 });
 
 /**

@@ -2,6 +2,7 @@ import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import { tierTermsOf } from "../../src/Catalog.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
 import { GraceElapsed } from "../../src/Subscription/GraceElapsed.command.ts";
@@ -11,6 +12,7 @@ import { RecordPaymentFailure } from "../../src/Subscription/RecordPaymentFailur
 import { Recover } from "../../src/Subscription/Recover.command.ts";
 import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
+import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import {
   initialSubscriptionState,
   type SubscribedState,
@@ -24,6 +26,7 @@ import {
   evolveAt,
   isAccepted,
   start,
+  testCatalog,
   TrialDays,
 } from "./Arbitraries.ts";
 
@@ -85,7 +88,7 @@ const expectedRejections: Record<Step["_tag"], ReadonlyArray<string>> = {
   Resume: ["NotScheduled", "NotSubscribed"],
   Expire: ["NotInGrace"],
   GraceElapsed: [],
-  ExtendTrial: ["TrialNotActive", "NotSubscribed"],
+  ExtendTrial: ["TrialNotActive", "NotSubscribed", "TrialDeadlineNotLater"],
   PeriodEnded: [],
 };
 
@@ -120,6 +123,15 @@ describe("lifecycle", () => {
 
           if (!isAccepted(decision)) {
             if (!expectedRejections[step._tag].includes(decision._tag)) return false;
+            // A refused extension is one that would not move the deadline
+            // forward, so the requested day is at or before the one in force.
+            if (step._tag === "ExtendTrial" && decision._tag === "TrialDeadlineNotLater") {
+              if (before.trialEndsAt === undefined) return false;
+              const requested = DateTime.add(now, { days: step.trialDays });
+              if (DateTime.toEpochMillis(requested) > DateTime.toEpochMillis(before.trialEndsAt)) {
+                return false;
+              }
+            }
             // A rejection changes nothing.
             if (state !== before) return false;
             continue;
@@ -222,6 +234,81 @@ describe("lifecycle", () => {
         return true;
       },
       { runs: 80, size: 40 },
+    ),
+  );
+});
+
+const DeadlineDays = Schema.Int.pipe(
+  Schema.check(Schema.isBetween({ minimum: -400, maximum: 400 })),
+);
+
+describe("trial deadlines", () => {
+  /**
+   * A trial's deadline is the end of its first period, and everything
+   * downstream reads it: `resetsAt`, the scheduled `PeriodEnded`, the close
+   * that opens the next period. A deadline at or before `now` opens a period
+   * that has already ended, and one that moves a running trial backwards
+   * closes the period early — which is the opposite of what `ExtendTrial`
+   * says it does.
+   */
+  it.effect("a trial opens forward, and an extension never moves it back", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          tier: Schema.Literals(["free", "pro", "unlimited", "metered"]),
+          openDays: DeadlineDays,
+          extendDays: DeadlineDays,
+        }),
+      ),
+      ({ tier, openDays, extendDays }) => {
+        const terms = tierTermsOf(testCatalog, tier);
+        if (terms === null) return false;
+        const now = start;
+        const trialEndsAt = DateTime.add(now, { days: openDays });
+
+        const opened = decideAt(
+          initialSubscriptionState,
+          new StartTrial({ tier, ...terms, trialEndsAt }),
+          now,
+          "open",
+        );
+        // A deadline that is not in the future may be refused. What it may not
+        // do is open a period whose end is already behind it.
+        if (!isAccepted(opened)) {
+          return DateTime.toEpochMillis(trialEndsAt) <= DateTime.toEpochMillis(now);
+        }
+        const state = evolveAt(initialSubscriptionState, opened, now, "open");
+        if (state._tag !== "Subscribed") return false;
+        if (DateTime.toEpochMillis(state.period.end) !== DateTime.toEpochMillis(trialEndsAt)) {
+          return false;
+        }
+        if (
+          DateTime.toEpochMillis(state.period.end) <= DateTime.toEpochMillis(state.period.start)
+        ) {
+          return false;
+        }
+
+        const requested = DateTime.add(now, { days: extendDays });
+        const extended = decideAt(
+          state,
+          new ExtendTrial({ trialEndsAt: requested }),
+          now,
+          "extend",
+        );
+        if (!isAccepted(extended)) {
+          return DateTime.toEpochMillis(requested) <= DateTime.toEpochMillis(trialEndsAt);
+        }
+        const after = evolveAt(state, extended, now, "extend");
+        if (after._tag !== "Subscribed") return false;
+        // An extension reschedules the period, and never to an earlier end.
+        if (
+          DateTime.toEpochMillis(after.period.end) <= DateTime.toEpochMillis(after.period.start)
+        ) {
+          return false;
+        }
+        return DateTime.toEpochMillis(after.period.end) >= DateTime.toEpochMillis(state.period.end);
+      },
+      { runs: 120, size: 30 },
     ),
   );
 });

@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { Admin } from "../Auth/Guards.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
+import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 
 /** The account is not on a trial, so there is nothing to extend. */
 export class TrialNotActive extends Domain.Rejection("TrialNotActive") {}
@@ -18,6 +19,6 @@ export class ExtendTrial extends Domain.Command("ExtendTrial", {
   target: AccountId,
   input: { trialEndsAt: Schema.DateTimeUtc },
   events: [TrialExtended],
-  rejects: [NotSubscribed, TrialNotActive],
+  rejects: [NotSubscribed, TrialNotActive, TrialDeadlineNotLater],
   middleware: [Admin],
 }) {}

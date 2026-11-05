@@ -99,6 +99,33 @@ describe("doctor", () => {
     }),
   );
 
+  it.effect("reports a read model whose money disagrees with the log", () =>
+    Effect.gen(function* () {
+      const { log } = yield* opened();
+      const rebuilt = (yield* doctor(log))[0]!.rebuilt;
+      yield* log.upsertReadModel(rebuilt);
+      // The counters still agree with the log; only the money on the feature
+      // was edited. A doctor that compared counters alone would call this row
+      // clean and leave a hand-edited bill in place.
+      yield* log.upsertReadModel({
+        ...rebuilt,
+        features: {
+          messages: {
+            ...rebuilt.features.messages!,
+            unitPrice: { amount: 5, currency: "usd" },
+            moneyCap: 1_000,
+            billed: 750,
+            priced: { "usd:5": { unitPrice: { amount: 5, currency: "usd" }, quantity: 150 } },
+          },
+        },
+      });
+      const mismatches = yield* doctor(log);
+      expect(mismatches.length).toBe(1);
+      expect(mismatches[0]?.stored?.features.messages?.billed).toBe(750);
+      expect(mismatches[0]?.commandIds).toEqual(["evt_1"]);
+    }),
+  );
+
   it.effect("diffs every account independently", () =>
     Effect.gen(function* () {
       const { log } = yield* opened("acct_a");

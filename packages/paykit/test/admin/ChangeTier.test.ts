@@ -1,7 +1,9 @@
 import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
+import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { AdminChangeTier, AdminChangeTierLive } from "../../src/Admin/ChangeTier.ts";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
@@ -10,9 +12,20 @@ import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { sameProration, type Proration } from "../../src/Proration.ts";
+import { planChangeTier } from "../../src/Subscription/ChangeTier.plan.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import {
+  decideAt,
+  isAccepted,
+  Script,
+  testCatalog as generatedCatalog,
+  TierName,
+  walk,
+} from "../properties/Arbitraries.ts";
+import { assertProperty } from "../support/Property.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
 const proTier = tier({
@@ -135,4 +148,39 @@ it.live("refuses a change with no standing, and a tier the catalog lacks", () =>
       expect(unknown.rejection._tag).toBe("TierNotInCatalog");
     }
   }).pipe(run),
+);
+
+/**
+ * The console quotes a tier change before an operator confirms it, and the
+ * quote is applied as the command. Both sides compute the proration from the
+ * same prices and the same period, so a plan must never be refused for
+ * carrying one the model did not expect — that would be an operator confirming
+ * one amount and the log recording another.
+ *
+ * The property is over the shared generated history: any standing, any instant,
+ * any tier the generated catalog sells.
+ */
+it.effect("a quoted tier change is never refused for disagreeing with itself", () =>
+  assertProperty(
+    Arbitrary.schema(Schema.Struct({ script: Script, tier: TierName })),
+    ({ script, tier }) => {
+      const { state, now } = walk(script);
+      const plan = planChangeTier(generatedCatalog, tier, state, now);
+      if (plan === null) return false;
+
+      const decision = decideAt(state, plan.command, now, "quote");
+      if (!isAccepted(decision)) {
+        // A quote can be refused for the standing, the currency or a ceiling,
+        // but never for its own arithmetic.
+        return decision._tag !== "ProrationMismatch";
+      }
+      const changed = decision.find((event) => event._tag === "TierChanged") as
+        | { readonly proration?: Proration }
+        | undefined;
+      if (changed === undefined) return false;
+      // And the log carries the money the operator was shown.
+      return sameProration(plan.proration, changed.proration ?? null);
+    },
+    { runs: 120, size: 40 },
+  ),
 );

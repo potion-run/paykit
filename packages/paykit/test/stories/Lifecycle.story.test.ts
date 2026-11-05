@@ -63,6 +63,7 @@ import {
   TrackUsage,
   UsageRecorded,
 } from "../../src/Subscription/TrackUsage.command.ts";
+import { TrialDeadlineNotLater } from "../../src/Subscription/TrialDeadlineNotLater.rejection.ts";
 import { tier } from "../../src/Tier.ts";
 
 const freeTier = tier({
@@ -489,8 +490,89 @@ it.effect("a trial started after a free tier keeps its refs, and grants the tria
       refs: { polar: { customer: "cus_polar" } },
       trialUsed: true,
     }),
+    Story.when(account, new ExtendTrial({ trialEndsAt: at("2030-01-22T00:00:00Z") })),
+    Story.then(
+      account,
+      new TrialExtended({
+        trialEndsAt: at("2030-01-22T00:00:00Z"),
+        periodEnd: at("2030-01-22T00:00:00Z"),
+      }),
+    ),
+  ),
+);
+
+it.effect("refuses a deadline that would not extend the trial", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new StartTrial({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: proAllowances,
+        trialEndsAt: at("2030-01-15T00:00:00Z"),
+      }),
+    ),
+    Story.then(
+      account,
+      new TrialStarted({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: proAllowances,
+        remaining: { messages: 2000 },
+        periodStart: start,
+        periodEnd: at("2030-01-15T00:00:00Z"),
+        anchorTz: "UTC",
+        trialEndsAt: at("2030-01-15T00:00:00Z"),
+        statusAfter: "trialing",
+      }),
+    ),
+    // The same deadline is not later than the one in force, so it would move
+    // the period's close onto the instant the trial already has.
+    Story.when(account, new ExtendTrial({ trialEndsAt: at("2030-01-15T00:00:00Z") })),
+    Story.rejected(
+      new TrialDeadlineNotLater({
+        current: at("2030-01-15T00:00:00Z"),
+        requested: at("2030-01-15T00:00:00Z"),
+      }),
+    ),
+    // And one that ends earlier would shorten it, which is not an extension.
     Story.when(account, new ExtendTrial({ trialEndsAt: graceUntil })),
-    Story.then(account, new TrialExtended({ trialEndsAt: graceUntil, periodEnd: graceUntil })),
+    Story.rejected(
+      new TrialDeadlineNotLater({
+        current: at("2030-01-15T00:00:00Z"),
+        requested: graceUntil,
+      }),
+    ),
+  ),
+);
+
+it.effect("refuses a trial that would end before it begins", () =>
+  story(
+    Story.provide(Actor, system()),
+    Story.clock(start),
+    Story.when(
+      account,
+      new StartTrial({
+        tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        allowances: proAllowances,
+        trialEndsAt: at("2029-12-25T00:00:00Z"),
+      }),
+    ),
+    Story.rejected(
+      new TrialDeadlineNotLater({
+        current: start,
+        requested: at("2029-12-25T00:00:00Z"),
+      }),
+    ),
   ),
 );
 
