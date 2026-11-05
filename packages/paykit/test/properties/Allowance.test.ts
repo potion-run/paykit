@@ -1,181 +1,166 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { allowance } from "../../src/Allowance.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { messages } from "../../src/Feature.ts";
-import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
-import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
-import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { allowancesOf } from "../../src/Catalog.ts";
 import {
   initialSubscriptionState,
-  SubscriptionState,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
-import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
-import { tier } from "../../src/Tier.ts";
+import { TrackUsage, type UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
+import { assertProperty } from "../support/Property.ts";
+import {
+  Amount,
+  commandOf,
+  decideAt,
+  DedupeKey,
+  evolveAt,
+  isAccepted,
+  start,
+  testCatalog,
+  TierName,
+} from "./Arbitraries.ts";
 
-const blockTier = tier({
-  id: "block",
-  grants: [allowance(messages, { included: 100, overage: "block" })],
-});
-const billTier = tier({
-  id: "bill",
-  price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 100, overage: "bill" })],
-});
+const account = "acct_property";
 
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [blockTier, billTier] }));
-
-const block = allowancesOf(testCatalog, "block")!;
-const bill = allowancesOf(testCatalog, "bill")!;
-const price = { amount: 1900, currency: "usd", interval: "month" as const };
-const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
-const ref = Subscription.ref("acct_prop");
-
-const ctx = (commandId: string, now = at) => ({
-  id: ref.id,
-  commandId,
-  stream: `Subscription/${ref.id}`,
-  version: 0,
-  now,
+const UsageStep = Schema.Struct({ amount: Amount, dedupeKey: DedupeKey });
+const UsageScript = Schema.Struct({
+  tier: TierName,
+  steps: Schema.Array(UsageStep).pipe(Schema.check(Schema.isMaxLength(60))),
 });
 
-type AnyEvent = { readonly _tag: string };
-
-const evolve = (state: unknown, events: ReadonlyArray<AnyEvent>, now = at) =>
-  events.reduce((current, event, index) => {
-    const handler = (
-      Subscription.definition.evolve as unknown as Record<
-        string,
-        (state: unknown, event: unknown, envelope: unknown) => unknown
-      >
-    )[event._tag]!;
-    return handler(current, event, {
-      id: ref.id,
-      stream: `Subscription/${ref.id}`,
-      seq: index + 1,
-      at: now,
-      commandId: "cmd",
-      correlationId: "cmd",
-    });
-  }, state);
-
-const decide = (
-  state: unknown,
-  command: { readonly _tag: string },
-  commandId = "cmd",
-  now = at,
-) => {
-  const handler = (
-    Subscription.definition.decide as unknown as Record<
-      string,
-      (state: unknown, command: unknown, ctx: unknown) => unknown
-    >
-  )[command._tag]!;
-  return handler(state, command, ctx(commandId, now));
+const activated = (tier: TierName): SubscribedState => {
+  const allowances = allowancesOf(testCatalog, tier)!;
+  const decision = decideAt(
+    initialSubscriptionState,
+    commandOf({ _tag: "Subscribe", tier }, initialSubscriptionState, start),
+    start,
+    "subscribe",
+  );
+  if (!isAccepted(decision)) throw new Error(`the generated catalog could not activate ${tier}`);
+  const state = evolveAt(initialSubscriptionState, decision, start, "subscribe");
+  if (state._tag !== "Subscribed") throw new Error("Subscribe did not activate a standing");
+  expect(allowances).toEqual(state.allowances);
+  return state;
 };
 
-const activated = (tierId: string, allowances: typeof block) => {
-  const subscribe = new Subscribe({
-    tier: tierId,
-    allowances,
-    ...(tierId === "bill" ? { price } : {}),
+const track = (amount: number, dedupeKey?: string) =>
+  new TrackUsage({
+    feature: "messages",
+    amount,
+    ...(dedupeKey === undefined ? {} : { dedupeKey }),
   });
-  const events = decide(initialSubscriptionState, subscribe) as ReadonlyArray<AnyEvent>;
-  return evolve(initialSubscriptionState, events) as SubscribedState;
-};
-
-const canonical = (state: unknown) =>
-  Schema.encodeSync(SubscriptionState)(state as typeof initialSubscriptionState);
 
 describe("allowance", () => {
-  it("never lets a blocking allowance overspend, go negative, or rise inside a period", () => {
-    let state = activated("block", block) as any;
-    let remaining = state.remaining.messages as number;
-    for (let amount = 1; amount <= 1000; amount += 7) {
-      const decision = decide(state, new TrackUsage({ feature: "messages", amount })) as
-        | ReadonlyArray<AnyEvent>
-        | { readonly _tag: string };
-      if (Array.isArray(decision)) {
-        state = evolve(state, decision);
-        const event = decision[0] as UsageRecorded;
-        expect(event.usedAfter).toBeLessThanOrEqual(100);
-        expect(event.remainingAfter).toBeGreaterThanOrEqual(0);
-        expect(event.remainingAfter).toBeLessThanOrEqual(remaining);
-        remaining = event.remainingAfter;
-      } else {
-        expect((decision as { readonly _tag: string })._tag).toBe("AllowanceExceeded");
-      }
-    }
-  });
+  it.effect("never lets a blocking allowance overspend or go negative", () =>
+    assertProperty(
+      Arbitrary.schema(UsageScript),
+      (script) => {
+        const unlimited = script.tier === "unlimited";
+        const bill = script.tier === "pro";
+        let state = activated(script.tier);
+        const included = state.allowances.messages?.included;
+        if (included === undefined) return false;
+        const limit = included === "unlimited" ? null : included;
+        if (!unlimited && limit === null) return false;
+        let remaining = state.remaining.messages;
+        let used = state.usage.messages ?? 0;
 
-  it("lets a bill allowance go past included and keeps used reproducible", () => {
-    let state = activated("bill", bill) as any;
-    for (const amount of [50, 50, 50, 50]) {
-      const decision = decide(state, new TrackUsage({ feature: "messages", amount })) as
-        | ReadonlyArray<AnyEvent>
-        | { readonly _tag: string };
-      expect(Array.isArray(decision)).toBe(true);
-      if (Array.isArray(decision)) {
-        state = evolve(state, decision);
-        const event = decision[0] as UsageRecorded;
-        expect(event.usedAfter).toBe(state.usage.messages);
-        expect(event.remainingAfter).toBe(state.remaining.messages);
-      }
-    }
-    expect(state.usage.messages).toBe(200);
-    expect(state.remaining.messages).toBe(-100);
-  });
+        for (const step of script.steps) {
+          const decision = decideAt(state, track(step.amount, step.dedupeKey), start, account);
+          if (!isAccepted(decision)) {
+            // Only a block can refuse the generated tiers: every request is
+            // positive and the feature exists in the tier.
+            if (decision._tag !== "AllowanceExceeded") return false;
+            if (unlimited || bill) return false;
+            // The refusal carries the count the model held before it.
+            const rejection = decision as unknown as { readonly remaining: number };
+            if (step.amount <= rejection.remaining) return false;
+            continue;
+          }
 
-  it("restores the included amount only at ClosePeriod", () => {
-    let state = activated("block", block) as any;
-    state = evolve(
-      state,
-      decide(
-        state,
-        new TrackUsage({ feature: "messages", amount: 80 }),
-      ) as any as ReadonlyArray<AnyEvent>,
-    );
-    expect(state.remaining.messages).toBe(20);
-    const closed = decide(
-      state,
-      new ClosePeriod({ periodEnd: state.period.end }),
-      "close",
-      state.period.end,
-    ) as ReadonlyArray<AnyEvent>;
-    expect(closed.length).toBe(3);
-    state = evolve(state, closed, state.period.end);
-    expect(state.usage.messages ?? 0).toBe(0);
-    expect(state.remaining.messages).toBe(100);
-  });
+          // An empty decision is a deduped retry: nothing moved.
+          if (decision.length === 0) continue;
 
-  it("is deterministic: the same command and clock decide the same events", () => {
-    const state = activated("bill", bill);
-    const command = new TrackUsage({ feature: "messages", amount: 25 });
-    const first = decide(state, command) as ReadonlyArray<AnyEvent>;
-    const second = decide(state, command) as ReadonlyArray<AnyEvent>;
-    expect(JSON.stringify(first.map((event) => ({ ...event })))).toBe(
-      JSON.stringify(second.map((event) => ({ ...event }))),
-    );
-  });
+          const event = decision[0] as UsageRecorded;
+          const expectedUsed = used + step.amount;
+          const expectedRemaining = remaining === null ? null : remaining - step.amount;
+          if (event.usedAfter !== expectedUsed) return false;
+          if (event.remainingAfter !== expectedRemaining) return false;
+          if (unlimited && event.remainingAfter !== null) return false;
+          if (!unlimited && (event.remainingAfter ?? 0) < 0 && !bill) return false;
+          if (limit !== null && event.usedAfter > limit && !bill) return false;
 
-  it("folds the same state from the committed events that decide carried", () => {
-    const state = activated("bill", bill);
-    const events: AnyEvent[] = [];
-    let walked = state;
-    for (const amount of [10, 20, 30]) {
-      const decision = decide(walked, new TrackUsage({ feature: "messages", amount })) as
-        | ReadonlyArray<AnyEvent>
-        | { readonly _tag: string };
-      if (Array.isArray(decision)) {
-        events.push(...decision);
-        walked = evolve(walked, decision) as SubscribedState;
-      }
-    }
-    const rebuilt = evolve(state, events) as SubscribedState;
-    expect(canonical(rebuilt)).toEqual(canonical(walked));
-    expect(walked.usage.messages).toBe(60);
+          state = evolveAt(state, decision, start, account) as SubscribedState;
+          used = event.usedAfter;
+          remaining = event.remainingAfter;
+        }
+
+        // A count is conserved: used + remaining = included for a blocking
+        // allowance, and used + (negative remaining) = included for billing.
+        if (unlimited || limit === null) return true;
+        return (state.usage.messages ?? 0) + (state.remaining.messages ?? 0) === limit;
+      },
+      { runs: 80, size: 40 },
+    ),
+  );
+
+  it.effect("closes a period back to what the tier includes, or what it carried", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          tier: Schema.Literals(["free", "carry"]),
+          steps: Schema.Array(UsageStep).pipe(Schema.check(Schema.isMaxLength(40))),
+        }),
+      ),
+      (script) => {
+        let state = activated(script.tier);
+        for (const step of script.steps) {
+          const decision = decideAt(state, track(step.amount, step.dedupeKey), start, account);
+          if (isAccepted(decision) && decision.length > 0) {
+            state = evolveAt(state, decision, start, account) as SubscribedState;
+          }
+        }
+
+        const remainingBefore = state.remaining.messages ?? 0;
+        const end = state.period.end;
+        const closed = decideAt(
+          state,
+          commandOf({ _tag: "ClosePeriod" }, state, end),
+          end,
+          "close",
+        );
+        if (!isAccepted(closed)) return false;
+        const reset = closed.find((event) => event._tag === "UsageReset") as
+          | {
+              readonly remaining: Readonly<Record<string, number | null>>;
+              readonly carried: Readonly<Record<string, number>>;
+            }
+          | undefined;
+        if (reset === undefined) return false;
+
+        const after = evolveAt(state, closed, end, "close");
+        if (after._tag !== "Subscribed") return false;
+        if ((after.usage.messages ?? 0) !== 0) return false;
+        if (after.credits !== 0) return false;
+        if (DateTime.toEpochMillis(after.period.start) !== DateTime.toEpochMillis(end))
+          return false;
+
+        const carried = script.tier === "carry" ? Math.min(Math.max(remainingBefore, 0), 100) : 0;
+        if (reset.carried.messages !== carried) return false;
+        return after.remaining.messages === 100 + carried;
+      },
+      { runs: 80, size: 30 },
+    ),
+  );
+
+  it("a bill allowance may go past its included amount and stay reproducible", () => {
+    const state = activated("pro");
+    const decision = decideAt(state, track(2_500), start, account);
+    expect(isAccepted(decision)).toBe(true);
+    if (!isAccepted(decision)) return;
+    const event = decision[0] as UsageRecorded;
+    expect(event.usedAfter).toBe(2_500);
+    expect(event.remainingAfter).toBe(-500);
   });
 });

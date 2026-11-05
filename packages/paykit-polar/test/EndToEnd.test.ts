@@ -179,7 +179,15 @@ describe("Polar, from checkout to check()", () => {
         }) ?? undefined;
       yield* subscription.send(
         ref,
-        new ChangeTier({ tier: "scale", allowances: scale, price: scalePrice, proration }),
+        new ChangeTier({
+          credits: 0,
+          creditsExpire: "period",
+          rates: {},
+          tier: "scale",
+          allowances: scale,
+          price: scalePrice,
+          proration,
+        }),
       );
 
       const charged = yield* (yield* ChargeProration())({ account });

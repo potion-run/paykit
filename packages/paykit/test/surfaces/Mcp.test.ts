@@ -120,7 +120,16 @@ describe("the MCP surface", () => {
         "tools/call",
         {
           name: "BillingApi_Subscribe_send",
-          arguments: { target: account.id, input: { tier: "free", allowances: free } },
+          arguments: {
+            target: account.id,
+            input: {
+              tier: "free",
+              allowances: free,
+              credits: 0,
+              creditsExpire: "period",
+              rates: {},
+            },
+          },
         },
         { "x-paykit-actor": account.id },
       );
@@ -190,7 +199,7 @@ describe("the MCP surface", () => {
         (tool) => tool.name,
       );
       expect(names).toContain("BillingApi_TrackUsage_send");
-      expect(names).toContain("BillingApi_ReserveUsage_send");
+      expect(names).toContain("BillingApi_Hold_send");
       expect(names.some((name) => name.includes("GrantCredits"))).toBe(false);
       expect(names.some((name) => name.endsWith("_watch"))).toBe(false);
     }).pipe(withMcp),

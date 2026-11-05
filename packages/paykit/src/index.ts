@@ -2,26 +2,66 @@
 // bindings, the model, and providers. Everything a user can import is API.
 
 // ── 1. deploy-time ──────────────────────────────────────────────────────────
-export { Feature, FeatureId, feature, messages, seats, storage_gb } from "./Feature.ts";
+export {
+  CreditRateCards,
+  CreditRates,
+  Feature,
+  FeatureId,
+  FeatureKind,
+  feature,
+  messages,
+  seats,
+  storage_gb,
+} from "./Feature.ts";
 export type { FeatureInput } from "./Feature.ts";
-export { Allowance, Allowances, Overage, Resets, allowance } from "./Allowance.ts";
+export {
+  Allowance,
+  Allowances,
+  Included,
+  Overage,
+  Resets,
+  UnitPrice,
+  allowance,
+  grant,
+} from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
-export { Interval, Price, Tier, TierId, tier } from "./Tier.ts";
+export { CreditsExpire, Interval, Price, Tier, TierId, TierKind, tier } from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
 export {
   Catalog,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
+  CatalogCapWithoutBilling,
+  CatalogCarryOverNeverResets,
+  CatalogCarryOverOnFlag,
+  CatalogCreditRatesOnFlag,
+  CatalogCreditFeatureHasAllowance,
+  CatalogCreditGrantInvalid,
+  CatalogCreditRateInvalid,
+  CatalogCreditRateMissing,
   CatalogEmptyTier,
   CatalogError,
+  CatalogFlagNotGranted,
   CatalogInvalid,
+  CatalogOneOffCredits,
+  CatalogOneOffCreditsExpire,
+  CatalogOneOffGrant,
+  CatalogOneOffWithoutPrice,
+  CatalogMoneyCapWithoutUnitPrice,
+  CatalogUnitPriceCurrency,
+  CatalogUnitPriceWithoutBilling,
   CatalogUnknownFeature,
+  CatalogUnlimitedOverage,
+  CatalogFlagOnMetered,
   allowancesOf,
   catalog,
+  creditRatesOf,
+  creditTermsOf,
   defineCatalog,
   featureOf,
   tierOf,
+  tierTermsOf,
 } from "./Catalog.ts";
 export type { CatalogInput } from "./Catalog.ts";
 export {
@@ -38,10 +78,12 @@ export {
 } from "./Stack.ts";
 export type { BillingStack, StackProps, Store } from "./Stack.ts";
 export {
+  BILLING_STACK_VERSION,
   BillingStack as BillingStackResource,
   BillingStackAttrs,
   BillingStackProps,
   BillingStackProvider,
+  BillingStackStateOutdated,
   BillingStore,
   providers,
   readBillingStack,
@@ -137,6 +179,7 @@ export {
   WebhookEvent,
   WebhookInvalid,
   WebhookKind,
+  Webhook,
   WebhookSignatureInvalid,
   completeCheckout,
   handleWebhook,
@@ -144,8 +187,15 @@ export {
 export type { PaymentsWebhook, WebhookError, WebhookRequest } from "./Webhooks.ts";
 export { Track } from "./Track.ts";
 export type { TrackInput } from "./Track.ts";
-export { Release, Reserve, Settle } from "./Hold.ts";
-export type { ReleaseInput, ReserveInput } from "./Hold.ts";
+export { Hold, Release, Settle } from "./Hold.ts";
+export type {
+  HoldInput,
+  HoldResult,
+  ReleaseInput,
+  ReleaseResult,
+  SettleInput,
+  SettleResult,
+} from "./Hold.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel as Model } from "./Paykit.model.ts";
@@ -192,6 +242,11 @@ export { AccountId } from "./Subscription/Subscription.id.ts";
 export { AccountEvents } from "./Subscription/AccountEvents.stream.ts";
 export { AccountEventsProjection } from "./Subscription/AccountEventsProjection.ts";
 export { BillingRead } from "./Subscription/BillingRead.projection.ts";
+export {
+  PeriodCloseUsage,
+  billableQuantities,
+  periodUsageCommandId,
+} from "./Subscription/PeriodCloseUsage.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export { Dunning } from "./Subscription/Dunning.policy.ts";
 export {
@@ -220,17 +275,27 @@ export { TrialStarted, StartTrial } from "./Subscription/StartTrial.command.ts";
 export { TierChanged, ChangeTier, DowngradeBelowUsage } from "./Subscription/ChangeTier.command.ts";
 export {
   AllowanceExceeded,
+  CreditExceeded,
+  FeatureNotMetered,
+  MoneyCapExceeded,
+  SpendCapExceeded,
   StandingBlocksUsage,
   TrackUsage,
   UsageRecorded,
 } from "./Subscription/TrackUsage.command.ts";
 export {
-  ReservationExceeded,
-  ReserveUsage,
+  HOLD_TTL_MINUTES,
+  // The command; the binding of the same name comes from `./Hold.ts`.
+  Hold as HoldCommand,
+  HoldExceeded,
+  HoldExpired,
+  HoldSettled,
+  HoldUnknown,
   UsageReserved,
-} from "./Subscription/ReserveUsage.command.ts";
-export { NoReservation, SettleUsage, UsageSettled } from "./Subscription/SettleUsage.command.ts";
-export { ReleaseUsage, UsageReleased } from "./Subscription/ReleaseUsage.command.ts";
+  defaultHoldExpiry,
+} from "./Subscription/Hold.command.ts";
+export { SettleHold, UsageSettled } from "./Subscription/SettleHold.command.ts";
+export { ReleaseHold, UsageReleased } from "./Subscription/ReleaseHold.command.ts";
 export { PaymentRecorded, RecordPayment } from "./Subscription/RecordPayment.command.ts";
 export {
   PaymentFailed,
@@ -282,16 +347,18 @@ export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 
 // ── 4. providers ────────────────────────────────────────────────────────────
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
+export type { MemoryPayments, MemoryUsageReport } from "./PaymentsMemory.ts";
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
 export { PaymentsStripe, PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
-export { stripeBindings } from "./PaymentsStripe.ts";
 export type {
-  StripeBindingSource,
   StripeBindings,
-  StripeOrigin,
   StripeProps,
   StripeTier,
+  StripeUsagePrice,
 } from "./PaymentsStripe.ts";
+export { encodeVendorPart } from "./VendorId.ts";
+export { Outbound, OutboundDeliveryError, OutboundEvents, outboundSignature } from "./Outbound.ts";
+export type { OutboundEndpoint, OutboundRequest } from "./Outbound.ts";
 export { PaymentsPolar } from "./PaymentsPolar.ts";
 export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
@@ -307,4 +374,4 @@ export {
   providerFor,
 } from "./Payments.ts";
 export type { ProviderSet } from "./Payments.ts";
-export type { PaymentError, PaymentsService, MoneyProvider } from "./Payments.ts";
+export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from "./Payments.ts";

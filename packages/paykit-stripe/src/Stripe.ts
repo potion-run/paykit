@@ -5,14 +5,17 @@ import {
   type Price,
   type StripeBindings,
   type StripeTier,
+  type StripeUsagePrice,
+  type TierKind,
 } from "@potion.run/paykit";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { distilledStripeClient } from "./StripeClient.ts";
 import { stripeWebhook } from "./Webhooks.ts";
 
 /** Where a tier lives in Stripe, and the price the catalog states. */
-export type { StripeTier };
+export type { StripeTier, StripeUsagePrice };
 
 /**
  * The Stripe calls this package makes, as an interface so a test can stand in.
@@ -22,8 +25,11 @@ export type { StripeTier };
 export interface StripeClient {
   /** A hosted Checkout Session for one price, tagged with its tier. */
   readonly createCheckoutSession: (request: {
-    readonly priceId: string;
+    /** The base price first, then one metered price per billable feature. */
+    readonly priceIds: ReadonlyArray<string>;
     readonly tier: string;
+    /** A subscription opens a period; a one-off pack is a single payment. */
+    readonly kind: TierKind;
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly cancelUrl: string;
@@ -45,15 +51,27 @@ export interface StripeClient {
     readonly currency: string;
     readonly description: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentDeclined>;
+  /**
+   * Resolve a tier's lookup key to the price that answers for it now. A price is
+   * replaced when its amount changes, so the key is the stable handle and the id
+   * is not.
+   */
+  readonly resolvePrice?: (lookupKey: string) => Effect.Effect<string, PaymentDeclined>;
   /** Refund a charge, fully or partially. */
   readonly createRefund?: (request: {
     readonly chargeId: string;
     readonly amount: number;
   }) => Effect.Effect<{}, PaymentDeclined>;
-  /** Write the tier into a Stripe entitlement, where one is configured. */
-  readonly syncTier?: (request: {
+  /**
+   * Send one meter event. `identifier` is the vendor idempotency key, and
+   * `timestamp` is in seconds since the epoch, as Stripe's API expects.
+   */
+  readonly reportUsage?: (request: {
+    readonly eventName: string;
     readonly customerExternalId: string;
-    readonly tier: string;
+    readonly quantity: number;
+    readonly identifier: string;
+    readonly timestamp: number;
   }) => Effect.Effect<{}, PaymentDeclined>;
 }
 
@@ -67,6 +85,12 @@ export interface StripeProps {
   readonly origin: string;
   /** Tier → Stripe price, and the price the catalog already states. */
   readonly tiers?: Readonly<Record<string, StripeTier>>;
+  /**
+   * Feature → meter event name, from `StripePrices`. The meter is what the
+   * closing period's billable units are sent to; without it the provider
+   * declares no `usage` capability.
+   */
+  readonly meters?: Readonly<Record<string, string>>;
   /** Where a completed checkout returns to. Defaults to `/welcome`. */
   readonly successPath?: string;
   /** Where an abandoned checkout returns to. Defaults to `/pricing`. */
@@ -103,6 +127,8 @@ export interface StripeOrigin {
   readonly cancelPath?: string;
   readonly billingPath?: string;
   readonly invoiceDescription?: string;
+  /** Feature → meter event name, from `StripePrices`. */
+  readonly meters?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -120,11 +146,12 @@ export const stripeClientBindings = (
   const cancel = `${where.origin}${where.cancelPath ?? "/pricing"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
   const bindings: StripeBindings = {
-    createCheckoutSession: ({ account, tier, priceId }) =>
+    createCheckoutSession: ({ account, tier, priceIds, kind }) =>
       client
         .createCheckoutSession({
-          priceId,
+          priceIds,
           tier,
+          kind,
           customerExternalId: account,
           successUrl: success,
           cancelUrl: cancel,
@@ -150,6 +177,14 @@ export const stripeClientBindings = (
           Effect.mapError((cause) => declined("createInvoice", cause)),
           Effect.map((invoice) => ({ invoiceId: invoice.invoiceId })),
         ),
+    ...(client.resolvePrice === undefined
+      ? {}
+      : {
+          resolvePrice: (lookupKey: string) =>
+            client.resolvePrice!(lookupKey).pipe(
+              Effect.mapError((cause) => declined("resolvePrice", cause)),
+            ),
+        }),
     ...(client.createRefund === undefined
       ? {}
       : {
@@ -158,13 +193,50 @@ export const stripeClientBindings = (
               Effect.mapError((cause) => declined("createRefund", cause)),
             ),
         }),
-    ...(client.syncTier === undefined
+    ...(client.reportUsage === undefined || where.meters === undefined
       ? {}
       : {
-          syncTier: ({ account, tier }: { account: string; tier: string }) =>
-            client.syncTier!({ customerExternalId: account, tier }).pipe(
-              Effect.mapError((cause) => declined("syncTier", cause)),
-            ),
+          reportUsage: ({
+            account,
+            periodStart: _periodStart,
+            periodEnd,
+            quantities,
+            commandId,
+          }: {
+            account: string;
+            periodStart: DateTime.Utc;
+            periodEnd: DateTime.Utc;
+            quantities: Readonly<Record<string, number>>;
+            commandId: string;
+          }) =>
+            Effect.forEach(
+              Object.entries(quantities),
+              ([feature, quantity]) => {
+                const eventName = where.meters?.[feature];
+                if (eventName === undefined) {
+                  return Effect.fail(
+                    new PaymentDeclined({
+                      provider: "stripe",
+                      code: "meter_not_configured",
+                      message: `no Stripe meter for ${feature}`,
+                    }),
+                  );
+                }
+                return client.reportUsage!({
+                  eventName,
+                  customerExternalId: account,
+                  quantity,
+                  // The period plus the account and feature: two accounts can
+                  // close the same period, and one report carries many features.
+                  identifier: `${commandId}:${account}:${feature}`,
+                  timestamp: Math.floor(DateTime.toEpochMillis(periodEnd) / 1000),
+                }).pipe(
+                  Effect.as({}),
+                  Effect.mapError((cause) => declined("reportUsage", cause)),
+                );
+              },
+              { concurrency: 1 },
+            ).pipe(Effect.as({})),
         }),
   };
   return { bindings };
@@ -177,9 +249,8 @@ export const stripeClientBindings = (
  * needs, with the tier → price mapping and the price the catalog states, so
  * `Stack` can refuse a mapping that disagrees at deploy time.
  *
- * It moves money; paykit keeps the entitlement. A Stripe entitlement is written
- * by `syncTier` when the client implements it and is never read back —
- * `check()` answers from paykit's own read model.
+ * It moves money; paykit keeps the entitlement, and `check()` answers from
+ * paykit's own read model rather than from anything read back out of Stripe.
  *
  * ### Selling a tier with Stripe
  * **Example:** A processor behind the catalog

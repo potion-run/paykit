@@ -43,6 +43,7 @@ import { CreditsGranted, GrantCredits } from "../../src/Subscription/GrantCredit
 import { NotInGrace } from "../../src/Subscription/NotInGrace.rejection.ts";
 import { NotScheduled } from "../../src/Subscription/NotScheduled.rejection.ts";
 import { NotSubscribed } from "../../src/Subscription/NotSubscribed.rejection.ts";
+import { PeriodEnded } from "../../src/Subscription/PeriodEnded.command.ts";
 import { PaymentRecorded, RecordPayment } from "../../src/Subscription/RecordPayment.command.ts";
 import {
   PaymentFailed,
@@ -91,10 +92,14 @@ const account = Subscription.ref("acct_life");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
+const march = at("2030-03-01T00:00:00Z");
 const graceUntil = at("2030-01-08T00:00:00Z");
 
 const activated = new SubscriptionActivated({
   tier: "pro",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: proAllowances,
   remaining: { messages: 2000 },
   periodStart: start,
@@ -108,7 +113,17 @@ const activated = new SubscriptionActivated({
 
 const subscribed = [
   Story.clock(start),
-  Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+  Story.when(
+    account,
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: proAllowances,
+      price: proPrice,
+    }),
+  ),
   Story.then(account, activated),
 ] as const;
 
@@ -193,6 +208,8 @@ it.effect("closes the period, resets usage, expires credits and opens the next p
       new UsageRecorded({
         feature: "messages",
         amount: 500,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 500,
         remainingAfter: 1500,
       }),
@@ -214,7 +231,7 @@ it.effect("closes the period, resets usage, expires credits and opens the next p
         standingAfter: "good",
         cancelAtPeriodEndAfter: false,
       }),
-      new UsageReset({ remaining: { messages: 2000 } }),
+      new UsageReset({ remaining: { messages: 2000 }, carried: { messages: 0 } }),
       new CreditsExpired({ amount: 250, balanceAfter: 0 }),
     ),
     Story.view(Entitlements, account, {
@@ -224,6 +241,7 @@ it.effect("closes the period, resets usage, expires credits and opens the next p
           included: 2000,
           used: 0,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: 2000,
           overage: "bill",
@@ -255,12 +273,27 @@ it.effect("a scheduled cancellation blocks usage once the period closes", () =>
         standingAfter: "blocked",
         cancelAtPeriodEndAfter: true,
       }),
-      new UsageReset({ remaining: { messages: 2000 } }),
+      new UsageReset({ remaining: { messages: 2000 }, carried: { messages: 0 } }),
       new CreditsExpired({ amount: 0, balanceAfter: 0 }),
     ),
     Story.view(Entitlements, account, { status: "canceled", standing: "blocked" }),
     Story.when(account, new TrackUsage({ feature: "messages", amount: 1 })),
     Story.rejected(new StandingBlocksUsage({ standing: "blocked", status: "canceled" })),
+    // The chain stops: a canceled standing closes no further period, even
+    // when a stale timer or an operator asks it to.
+    Story.clock(march),
+    Story.then(account),
+    Story.when(account, new PeriodEnded({ periodEnd: march })),
+    Story.then(account),
+    Story.when(account, new ClosePeriod({ periodEnd: march })),
+    Story.rejected(new PeriodNotClosed({ periodEnd: march, now: march })),
+    Story.when(account, new EnterGrace({ graceUntil })),
+    Story.rejected(new NotInGrace({ status: "canceled" })),
+    Story.view(Entitlements, account, {
+      status: "canceled",
+      standing: "blocked",
+      periodEnd: march,
+    }),
   ),
 );
 
@@ -285,6 +318,8 @@ it.effect("expires only from grace and is terminal", () =>
     Story.when(account, new Expire()),
     Story.then(account),
     Story.view(Entitlements, account, { status: "expired", standing: "blocked" }),
+    Story.when(account, new EnterGrace({ graceUntil })),
+    Story.rejected(new NotInGrace({ status: "expired" })),
   ),
 );
 
@@ -296,6 +331,9 @@ it.effect("extends a trial and refuses when there is none", () =>
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         trialEndsAt: at("2030-01-15T00:00:00Z"),
       }),
@@ -304,6 +342,9 @@ it.effect("extends a trial and refuses when there is none", () =>
       account,
       new TrialStarted({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -373,15 +414,27 @@ it.effect("refuses commands that need a standing", () =>
   ),
 );
 
-it.effect("a trial started after a free tier keeps the account's credits and refs", () =>
+it.effect("a trial started after a free tier keeps its refs, and grants the trial pool", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "free", allowances: allowances("free") })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: allowances("free"),
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "free",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: allowances("free"),
         remaining: { messages: 100 },
         periodStart: start,
@@ -406,6 +459,9 @@ it.effect("a trial started after a free tier keeps the account's credits and ref
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         trialEndsAt: at("2030-01-15T00:00:00Z"),
       }),
@@ -414,6 +470,9 @@ it.effect("a trial started after a free tier keeps the account's credits and ref
       account,
       new TrialStarted({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -424,7 +483,9 @@ it.effect("a trial started after a free tier keeps the account's credits and ref
       }),
     ),
     Story.state(account, {
-      credits: 300,
+      // Activation grants the tier's pool, so the goodwill balance a `free`
+      // account held is replaced by what the trial sells. The refs survive.
+      credits: 0,
       refs: { polar: { customer: "cus_polar" } },
       trialUsed: true,
     }),

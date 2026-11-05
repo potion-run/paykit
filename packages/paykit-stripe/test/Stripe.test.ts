@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "@potion.run/paykit";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import {
@@ -21,7 +22,7 @@ const recording = (asked: Array<Record<string, unknown>> = []): StripeClient => 
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
-      return { url: `https://checkout.stripe.test/${request.priceId}` };
+      return { url: `https://checkout.stripe.test/${request.priceIds.join(",")}` };
     }),
   createBillingPortalSession: (request) =>
     Effect.sync(() => {
@@ -56,17 +57,108 @@ describe("Stripe as a paykit provider", () => {
       const session = yield* runWith(
         provider,
         Effect.gen(function* () {
-          return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+          return yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
         }),
       );
       expect(session.url).toContain("price_123");
       expect(asked[0]).toMatchObject({
-        priceId: "price_123",
+        priceIds: ["price_123"],
         tier: "pro",
         customerExternalId: "acct_1",
         successUrl: "https://app.example.com/welcome",
         cancelUrl: "https://app.example.com/pricing",
       });
+    }),
+  );
+
+  it.effect("attaches the metered price and reports the period's units", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const unitPrice = { amount: 2, currency: "usd" } as const;
+      const provider = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+        tiers: {
+          pro: {
+            price: proPrice,
+            priceId: "price_123",
+            usage: { messages: { unitPrice, priceId: "price_msg" } },
+          },
+        },
+        meters: { messages: "paykit_prod_messages" },
+        client: {
+          ...recording(asked),
+          reportUsage: (request) =>
+            Effect.sync(() => {
+              asked.push(request as never);
+              return {};
+            }),
+        },
+      });
+
+      expect(provider.capabilities.has("usage")).toBe(true);
+      expect(provider.unitPrices).toEqual({ pro: { messages: unitPrice } });
+      const session = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
+        }),
+      );
+      expect(session.url).toContain("price_123,price_msg");
+
+      const periodStart = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
+      const periodEnd = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+      yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          yield* (yield* Payments).reportUsage({
+            account: "acct_1",
+            periodStart,
+            periodEnd,
+            quantities: { messages: 50 },
+            commandId: "period-usage:1:2",
+          });
+        }),
+      );
+      // One meter event per feature, with the period as its idempotency key.
+      expect(asked.at(-1)).toMatchObject({
+        eventName: "paykit_prod_messages",
+        customerExternalId: "acct_1",
+        quantity: 50,
+        identifier: "period-usage:1:2:acct_1:messages",
+        timestamp: Math.floor(DateTime.toEpochMillis(periodEnd) / 1000),
+      });
+    }),
+  );
+
+  it.effect("opens a one-off purchase and forwards the kind", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const provider = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+        tiers,
+        client: recording(asked),
+      });
+      yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "one_off",
+          });
+        }),
+      );
+      expect(asked[0]).toMatchObject({ tier: "pro", kind: "one_off" });
     }),
   );
 
@@ -140,7 +232,11 @@ describe("Stripe as a paykit provider", () => {
         runWith(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );
@@ -160,7 +256,11 @@ describe("Stripe as a paykit provider", () => {
         runWith(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );

@@ -1,4 +1,4 @@
-import { allowance } from "./Allowance.ts";
+import { allowance, grant } from "./Allowance.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
@@ -8,9 +8,10 @@ import { ChargeProration } from "./ChargeProration.ts";
 import { Check, CheckHttp, CheckInProcess, CheckReadModel, evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
-import { Release, Reserve, Settle } from "./Hold.ts";
+import { Hold, Release, Settle } from "./Hold.ts";
 import { List } from "./List.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
+import { paymentsRouter } from "./Payments.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
@@ -23,10 +24,11 @@ import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { Subscribe } from "./Subscribe.ts";
+import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { Track } from "./Track.ts";
 import { Verify, verifyState } from "./Verify.ts";
-import { completeCheckout, handleWebhook } from "./Webhooks.ts";
+import { Webhook, completeCheckout, handleWebhook } from "./Webhooks.ts";
 
 /**
  * The four export groups as one namespace, so the docs' `Paykit.feature(...)`
@@ -63,6 +65,7 @@ export const Paykit = {
   // deploy-time
   feature,
   allowance,
+  grant,
   tier,
   catalog,
   defineCatalog,
@@ -84,7 +87,7 @@ export const Paykit = {
   CheckHttp,
   evaluateCheck,
   Track,
-  Reserve,
+  Hold,
   Settle,
   Release,
   Subscribe,
@@ -95,11 +98,13 @@ export const Paykit = {
   Verify,
   verifyState,
   doctor,
+  Webhook,
   handleWebhook,
   completeCheckout,
   // model
   Model: PaykitModel,
   ModelHandlers: PaykitHandlers,
+  PeriodCloseUsage,
   BillingApi,
   BillingAdminApi,
   // providers
@@ -107,4 +112,5 @@ export const Paykit = {
   Manual: PaymentsManual,
   Stripe: PaymentsStripe,
   PaymentsPolar,
+  paymentsRouter,
 } as const;

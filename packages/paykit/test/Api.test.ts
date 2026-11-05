@@ -47,7 +47,11 @@ it.live("an admin grants credits through the command, then reads Entitlements", 
   Effect.gen(function* () {
     const admin = yield* BillingAdminApi.clientInProcess;
     const tenant = yield* BillingApi.clientInProcess;
-    yield* tenant.Subscribe(account.id, { tier: "free", allowances: free }, asAccount);
+    yield* tenant.Subscribe(
+      account.id,
+      { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
+      asAccount,
+    );
     const granted = yield* admin.GrantCredits(account.id, { amount: 250 }, asAdmin);
     expect(granted.reply).toEqual({ balance: 250 });
     const state = yield* admin.BillingState.get(account.id, { atLeast: granted, ...asAdmin });
@@ -72,7 +76,11 @@ it.live("an admin grants credits through the command, then reads Entitlements", 
 it.live("the tenant surface tracks usage but does not serve the admin commands", () =>
   Effect.gen(function* () {
     const tenant = yield* BillingApi.clientInProcess;
-    yield* tenant.Subscribe(account.id, { tier: "free", allowances: free }, asAccount);
+    yield* tenant.Subscribe(
+      account.id,
+      { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
+      asAccount,
+    );
     const tracked = yield* tenant.TrackUsage(
       account.id,
       { feature: "messages", amount: 5 },
@@ -88,7 +96,13 @@ it.live("a request with no caller is refused before it reaches the model", () =>
   Effect.gen(function* () {
     const tenant = yield* BillingApi.clientInProcess;
     const exit = yield* Effect.exit(
-      tenant.Subscribe(account.id, { tier: "free", allowances: free }),
+      tenant.Subscribe(account.id, {
+        tier: "free",
+        allowances: free,
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+      }),
     );
     expect(exit._tag).toBe("Failure");
     expect(String(exit)).toContain("Unauthenticated");
@@ -101,7 +115,7 @@ it.live("an account cannot act on another account", () =>
     const exit = yield* Effect.exit(
       tenant.Subscribe(
         Subscription.ref("acct_someone_else").id,
-        { tier: "free", allowances: free },
+        { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
         asAccount,
       ),
     );
@@ -125,7 +139,7 @@ it.live("a signed-in account reads only its own entitlements", () =>
     const tenant = yield* BillingApi.clientInProcess;
     const subscribed = yield* tenant.Subscribe(
       account.id,
-      { tier: "free", allowances: free },
+      { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
       asAccount,
     );
     const mine = yield* tenant.Entitlements.get(account.id, { atLeast: subscribed, ...asAccount });
@@ -146,7 +160,7 @@ it.live("both surfaces read the same AccountEvents stream", () =>
     const tenant = yield* BillingApi.clientInProcess;
     const subscribed = yield* tenant.Subscribe(
       account.id,
-      { tier: "free", allowances: free },
+      { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
       asAccount,
     );
     yield* admin.AccountEvents.peek(account.id, { atLeast: subscribed, ...asAdmin });

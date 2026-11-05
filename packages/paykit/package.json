@@ -48,7 +48,6 @@
   },
   "devDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
-    "@alchemy.run/stripe": "catalog:",
     "@alchemy.run/test": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
@@ -59,16 +58,12 @@
   },
   "peerDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
-    "@alchemy.run/stripe": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "foldkit": "catalog:"
   },
   "peerDependenciesMeta": {
     "@alchemy.run/cloudflare": {
-      "optional": true
-    },
-    "@alchemy.run/stripe": {
       "optional": true
     },
     "foldkit": {

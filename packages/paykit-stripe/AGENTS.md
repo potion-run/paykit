@@ -3,6 +3,9 @@
 Stripe for paykit: one call that returns a `Payments` provider, the webhook that moves a
 standing, and the three Stripe calls they need. Over `@distilled.cloud/stripe`.
 
+Resource-provider patterns (lifecycle, Reconciler doctrine, ownership, tests) live in the root
+[AGENTS.md](../../AGENTS.md#resource-providers).
+
 **This is a paykit package, not a general Alchemy provider.** It imports `@potion.run/paykit`,
 because its whole job is to be the shortest path from a catalog to a working Stripe processor.
 That is a deliberate maintenance choice: a general provider would need its own users, docs,
@@ -19,10 +22,29 @@ use. Do not grow this one into it.
 import { Stripe } from "@potion.run/paykit-stripe";
 import { Paykit } from "@potion.run/paykit";
 
+// The deploy creates the prices the catalog states and hands back the keys.
+const sold = yield* StripePrices("Prices", {
+  tiers: {
+    pro: {
+      price: proPrice,
+      usage: { messages: { amount: 2, currency: "usd" } },
+    },
+  },
+});
+
 const stripe = Stripe({
   secretKey: yield* Config.redacted("STRIPE_SECRET_KEY"),
   origin: "https://app.example.com",
-  tiers: { pro: { price: proPrice, priceId: "price_123" } },
+  tiers: {
+    pro: {
+      price: proPrice,
+      lookupKey: sold.prices.pro,
+      usage: {
+        messages: { unitPrice: { amount: 2, currency: "usd" }, lookupKey: sold.usage.pro.messages },
+      },
+    },
+  },
+  meters: sold.meters,
 });
 ```
 
@@ -35,7 +57,9 @@ const stripe = Stripe({
 | `distilledStripeClient` | `@distilled.cloud/stripe` behind those calls |
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
-| `StripeSignatureInvalid` | the request did not come from Stripe, or did not come recently |
+| `StripePrices(id, { tiers })` | creates the products, base prices, meters and metered prices the catalog states, and returns `{ prices, usage, meters }` |
+| `priceDeclarations(tiers)` | the pure mapping: resource ids, lookup keys, amounts, intervals |
+| `lookupKeyOf(stage, tier)` | `paykit:<stage>:<tier>`, the only identity that survives a restore |
 
 `Stripe()` builds the distilled client from `secretKey` when no `client` is given, so a deployment
 wires nothing. It returns what the catalog needs and nothing else: `kind`, `capabilities`,
@@ -48,14 +72,43 @@ only moves when paykit applies the provider's event. The signature check is
 not model, which the route answers 200 and ignores. The Stripe event id becomes the command id, so
 a redelivery replays instead of charging twice.
 
+## The deploy provisions the prices
+
+`StripePrices` yields one `@alchemy.run/stripe` `Product` and base `Price` per priced tier — the
+vendor package's own resources, not a second implementation — plus a `BillingMeter` and a metered
+`Price` for every `usage` feature. It returns `SoldPrices`: the base lookup key per tier, the metered
+lookup key per tier and feature, and the meter event name per feature. `Stripe({ meters })` carries
+the meter map to the runtime so the close can report usage. Three rules come with it, from
+[ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
+
+- **A price is never deleted.** A tier that leaves the catalog is archived, because invoices
+  reference it. A changed amount creates a new price, moves the lookup key onto it
+  (`transfer_lookup_key`) and archives the old one, because Stripe prices are immutable and a live
+  subscription must not change what it is charged.
+- **The lookup key is the identity, the id is a cache.** `paykit:<stage>:<tier>` is what a restored
+  state reconciles to; a price id is an output of one run. The stage is in the key because every
+  stage that shares a key pair shares the Stripe account, and `transfer_lookup_key` would otherwise
+  let a preview price take the key from production's.
+- **The catalog stays provider-free.** `StripePrices` takes prices and returns keys. Nothing about
+  Stripe reaches the catalog, and a stack that runs two providers declares both from the same
+  prices. A tier entry can state `kind: "one_off"` so its price is one-time; the checkout then uses
+  Stripe's `mode: "payment"` instead of starting a subscription.
+
+`Stripe({ tiers })` accepts either handle: a `priceId` pins one price object, a `lookupKey` resolves
+to whichever price currently answers for the tier (through `resolvePrice`, which the distilled
+client implements with `GetPrices`). With a key, changing a price in the catalog needs no config
+change. The checkout carries the base price and every metered price as line items on one
+subscription, and `StripeProps.meters` is what lets `reportUsage` send one meter event per feature
+with the closing period as its identifier.
+
 ## Rules
 
 - **The catalog never carries a Stripe id.** A tier maps to a `priceId` here, in provider config.
   `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
 - **A capability is what the client implements.** `checkout` and `portal` are always there;
-  `invoice`, `refund` and `syncTier` are declared only when the client carries them, and asking for
-  an absent one fails with `ProviderCapabilityMissing`. A stub that returns success would be a
-  silent degradation.
+  `invoice` and `refund` are declared only when the client carries them, and asking for an absent
+  one fails with `ProviderCapabilityMissing`. A stub that returns success would be a silent
+  degradation.
 - **The checkout carries the tier.** The session is created with `client_reference_id` and
   `metadata.tier`, so the webhook reads what was bought instead of grepping a line item. An invoice
   or a subscription has no such metadata, so its tier comes from the price the buyer paid for — and

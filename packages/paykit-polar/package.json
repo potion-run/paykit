@@ -60,6 +60,7 @@
   },
   "peerDependencies": {
     "@potion.run/paykit": "workspace:*",
+    "alchemy": "catalog:",
     "effect": "catalog:"
   }
 }

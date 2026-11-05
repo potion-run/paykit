@@ -70,6 +70,9 @@ const scaleAllowances = allowances("scale");
 
 const activatedFree = new SubscriptionActivated({
   tier: "free",
+  credits: 0,
+  creditsExpire: "period",
+  rates: {},
   allowances: freeAllowances,
   remaining: { messages: 100 },
   periodStart: start,
@@ -83,7 +86,16 @@ it.effect("subscribes to a free tier and exposes its entitlements", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "free", allowances: freeAllowances })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: freeAllowances,
+      }),
+    ),
     Story.then(account, activatedFree),
     Story.state(account, { _tag: "Subscribed", tier: "free", status: "active" }),
     Story.view(Entitlements, account, {
@@ -95,6 +107,7 @@ it.effect("subscribes to a free tier and exposes its entitlements", () =>
           included: 100,
           used: 0,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: 100,
           overage: "block",
@@ -116,7 +129,16 @@ it.effect("records usage and refuses past a blocking allowance", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "free", allowances: freeAllowances })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: freeAllowances,
+      }),
+    ),
     Story.then(account, activatedFree),
     Story.when(account, new TrackUsage({ feature: "messages", amount: 40 })),
     Story.then(
@@ -124,6 +146,8 @@ it.effect("records usage and refuses past a blocking allowance", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 40,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 40,
         remainingAfter: 60,
       }),
@@ -134,6 +158,7 @@ it.effect("records usage and refuses past a blocking allowance", () =>
           included: 100,
           used: 40,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: 60,
           overage: "block",
@@ -159,7 +184,16 @@ it.effect("dedupes a usage fact by its key", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "free", allowances: freeAllowances })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: freeAllowances,
+      }),
+    ),
     Story.then(account, activatedFree),
     Story.when(account, new TrackUsage({ feature: "messages", amount: 10, dedupeKey: "req-1" })),
     Story.then(
@@ -167,6 +201,8 @@ it.effect("dedupes a usage fact by its key", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 10,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 10,
         remainingAfter: 90,
         dedupeKey: "req-1",
@@ -180,6 +216,7 @@ it.effect("dedupes a usage fact by its key", () =>
           included: 100,
           used: 10,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: 90,
           overage: "block",
@@ -195,11 +232,24 @@ it.effect("bills overage past an included amount when the allowance says bill", 
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -217,6 +267,8 @@ it.effect("bills overage past an included amount when the allowance says bill", 
       new UsageRecorded({
         feature: "messages",
         amount: 2500,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 2500,
         remainingAfter: -500,
       }),
@@ -227,6 +279,7 @@ it.effect("bills overage past an included amount when the allowance says bill", 
           included: 2000,
           used: 2500,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: -500,
           overage: "bill",
@@ -246,6 +299,9 @@ it.effect("starts one trial per account", () =>
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         trialEndsAt: at("2030-01-15T00:00:00Z"),
       }),
@@ -254,6 +310,9 @@ it.effect("starts one trial per account", () =>
       account,
       new TrialStarted({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -268,6 +327,9 @@ it.effect("starts one trial per account", () =>
       account,
       new StartTrial({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         trialEndsAt: at("2030-02-15T00:00:00Z"),
       }),
@@ -279,7 +341,16 @@ it.effect("starts one trial per account", () =>
 it.effect("refuses a tier the catalog does not carry", () =>
   story(
     Story.provide(Actor, system()),
-    Story.when(account, new Subscribe({ tier: "nope", allowances: {} })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "nope",
+        allowances: {},
+      }),
+    ),
     Story.rejected(new TierNotInCatalog({ tier: "nope" })),
   ),
 );
@@ -288,11 +359,24 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -310,6 +394,8 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
       new UsageRecorded({
         feature: "messages",
         amount: 900,
+        cost: 0,
+        creditsAfter: 0,
         usedAfter: 900,
         remainingAfter: 1100,
       }),
@@ -318,6 +404,9 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
       account,
       new ChangeTier({
         tier: "scale",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: scaleAllowances,
         price: { amount: 9900, currency: "usd", interval: "month" },
         // The proration the model works out at the period's start: the whole
@@ -329,6 +418,9 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
       account,
       new TierChanged({
         tier: "scale",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: scaleAllowances,
         remaining: { messages: 4100 },
         currency: "usd",
@@ -345,6 +437,7 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
           included: 5000,
           used: 900,
           reserved: 0,
+          carried: 0,
           allowed: true,
           remaining: 4100,
           overage: "block",
@@ -357,6 +450,9 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
       account,
       new ChangeTier({
         tier: "free",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: freeAllowances,
       }),
     ),
@@ -368,11 +464,24 @@ it.effect("carries proration on a mid-cycle tier change for audit", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -388,6 +497,9 @@ it.effect("carries proration on a mid-cycle tier change for audit", () =>
       account,
       new ChangeTier({
         tier: "scale",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: scaleAllowances,
         price: { amount: 9900, currency: "usd", interval: "month" },
         proration: { currency: "usd", credit: 1900, charge: 9900, due: 8000 },
@@ -397,6 +509,9 @@ it.effect("carries proration on a mid-cycle tier change for audit", () =>
       account,
       new TierChanged({
         tier: "scale",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: scaleAllowances,
         remaining: { messages: 5000 },
         currency: "usd",
@@ -413,11 +528,24 @@ it.effect("refuses a currency change", () =>
   story(
     Story.provide(Actor, system()),
     Story.clock(start),
-    Story.when(account, new Subscribe({ tier: "pro", allowances: proAllowances, price: proPrice })),
+    Story.when(
+      account,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: proAllowances,
+        price: proPrice,
+      }),
+    ),
     Story.then(
       account,
       new SubscriptionActivated({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         remaining: { messages: 2000 },
         periodStart: start,
@@ -433,6 +561,9 @@ it.effect("refuses a currency change", () =>
       account,
       new ChangeTier({
         tier: "scale",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: scaleAllowances,
         price: { amount: 9900, currency: "eur", interval: "month" },
       }),

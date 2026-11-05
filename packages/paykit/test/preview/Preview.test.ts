@@ -67,6 +67,9 @@ it.live("previews the charge a tier change would make", () =>
       Subscription.ref(account),
       new Subscribe({
         tier: "pro",
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
         allowances: proAllowances,
         price: { amount: 1900, currency: "usd", interval: "month" },
       }),
@@ -112,7 +115,13 @@ it("a preview's events match what the same command records", () =>
     const subscription = yield* Subscription;
     const receipt = yield* subscription.send(
       Subscription.ref(account),
-      new Subscribe({ tier: "free", allowances: allowancesOf(testCatalog, "free")! }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: allowancesOf(testCatalog, "free")!,
+      }),
     );
     expect(receipt.events.map((event) => event._tag)).toEqual(
       predicted.events.map((event) => event._tag),

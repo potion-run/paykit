@@ -2,6 +2,7 @@ import type * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import { UnitPrice } from "./Allowance.ts";
 import { catalog, type Catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
 import { PaymentCapability, type MoneyProvider } from "./Payments.ts";
 import { Price, type Tier } from "./Tier.ts";
@@ -43,6 +44,10 @@ export const ProviderDescriptor = Schema.Struct({
   webhook: Schema.Boolean,
   capabilities: Schema.Array(PaymentCapability),
   prices: Schema.optional(Schema.Record(Schema.String, Price)),
+  /** What the provider charges per billable unit, per tier and feature. */
+  unitPrices: Schema.optional(
+    Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
+  ),
 });
 export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
@@ -53,6 +58,7 @@ export const providerDescriptor = (provider: MoneyProvider): ProviderDescriptor 
   webhook: provider.webhook !== undefined,
   capabilities: [...provider.capabilities],
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
+  ...(provider.unitPrices === undefined ? {} : { unitPrices: provider.unitPrices }),
 });
 
 /** The store a Stack writes its event log to. */
@@ -142,6 +148,45 @@ export const validateProviderMappings = (
       const mismatch = checkPrice(tier, mapped);
       if (mismatch !== null) return mismatch;
     }
+    // A unit price the provider states and the catalog does not is as much a
+    // disagreement as a different amount: the vendor would bill a feature the
+    // entitlement plane never priced.
+    for (const [tierId, mapped] of Object.entries(provider.unitPrices ?? {})) {
+      const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+      if (tier === undefined) {
+        return new CatalogPriceMismatch({
+          tier: tierId,
+          field: "unitPrices",
+          expected: "in catalog",
+          actual: "missing",
+        });
+      }
+      for (const [featureId, unitPrice] of Object.entries(mapped)) {
+        const grant = tier.grants.find((candidate) => candidate.feature === featureId);
+        const mismatch = checkUnitPrice(tier.id, featureId, grant?.unitPrice, unitPrice);
+        if (mismatch !== null) return mismatch;
+      }
+    }
+    // A provider that can meter a postpaid tier must map every billable
+    // feature, or the close would have a price to charge and no meter to send
+    // the quantity to. A provider that maps no price for the tier is not
+    // selling it here, so it is not asked for a meter.
+    if (provider.capabilities.includes("usage")) {
+      for (const [tierId] of Object.entries(provider.prices ?? {})) {
+        const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+        if (tier === undefined) continue;
+        for (const grant of tier.grants) {
+          if (grant.unitPrice === undefined) continue;
+          if (provider.unitPrices?.[tierId]?.[grant.feature] !== undefined) continue;
+          return new CatalogPriceMismatch({
+            tier: tierId,
+            field: `unitPrice.${grant.feature}`,
+            expected: `${grant.unitPrice.amount} ${grant.unitPrice.currency}`,
+            actual: "missing",
+          });
+        }
+      }
+    }
   }
   for (const tier of parsed.tiers) {
     if (tier.price === undefined) continue;
@@ -150,6 +195,33 @@ export const validateProviderMappings = (
         provider.capabilities.includes("checkout") || provider.capabilities.includes("invoice"),
     );
     if (!canSell) return new NoPurchasePath({ tier: tier.id });
+  }
+  return null;
+};
+
+/** Compare one provider unit price with the catalog's, or with the absence of one. */
+const checkUnitPrice = (
+  tier: string,
+  feature: string,
+  expected: UnitPrice | undefined,
+  actual: UnitPrice,
+): CatalogPriceMismatch | null => {
+  const field = `unitPrice.${feature}`;
+  if (expected === undefined) {
+    return new CatalogPriceMismatch({
+      tier,
+      field,
+      expected: "none",
+      actual: `${actual.amount} ${actual.currency}`,
+    });
+  }
+  if (expected.amount !== actual.amount || expected.currency !== actual.currency) {
+    return new CatalogPriceMismatch({
+      tier,
+      field,
+      expected: `${expected.amount} ${expected.currency}`,
+      actual: `${actual.amount} ${actual.currency}`,
+    });
   }
   return null;
 };

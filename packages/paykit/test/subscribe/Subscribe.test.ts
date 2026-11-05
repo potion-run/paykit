@@ -24,7 +24,16 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
-const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
+const packTier = tier({
+  id: "credits_1k",
+  kind: "one_off",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  credits: 1_000,
+  grants: [],
+});
+const testCatalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [freeTier, proTier, packTier] }),
+);
 const account = "acct_checkout";
 
 const ModelWorld = PaykitModel.layer(
@@ -95,6 +104,58 @@ describe("Subscribe purchase path", () => {
         expect(current.status).toBe("active");
         expect(current.refs.memory?.checkout).toContain("checkout");
       }
+    }).pipe(withMemory),
+  );
+
+  it.live("opens a one-off purchase without changing the standing", () =>
+    Effect.gen(function* () {
+      const subscribe = yield* Subscribe();
+      yield* subscribe({ account, tier: "free" });
+      const purchase = yield* subscribe({ account, tier: "credits_1k" });
+      expect("url" in purchase).toBe(true);
+
+      // The checkout is a purchase, not a second standing: the account is
+      // still on the free tier until the provider reports the payment.
+      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free", credits: 0 });
+
+      const action = yield* completeCheckout({
+        id: "evt_pack_1",
+        provider: "memory",
+        account,
+        tier: "credits_1k",
+      });
+      expect(action).toBe("purchased");
+      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free", credits: 1_000 });
+    }).pipe(withMemory),
+  );
+
+  it.live("buys a pack before a plan, and the first subscription carries the pool", () =>
+    Effect.gen(function* () {
+      const subscribe = yield* Subscribe();
+      const purchase = yield* subscribe({ account, tier: "credits_1k" });
+      expect("url" in purchase).toBe(true);
+      expect((yield* state)._tag).toBe("Unsubscribed");
+
+      const action = yield* completeCheckout({
+        id: "evt_pack_pre",
+        provider: "memory",
+        account,
+        tier: "credits_1k",
+      });
+      expect(action).toBe("purchased");
+      expect(yield* state).toMatchObject({
+        _tag: "Unsubscribed",
+        credits: 1_000,
+        prepaidCredits: 1_000,
+      });
+
+      yield* subscribe({ account, tier: "free" });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        tier: "free",
+        credits: 1_000,
+        prepaidCredits: 1_000,
+      });
     }).pipe(withMemory),
   );
 

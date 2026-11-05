@@ -1,7 +1,10 @@
 # @potion.run/paykit-polar
 
-Polar for paykit: one call that returns a `Payments` provider, and the Polar-shaped pieces it
-needs to do that. Over `@distilled.cloud/polar`.
+Polar for paykit: one call that returns a `Payments` provider, the products its tiers are sold
+as, and the Polar-shaped pieces it needs to do that. Over `@distilled.cloud/polar`.
+
+Resource-provider patterns (lifecycle, Reconciler doctrine, ownership, tests) live in the root
+[AGENTS.md](../../AGENTS.md#resource-providers).
 
 **This is a paykit package, not a general Alchemy provider.** It imports `@potion.run/paykit`,
 because its whole job is to be the shortest path from a catalog to a working Polar merchant of
@@ -18,11 +21,27 @@ written for those users. Do not grow this one into it.
 import { Polar } from "@potion.run/paykit-polar";
 import { Paykit } from "@potion.run/paykit";
 
+const sold = yield* PolarPrices("Prices", {
+  tiers: {
+    pro: {
+      price: proPrice,
+      usage: { messages: { amount: 2, currency: "usd" } },
+    },
+  },
+});
+
 const polar = Polar({
   accessToken: Config.redacted("POLAR_ACCESS_TOKEN"),
   server: "production",           // or "sandbox"
   origin: "https://app.example.com",
-  tiers: { pro: { price: proPrice, productId: "prod_123" } },
+  tiers: {
+    pro: {
+      price: proPrice,
+      productId: sold.products.pro,
+      usage: { messages: { amount: 2, currency: "usd" } },
+    },
+  },
+  meters: sold.meters,
 });
 ```
 
@@ -33,9 +52,15 @@ const polar = Polar({
 | `PolarProps` | token, server, origin and the tier mapping |
 | `PolarClient` | the three Polar calls, as an interface a test stands in for |
 | `distilledPolarClient` | `@distilled.cloud/polar` behind those three calls |
+| `PolarPrices(id, { tiers })` | creates the products, meters and metered prices the catalog states, and returns `{ products, meters }` |
+| `priceDeclarations(tiers, stage)` | the pure mapping: names, resource ids and the prices |
+| `productNameOf(stage, tier)` | `paykit:<stage>:<tier>`, the name that carries the stage |
+| `Product` | the `Polar.Product` resource a stack reconciles |
+| `Meter` | the `Polar.Meter` resource a metered price counts through |
+| `polarProviders({ accessToken, server })` | the provider layer a stack mounts so `PolarPrices` can run |
 | `polarWebhook(props)` | verifies and translates a Polar webhook into paykit's `WebhookEvent` |
 | `PolarProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
-| `PolarSignatureInvalid` | the request did not come from Polar, or did not come recently |
+| `PolarWebhookError` | a delivery did not come from Polar, or did not come recently |
 
 `Polar()` builds the distilled client from `accessToken` + `server` when no
 `client` is given, so a deployment wires nothing: `server: "sandbox"` points at
@@ -50,16 +75,39 @@ decodes the payload and answers the `WebhookEvent` `handleWebhook` already knows
 `none` for a Polar event paykit does not model, which the route answers 200 and ignores. The
 `webhook-id` header becomes the command id, so a redelivery replays instead of charging twice.
 
+## The deploy provisions the products
+
+`PolarPrices` yields one `Polar.Product` per priced tier and one `Polar.Meter` per billable feature,
+then returns `SoldPrices`: the product id per tier and the meter event name per feature. Mount
+`polarProviders({ accessToken, server })` beside the other providers so the stack can reconcile
+them. Each product id is an Alchemy `Output<string>`: hand it to the Worker's environment and build
+`Polar({ tiers })` there with the resolved id, plus `meters` for the close. A product carries its
+fixed price and every metered price; a changed metered price is a new product generation. Three
+rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
+
+- **A product is never deleted.** A tier that leaves the catalog is retained: `RemovalPolicy.retain`
+  skips the provider's delete, so the product stays in Polar and only the state row goes away. It is
+  not archived — archiving a retired product is its own slice.
+- **The tier is the identity, in Polar's own fields.** `metadata.paykit_tier = "<tier>"` plus the
+  stage-qualified name `paykit:<stage>:<tier>`. A state-lost deploy finds the product by that pair
+  instead of creating a second one, and a price change is a new generation of the same identity.
+- **The catalog stays provider-free.** `PolarPrices` takes prices and returns products and meters.
+  Nothing about Polar reaches the catalog, and a stack that runs two providers declares both from the
+  same prices. A tier entry can state `kind: "one_off"` so its product is one-time; the checkout then
+  charges once instead of starting a subscription.
+
+Polar embeds prices in the product, where Stripe models a price as its own object. So a price change
+replaces the product (a new id, the old one kept), and the difference stops inside this package:
+`paykit`'s `PolarTier` keeps its `{ price, productId }` shape.
+
 ## Rules
 
 - **The catalog never carries a Polar id.** A tier maps to a `productId` here, in provider config.
   `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
 - **A missing capability is `ProviderCapabilityMissing`.** `Polar()` sells through checkout,
   refunds on request and opens the customer portal, so it declares `checkout`, `refund` and
-  `portal`. `createInvoice` is never declared — Polar's purchase path is checkout — and `syncTier`
-  is declared only when the supplied `client` implements it, because the distilled client exposes
-  no benefit sync. A binding that asks for an absent op fails with a typed error rather than
-  silently doing nothing.
+  `portal`, `invoice` when `invoiceProductId` is configured, and `usage` when `meters` is. A
+  binding that asks for an absent op fails with a typed error rather than silently doing nothing.
 - **A vendor failure is `PaymentDeclined`**, never a defect. The model must be able to record a
   failed charge. The one defect the webhook path has is a runtime without WebCrypto: nothing can
   be verified there, and that is a deployment to fix, not a request to refuse.

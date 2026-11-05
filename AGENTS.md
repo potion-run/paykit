@@ -9,7 +9,7 @@ beside its source.
 | Package | Directory | What it is | Read next |
 | --- | --- | --- | --- |
 | `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
-| `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, in one call | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
+| `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, and the products its tiers are sold as | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
 | `@potion.run/paykit-admin` | `packages/paykit-admin` | Foldkit ops console for a paykit deployment | [AGENTS.md](./packages/paykit-admin/AGENTS.md) · [README.md](./packages/paykit-admin/README.md) |
 
 `examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
@@ -116,6 +116,119 @@ type or constructor; these are the rules this repo follows. Paths below are rela
   runnable example and the tag a docs generator reads (`@primitive`, `@resource`, `@layer`); the
   source is the docs source of truth (`packages/stripe/src/Price.ts`, Alchemy AGENTS.md).
 
+## Resource providers
+
+The vendor packages (`paykit-stripe`, `paykit-polar`) own Alchemy resources, so the rules in
+Alchemy's [AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) apply here. This
+section copies the resource part of that file — the lifecycle, the Reconciler doctrine, ownership
+testing and the test conventions — so a change to a resource does not have to leave the repo to find
+them. Where an ADR says something narrower (a price is never deleted, a hold is an entity), the ADR
+wins.
+
+### Lifecycle operations
+
+A provider implements:
+
+- **Diff** — compares new props with old props and decides update or replace. For an update it may
+  name stable properties. Use it as an optimization and to identify replacement, not as a third
+  path: return `undefined` / `void` for the default update, `{ action: "replace" }` when a
+  create-only prop changed, and never return `no-op` unless the change is deliberately ignored.
+- **Read** — reads current cloud attributes. It can run without current output (state was lost), so
+  derive the physical identity deterministically or find the object by ownership metadata. Return
+  `Unowned(attrs)` for an existing object that is not ours; the engine refuses adoption unless
+  `--adopt` is set. A missing object is `undefined`, not a failure.
+- **Pre-create / Observe** — only for a real bootstrap identity problem (a Function whose ARN is
+  needed by a dependency cycle). Financial resources do not need them; there is nothing to stub
+  before the real object exists.
+- **Reconcile** — converges actual cloud state to desired state for every starting point.
+- **Delete** — idempotent; a missing object is not an error. For financial records delete is
+  retention or archival, never destruction (ADR 0003).
+- **List** — enumerates every object in the scope for account-wide teardown, returning the same
+  attributes `read` does. A resource that cannot meaningfully be deleted sets
+  `nuke: { skip: true }`.
+
+### Reconciler doctrine
+
+`reconcile` receives `output` and `olds`:
+
+| `output` | `olds` | Meaning |
+| --- | --- | --- |
+| `undefined` | `undefined` | Greenfield — no prior physical resource |
+| defined | defined | Routine update — engine-owned resource |
+| defined | `undefined` | Adoption — engine-owned through `read` |
+
+It must work for all three. Do not branch the body on `output === undefined` and run a “create
+body” versus an “update body”; that is rename-and-branch and re-introduces every assumption the old
+create/update split made. Write one flow:
+
+1. **Observe** — derive the physical identifier and read live cloud state via `getX` / `describeX`.
+2. **Ensure** — if the resource is missing, create it. Catch `AlreadyExists` / `Conflict` as a race
+   and continue. Wait for active state if the vendor has one.
+3. **Sync** — for each mutable aspect (settings, sub-resources, tags, policy): read *observed* cloud
+   state, compute desired state from `news`, diff, and apply only the delta. Skip the API entirely
+   when there is no change.
+4. **Return** — re-read the final state if needed and return fresh attributes.
+
+Invariants:
+
+- **Observation beats assumption.** Cloud state is authoritative; `olds` is at most a hint to skip
+  a no-op call, never the source of truth for what is deployed.
+- **Each sync step is independently idempotent.** Crash mid-reconcile, re-run, converge.
+- **`output` is a cache** for stable identifiers (physical name, ARN, immutable id). It is not proof
+  the object still exists; if it does not, observation falls through to “missing” and ensure
+  recreates it.
+- **Catch the races.** `AlreadyExists` / `NotFound` / `ResourceInUse` are races or eventual
+  consistency, not failures to propagate.
+- **Tags diff against observed tags.** Adoption may hand you an object whose tags do not match what
+  was last persisted.
+
+The canonical reference reconcilers live in the Alchemy mirror under
+`.agent_sources/github.com/alchemy-run/alchemy/packages/`:
+`aws/src/S3/Bucket.ts`, `aws/src/SQS/Queue.ts`, `aws/src/DynamoDB/Table.ts`, `aws/src/EC2/Vpc.ts`
+and `cloudflare/src/Workers/Worker.ts`. Read one before writing a new lifecycle.
+
+### Ownership, adoption and identity
+
+- **Brand the object.** Stamp `createInternalTags(id)` on every resource, mapped to the vendor's
+  metadata constraints; ours lives in each vendor package's `Metadata.ts` (`alchemy::stack` →
+  `alchemy_stack`, and so on).
+- **Diff with `diffTags` against observed metadata**, never `olds.tags` or `output.metadata`.
+- **Refuse a foreign object.** `read` returns `Unowned(attrs)` when the object exists but lacks our
+  ownership tags, so a deploy cannot silently take over a hand-made object.
+- **The vendor id is a cache, not the identity.** Identity is the vendor's own field — a Stripe
+  lookup key, a Polar `metadata.paykit_tier` plus a stage-qualified name — so a restored state
+  reconciles to the same object instead of duplicating it.
+- **Do not construct a name from randomness.** Derive it from the stack, stage and logical id, or
+  from the catalog identity; a test must find the same object on every run.
+
+### Props, attributes and JSDoc
+
+- Props are plain types. **Never write `Input<T>` in a Props interface**; the engine applies
+  `Input` deeply. `Input<T>` is only for a helper that genuinely receives unresolved values.
+- A resource is `Resource<"Vendor.Resource", Props, Attributes, Binding, Providers>` and its
+  contract and provider live in the same file. Attributes are plain data.
+- Resource JSDoc uses `###` sections and `**Example:**` labels, with the generator tags last:
+  `@resource` and `@product Product` on a resource, `@primitive` / `@product Stripe` on a helper,
+  `@layer` on a provider layer. Every prop and attribute gets a field-level doc comment. The source
+  is the docs source of truth.
+- **Pure constructors, one validating Effect.** A declaration is total and side-effect-free; the
+  effectful entry point maps schema failures to a tagged error with context.
+
+### Resource tests
+
+- Lifecycle and reconciliation use `test.provider` with `stack.deploy`: start and end with
+  `stack.destroy()`, and exercise create, update, replacement and removal. A replace must prove the
+  old object is retained or archived as the ADR says.
+- Verify cloud state **out of band** through the vendor SDK, not from the provider's own attributes.
+  Assert deletion (or archival) through the vendor too.
+- Do not mock HTTP or SDK responses as a substitute for a deployment. A gated live test is the
+  authority for the vendor path; a fast fake may sit beside it as a contract test, and must say so
+  in its header.
+- Use deterministic identities; never `Date.now()`, a UUID or a random suffix in a name. When a
+  name is genuinely needed, derive it from `stack.stage`.
+- Resource code and its tests follow the [Effect discipline](#effect-discipline) above: no
+  `async` / `await`, raw `Promise`, `process.env`, `fetch` or `node:fs`.
+
 ## Source-first
 
 Effect, Alchemy and Foldkit are read from source before their APIs are guessed. `pnpm
@@ -170,6 +283,13 @@ add it; if a gate fails, fix the code rather than the gate.
 
 ## Further reading
 
+- [What to build next](./docs/NEXT.md) — the state of the work, the queue, the traps, and the
+  invariants a next slice must not break.
+- [ADRs](./docs/adr/) — decisions that shaped the model, oldest first. Read
+  [0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
+  express: it is the record that says pricing is catalog data and the deploy provisions the vendor.
+  [0006](./docs/adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) is the one to read before
+  touching `unitPrice`, `moneyCap` or `UsageRecorded.charge`.
 - [Alchemy AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) — engine
   concepts, the Reconciler doctrine, the Typed Error Doctrine and the binding conventions every
   provider package here follows.

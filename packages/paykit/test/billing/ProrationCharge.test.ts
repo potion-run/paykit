@@ -1,9 +1,12 @@
 import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
@@ -25,6 +28,7 @@ import { NoProrationDue } from "../../src/Subscription/RecordProrationInvoice.co
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import { assertProperty } from "../support/Property.ts";
 
 const proTier = tier({
   id: "pro",
@@ -76,8 +80,8 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "refund" })),
         createPortal: () =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "createPortal" })),
-        syncTier: () =>
-          Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "syncTier" })),
+        reportUsage: () =>
+          Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "reportUsage" })),
       }),
     ),
     Layer.succeed(PaymentsProvider, { name: "test", capabilities: new Set(["invoice"] as const) }),
@@ -102,11 +106,24 @@ const world = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
 const upgraded = Effect.gen(function* () {
   const subscription = yield* Subscription;
   const ref = Subscription.ref(account);
-  yield* subscription.send(ref, new Subscribe({ tier: "pro", allowances: pro, price: proPrice }));
+  yield* subscription.send(
+    ref,
+    new Subscribe({
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+    }),
+  );
   yield* subscription.send(
     ref,
     new ChangeTier({
       tier: "scale",
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
       allowances: scale,
       price: scalePrice,
       proration: upgrade,
@@ -165,9 +182,15 @@ describe("charging a proration", () => {
         });
         expect(page?.prorationInvoice).toBe("inv_1");
 
-        // And the cross-account row a dashboard reads, not just the page.
+        // And the cross-account row a dashboard reads, not just the page. The
+        // projection is a consumer of its own, so the row can trail the view:
+        // wait for it instead of assuming one delivery feeds both.
         const reads = yield* BillingReadStore;
-        const row = yield* reads.get(account);
+        let row = yield* reads.get(account);
+        for (let attempt = 0; attempt < 500 && row?.proration === undefined; attempt++) {
+          yield* Effect.sleep("10 millis");
+          row = yield* reads.get(account);
+        }
         expect(row?.proration?.due).toBe(8000);
         expect(row?.prorationInvoice).toBe("inv_1");
       }),
@@ -198,7 +221,14 @@ describe("charging a proration", () => {
         const subscription = yield* Subscription;
         yield* subscription.send(
           Subscription.ref(account),
-          new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "pro",
+            allowances: pro,
+            price: proPrice,
+          }),
         );
         const charge = yield* ChargeProration();
         const error = yield* Effect.flip(charge({ account }));
@@ -218,11 +248,25 @@ describe("charging a proration", () => {
         const ref = Subscription.ref(account);
         yield* subscription.send(
           ref,
-          new Subscribe({ tier: "scale", allowances: scale, price: scalePrice }),
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "scale",
+            allowances: scale,
+            price: scalePrice,
+          }),
         );
         yield* subscription.send(
           ref,
-          new ChangeTier({ tier: "free", allowances: free, proration: downgrade }),
+          new ChangeTier({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+            proration: downgrade,
+          }),
         );
         const charge = yield* ChargeProration();
         const error = yield* Effect.flip(charge({ account }));
@@ -255,6 +299,100 @@ describe("charging a proration", () => {
       }),
       asked,
       refused,
+    );
+  });
+
+  it.effect("charges a positive proration exactly once, and nothing otherwise", () => {
+    const ChargeCase = Schema.Struct({
+      from: Schema.Literals(["free", "pro", "scale"]),
+      to: Schema.Literals(["free", "pro", "scale"]),
+    });
+    const priceOf = (tier: "free" | "pro" | "scale") =>
+      tier === "pro" ? proPrice : tier === "scale" ? scalePrice : undefined;
+    const allowancesFor = (tier: "free" | "pro" | "scale") =>
+      tier === "pro" ? pro : tier === "scale" ? scale : free;
+    const period = { start, end };
+
+    return assertProperty(
+      Arbitrary.schema(ChargeCase),
+      ({ from, to }) => {
+        const asked: Array<Invoice> = [];
+        const fromPrice = priceOf(from);
+        const toPrice = priceOf(to);
+        const proration = prorate({
+          from: fromPrice,
+          to: toPrice,
+          period,
+          at: start,
+        });
+        const due = proration?.due ?? 0;
+        const account = "acct_charge_property";
+
+        return Effect.gen(function* () {
+          const subscription = yield* Subscription;
+          const ref = Subscription.ref(account);
+          const subscribed = yield* Effect.result(
+            subscription.send(
+              ref,
+              new Subscribe({
+                tier: from,
+                allowances: allowancesFor(from),
+                credits: 0,
+                creditsExpire: "period",
+                rates: {},
+                ...(fromPrice === undefined ? {} : { price: fromPrice }),
+              }),
+            ),
+          );
+          if (Result.isFailure(subscribed)) return false;
+
+          const changed = yield* Effect.result(
+            subscription.send(
+              ref,
+              new ChangeTier({
+                tier: to,
+                allowances: allowancesFor(to),
+                credits: 0,
+                creditsExpire: "period",
+                rates: {},
+                ...(toPrice === undefined ? {} : { price: toPrice }),
+                ...(proration === null ? {} : { proration }),
+              }),
+            ),
+          );
+          if (Result.isFailure(changed)) return false;
+
+          const charge = yield* ChargeProration();
+          const first = yield* Effect.result(charge({ account }));
+
+          if (due > 0) {
+            // The positive difference is charged once, for the amount the log
+            // recorded. A second call finds the invoice and charges nothing.
+            if (Result.isFailure(first)) return false;
+            if (first.success.outcome !== "charged") return false;
+            if (first.success.amount !== due) return false;
+            if (first.success.currency !== proration!.currency) return false;
+            if (asked.length !== 1 || asked[0]?.amount !== due) return false;
+
+            const second = yield* Effect.result(charge({ account }));
+            if (!Result.isFailure(second)) return false;
+            if (second.failure._tag !== "NoProrationDue") return false;
+            if (second.failure.reason !== "billed") return false;
+            return asked.length === 1;
+          }
+
+          // A credit or a no-op is recorded, never collected.
+          if (Result.isFailure(first)) {
+            return (
+              first.failure._tag === "NoProrationDue" &&
+              first.failure.reason === "none" &&
+              asked.length === 0
+            );
+          }
+          return false;
+        }).pipe(Effect.provide(world(asked)));
+      },
+      { runs: 30, size: 12 },
     );
   });
 });

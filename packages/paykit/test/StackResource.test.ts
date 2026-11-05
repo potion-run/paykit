@@ -3,9 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../src/Allowance.ts";
 import {
+  BILLING_STACK_VERSION,
   BillingStack,
   BillingStackAttrs,
   BillingStackProvider,
+  BillingStackStateOutdated,
   readBillingStack,
   reconcileBillingStack,
 } from "../src/BillingStack.resource.ts";
@@ -120,6 +122,34 @@ describe("the BillingStack resource", () => {
     if (recorded._tag !== "Success") return;
     expect(Effect.runSync(readBillingStack(recorded.success))).toEqual(recorded.success);
     expect(Effect.runSyncExit(readBillingStack(undefined))._tag).toBe("Failure");
+  });
+
+  it("records the shape version it wrote", () => {
+    const recorded = run(reconcileBillingStack(props));
+    expect(recorded._tag).toBe("Success");
+    if (recorded._tag !== "Success") return;
+    expect(recorded.success.version).toBe(BILLING_STACK_VERSION);
+  });
+
+  it("refuses state written by a shape it cannot read", () => {
+    const recorded = run(reconcileBillingStack(props));
+    if (recorded._tag !== "Success") return;
+    // State from before the field existed: no `version` at all, which is 0.
+    const { version: _version, ...legacy } = recorded.success;
+    const refused = run(readBillingStack(legacy as unknown as BillingStackAttrs));
+    expect(refused._tag).toBe("Failure");
+    if (refused._tag !== "Failure") return;
+    expect(refused.failure).toBeInstanceOf(BillingStackStateOutdated);
+    if (refused.failure._tag !== "BillingStackStateOutdated") return;
+    expect(refused.failure.found).toBe(0);
+    expect(refused.failure.expected).toBe(BILLING_STACK_VERSION);
+
+    const future = run(
+      readBillingStack({ ...recorded.success, version: BILLING_STACK_VERSION + 1 }),
+    );
+    expect(future._tag).toBe("Failure");
+    if (future._tag !== "Failure") return;
+    expect(future.failure).toBeInstanceOf(BillingStackStateOutdated);
   });
 
   it("keeps the stack when it is removed", () => {

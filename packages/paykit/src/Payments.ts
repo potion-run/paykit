@@ -1,9 +1,11 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Context from "effect/Context";
+import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { Price } from "./Tier.ts";
+import type { UnitPrice } from "./Allowance.ts";
+import { TierKind, type Price } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
 
 /** A provider did not implement the operation a binding asked for. */
@@ -31,7 +33,7 @@ export const PaymentCapability = Schema.Literals([
   "invoice",
   "refund",
   "portal",
-  "syncTier",
+  "usage",
 ]);
 export type PaymentCapability = typeof PaymentCapability.Type;
 
@@ -44,7 +46,7 @@ export const PaymentCapabilities = Schema.Array(PaymentCapability);
  */
 export const Payments = Domain.ExternalSystem("Payments", {
   createCheckout: {
-    args: { account: Schema.String, tier: Schema.String },
+    args: { account: Schema.String, tier: Schema.String, kind: TierKind },
     success: { url: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
@@ -63,8 +65,20 @@ export const Payments = Domain.ExternalSystem("Payments", {
     success: { url: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
-  syncTier: {
-    args: { account: Schema.String, tier: Schema.String },
+  reportUsage: {
+    args: {
+      account: Schema.String,
+      /** The closed period the quantities belong to. */
+      periodStart: Schema.DateTimeUtc,
+      periodEnd: Schema.DateTimeUtc,
+      /** The billable units of each metered feature: the part past `included`. */
+      quantities: Schema.Record(
+        Schema.String,
+        Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+      ),
+      /** Idempotency key: the closing period, so a redelivery is the same report. */
+      commandId: Schema.String,
+    },
     success: {},
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
@@ -75,6 +89,8 @@ export interface PaymentsService {
   readonly createCheckout: (args: {
     readonly account: string;
     readonly tier: string;
+    /** A subscription opens a period; a one-off pack is a single payment. */
+    readonly kind: TierKind;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
   readonly createInvoice: (args: {
     readonly account: string;
@@ -88,10 +104,14 @@ export interface PaymentsService {
   readonly createPortal: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
-  readonly syncTier: (args: {
+  readonly reportUsage: (args: {
     readonly account: string;
-    readonly tier: string;
-  }) => Effect.Effect<void, PaymentError>;
+    readonly periodStart: DateTime.Utc;
+    readonly periodEnd: DateTime.Utc;
+    /** Billable units per feature. A zero quantity is not a usage report. */
+    readonly quantities: Readonly<Record<string, number>>;
+    readonly commandId: string;
+  }) => Effect.Effect<{}, PaymentError>;
 }
 
 /** The provider behind the `Payments` service: its name and declared ops. */
@@ -142,6 +162,12 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
   /** The provider's price handle per tier. The catalog stays provider-free. */
   readonly prices?: Readonly<Record<string, Price>>;
   /**
+   * What the provider charges per billable unit, per tier and feature. The
+   * deploy compares it with the catalog's `Allowance.unitPrice`; a disagreement
+   * is a refusal, never a runtime conversion.
+   */
+  readonly unitPrices?: UnitPriceMap;
+  /**
    * How this provider reports a payment, when it can. A provider that sells a
    * priced tier but cannot say it was paid leaves the account waiting for a
    * webhook that never comes; carrying the decoder here keeps the secret and
@@ -149,6 +175,9 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
    */
   readonly webhook?: PaymentsWebhook;
 }
+
+/** A provider's unit prices, keyed by tier and then by feature. */
+export type UnitPriceMap = Readonly<Record<string, Readonly<Record<string, UnitPrice>>>>;
 
 /** The providers a deployment runs, and the one that serves a new account. */
 export interface ProviderSet {

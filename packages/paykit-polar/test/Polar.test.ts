@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { PaymentDeclined, Payments, ProviderCapabilityMissing } from "@potion.run/paykit";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -53,7 +54,11 @@ describe("Polar as a paykit provider", () => {
       const session = yield* runWith(
         provider,
         Effect.gen(function* () {
-          return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+          return yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
         }),
       );
       expect(session.url).toContain("polar.sh");
@@ -62,6 +67,51 @@ describe("Polar as a paykit provider", () => {
         customerExternalId: "acct_1",
         successUrl: "https://app.example.com/welcome",
         returnUrl: "https://app.example.com/billing",
+      });
+    }),
+  );
+
+  it.effect("reports a closing period's units to the feature's meter", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const unitPrice = { amount: 2, currency: "usd" } as const;
+      const provider = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        tiers: { pro: { price: proPrice, productId: "prod_123", usage: { messages: unitPrice } } },
+        meters: { messages: "paykit_prod_messages" },
+        client: {
+          ...recording(asked),
+          reportUsage: (request) =>
+            Effect.sync(() => {
+              asked.push(request as never);
+              return {};
+            }),
+        },
+      });
+
+      expect(provider.capabilities.has("usage")).toBe(true);
+      expect(provider.unitPrices).toEqual({ pro: { messages: unitPrice } });
+
+      const periodEnd = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+      yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          yield* (yield* Payments).reportUsage({
+            account: "acct_1",
+            periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
+            periodEnd,
+            quantities: { messages: 50 },
+            commandId: "period-usage:1:2",
+          });
+        }),
+      );
+      expect(asked.at(-1)).toMatchObject({
+        eventName: "paykit_prod_messages",
+        externalCustomerId: "acct_1",
+        quantity: 50,
+        externalId: "period-usage:1:2:acct_1:messages",
+        timestamp: DateTime.formatIso(periodEnd),
       });
     }),
   );
@@ -108,7 +158,11 @@ describe("Polar as a paykit provider", () => {
         runWith(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );
@@ -129,7 +183,11 @@ describe("Polar as a paykit provider", () => {
         runWith(
           provider,
           Effect.gen(function* () {
-            return yield* (yield* Payments).createCheckout({ account: "acct_1", tier: "pro" });
+            return yield* (yield* Payments).createCheckout({
+              account: "acct_1",
+              tier: "pro",
+              kind: "subscription",
+            });
           }),
         ),
       );

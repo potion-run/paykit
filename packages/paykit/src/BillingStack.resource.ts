@@ -27,7 +27,28 @@ export const BillingStackProps = Schema.Struct({
 });
 export type BillingStackProps = typeof BillingStackProps.Type;
 
+/**
+ * The shape of what a stack records. Bump it whenever `BillingStackAttrs`
+ * changes in a way old state cannot read, and `read` refuses a version it does
+ * not know instead of handing back a record it silently half-understands.
+ *
+ * State written before the field existed has no `version` and is version `0`.
+ */
+export const BILLING_STACK_VERSION = 1;
+
+/** A stack's state was written by a shape this version cannot read. */
+export class BillingStackStateOutdated extends Schema.TaggedError<BillingStackStateOutdated>()(
+  "BillingStackStateOutdated",
+  {
+    /** The version found in state; `0` when the record predates the field. */
+    found: Schema.Int,
+    expected: Schema.Int,
+  },
+) {}
+
 export const BillingStackAttrs = Schema.Struct({
+  /** Absent on state written before the field existed; `read` treats that as 0. */
+  version: Schema.optionalKey(Schema.Int),
   catalog: Catalog,
   tiers: Schema.Array(Schema.String),
   providers: Schema.Array(ProviderDescriptor),
@@ -74,6 +95,7 @@ export const reconcileBillingStack = (
     const invalid = validateProviderMappings(parsed, providers);
     if (invalid !== null) return yield* invalid;
     return {
+      version: BILLING_STACK_VERSION,
       catalog: parsed,
       tiers: parsed.tiers.map((tier) => tier.id),
       providers,
@@ -83,14 +105,27 @@ export const reconcileBillingStack = (
 
 /**
  * What a read returns: the attributes already in state, never a re-derive. A
- * read with no state is a resource that has not been created yet.
+ * read with no state is a resource that has not been created yet, and a read of
+ * a version this package cannot interpret is a typed refusal — the alternative
+ * is a run that diffs against attributes it only half understands.
  */
 export const readBillingStack = (
   output: BillingStackAttrs | undefined,
-): Effect.Effect<BillingStackAttrs> =>
+): Effect.Effect<BillingStackAttrs, BillingStackStateOutdated> =>
   output === undefined
     ? Effect.die("BillingStack is read before it was reconciled")
-    : Effect.succeed(output);
+    : Effect.gen(function* () {
+        // Read off the record rather than the type: state written before the
+        // field existed still has to be judged, not trusted.
+        const found = (output as { readonly version?: number }).version ?? 0;
+        if (found !== BILLING_STACK_VERSION) {
+          return yield* new BillingStackStateOutdated({
+            found,
+            expected: BILLING_STACK_VERSION,
+          });
+        }
+        return output;
+      });
 
 /**
  * The Alchemy provider for `BillingStack`. Reconcile validates; read trusts
@@ -104,6 +139,9 @@ export const readBillingStack = (
  */
 export const BillingStackProvider = () =>
   Provider.succeed(BillingStack, {
+    // Alchemy persists this beside the state, so the engine can tell two
+    // generations of the same resource apart. It moves with the attrs.
+    version: BILLING_STACK_VERSION,
     nuke: { singleton: true },
     reconcile: ({ news }) => reconcileBillingStack(news),
     read: ({ output }) => readBillingStack(output),

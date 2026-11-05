@@ -3,9 +3,9 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { Standing, SubscriptionStatus } from "./Subscription.state.ts";
+import { Standing, SubscriptionStatus, rollsPeriod } from "./Subscription.state.ts";
 
-/** The period is not over yet, or it was already closed. */
+/** The period is not over yet, it was already closed, or the standing has ended. */
 export class PeriodNotClosed extends Domain.Rejection("PeriodNotClosed", {
   periodEnd: Schema.DateTimeUtc,
   now: Schema.DateTimeUtc,
@@ -22,9 +22,18 @@ export class PeriodClosed extends Domain.Event("PeriodClosed", {
   cancelAtPeriodEndAfter: Schema.Boolean,
 }) {}
 
-/** Usage counters returned to zero. `remaining` is the outcome after reset. */
+/**
+ * Usage counters returned to zero, and the allowance the next period starts
+ * with. `remaining` is the outcome after reset, and is `null` for a feature
+ * with no count. `carried` is how much of that rolled over from the period that
+ * just closed — `0` for a feature that carried nothing. `kept` marks a
+ * counted `resets: "never"` feature whose usage and open reservations survive
+ * the boundary; absent means every feature reset.
+ */
 export class UsageReset extends Domain.Event("UsageReset", {
-  remaining: Schema.Record(Schema.String, Schema.Int),
+  remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
+  carried: Schema.Record(Schema.String, Schema.Int),
+  kept: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
 }) {}
 
 /** Credits do not survive a period boundary. */
@@ -42,10 +51,12 @@ export const canClosePeriod = (
   if (state._tag !== "Subscribed") return false;
   const current = state as unknown as {
     readonly _tag: "Subscribed";
+    readonly status: SubscriptionStatus;
     readonly period: { readonly start: DateTime.Utc; readonly end: DateTime.Utc };
     readonly lastClosedPeriodStart?: DateTime.Utc;
   };
   return (
+    rollsPeriod(current.status) &&
     DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(periodEnd) &&
     DateTime.toEpochMillis(periodEnd) === DateTime.toEpochMillis(current.period.end) &&
     (current.lastClosedPeriodStart === undefined ||

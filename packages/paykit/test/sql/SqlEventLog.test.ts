@@ -52,6 +52,7 @@ const readModelRow = {
       included: 100,
       used: 0,
       reserved: 0,
+      carried: 0,
       allowed: true,
       remaining: 100,
       overage: "block" as const,
@@ -62,6 +63,7 @@ const readModelRow = {
       included: 5,
       used: 1,
       reserved: 0,
+      carried: 0,
       allowed: true,
       remaining: 4,
       overage: "allow" as const,
@@ -223,6 +225,129 @@ describe("SqlEventLog", () => {
       expect((yield* log.readModel("acct_0"))?.currency).toBe("usd");
       expect((yield* log.readModel("acct_1"))?.currency).toBeUndefined();
       expect(yield* log.readModel("missing")).toBe(null);
+    }),
+  );
+
+  it.effect("round-trips an unlimited feature's absent count through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const unlimited = {
+        ...readModelRow,
+        features: {
+          reports: {
+            included: "unlimited" as const,
+            used: 2_000_000,
+            reserved: 0,
+            carried: 0,
+            allowed: true,
+            remaining: null,
+            overage: "allow" as const,
+            resets: "month" as const,
+            resetsAt: later,
+          },
+        },
+      };
+      yield* log.upsertReadModel(unlimited);
+      const read = yield* log.readModel("acct_1");
+      // `null` is the absence of a count; a store that turned it into 0 would
+      // report a spent-out allowance that never runs out.
+      expect(read?.features.reports?.included).toBe("unlimited");
+      expect(read?.features.reports?.remaining).toBeNull();
+      expect(read?.features.reports?.used).toBe(2_000_000);
+      expect(read).toEqual(unlimited);
+    }),
+  );
+
+  it.effect("round-trips a flag's judgement, and no counter, through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const flagged = {
+        ...readModelRow,
+        features: {
+          sso: {
+            included: 1,
+            used: 0,
+            reserved: 0,
+            carried: 0,
+            allowed: true,
+            remaining: null,
+            overage: "allow" as const,
+            resets: "never" as const,
+            resetsAt: null,
+          },
+        },
+      };
+      yield* log.upsertReadModel(flagged);
+      const read = yield* log.readModel("acct_1");
+      // The read model carries the judgement (`allowed`), not a counter it
+      // invented: an on/off capability has nothing to spend down.
+      expect(read?.features.sso?.allowed).toBe(true);
+      expect(read?.features.sso?.remaining).toBeNull();
+      expect(read?.features.sso?.included).toBe(1);
+      expect(read).toEqual(flagged);
+    }),
+  );
+
+  it.effect("round-trips a carried amount through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const rolled = {
+        ...readModelRow,
+        features: {
+          messages: {
+            included: 2_000,
+            used: 0,
+            reserved: 0,
+            carried: 1_480,
+            allowed: true,
+            remaining: 3_480,
+            overage: "block" as const,
+            resets: "month" as const,
+            resetsAt: later,
+          },
+        },
+      };
+      yield* log.upsertReadModel(rolled);
+      const read = yield* log.readModel("acct_1");
+      // The carry is visible on the row, not folded into `remaining` alone.
+      expect(read?.features.messages?.carried).toBe(1_480);
+      expect(read?.features.messages?.remaining).toBe(3_480);
+      expect(read).toEqual(rolled);
+    }),
+  );
+
+  it.effect("round-trips a credit-priced feature's pool through the JSON column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      const metered = {
+        ...readModelRow,
+        credits: 49_000,
+        features: {
+          ai: {
+            creditRates: { default: 1, "gpt-large": 10 },
+            included: null,
+            used: 1_000,
+            reserved: 0,
+            remaining: 49_000,
+            carried: 0,
+            allowed: true,
+            overage: "block" as const,
+            resets: "never" as const,
+            resetsAt: null,
+          },
+        },
+      };
+      yield* log.upsertReadModel(metered);
+      const read = yield* log.readModel("acct_1");
+      // The card, the credits this feature spent, and the shared pool it
+      // reports all survive the JSON column, so the edge prices a request
+      // without reading the catalog.
+      expect(read?.credits).toBe(49_000);
+      expect(read?.features.ai?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
+      expect(read?.features.ai?.remaining).toBe(49_000);
+      expect(read?.features.ai?.used).toBe(1_000);
+      expect(read?.features.ai?.included).toBeNull();
+      expect(read).toEqual(metered);
     }),
   );
 

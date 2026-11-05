@@ -22,9 +22,9 @@ it("one declaration projects to an MCP server for each Api", () => {
 it("the tenant tools are the commands and reads a signed-in account may reach", () => {
   const names = toolNames(BillingToolkit.toolkit);
   expect(names).toContain("BillingApi_TrackUsage_send");
-  expect(names).toContain("BillingApi_ReserveUsage_send");
-  expect(names).toContain("BillingApi_SettleUsage_send");
-  expect(names).toContain("BillingApi_ReleaseUsage_send");
+  expect(names).toContain("BillingApi_Hold_send");
+  expect(names).toContain("BillingApi_SettleHold_send");
+  expect(names).toContain("BillingApi_ReleaseHold_send");
   expect(names).toContain("BillingApi_Entitlements_get");
   expect(names).toContain("BillingApi_BillingState_get");
   // The tenant Api does not serve the operator commands at all.

@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@alchemy.run/test": "catalog:",
+    "@potion.run/paykit-polar": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:"

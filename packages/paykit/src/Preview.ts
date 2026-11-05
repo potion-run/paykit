@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 import { Actor, system } from "./Auth/Actor.ts";
-import { allowancesOf, type Catalog, tierOf } from "./Catalog.ts";
+import { type Catalog, tierOf, tierTermsOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import { ChangeTier } from "./Subscription/ChangeTier.command.ts";
@@ -63,11 +63,16 @@ const commandOf = (
   now: DateTime.Utc,
 ): Previewable | null => {
   if (input.kind === "cancel") return new ScheduleCancellation();
-  const allowances = allowancesOf(catalog, input.tier);
   const tier = tierOf(catalog, input.tier);
-  if (allowances === null || tier === null) return null;
+  const terms = tierTermsOf(catalog, input.tier);
+  if (terms === null || tier === null) return null;
+  // The catalog-derived fields travel together: a command that carried the
+  // allowances but not the credit terms would be refused by `CatalogGuard`.
+  const { allowances, credits, creditsExpire, rates } = terms;
   const price = tier.price === undefined ? {} : { price: tier.price };
-  if (input.kind === "subscribe") return new Subscribe({ tier: input.tier, allowances, ...price });
+  if (input.kind === "subscribe") {
+    return new Subscribe({ tier: input.tier, allowances, credits, creditsExpire, rates, ...price });
+  }
   const midCycle =
     state._tag === "Subscribed"
       ? prorate({
@@ -80,6 +85,9 @@ const commandOf = (
   return new ChangeTier({
     tier: input.tier,
     allowances,
+    credits,
+    creditsExpire,
+    rates,
     ...price,
     ...(midCycle === null ? {} : { proration: midCycle }),
   });

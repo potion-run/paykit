@@ -1,6 +1,8 @@
 import * as Stripe from "@distilled.cloud/stripe";
 import {
   CreateBillingPortalSession,
+  GetPrices,
+  CreateBillingMeterEvent,
   CreateCheckoutSession,
   CreateInvoice,
   CreateInvoiceFinalize,
@@ -52,8 +54,12 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
   return {
     createCheckoutSession: (request) =>
       CreateCheckoutSession({
-        mode: "subscription",
-        line_items: [{ price: request.priceId, quantity: 1 }],
+        // A one-off pack is a single payment; a subscription repeats. Stripe
+        // rejects `payment` for a recurring price, so the catalog's one-off
+        // tiers must be provisioned with a one-time price.
+        mode: request.kind === "one_off" ? "payment" : "subscription",
+        // The base price plus every metered price on the same subscription.
+        line_items: request.priceIds.map((price) => ({ price, quantity: 1 })),
         customer: request.customerExternalId,
         client_reference_id: request.customerExternalId,
         // The tier travels on the session, so the webhook does not have to
@@ -114,12 +120,42 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         }
         return { invoiceId: finalized.id };
       }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
+    resolvePrice: (lookupKey) =>
+      GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
+        Effect.flatMap((prices) => {
+          const price = prices.data[0];
+          return price?.id === undefined
+            ? Effect.fail(
+                new PaymentDeclined({
+                  provider: "stripe",
+                  code: "price_not_configured",
+                  message: `no active price for lookup key ${lookupKey}`,
+                }),
+              )
+            : Effect.succeed(price.id);
+        }),
+        Effect.mapError((cause) => declined("resolvePrice")(cause)),
+        Effect.provide(live),
+      ),
     createRefund: (request) =>
       CreateRefund({ charge: request.chargeId, amount: request.amount }).pipe(
         Effect.as({}),
         Effect.mapError(declined("createRefund")),
         Effect.provide(live),
       ),
+    // One meter event per feature, carrying the billable quantity. Stripe's
+    // `identifier` is the idempotency contract: the close's period id plus the
+    // feature, so a retry is the same event rather than a second quantity.
+    reportUsage: (request) =>
+      CreateBillingMeterEvent({
+        event_name: request.eventName,
+        identifier: request.identifier,
+        timestamp: request.timestamp,
+        payload: {
+          stripe_customer_id: request.customerExternalId,
+          value: String(request.quantity),
+        },
+      }).pipe(Effect.as({}), Effect.mapError(declined("reportUsage")), Effect.provide(live)),
   };
 };
 

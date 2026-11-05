@@ -45,17 +45,30 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 | Word | Means | Not to be called |
 | --- | --- | --- |
 | `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
-| `Feature` | a meterable thing: `messages`, `seats`, `storage_gb` | `Meter` — this is not the provider's billing meter |
-| `Allowance` | what a tier grants of one feature, and what happens past it | `Limit` — a limit is one field of an allowance |
+| `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
+| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, whether what is unspent rolls over, and the `cap` that stops the billing | `Limit` — a limit is one field of an allowance |
+| `Credit` | the account's pool, spent by every feature whose rate card prices it, granted by a tier | `Balance` — one balance is not a meter; `Points` |
 | `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
-| `Reservation` | units held but not yet billed, for work in flight | `Lock` — a lock is a database primitive |
+| `Hold` | units or credits held, by id, for work in flight and not yet billed | `Reservation`, `Lock` — a hold is addressable, and a lock is a database primitive |
 | `Standing` | `good \| grace \| blocked`, plus per-feature remaining | `Status` |
 | `Actor` | who is calling: an `account`, an `admin`, or the `system` | `User`, `Principal` |
 
-`Allowance.overage` is one of `"block"`, `"bill"`, `"allow"`. `Allowance.resets` is one of
-`"month"`, `"annual"`, `"never"`.
+`Allowance.included` is a non-negative count or `"unlimited"`. `Allowance.overage` is one of
+`"block"`, `"bill"`, `"allow"`, and is only meaningful for a count: an unlimited allowance
+defaults it to `"allow"` and the catalog refuses any other value beside `"unlimited"`
+(`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`, and
+`Allowance.carryOver` says whether what a period did not spend rolls into the next one (at most
+`included`); it is refused on a flag and on `resets: "never"`. A `never` allowance is not moved
+by a period close: its usage, open holds and remaining count stay where they were.
+
+A feature is priced one of two ways. It counts its own units (`Allowance`), or it declares
+`creditRates: Record<string, Int>` — credits per unit, keyed by a dimension the caller names, with
+a required `"default"` — and spends the account's `Credit` pool. A credit-priced feature has no
+allowance (`CatalogCreditFeatureHasAllowance`) and its `remaining` is the pool, shared with every
+other credit-priced feature. A tier states `credits` and `creditsExpire` (`"period"` by default,
+which zeroes the pool at a close; `"never"` keeps it).
 
 ## Package
 
@@ -71,7 +84,7 @@ export groups, the peers and the build output.
 - `@alchemy.run/sql` is a dependency: the SQL store's migrations are Alchemy's migration
   registry (`@alchemy.run/sql/Migrations`), not a parallel implementation.
 - `@alchemy.run/domain` is a dependency: the model is the product.
-- `@alchemy.run/cloudflare`, `@alchemy.run/stripe`, `@potion.run/paykit-polar` and `foldkit`
+- `@alchemy.run/cloudflare`, `@potion.run/paykit-stripe`, `@potion.run/paykit-polar` and `foldkit`
   are optional peers plus dev dependencies, so a user who never imports `Polar` from
   `@potion.run/paykit-polar` never installs it.
 - Versions come from the workspace catalog in `pnpm-workspace.yaml`; a package that needs a
@@ -111,9 +124,11 @@ yield* check({ account, feature: "messages", amount: 1 });        // => { allowe
 const track = yield* Paykit.Track();
 yield* track({ account, feature: "messages", amount: 1, dedupeKey: requestId });
 
-yield* Paykit.Reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
-yield* Paykit.Settle({ account, feature: "messages", amount: 8 });
-yield* Paykit.Release({ account, feature: "messages", amount: 2 });
+const { holdId } = yield* Paykit.Hold({ account, feature: "messages", amount: 10, dedupeKey: turnId });
+yield* Paykit.Settle({ account, holdId, amount: 8 });              // => { billed: 8, released: 2 }
+yield* Paykit.Release({ account, holdId });                        // => { released: 10 }
+// A hold still open at its `expiresAt` (15 minutes by default) is released by
+// `HoldSweep`, so a crash between hold and settle returns the capacity.
 
 const subscribe = yield* Paykit.Subscribe();
 yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId } | { activated: true }
@@ -151,15 +166,41 @@ That duality is the point of building on a model framework rather than writing a
 
 A catalog is three plain declarations, and every value it holds is serializable:
 
-- `feature({ id, name })` declares a meter once. Its id is branded, so the id an allowance
-  carries cannot be confused with an arbitrary string.
-- `allowance(feature, { included, overage, resets })` quotes a declared feature in a tier, with
-  `overage` defaulting to `block` and `resets` to `month`.
-- `tier({ id, name, price, grants })` bundles allowances. A tier with no `price` is free; a tier
-  must grant at least one allowance, because one that grants nothing could never activate.
+- `feature({ id, name, kind })` declares a meter once. Its id is branded, so the id an allowance
+  carries cannot be confused with an arbitrary string. `kind` is `"metered"` (the default) or
+  `"flag"`, an on/off capability with no counter.
+- `allowance(feature, { included, overage, resets, carryOver })` quotes a declared feature in a
+  tier, with `overage` defaulting to `block` for a count (and to `allow` for `"unlimited"`),
+  `resets` to `month`, and `carryOver` to `false`. `carryOver: true` closes a period at
+  `included + clamp(unspent, 0, included)` — one extra period's worth at most — and records the
+  carried amount on `UsageReset`, so the read model can show it.
+- `grant(feature)` grants a `"flag"` in a tier: `{ kind: "flag", included: 1, overage: "allow",
+  resets: "never" }`. `kind` lives on the allowance because `decide` is pure and never sees the
+  catalog, so the allowance has to say what kind of thing it is. A flag granted any other way — or
+  a flag grant on a metered feature — is refused.
+- `tier({ id, name, price, grants, kind })` bundles allowances. A tier with no `price` is free; a
+  subscription tier must grant at least one allowance, because one that grants nothing could never
+  activate. A `kind: "one_off"` pack is the exception: it sells credits only, has no grants, and
+  must state a price.
+- `feature({ id, name, kind, creditRates })` may declare a rate card, which makes the feature
+  credit-priced: `track({ feature, amount, dimension })` then spends `amount × rate` from the pool,
+  and `check({ feature, amount, dimension })` compares against it.
+- `allowance(feature, { ..., cap })` states a ceiling in the feature's own unit: the most a period
+  may bill past `included`. It needs `overage: "bill"`, and `Track` and `Hold` both refuse past it
+  with `SpendCapExceeded`.
+- `allowance(feature, { ..., unitPrice, moneyCap })` prices the billable part of usage: one unit
+  past `included` costs `unitPrice.amount` minor units, and `moneyCap` is the money ceiling for one
+  period. Both need `overage: "bill"`; a tier's unit prices share one currency. `Track` records the
+  charge on `UsageRecorded` and refuses past the money cap with `MoneyCapExceeded`; `check()` prices
+  the requested amount before comparing.
 - `catalog({ features, tiers })` validates the whole thing and returns typed errors:
   `CatalogDuplicateFeature`, `CatalogDuplicateTier`, `CatalogDuplicateAllowance`,
-  `CatalogUnknownFeature`, `CatalogEmptyTier`, or `CatalogInvalid` for a schema failure.
+  `CatalogUnknownFeature`, `CatalogEmptyTier`, `CatalogUnlimitedOverage`, `CatalogFlagNotGranted`,
+  `CatalogFlagOnMetered`, `CatalogCarryOverOnFlag`, `CatalogCarryOverNeverResets`,
+  `CatalogCapWithoutBilling`, `CatalogUnitPriceWithoutBilling`, `CatalogMoneyCapWithoutUnitPrice`,
+  `CatalogUnitPriceCurrency`, `CatalogCreditRateMissing`, `CatalogCreditRateInvalid`, `CatalogCreditFeatureHasAllowance`,
+  `CatalogCreditAllowanceOnFlag`, `CatalogCreditGrantInvalid`, or `CatalogInvalid` for a schema
+  failure.
 
 Constructors stay pure and total. Validation happens at `catalog()`, which is where a deploy
 can refuse a catalog before it reaches money. `defineCatalog()` is the synchronous `Result`
@@ -168,7 +209,7 @@ form for tooling and tests.
 ## Domain model
 
 One aggregate, keyed by account. Subscription state, usage counters and open reservations live
-together so a `TrackUsage` or a `ReserveUsage` that would exceed a blocking allowance is refused
+together so a `TrackUsage` or a `Hold` that would exceed a blocking allowance is refused
 in the same transaction that records it. Counters are always reproduced by folding events, so
 they are a projection of the event log, not a second truth. `refs` is the only place a vendor
 identifier may live: keyed by provider, so a second provider is additive, and unread by `decide`.
@@ -179,10 +220,12 @@ state: {
   tier, status: "trialing" | "active" | "grace" | "canceled" | "expired",
   period: { start, end, anchorTz }, trialEndsAt?, graceUntil?,
   price?,                                   // what this account was sold at
-  cancelAtPeriodEnd, credits,
+  cancelAtPeriodEnd, credits, prepaidCredits?,  // purchased credits stay when the plan's expire
+  billed?: { [feature]: number },              // money billed this period, a fold of UsageRecorded.charge
   usage: { [feature]: number },             // billed, a fold of UsageRecorded
-  reserved: { [feature]: number },          // held, a fold of the reservation events
-  remaining: { [feature]: number },         // spendable now: included - usage - reserved
+  holds: { [holdId]: { feature, amount, dimension?, rate, cost, at, expiresAt, status } },
+  // reserved: { [feature]: number } and reservedCredits: number are folds of the open holds
+  remaining: { [feature]: number | null },  // spendable now: included - usage - reserved; null when unbounded
   refs: { [provider]: { customer?, subscription?, checkout? } },  // opaque vendor ids
 }
 ```
@@ -197,10 +240,11 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
-| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage` | `Session` |
-| `ReserveUsage` | `UsageReserved` | `ReservationExceeded`, `StandingBlocksUsage` | `Session` |
-| `SettleUsage` | `UsageRecorded`, `UsageSettled` | `NoReservation`, `StandingBlocksUsage` | `Session` |
-| `ReleaseUsage` | `UsageReleased` | `NoReservation` | `Session` |
+| `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered`, `SpendCapExceeded`, `MoneyCapExceeded` | `Session` |
+| `Hold` | `UsageReserved` | `HoldExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
+| `SettleHold` | `UsageRecorded`, `UsageSettled` | `HoldUnknown`, `HoldSettled`, `HoldExpired`, `HoldExceeded`, `StandingBlocksUsage` | `Session` |
+| `ReleaseHold` | `UsageReleased` | `HoldUnknown`, `HoldSettled` | `Session` |
+| `HoldElapsed` | `UsageReleased` | — | — |
 | `ConsumeCredits` | `CreditsConsumed` | `NotSubscribed`, `CreditExceedsBalance` | `Session` |
 | `ScheduleCancellation` | `CancellationScheduled` | `AlreadyCanceled`, `NotSubscribed` | `Session` |
 | `Resume` | `CancellationWithdrawn` | `NotScheduled`, `NotSubscribed` | `Session` |
@@ -210,6 +254,7 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `Recover` | `Recovered` | `NotInGrace` | `Admin` |
 | `Expire` | `SubscriptionExpired` | `NotInGrace` | `Admin` |
 | `GrantCredits` | `CreditsGranted` | `NotSubscribed` | `Admin` |
+| `PurchaseCredits` | `CreditsPurchased` | `NotSubscribed` | `Admin` |
 | `ExtendTrial` | `TrialExtended` | `NotSubscribed`, `TrialNotActive` | `Admin` |
 | `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `NotSubscribed`, `PeriodNotClosed` | — |
 | `PeriodEnded` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | — | — |
@@ -217,10 +262,10 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `AttachProviderRef` | `ProviderRefAttached` | — | — |
 
 `decide` is pure. It cannot read the clock, a provider or an ambient context, so authorization
-lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed` and
-`AttachProviderRef` carry no guard because a policy, a scheduler or a webhook translator sends
-them as the deployment. `Proration` is a pure function in `src/Proration.ts` with its own
-properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
+lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed`,
+`HoldElapsed` and `AttachProviderRef` carry no guard because a policy, a scheduler or a webhook
+translator sends them as the deployment. `Proration` is a pure function in `src/Proration.ts` with
+its own properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
 `periodAfter`, `priceAfter`) instead of re-deriving a rule.
 
 ### The command carries its catalog fields
@@ -276,7 +321,7 @@ keeping the old one.
 
 | Kind | Name | Purpose |
 | --- | --- | --- |
-| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, allowed, resetsAt, overage }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes |
+| View | `Entitlements` | per-feature `{ included, used, reserved, remaining, carried, allowed, resetsAt, overage, unitPrice?, moneyCap?, billed? }` and standing — the `check()` read model, `allowed` being the judgement `check({ amount: 1 })` makes, `carried` being how much of `remaining` rolled over, `billed` the period's money for a postpaid feature |
 | View | `BillingState` | what a billing page shows: tier, price, period end, cancel-at-period-end, credits, `dunningAttempts`, and the last tier change's `proration` with the invoice it was billed on |
 | Stream | `AccountEvents` | every event for one account, for the audit pane and support |
 | Projection | `BillingRead` | SQL rows for `List`, dashboards and the edge read path |
@@ -293,7 +338,14 @@ first issue will be "how do I list past-due".
 
 - `PeriodRollover` — a policy on the period start schedules `PeriodEnded`, which closes the
   period, resets usage and releases credits. `PeriodEnded` records nothing when the period is
-  not over, so an early fire is a no-op rather than a rejection.
+  not over, so an early fire is a no-op rather than a rejection. A close that ends the standing
+  (`canceled` or `expired`) opens no next period, and `EnterGrace` is refused once a standing is
+  terminal.
+- `PeriodCloseUsage` — a policy on `PeriodClosed` reads the closing period's per-feature `used`
+  from `Entitlements`, sends the billable part (`used - included`) to the account's provider once,
+  and uses the period as the idempotency key. A provider without `usage` fails with
+  `ProviderCapabilityMissing`; an account with no vendor reference has no meter to feed and is left
+  to `Verify`.
 - `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
   account is still in grace. A recovery before the deadline makes it a no-op.
 
@@ -302,6 +354,11 @@ first issue will be "how do I list past-due".
   `PaymentFailed`, carried to `dunningAttempts` on both read models — and owns the grace window and
   the expiry. An operator sees the count on the billing page and decides whether to extend grace;
   the console is the reader, which is why the field is not write-only.
+- `HoldSweep` — a policy on `UsageReserved` schedules `HoldElapsed` at the hold's `expiresAt`, which
+  releases it if it is still open. A hold settled or released first makes it a no-op, so a caller
+  that crashes between hold and settle does not keep capacity forever. The release is the same
+  `UsageReleased` a caller's `Release` records, so a late settle is still `HoldSettled` and a late
+  release is a replay.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,
@@ -317,7 +374,7 @@ Payments = Domain.ExternalSystem("Payments", {
   refund:         Op<{ chargeId, amount }, {}>,
   // optional — declared per provider and surfaced as capabilities
   createPortal:   Op<{ account }, { url }>,
-  syncTier:       Op<{ account, tier }, {}>,
+  reportUsage:    Op<{ account, periodStart, periodEnd, quantities, commandId }, {}>, // one close's billable units
 });
 ```
 
@@ -359,9 +416,9 @@ and webhook endpoint as Alchemy resources, and exposes checkout, portal and refu
 over its distilled SDK. paykit's adapter is a thin translation over those bindings: vendor HTTP,
 auth and signature verification live in the vendor package, and the model imports neither.
 
-Stripe uses Alchemy's `@alchemy.run/stripe`. Polar has no such package, so we publish
-`@potion.run/paykit-polar` — a paykit provider, not a general Alchemy one: it imports paykit and
-exports the single call that stands Polar up. It lives at
+Neither vendor has an Alchemy provider that does what paykit needs, so we publish both:
+`@potion.run/paykit-stripe` and `@potion.run/paykit-polar` — paykit providers, not general Alchemy
+ones: each imports paykit and exports the single call that stands the vendor up. It lives at
 `packages/paykit-polar/` in this workspace, versioned and published on its own, and paykit takes
 it as an optional peer plus a `workspace:*` dev dependency. Its `package.json` mirrors Alchemy's
 `packages/stripe`: `alchemy` and `effect` as peers, `@distilled.cloud/polar` as a dependency.
@@ -415,7 +472,7 @@ Rules that keep the projections honest:
 - **The Api is the unit of authorization.** MCP tools run through the Api's middleware using the
   MCP request's own headers, so the tenant MCP server authenticates exactly as the tenant HTTP
   surface does. Serve the two Apis at two paths; never merge them.
-- **A tool is destructive unless it is a read.** `TrackUsage`, `ReserveUsage` and every other
+- **A tool is destructive unless it is a read.** `TrackUsage`, `Hold` and every other
   command is annotated `Destructive`; `Entitlements.get` is `Readonly`. A model that can write
   cannot be talked into thinking it is reading.
 - **Streams are not tools.** `watch` and `events` are not one result, so they stay on the Api's
@@ -507,25 +564,34 @@ future `Payments` operation rather than something this function can see.
 
 Every one of these fails on purpose before it passes.
 
-1. Delivery permutations: any order, at most twice. State after any permutation equals state
-   after the canonical order. This is the largest bug class in every system that accepts
-   provider webhooks.
+1. Delivery permutations: a delivery may arrive twice, never out of order per `(source,
+   target)`. State after a duplicate delivery equals state after the canonical order. This is the
+   largest bug class in every system that accepts provider webhooks, and the idempotent command
+   id, not reordering facts, is what closes it.
+
+   Provider webhooks are facts, not deliveries. The edge applies a fact once by the provider
+   event id; a checkout for a standing that already exists is a replay, never a second
+   activation. A fact that arrives before the standing it describes — a failed payment before
+   checkout — is ignored rather than buffered: the provider's retry is the recovery, and the edge
+   never invents an order across facts. A cancellation and a failure commute once a standing
+   exists, so grace plus a scheduled cancellation is the same state whichever arrives first.
 2. Replay determinism: folding an account's events reproduces its stored state for any
    generated command sequence.
 3. Allowance: `used + reserved ≤ included` for `block`, never negative, and `remaining` is
-   monotone within a period except at `ClosePeriod`, `ReserveUsage` and `ReleaseUsage`.
+   monotone within a period except at `ClosePeriod`, `Hold` and `ReleaseHold`.
 4. Proration: parts sum to the full price within rounding; credit plus charge nets to zero.
 5. Idempotence: every command replayed with the same `commandId` produces no second event.
 6. Cancellation and resume are idempotent; `Expire` from any state is terminal or a no-op.
 7. Pricing: replaying the log reproduces every price the account was sold at, and a price change
    in the catalog never moves a standing that already exists.
-8. Reservation: settle plus release never exceeds what was held, and `used` after a settle
-   equals what was held — a hold is not billed twice.
+8. Hold: a settle bills no more than the hold holds and returns the rest, and `used` after a
+   settle equals what it billed — a hold is not billed twice.
 
 Gates: `Domain.verify(Model)` returns empty, `Story` tests for every command and rejection,
 the `Payments` conformance suite green for all implementations, money as `Schema.Int` minor
-units with currency on every amount, no `Date.now()` inside `decide`, and a `TestClock` layer
-in the test kit so a billing library can be time-travelled.
+units with currency on every amount, no `Date.now()` inside `decide`, a `TestClock` layer in the
+test kit so a billing library can be time-travelled, and properties generated and shrunk with
+`effect/Arbitrary` so every falsification carries a replay token.
 
 ## Milestones
 
@@ -571,7 +637,7 @@ potion/                          # pnpm workspace root (private)
         Feature.ts  Allowance.ts  Tier.ts  Catalog.ts  CatalogService.ts
         BillingStack.resource.ts
         Check.ts                 # in-process, read-model and HTTP read paths
-        Track.ts  Hold.ts        # Reserve / Settle / Release
+        Track.ts  Hold.ts        # Hold / Settle / Release
         Subscribe.ts  Portal.ts  List.ts  Preview.ts  Verify.ts  Webhooks.ts
         Proration.ts  Doctor.ts
         Auth/
@@ -583,11 +649,12 @@ potion/                          # pnpm workspace root (private)
           Entitlements.view.ts  BillingState.view.ts
           AccountEvents.stream.ts  BillingRead.projection.ts
           AccountEventsProjection.ts
-          PeriodRollover.policy.ts  Dunning.policy.ts
+          PeriodRollover.policy.ts  Dunning.policy.ts  HoldSweep.policy.ts
+          PeriodCloseUsage.policy.ts
         BillingApi.api.ts  BillingAdminApi.api.ts
         BillingReadStore.ts
         Payments.ts  PaymentsMemory.ts  PaymentsManual.ts
-        PaymentsStripe.ts               # delegates to @alchemy.run/stripe
+        PaymentsStripe.ts               # the port mapping @potion.run/paykit-stripe fills in
         PaymentsPolar.ts                # delegates to @potion.run/paykit-polar
         Store/Sql.ts  Store/SqlEventLog.ts  Store/Tables.ts
         Migrations/
@@ -637,8 +704,20 @@ else. The root `pnpm typecheck` builds every package through project references,
   with its own name and its own users, and this one does not become it by accreting options.
 - **Events are the API.** Event names and their fields are public. Version from 0.1.0 and keep
   `Backfill`/`CatchUp` so a projection change is a rebuild, not a rewrite.
-- **A reservation that leaks shrinks an allowance.** `ReleaseUsage` refuses to release more than
-  is held rather than clamping, so a leak surfaces as a typed error. Watch `reserved` in
+- **A prepaid-only account holds credits but cannot spend them yet.** The pool lives on
+  `Unsubscribed` and is carried into the first plan, and `prepaidCredits` protects it from a period
+  close. Spending needs the rate cards copied at activation, so a plan (or a catalog-rate fallback)
+  is still the next step for a credits-only customer.
+- **Postpaid bills in the model and at the vendor.** `unitPrice`/`moneyCap` price and enforce usage
+  locally and put the charge on the event. `StripePrices`/`PolarPrices` create the metered price from
+  the same `unitPrice`, and `PeriodCloseUsage` sends the closing period's billable quantity to the
+  provider once with the period as the idempotency key. A provider without a meter declares no
+  `usage` capability, so the close fails with `ProviderCapabilityMissing` instead of silently
+  billing only locally. A mid-period price change still needs a report split per vendor price; the
+  current policy sends one report for the period at the standing's price.
+- **A leaked hold returns its capacity.** A hold is addressable and expires, and `HoldSweep`
+  releases it at `expiresAt`, so `reserved` counts capacity in flight and goes back to zero on its
+  own. A hold whose work outlives its deadline is still a support question, so watch `reserved` in
   `BillingState` and alert on a hold older than its work.
 - **An MCP tool can spend money.** The tool list is derived from the Api, so an Api that serves a
   priced command publishes a destructive tool. Keep `GrantCredits` off the tenant Api, and
@@ -661,21 +740,18 @@ else. The root `pnpm typecheck` builds every package through project references,
   puts the read models in the same schema, and `migrations/0001_init.sql` — generated from
   `migrationFiles` — is the DDL. `examples/billing/test/sql.test.ts` runs that same wiring over SQLite
   and asserts the event, the view row and the read-model page are rows in one database.
-- **Stripe is adapted, not repackaged.** `stripeBindings(bindings, where)` maps `@alchemy.run/stripe`'s
-  `CreateCheckoutSession` and `CreateBillingPortalSession` onto the `Payments` port, and a test
-  proves the mapping and that a vendor failure becomes a typed `PaymentDeclined`. There is no
-  `@potion.run/paykit-stripe` and there should not be: Alchemy ships the vendor package, and a
-  paykit-shaped wrapper around it would be a second product with no user of its own.
+- **Stripe and Polar are both paykit-shaped packages.** `@potion.run/paykit-stripe` and
+  `@potion.run/paykit-polar` each build a client on their distilled SDK and return the provider the
+  catalog needs, so a deployment writes one call and no bindings. `PaymentsStripe` and
+  `PaymentsPolar` are the port mappings underneath, for a test or a caller with its own bindings.
 - **Polar has no Alchemy package, so paykit publishes one — and it is paykit-shaped.**
   `Polar(props)` in `@potion.run/paykit-polar` returns the `Provider` the catalog needs, so a user
   writes one call and no bindings. It imports `@potion.run/paykit` on purpose: a general Alchemy
   provider would need its own users, docs and release train, and we would carry all of it to serve
-  one adapter. Polar without paykit, if anyone wants it, is a different package with a different
-  name. Stripe needs no such package: `@alchemy.run/stripe` exists, so the adapter is
-  `stripeBindings(...)` in `PaymentsStripe.ts` behind the optional peer.
-- **A missing capability is not a fabricated decline.** `stripeBindings` omits `createRefund`
-  because `@alchemy.run/stripe` has no refund binding, so Stripe declares no `refund` capability and
-  asking for one fails with `ProviderCapabilityMissing`. Nothing pretends a card was declined.
+  one adapter. Stripe without paykit, if anyone wants it, is `@alchemy.run/stripe`.
+- **A missing capability is not a fabricated decline.** A client that cannot refund declares no
+  `refund` capability, and asking for one fails with `ProviderCapabilityMissing`. Nothing pretends
+  a card was declined.
 - **A catalog-derived command needs the catalog.** `Subscribe`, `ChangeTier` and `StartTrial` carry
   their own allowances and price. `CatalogGuard` refuses a mismatch, but it cannot invent a missing
   price, so an Api client must send the fields the catalog implies. `tierCommand()` in the example is

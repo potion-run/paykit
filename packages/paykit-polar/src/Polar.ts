@@ -5,7 +5,10 @@ import {
   type PolarTier,
   type MoneyProvider,
   type Price,
+  type TierKind,
+  type UnitPrice,
 } from "@potion.run/paykit";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -13,7 +16,7 @@ import { distilledPolarClient } from "./PolarClient.ts";
 import { polarWebhook } from "./Webhooks.ts";
 
 /** Where a tier lives in Polar, and the price the catalog states. */
-export type { PolarTier };
+export type { PolarTier, UnitPrice };
 
 /** Which Polar the token belongs to. Sandbox products are not production's. */
 export type PolarServer = "production" | "sandbox";
@@ -31,6 +34,8 @@ export interface PolarClient {
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly returnUrl: string;
+    /** A subscription product opens a period; a one-off product does not. */
+    readonly kind: TierKind;
   }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /** A customer session, which is Polar's way into the customer portal. */
   readonly createCustomerSession: (request: {
@@ -54,6 +59,17 @@ export interface PolarClient {
     readonly orderId: string;
     readonly amount: number;
   }) => Effect.Effect<unknown, PaymentDeclined>;
+  /**
+   * Ingest one metered-usage event. `externalId` is the idempotency key; Polar
+   * dedupes by it, so a retried close is the same event.
+   */
+  readonly reportUsage?: (request: {
+    readonly eventName: string;
+    readonly externalCustomerId: string;
+    readonly quantity: number;
+    readonly externalId: string;
+    readonly timestamp: string;
+  }) => Effect.Effect<unknown, PaymentDeclined>;
 }
 
 /** What `Polar()` needs to stand up a merchant of record. */
@@ -68,6 +84,12 @@ export interface PolarProps {
   readonly origin: string;
   /** Tier → Polar product, and the price the catalog already states. */
   readonly tiers?: Readonly<Record<string, PolarTier>>;
+  /**
+   * Feature → meter event name, from `PolarPrices`. The meter is what the
+   * closing period's billable units are sent to; without it the provider
+   * declares no `usage` capability.
+   */
+  readonly meters?: Readonly<Record<string, string>>;
   /**
    * The id of the one-time product a proration is billed as. Without it the
    * provider declares no `invoice` capability, so `ChargeProration` fails with
@@ -110,18 +132,20 @@ export const polarBindings = (
     readonly billingPath?: string;
     readonly invoiceProductId?: string;
     readonly invoiceDescription?: string;
+    readonly meters?: Readonly<Record<string, string>>;
   },
 ): PolarBindings => {
   const success = `${where.origin}${where.successPath ?? "/welcome"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
   return {
-    createCheckoutSession: ({ account, productId }) =>
+    createCheckoutSession: ({ account, productId, kind }) =>
       client
         .createCheckoutSession({
           productId,
           customerExternalId: account,
           successUrl: success,
           returnUrl: billing,
+          kind,
         })
         .pipe(
           Effect.mapError((cause) => declined("createCheckoutSession", cause)),
@@ -164,6 +188,51 @@ export const polarBindings = (
         Effect.mapError((cause) => declined("createRefund", cause)),
         Effect.map(() => ({})),
       ),
+    ...(client.reportUsage === undefined || where.meters === undefined
+      ? {}
+      : {
+          reportUsage: ({
+            account,
+            periodEnd,
+            quantities,
+            commandId,
+          }: {
+            account: string;
+            periodStart: DateTime.Utc;
+            periodEnd: DateTime.Utc;
+            quantities: Readonly<Record<string, number>>;
+            commandId: string;
+          }) =>
+            Effect.forEach(
+              Object.entries(quantities),
+              ([feature, quantity]) => {
+                const eventName = where.meters?.[feature];
+                if (eventName === undefined) {
+                  return Effect.fail(
+                    new PaymentDeclined({
+                      provider: "polar",
+                      code: "meter_not_configured",
+                      message: `no Polar meter for ${feature}`,
+                    }),
+                  );
+                }
+                return client.reportUsage!({
+                  eventName,
+                  externalCustomerId: account,
+                  quantity,
+                  // The period plus the account and feature, so two accounts
+                  // closing one period do not collide and one report can carry
+                  // every billable feature.
+                  externalId: `${commandId}:${account}:${feature}`,
+                  timestamp: DateTime.formatIso(periodEnd),
+                }).pipe(
+                  Effect.as({}),
+                  Effect.mapError((cause) => declined("reportUsage", cause)),
+                );
+              },
+              { concurrency: 1 },
+            ).pipe(Effect.as({})),
+        }),
   };
 };
 

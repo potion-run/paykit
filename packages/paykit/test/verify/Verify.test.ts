@@ -129,7 +129,14 @@ it.live("verify finds a checkout that attached no vendor reference", () =>
     const subscription = yield* Subscription;
     yield* subscription.send(
       Subscription.ref(account),
-      new Subscribe({ tier: "pro", allowances: pro, price: proPrice }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
     );
     const verify = yield* Verify();
     const mismatches = yield* verify({ account });
@@ -141,7 +148,17 @@ it.live("verify is clean once the vendor reference is attached", () =>
   Effect.gen(function* () {
     const subscription = yield* Subscription;
     const ref = Subscription.ref(account);
-    yield* subscription.send(ref, new Subscribe({ tier: "pro", allowances: pro, price: proPrice }));
+    yield* subscription.send(
+      ref,
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "pro",
+        allowances: pro,
+        price: proPrice,
+      }),
+    );
     yield* subscription.send(
       ref,
       new AttachProviderRef({ provider: "stripe", refs: { customer: "cus_1" } }),
@@ -156,7 +173,13 @@ it.live("a free standing verifies without a provider at all", () =>
     const subscription = yield* Subscription;
     yield* subscription.send(
       Subscription.ref(account),
-      new Subscribe({ tier: "free", allowances: free }),
+      new Subscribe({
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        tier: "free",
+        allowances: free,
+      }),
     );
     const verify = yield* Verify();
     expect(yield* verify({ account })).toEqual([]);

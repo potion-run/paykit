@@ -60,13 +60,24 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 
 - `feature()` declares a meter once. `FeatureId` and `TierId` are branded; a tier quotes a
   feature by value through `allowance()`, never by a bare string.
-- `tier()` bundles at least one allowance. A missing `price` is free; prices are integer minor
-  units plus a currency.
+- `tier()` bundles at least one allowance for a subscription. A missing `price` is free; prices
+  are integer minor units plus a currency. A `kind: "one_off"` pack is the exception: it grants
+  credits, has no allowances, defaults `creditsExpire` to `"never"`, and must state a price. The
+  catalog refuses either shape the wrong way round.
+- A postpaid allowance states `unitPrice: { amount, currency }` and optionally `moneyCap`; both
+  need `overage: "bill"`, and a tier's unit prices share one currency (the tier price's, when it has
+  one). The catalog refuses a price with nothing to bill (`CatalogUnitPriceWithoutBilling`), a money
+  cap with no price, and mixed currencies. `check()` prices the requested amount; `Track` records
+  `charge` and `billedAfter` on the event and refuses past the money cap.
 - `catalog()` / `defineCatalog()` validate the graph and refuse with `CatalogError`, a
   `Schema.Union` with one tag per refusal. A new semantic rule gets a new tag carrying its
   evidence and a test; `CatalogInvalid` is only for a schema failure.
 - Constructors stay pure; `catalog()` is the only effectful step. Lookups are `tierOf`,
   `featureOf` and `allowancesOf`.
+- What a tier can express is a decision with a record: [ADR
+  0001](../../docs/adr/0001-catalog-states-the-pricing-model.md) says pricing is catalog data and
+  the deploy provisions the vendor, so a new shape lands as a field plus a `decide` rule, never as
+  a provider id or a runtime edit.
 - No provider ids in the catalog. The tier → vendor price mapping lives in provider config;
   `CatalogPriceMismatch` in `Stack` is the backstop.
 - A public catalog function carries a JSDoc example, like an Alchemy primitive.
@@ -92,9 +103,30 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   have recorded it. Never check-then-write, and dedupe by `dedupeKey` so a retry records once.
 - `ChangeTier` ships next-period-only first. Mid-cycle proration is a second pass with its own
   properties in `src/Proration.ts`.
-- A reservation moves `remaining` and `reserved`, never `usage`. `SettleUsage` bills the held
-  units and `ReleaseUsage` returns them; settling or releasing more than is held is a typed
-  rejection, so a leak surfaces as an error rather than a shrinking allowance.
+- A hold is an entity with an id, and `reserved` / `reservedCredits` are folds of the open holds,
+  never counters a command writes. A hold moves `remaining` and `reserved`, never `usage`.
+  `SettleHold` bills what ran and returns the rest in the same command, so the common path is two
+  calls and there is no third one to forget. Settling a settled hold records nothing (a replay);
+  over-settling is `HoldExceeded`, releasing a settled hold is `HoldSettled`, an id nobody issued
+  is `HoldUnknown`, and a hold past `expiresAt` is `HoldExpired` — a release still returns the
+  units, because a late release is a cleanup and not a charge. `HoldSweep` schedules `HoldElapsed`
+  at `expiresAt`, so a hold nobody settles or releases comes back on its own; the deadline is a
+  no-op for a hold that already closed, so the caller's release and the sweep cannot both act. A
+  hold on a credit-priced feature reserves `amount × rate` at the rate captured when it was placed,
+  so a catalog change mid-flight does not reprice work already priced.
+- A period close resets every allowance except `resets: "never"`, which keeps its usage, open
+  holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
+  further period, and `EnterGrace` is refused once the standing is terminal.
+- A trial opens on the cadence its price states: an annual trial converts into an annual period,
+  not a monthly one.
+- Postpaid money is on the event. `UsageRecorded.charge` is this event's bill and `billedAfter` is
+  the feature's period total, so a replay reproduces the bill and a catalog price change never
+  reprices history. A money cap refuses in the same transaction as the usage and leaves the standing
+  `good`.
+- A one-off pack is a purchase, not a tier change: its credits arrive through `PurchaseCredits` /
+  `CreditsPurchased`, never `TierChanged`, and never create a second standing. The standing tracks
+  `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only
+  `credits - prepaidCredits`, and spending drains the plan's credits before the protected pool.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
@@ -141,6 +173,10 @@ around it.
 - `Paykit.Preview` runs the same pure `decide` and reports the events and proration a command
   would produce. Show the charge before applying it; a write an agent may retry carries a
   `commandId`.
+- Outbound events are a policy over a port. `OutboundEvents` signs every committed subscription
+  event and hands it to the `Outbound` transport; the idempotency key is `<account>:<seq>`. A
+  deployment without an `Outbound` layer pays nothing for it, and the app owns HTTP, queues and
+  retries at the edge.
 
 ## Auth
 
@@ -237,7 +273,9 @@ const world = Layer.mergeAll(
 - **The price has one meaning.** The catalog states it, the vendor package charges it, and
   `Stack` fails with `CatalogPriceMismatch` when the mapping disagrees.
 - **Webhooks translate at the edge**, into our events, with the provider's event id as the
-  `commandId` so a redelivery is a replay, not a second charge.
+  `commandId` so a redelivery is a replay, not a second charge. `Webhook()` is that edge as a
+  binding — the model's services resolved once, an event applied per delivery — so a route builds
+  it beside its other bindings instead of re-resolving the model on every call.
 - **A missing capability is a typed error**, `ProviderCapabilityMissing`, naming provider and
   op. The console hides the action; nothing degrades silently.
 - **The provider carries its own webhook.** Given a signing secret, `Stripe()` and `Polar()` return
@@ -261,9 +299,17 @@ Both are **paykit packages**, not general Alchemy providers: they import `@potio
 export the shortest path from a catalog to a working provider. That is a maintenance decision, not a
 coupling accident — a general provider would need its own users, docs and release train, and we
 would carry all of it to serve one adapter. If someone needs Stripe or Polar without paykit,
-`@alchemy.run/stripe` exists for exactly that. A caller who already owns vendor bindings — an
-Alchemy deployment, or a test — still uses the adapters directly: `stripeBindings(...)` and
-`polarBindings(...)` map theirs onto the port.
+`@alchemy.run/stripe` exists for exactly that. A test, or a caller with its own vendor bindings,
+still uses the adapters directly: `PaymentsStripe({ bindings, tiers })` and
+`PaymentsPolar({ bindings, tiers })` are the port mappings the packages fill in.
+
+A vendor package also owns the deploy half: `StripePrices` and `PolarPrices` create the prices, or
+the products with their embedded prices, that the catalog states — and for each postpaid feature, a
+meter and a metered price from the same `unitPrice`. They return the meter event names and the
+metered handles the runtime provider needs, so `PeriodCloseUsage` can push the closing period's
+billable units. Both declare every resource with `RemovalPolicy.retain`, so a tier that leaves the
+catalog leaves a financial record rather than a deleted one. They are deploy-time helpers, not
+resources paykit reconciles; `BillingStack` records what they produced.
 
 Adding a provider touches the same places every time:
 
@@ -309,7 +355,7 @@ internal, whatever it is.
 | Suite | Proves |
 | --- | --- |
 | `test/stories` | every command's happy path and every rejection |
-| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar) |
+| `test/properties` | the eight properties in [the correctness bar](./PLAN.md#correctness-bar), plus cross-family state conservation, read/write agreement, the catalog and guard contract, and delivery dedupe |
 | `test/conformance` | every `Payments` implementation passes the cases its capabilities declare |
 | `test/surfaces` | the MCP tool list and the CLI are derived from the Apis, not written twice |
 | `test/Api.test.ts` | each guard refuses what it should: no caller, another account, an operator command |
@@ -317,6 +363,10 @@ internal, whatever it is.
 Write the property red first. A property that has never failed proves nothing, and a rejection
 without a story is unimplemented.
 
+- Properties are generated with `effect/Arbitrary` through `test/support/Property.ts`;
+  `test/properties/Arbitraries.ts` holds the command and script generators. A falsification prints
+  its shrunk input and a replay token, which goes back into `replay` to reproduce it. A fixed loop
+  over hand-picked inputs is an example, not a property.
 - `TestClock` everywhere. A billing test that waits in real time will flake.
 - Deterministic data: account ids are constants or derived from the test name. No `Math.random()`
   and no `Date.now()` for identity.
