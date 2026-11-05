@@ -3,8 +3,8 @@ import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 
 /**
- * The docs site as an Alchemy stack: one static Astro build, deployed as a
- * Cloudflare Worker whose assets are the output. The Nimbus build writes
+ * The docs site as an Alchemy stack: one static Blume build, deployed as a
+ * Cloudflare Worker whose assets are the output. The Blume build writes
  * `dist/`, so `StaticSite` runs it and hashes the result; there is no separate
  * Wrangler config to keep in step.
  */
