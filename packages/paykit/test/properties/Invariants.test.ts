@@ -1,8 +1,10 @@
 import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 import { isFlagGrant, type Allowance } from "../../src/Allowance.ts";
 import {
+  billedOf,
   includedRemainingOf,
   initialSubscriptionState,
   prepaidCreditsOf,
@@ -13,7 +15,7 @@ import {
   type SubscriptionState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
-import { commandOf, decideAt, evolveAt, isAccepted, Script, start } from "./Arbitraries.ts";
+import { Amount, commandOf, decideAt, evolveAt, isAccepted, Script, start } from "./Arbitraries.ts";
 
 type Event = Readonly<{ readonly _tag: string }>;
 
@@ -60,8 +62,9 @@ const updateBases = (
 /**
  * The numbers a standing may never contradict, whatever command produced it:
  * a pool that does not go negative and still covers every open hold, a hold
- * that is a fold of the holds themselves, and a counted allowance whose use,
- * reservations and remainder still add up to what the period began with.
+ * that is a fold of the holds themselves, a counted allowance whose use,
+ * reservations and remainder still add up to what the period began with, and
+ * no ceiling the period already passed.
  */
 const invariantsHold = (
   state: SubscriptionState,
@@ -105,8 +108,17 @@ const invariantsHold = (
     if (remaining === null) return false;
     // A blocking allowance never spends past zero.
     if (allowance.overage === "block" && remaining < 0) return false;
-    // A cap is a ceiling on the units a period may bill, holds included.
+    // A cap is a ceiling on the units a period may bill, holds included. Every
+    // command that could cross one refuses — usage and holds in the transaction
+    // that would record them, and `ChangeTier` when the move itself would land
+    // the standing past it — so no reachable state is over its ceiling.
     if (allowance.cap !== undefined && used + reserved > allowance.included + allowance.cap) {
+      return false;
+    }
+    // The same, in money. `billed` is kept across a tier change, so a change
+    // under a smaller money cap is a ceiling already passed; `ChangeTier`
+    // refuses it (`DowngradeBelowSpend`) for exactly that reason.
+    if (allowance.moneyCap !== undefined && billedOf(state, feature) > allowance.moneyCap) {
       return false;
     }
     // Use, reservations and the remainder are one count: none of them may
@@ -145,6 +157,67 @@ describe("cross-family invariants", () => {
         return true;
       },
       { runs: 100, size: 50 },
+    ),
+  );
+});
+
+const MoneyStep = Schema.Union([
+  Schema.TaggedStruct("TrackUsage", { amount: Amount }),
+  Schema.TaggedStruct("ChangeTier", {
+    tier: Schema.Literals(["metered", "capped", "cheap", "recurring"]),
+  }),
+  Schema.TaggedStruct("ClosePeriod", {}),
+]);
+type MoneyStep = typeof MoneyStep.Type;
+
+/**
+ * A history that opens on a money tier and keeps moving between them. The
+ * shared generator reaches a money allowance only by chance, and reaching a
+ * ceiling has to happen *before* a tier change that would land under it, so the
+ * general script rarely produces the pair. This one bills and changes tier in
+ * the same script by construction.
+ */
+const MoneyHistory = Schema.Struct({
+  tier: Schema.Literals(["metered", "capped", "cheap", "recurring"]),
+  steps: Schema.Array(MoneyStep).pipe(Schema.check(Schema.isMaxLength(40))),
+});
+type MoneyHistory = typeof MoneyHistory.Type;
+
+describe("cross-family invariants on the money plane", () => {
+  it.effect("no reachable standing is past a unit ceiling or a money ceiling", () =>
+    assertProperty(
+      Arbitrary.schema(MoneyHistory),
+      (history) => {
+        let state: SubscriptionState = initialSubscriptionState;
+        let now = start;
+        const bases = new Map<string, number | null>();
+
+        const run = (step: {
+          readonly command: Parameters<typeof commandOf>[0];
+          readonly advanceDays: number;
+        }): boolean => {
+          now = DateTime.add(now, { days: step.advanceDays });
+          const command = commandOf(step.command, state, now);
+          const decision = decideAt(state, command, now, "money-invariant");
+          if (!isAccepted(decision)) return true;
+          state = evolveAt(state, decision, now, "money-invariant");
+          updateBases(bases, decision, state);
+          return invariantsHold(state, bases);
+        };
+
+        const steps: ReadonlyArray<{
+          readonly command: Parameters<typeof commandOf>[0];
+          readonly advanceDays: number;
+        }> = [
+          { command: { _tag: "Subscribe", tier: history.tier }, advanceDays: 0 },
+          ...history.steps.map((step) => ({ command: step, advanceDays: 0 })),
+        ];
+        for (const step of steps) {
+          if (!run(step)) return false;
+        }
+        return true;
+      },
+      { runs: 120, size: 40 },
     ),
   );
 });

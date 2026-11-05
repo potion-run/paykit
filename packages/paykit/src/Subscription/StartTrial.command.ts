@@ -11,6 +11,7 @@ import { AccountId } from "./Subscription.id.ts";
 import type { SubscriptionStatus } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
+import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 
 /** The account's trial began and its first period is open. */
 export class TrialStarted extends Domain.Event("TrialStarted", {
@@ -48,7 +49,13 @@ export class StartTrial extends Domain.Command("StartTrial", {
     price: Schema.optionalKey(Price),
   },
   events: [TrialStarted],
-  rejects: [TrialAlreadyUsed, TierNotInCatalog, CatalogMismatch, CurrencyMismatch],
+  rejects: [
+    TrialAlreadyUsed,
+    TierNotInCatalog,
+    CatalogMismatch,
+    CurrencyMismatch,
+    TrialDeadlineNotLater,
+  ],
   middleware: [Session, CatalogGuard],
 }) {}
 

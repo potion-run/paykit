@@ -1,16 +1,28 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { allowance } from "../../src/Allowance.ts";
+import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { feature, messages } from "../../src/Feature.ts";
+import { prorate } from "../../src/Proration.ts";
+import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { Hold, HoldExceeded } from "../../src/Subscription/Hold.command.ts";
 import { HoldElapsed } from "../../src/Subscription/HoldElapsed.command.ts";
 import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
+import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
+import {
+  creditRateOf,
+  initialSubscriptionState,
+} from "../../src/Subscription/Subscription.state.ts";
 import {
   holdOf,
   reservedOf,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
+import { tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   Amount,
@@ -404,6 +416,132 @@ describe("holds", () => {
         return isAccepted(again) && again.length === 0;
       },
       { runs: 80, size: 20 },
+    ),
+  );
+});
+
+/**
+ * The rate a hold was priced at belongs to the hold, not to the catalog. A
+ * catalog edit that changes what a credit costs must not reprice work that was
+ * already promised: the request is priced once, when it is placed, and the
+ * settle bills that price however the catalog moved in between.
+ *
+ * The two catalogs below are the same catalog at two moments — the feature is
+ * declared once per catalog with a different rate card, so the `rates` a
+ * `ChangeTier` carries are the new ones.
+ */
+const cheapAi = feature({ id: "ai", name: "AI", creditRates: { default: 1 } });
+const dearAi = feature({ id: "ai", name: "AI", creditRates: { default: 10 } });
+const before = Effect.runSync(
+  catalog({
+    features: [messages, cheapAi],
+    tiers: [
+      tier({
+        id: "pro",
+        price: { amount: 1_900, currency: "usd", interval: "month" },
+        credits: 10_000,
+        grants: [allowance(messages, { included: 100 })],
+      }),
+    ],
+  }),
+);
+const after = Effect.runSync(
+  catalog({
+    features: [messages, dearAi],
+    tiers: [
+      tier({
+        id: "pro",
+        price: { amount: 1_900, currency: "usd", interval: "month" },
+        credits: 10_000,
+        grants: [allowance(messages, { included: 100 })],
+      }),
+    ],
+  }),
+);
+
+describe("a hold's captured rate", () => {
+  it.effect("a settle bills the rate the hold was placed at, not the catalog's today", () =>
+    assertProperty(
+      Arbitrary.schema(Schema.Struct({ held: Amount, settled: Amount })),
+      ({ held, settled }) => {
+        const terms = tierTermsOf(before, "pro");
+        if (terms === null) return false;
+        const openedState = decideAt(
+          initialSubscriptionState,
+          new Subscribe({ tier: "pro", ...terms }),
+          start,
+          "open",
+        );
+        if (!isAccepted(openedState)) return false;
+        let state = evolveAt(
+          initialSubscriptionState,
+          openedState,
+          start,
+          "open",
+        ) as SubscribedState;
+
+        const reserved = decideAt(
+          state,
+          new Hold({
+            holdId: "repriced",
+            feature: "ai",
+            amount: held,
+            expiresAt: DateTime.add(start, { days: 1 }),
+          }),
+          start,
+          "hold",
+        );
+        if (!isAccepted(reserved)) {
+          // A credit hold is refused only once the pool cannot cover it.
+          return reserved._tag === "HoldExceeded";
+        }
+        state = evolveAt(state, reserved, start, "hold") as SubscribedState;
+        // One credit a unit was the price when this work was promised.
+        if (holdOf(state, "repriced")?.rate !== 1) return false;
+
+        // The catalog now says ten. A tier change carries the new card, and
+        // its proration is the one the prices and the period work out to.
+        const repriced = tierTermsOf(after, "pro")!;
+        const proration = prorate({
+          from: state.price,
+          to: repriced.price,
+          period: { start: state.period.start, end: state.period.end },
+          at: start,
+        });
+        const changed = decideAt(
+          state,
+          new ChangeTier({
+            tier: "pro",
+            ...repriced,
+            ...(proration === null ? {} : { proration }),
+          }),
+          start,
+          "reprice",
+        );
+        if (!isAccepted(changed)) return false;
+        state = evolveAt(state, changed, start, "reprice") as SubscribedState;
+        if (creditRateOf(state.rates["ai"]!, "default") !== 10) return false;
+
+        if (settled > held) return true;
+        const creditsBefore = state.credits;
+        const settle = decideAt(
+          state,
+          new SettleHold({ holdId: "repriced", amount: settled }),
+          start,
+          "settle",
+        );
+        if (!isAccepted(settle)) return settle._tag === "CreditExceeded";
+        const recorded = settle.find((event) => event._tag === "UsageRecorded") as
+          | { readonly cost: number; readonly creditsAfter: number; readonly amount: number }
+          | undefined;
+        if (recorded === undefined) return false;
+        // `amount × the captured rate`, not `amount × the catalog's rate`.
+        if (recorded.cost !== settled * 1) return false;
+        if (recorded.creditsAfter !== creditsBefore - recorded.cost) return false;
+        const evolved = evolveAt(state, settle, start, "settle") as SubscribedState;
+        return evolved.credits === creditsBefore - settled;
+      },
+      { runs: 80, size: 30 },
     ),
   );
 });

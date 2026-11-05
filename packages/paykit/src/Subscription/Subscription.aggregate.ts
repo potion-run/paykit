@@ -115,6 +115,7 @@ import {
   UsageRecorded,
 } from "./TrackUsage.command.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
+import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 
 /** The currency a tier's postpaid prices are stated in, if it has any. */
 const unitPriceCurrencyOf = (allowances: Allowances): string | undefined => {
@@ -314,6 +315,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const currency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
       if (currentCurrency !== undefined && currency !== undefined && currentCurrency !== currency) {
         return new CurrencyMismatch({ expected: currentCurrency, actual: currency });
+      }
+      // The deadline is the end of the first period, so it has to be ahead of
+      // the start. A trial that ends before it begins opens a period the engine
+      // would close on its next tick, and every `resetsAt` after it inherits the
+      // mistake.
+      if (DateTime.toEpochMillis(command.trialEndsAt) <= DateTime.toEpochMillis(now)) {
+        return new TrialDeadlineNotLater({ current: now, requested: command.trialEndsAt });
       }
       return [
         new TrialStarted({
@@ -1059,6 +1067,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ExtendTrial: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
       if (state.status !== "trialing") return new TrialNotActive();
+      // `ExtendTrial` moves a deadline forward. A deadline that is not later
+      // would shorten the trial and bring the period's close with it — the
+      // opposite of the command's name — so it is refused rather than applied.
+      const current = state.trialEndsAt ?? state.period.end;
+      if (DateTime.toEpochMillis(command.trialEndsAt) <= DateTime.toEpochMillis(current)) {
+        return new TrialDeadlineNotLater({ current, requested: command.trialEndsAt });
+      }
       return [
         new TrialExtended({
           trialEndsAt: command.trialEndsAt,

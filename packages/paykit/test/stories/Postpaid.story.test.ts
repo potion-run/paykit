@@ -84,7 +84,9 @@ const feature = (over: {
   resetsAt: over.resetsAt ?? monthLater,
   unitPrice,
   moneyCap: 500,
-  billed: over.billed,
+  // `billed` is absent when nothing has been billed this period, the same way
+  // a fresh standing reports it: zero is the absence of a bill, not a number.
+  ...(over.billed === 0 ? {} : { billed: over.billed }),
 });
 
 const subscribed = [

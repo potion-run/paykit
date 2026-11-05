@@ -1,11 +1,15 @@
 import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { creditRatesOf, tierTermsOf } from "../../src/Catalog.ts";
+import { allowance } from "../../src/Allowance.ts";
+import { catalog, creditRatesOf, tierTermsOf } from "../../src/Catalog.ts";
+import { feature, messages } from "../../src/Feature.ts";
 import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { PurchaseCredits } from "../../src/Subscription/PurchaseCredits.command.ts";
+import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import {
   creditRateOf,
   initialSubscriptionState,
@@ -14,6 +18,7 @@ import {
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
+import { tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   Amount,
@@ -422,6 +427,112 @@ describe("credits", () => {
         return true;
       },
       { runs: 80, size: 20 },
+    ),
+  );
+});
+
+/**
+ * A one-off pack never expires. A close expires the plan's own credits and
+ * nothing else, so after any close the pool is exactly the part a pack bought —
+ * and `prepaidCredits` still names it, so the next close expires zero rather
+ * than spending it a second time.
+ *
+ * The plan grants a small pool on purpose: spending past it is the case that
+ * reaches into the pack, and `protectedAfterSpending` is where that decision
+ * lives.
+ */
+const PLAN_CREDITS = 100;
+const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1 } });
+const creditsCatalog = Effect.runSync(
+  catalog({
+    features: [messages, ai],
+    tiers: [
+      tier({
+        id: "small",
+        price: { amount: 900, currency: "usd", interval: "month" },
+        credits: PLAN_CREDITS,
+        grants: [allowance(messages, { included: 10 })],
+      }),
+    ],
+  }),
+);
+
+describe("what a close may expire", () => {
+  it.effect("a close leaves the pool equal to what a pack bought", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          purchased: Amount,
+          spent: Amount,
+        }),
+      ),
+      ({ purchased, spent }) => {
+        const terms = tierTermsOf(creditsCatalog, "small")!;
+        const bought = decideAt(
+          initialSubscriptionState,
+          new PurchaseCredits({
+            tier: "credits_1k",
+            amount: purchased,
+            rates: creditRatesOf(creditsCatalog),
+          }),
+          start,
+          "buy",
+        );
+        if (!isAccepted(bought)) return false;
+        let state = evolveAt(initialSubscriptionState, bought, start, "buy");
+
+        const opened = decideAt(state, new Subscribe({ tier: "small", ...terms }), start, "open");
+        if (!isAccepted(opened)) return false;
+        state = evolveAt(state, opened, start, "open");
+        if (state._tag !== "Subscribed") return false;
+
+        // The pool is the plan's grant plus the pack it carried in.
+        if (state.credits !== PLAN_CREDITS + purchased) return false;
+
+        if (spent > state.credits) return true;
+        if (spent > 0) {
+          const tracked = decideAt(
+            state,
+            new TrackUsage({ feature: "ai", amount: spent }),
+            start,
+            "spend",
+          );
+          if (!isAccepted(tracked)) return false;
+          state = evolveAt(state, tracked, start, "spend") as SubscribedState;
+        }
+
+        // Spending drains the plan's credits before the pack: the protected
+        // part only shrinks once the plan's own credits are gone.
+        const expectedPrepaid = purchased - Math.max(0, spent - PLAN_CREDITS);
+        if (prepaidCreditsOf(state) !== expectedPrepaid) return false;
+        if (state.credits !== PLAN_CREDITS + purchased - spent) return false;
+
+        const close = decideAt(
+          state,
+          commandOf({ _tag: "ClosePeriod" }, state, state.period.end),
+          state.period.end,
+          "close",
+        );
+        if (!isAccepted(close)) return false;
+        const closed = evolveAt(state, close, state.period.end, "close") as SubscribedState;
+
+        // The close takes the plan's credits and leaves the pack, so the pool
+        // and the protected part are the same number afterwards.
+        if (closed.credits !== expectedPrepaid) return false;
+        if (prepaidCreditsOf(closed) !== expectedPrepaid) return false;
+
+        // A second close expires nothing, because everything left is a pack.
+        const again = decideAt(
+          closed,
+          commandOf({ _tag: "ClosePeriod" }, closed, closed.period.end),
+          closed.period.end,
+          "close-again",
+        );
+        if (!isAccepted(again)) return false;
+        const twice = evolveAt(closed, again, closed.period.end, "close-again") as SubscribedState;
+        return twice.credits === expectedPrepaid && prepaidCreditsOf(twice) === expectedPrepaid;
+      },
+      { runs: 100, size: 30 },
     ),
   );
 });

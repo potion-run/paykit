@@ -60,6 +60,30 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [free, pro, scale, euro] }),
 );
 
+/**
+ * Two tiers with the two ceilings `ChangeTier` refuses to move under. One is a
+ * unit ceiling (`included + cap`), the other a money ceiling the period may not
+ * bill past.
+ */
+const capped = tier({
+  id: "capped",
+  price: { amount: 900, currency: "usd", interval: "month" },
+  grants: [allowance(messages, { included: 100, overage: "bill", cap: 20 })],
+});
+const metered = tier({
+  id: "metered",
+  price: { amount: 1_900, currency: "usd", interval: "month" },
+  grants: [
+    allowance(messages, {
+      included: 100,
+      overage: "bill",
+      unitPrice: { amount: 5, currency: "usd" },
+      moneyCap: 500,
+    }),
+  ],
+});
+const ceilings = Effect.runSync(catalog({ features: [messages], tiers: [capped, metered] }));
+
 const state = (
   status: "trialing" | "active" | "grace" | "canceled" | "expired",
   overrides: { readonly cancelAtPeriodEnd?: boolean; readonly tier?: string } = {},
@@ -97,6 +121,39 @@ const entitlements = (used: number, reserved = 0): EntitlementsState =>
         overage: "block",
         resets: "month",
         resetsAt: null,
+      },
+    },
+  }) as unknown as EntitlementsState;
+
+/** The same row for the money tiers: a bill allowance carrying both ceilings. */
+const ceilingEntitlements = (feature: {
+  readonly used: number;
+  readonly billed: number;
+}): EntitlementsState =>
+  ({
+    account: "acct_1",
+    tier: "metered",
+    status: "active",
+    standing: "good",
+    periodStart: 0,
+    periodEnd: 0,
+    cancelAtPeriodEnd: false,
+    credits: 0,
+    dunningAttempts: 0,
+    features: {
+      messages: {
+        included: 100,
+        used: feature.used,
+        reserved: 0,
+        remaining: 100 - feature.used,
+        allowed: true,
+        overage: "bill",
+        resets: "month",
+        resetsAt: null,
+        cap: 20,
+        unitPrice: { amount: 5, currency: "usd" },
+        moneyCap: 500,
+        ...(feature.billed === 0 ? {} : { billed: feature.billed }),
       },
     },
   }) as unknown as EntitlementsState;
@@ -162,6 +219,34 @@ describe("admin actions", () => {
     const only = Effect.runSync(catalog({ features: [messages], tiers: [pro] }));
     expect(actions("active", { tier: "pro" }, { catalog: only })).not.toContain("ChangeTier");
   });
+
+  it("does not offer a tier whose unit ceiling the period already passed", () => {
+    // `capped` bills up to `included + cap` = 120 units and the account has used
+    // 190 of them. `ChangeTier` refuses the move (`DowngradeBelowCeiling`), so
+    // the console must not put it on screen: every later `TrackUsage` would be
+    // refused until the period resets.
+    const offered = actionsFor(state("active", { tier: "metered" }), {
+      catalog: ceilings,
+      entitlements: ceilingEntitlements({ used: 190, billed: 450 }),
+    });
+    expect(offered.map((descriptor) => descriptor.action)).not.toContain("ChangeTier");
+  });
+
+  it("does not offer a tier whose money ceiling the period already billed past", () => {
+    // `metered` may bill 500 minor units a period. The counters are well under
+    // `capped`'s unit ceiling in both cases, so only the money rule can keep
+    // the move off the screen.
+    const offered = (billed: number) =>
+      actionsFor(state("active", { tier: "capped" }), {
+        catalog: ceilings,
+        entitlements: ceilingEntitlements({ used: 50, billed }),
+      });
+
+    expect(offered(400).find((descriptor) => descriptor.action === "ChangeTier")?.tiers).toEqual([
+      "metered",
+    ]);
+    expect(offered(600).map((descriptor) => descriptor.action)).not.toContain("ChangeTier");
+  });
 });
 
 type Event = Readonly<{ readonly _tag: string }>;
@@ -214,11 +299,22 @@ const commandFor = (
   now: DateTime.Utc,
 ): ConsoleCommand | null => {
   const soon = DateTime.add(now, { days: 7 });
+  // An extension has to land past the deadline already in force, which is not
+  // the same as past `now`: a trial extended twice must move forward twice.
+  const extended =
+    state._tag === "Subscribed" && state.trialEndsAt !== undefined
+      ? DateTime.add(
+          DateTime.toEpochMillis(state.trialEndsAt) > DateTime.toEpochMillis(now)
+            ? state.trialEndsAt
+            : now,
+          { days: 7 },
+        )
+      : soon;
   switch (action) {
     case "GrantCredits":
       return new GrantCredits({ amount: 250 });
     case "ExtendTrial":
-      return new ExtendTrial({ trialEndsAt: soon });
+      return new ExtendTrial({ trialEndsAt: extended });
     case "EnterGrace":
       return new EnterGrace({ graceUntil: soon });
     case "RecordPayment":

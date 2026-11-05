@@ -17,6 +17,7 @@ import {
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
   initialSubscriptionState,
+  billedOf,
   remainingOf,
   reservedCreditsOf,
   reservedOf,
@@ -157,6 +158,9 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     if (isFlagGrant(allowance)) {
       if (entry.remaining !== null) return false;
     } else if (entry.remaining !== remainingOf(state, feature)) return false;
+    // Money is part of the standing: a read model that reports a bill the state
+    // does not hold lets `check()` spend a cap the account already reached.
+    if ((entry.billed ?? 0) !== billedOf(state, feature)) return false;
   }
 
   // A credit-priced feature shares one pool: its `remaining` is the pool less
@@ -168,6 +172,17 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     if (entry.used !== usedOf(state, feature)) return false;
     if (entry.reserved !== heldCredits) return false;
     if (entry.remaining !== state.credits - heldCredits) return false;
+  }
+
+  // The judgement the row carries is `check({ amount: 1 })`, computed by a
+  // second implementation (`allowsOne`) of the rule `evaluateCheck` applies.
+  // Two implementations of one ceiling are where a read model starts
+  // disagreeing with the write path, so this is what says they do not.
+  for (const [feature, entry] of Object.entries(view.features)) {
+    const asked = evaluateCheck(view, { account: propertyAccount, feature, amount: 1 });
+    if (asked.allowed !== entry.allowed) return false;
+    if (asked.remaining !== entry.remaining) return false;
+    if (asked.standing !== view.standing) return false;
   }
 
   return true;
@@ -258,4 +273,46 @@ describe("read and write agreement", () => {
       { runs: 100, size: 50 },
     ),
   );
+});
+
+describe("a standing that goes blocked", () => {
+  /**
+   * The shrunk counterexample the property above found. `allowed` is documented
+   * as the answer `check({ amount: 1 })` gives, so a row still saying yes after
+   * the standing went `blocked` offers work the write path refuses. Commands
+   * that only moved `status` / `standing` used to leave every feature's
+   * judgement where the previous period put it.
+   */
+  it("rejudges every feature on the row, not only on the next write", () => {
+    let state: SubscriptionState = initialSubscriptionState;
+    let view = initialEntitlements;
+    let now = start;
+    const script = {
+      steps: [
+        { command: { _tag: "StartTrial", tier: "free", trialDays: 1 }, advanceDays: 0 },
+        { command: { _tag: "EnterGrace" }, advanceDays: 0 },
+        { command: { _tag: "Expire" }, advanceDays: 0 },
+      ],
+    } as const;
+
+    for (const [index, step] of script.steps.entries()) {
+      now = DateTime.add(now, { days: step.advanceDays });
+      const command = commandOf(step.command, state, now);
+      const decision = decideAt(state, command, now, `blocked-${index}`);
+      if (!isAccepted(decision)) throw new Error(`${step.command._tag} was refused`);
+      state = evolveAt(state, decision, now, `blocked-${index}`);
+      view = foldView(view, decision);
+    }
+
+    if (state._tag !== "Subscribed" || state.status !== "expired") {
+      throw new Error("the script never expired the standing");
+    }
+    if (view.standing !== "blocked") throw new Error("the row did not go blocked");
+    const features = Object.entries(view.features);
+    if (features.length === 0) throw new Error("the row carries no features");
+    for (const [feature, entry] of features) {
+      if (entry.allowed !== false) throw new Error(`the row still allows ${feature}`);
+      if (!viewMatchesState(state, view)) throw new Error(`the row disagrees about ${feature}`);
+    }
+  });
 });
