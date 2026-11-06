@@ -4,9 +4,16 @@
 \* The close reports each unit at the price it was recorded at, in one report
 \* that carries a line per price, and the vendor receives all of them.
 \*
-\* Mirrors `Subscription/PeriodCloseUsage.policy.ts` (`billableLines`),
-\* `Subscription/Entitlements.view.ts` (`FeatureEntitlement.priced`) and
-\* `Subscription/TrackUsage.command.ts` (`UsageRecorded.billable`).
+\* The split is arithmetic, not an interleaving: `UsageRecorded.billable` is
+\* computed against the running total when the event is recorded, and the close
+\* only sums it. The model keeps the grant constant and uses the closed form of
+\* that sum at the close; `billableUnitsOf` is what the tests pin.
+\*
+\* Mirrors:
+\*   packages/paykit/src/Subscription/PeriodCloseUsage.policy.ts (`billableLines`)
+\*   packages/paykit/src/Subscription/Entitlements.view.ts      (`FeatureEntitlement.priced`)
+\*   packages/paykit/src/Subscription/TrackUsage.command.ts     (`UsageRecorded.billable`)
+\*   packages/paykit/src/Subscription/Subscription.state.ts     (`billableUnitsOf`)
 \*
 \* Read spec/README.md beside this file before changing it.
 EXTENDS Naturals, FiniteSets, Sequences
@@ -23,10 +30,12 @@ Prices == 1..2
 Max2(a, b) == IF a > b THEN a ELSE b
 
 \* The units a period bills at each price, given the period's usage in the order
-\* it was recorded. `SharesIncluded` is the design under test: a period grants
-\* `Included` once, so the first units in time order are free and only the rest
-\* bill. Counting the grant per price instead would give it away once per price,
-\* which is a different period than the one that was used.
+\* it was recorded. This is the closed form of summing the `billable` field on
+\* every event, because the grant is constant. `SharesIncluded` is the design
+\* under test: a period grants `Included` once, so the first units in time order
+\* are free and only the rest bill. Counting the grant per price instead would
+\* give it away once per price, which is a different period than the one that
+\* was used.
 Freeze(usage) ==
   IF SharesIncluded
   THEN [v \in Prices |-> Cardinality({i \in 1..Len(usage) : usage[i] = v /\ i > Included})]

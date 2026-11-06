@@ -101,7 +101,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     if (tier === null || terms === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
-    const { kind, allowances, credits, creditsExpire, rates } = terms;
+    const { kind, allowances, credits, creditsExpire, topUp, rates } = terms;
     const ref = Subscription.ref(input.account);
     const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
     const standing = yield* subscription.state(ref);
@@ -119,6 +119,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
             allowances,
             credits,
             creditsExpire,
+            ...(topUp === undefined ? {} : { topUp }),
             rates,
             ...anchored,
           }),

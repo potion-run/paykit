@@ -160,6 +160,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
               allowances: terms.allowances,
               credits: terms.credits,
               creditsExpire: terms.creditsExpire,
+              ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
               rates: terms.rates,
               ...(tier?.price === undefined ? {} : { price: tier.price }),
               ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),

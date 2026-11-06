@@ -265,7 +265,7 @@ export const BillingApiLayer = Layer.mergeAll(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, rates, price } = terms;
+          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toScheduleTierChangeError)(
             client.ScheduleTierChange(
               id,
@@ -274,6 +274,7 @@ export const BillingApiLayer = Layer.mergeAll(
                 allowances,
                 credits,
                 creditsExpire,
+                ...(topUp === undefined ? {} : { topUp }),
                 rates,
                 ...(price === undefined ? {} : { price }),
               },
@@ -326,7 +327,7 @@ export const BillingApiLayer = Layer.mergeAll(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, rates, price } = terms;
+          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toStartTrialError)(
             client.StartTrial(
               id,
@@ -335,6 +336,7 @@ export const BillingApiLayer = Layer.mergeAll(
                 allowances,
                 credits,
                 creditsExpire,
+                ...(topUp === undefined ? {} : { topUp }),
                 rates,
                 trialEndsAt: request.trialEndsAt,
                 ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),

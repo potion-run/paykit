@@ -50,6 +50,7 @@ export const testCatalog = Effect.runSync(
         id: "pro",
         price: { amount: 1_900, currency: "usd", interval: "month" },
         credits: 50_000,
+        topUp: 100,
         grants: [allowance(messages, { included: 2_000, overage: "bill" })],
       }),
       tier({

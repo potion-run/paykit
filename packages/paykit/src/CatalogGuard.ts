@@ -14,6 +14,7 @@ interface CatalogCarried {
   readonly price?: Price;
   readonly credits?: number;
   readonly creditsExpire?: string;
+  readonly topUp?: number;
   readonly rates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
 }
 
@@ -119,6 +120,18 @@ export const catalogMismatchOf = (
       field: "creditsExpire",
       expected: expectedExpire,
       actual: actualExpire,
+    });
+  }
+  // The line at which a spend refills the pool is a plan term like the grant
+  // itself: a caller that moves it would buy a pack the deploy never agreed to.
+  const expectedTopUp = tier.topUp === undefined ? "none" : String(tier.topUp);
+  const actualTopUp = input.topUp === undefined ? "none" : String(input.topUp);
+  if (expectedTopUp !== actualTopUp) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "topUp",
+      expected: expectedTopUp,
+      actual: actualTopUp,
     });
   }
   const expectedRates = ratesKey(creditRatesOf(catalog));

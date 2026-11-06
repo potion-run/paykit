@@ -369,12 +369,14 @@ no second log, and no read model that can disagree with the stream.
   `UsageReleased` a caller's `Release` records, so a late settle is still `HoldSettled` and a late
   release is a replay.
 - `AutoTopUp` — a policy on `UsageRecorded` and `CreditsConsumed`. A spend that takes the credit pool
-  from above the deployment's threshold to at or below it buys the named one-off pack: the policy
-  opens an invoice for the pack's price keyed by the crossing and records the purchase with that
-  invoice id. The balance before the spend is on the event, so a spend while the pool is already
-  below the line is not a second crossing; the pack is the cooldown. A deployment that provides no
-  `autoTopUp({ ... })` runs nothing, and a provider without `invoice` is
-  `ProviderCapabilityMissing` rather than a free pack.
+  from above the standing tier's `topUp` line to at or below it buys the one-off pack the
+  deployment named: the policy opens an invoice for the pack's price keyed by the crossing and
+  records the purchase with that invoice id. The line travels on the standing (`Tier.topUp` -> the
+  activation, change and schedule events), so a free tier and an enterprise tier refill on the
+  numbers their pools need; a tier without one never refills. The balance before the spend is on the
+  event, so a spend while the pool is already below the line is not a second crossing; the pack is
+  the cooldown. A deployment that provides no `autoTopUp({ ... })` runs nothing, and a provider
+  without `invoice` is `ProviderCapabilityMissing` rather than a free pack.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,

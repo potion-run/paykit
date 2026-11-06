@@ -64,6 +64,9 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   are integer minor units plus a currency. A `kind: "one_off"` pack is the exception: it grants
   credits, has no allowances, defaults `creditsExpire` to `"never"`, and must state a price. The
   catalog refuses either shape the wrong way round.
+- A subscription tier may state `topUp`, the credit line at or below which a spend buys the
+  deployment's auto top-up pack. It is carried on the standing, and a pack cannot state one
+  (`CatalogTopUpOnPack`) because a pack has no spend to observe.
 - A postpaid allowance states `unitPrice: { amount, currency }` and optionally `moneyCap`; both
   need `overage: "bill"`, and a tier's unit prices share one currency (the tier price's, when it has
   one). The catalog refuses a price with nothing to bill (`CatalogUnitPriceWithoutBilling`), a money
@@ -139,14 +142,16 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   `CreditsPurchased`, never `TierChanged`, and never create a second standing. The standing tracks
   `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only
   `credits - prepaidCredits`, and spending drains the plan's credits before the protected pool.
-- An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, threshold,
-  pack })` provides `AutoTopUp`, which buys the named `kind: "one_off"` pack when a spend takes the
-  pool from above the threshold to at or below it. The balance before the event is derived from the
-  event (`creditsAfter + cost`, `balanceAfter + amount`), so a second spend below the line is not a
-  second crossing, and a grant, an expiry or a hold reservation never triggers one. It opens the
-  pack's price as an invoice keyed by the crossing and records `PurchaseCredits` with that
-  `invoiceId`, so the money and the credits are one record; the pack is the cooldown, and a
-  provider without `invoice` is `ProviderCapabilityMissing`, never a free pack.
+- An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, pack })`
+  provides `AutoTopUp`, which buys the named `kind: "one_off"` pack when a spend takes the pool from
+  above the standing tier's `topUp` line to at or below it. The line is catalog data (`Tier.topUp`)
+  carried on the standing like `pendingTier`, because a free tier and an enterprise tier need
+  different lines and `decide` never sees the catalog. A tier without it never refills. The balance
+  before the event is derived from the event (`creditsAfter + cost`, `balanceAfter + amount`), so a
+  second spend below the line is not a second crossing, and a grant, an expiry or a hold reservation
+  never triggers one. It opens the pack's price as an invoice keyed by the crossing and records
+  `PurchaseCredits` with that `invoiceId`, so the money and the credits are one record; the pack is
+  the cooldown, and a provider without `invoice` is `ProviderCapabilityMissing`, never a free pack.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.

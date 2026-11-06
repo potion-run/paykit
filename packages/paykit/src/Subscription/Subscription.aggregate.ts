@@ -224,6 +224,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
             credits,
             ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
             creditsExpire,
+            ...(pending.topUp === undefined ? {} : { topUp: pending.topUp }),
             rates: pending.rates,
             ...(pending.currency === undefined ? {} : { currency: pending.currency }),
             ...(pending.interval === undefined ? {} : { interval: pending.interval }),
@@ -371,6 +372,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           credits: command.credits + prepaidCreditsOf(state),
           ...carriedPrepaid(state, command.credits + prepaidCreditsOf(state)),
           creditsExpire: command.creditsExpire,
+          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
           statusAfter: "trialing",
         }),
@@ -410,6 +412,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           credits: command.credits + prepaidCreditsOf(state),
           ...carriedPrepaid(state, command.credits + prepaidCreditsOf(state)),
           creditsExpire: command.creditsExpire,
+          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
           statusAfter: "active",
         }),
@@ -501,6 +504,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           credits: current.credits,
           ...carriedPrepaid(current, current.credits),
           creditsExpire: command.creditsExpire,
+          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
           ...(current.price === undefined ? {} : { priceBefore: current.price }),
           ...(command.price === undefined ? {} : { priceAfter: command.price }),
@@ -1065,6 +1069,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.price === undefined ? {} : { price: command.price }),
           credits: command.credits,
           creditsExpire: command.creditsExpire,
+          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
           ...(state.currency === undefined ? {} : { currency: state.currency }),
           interval: state.interval,
@@ -1156,6 +1161,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       credits: event.credits,
       prepaidCredits: event.prepaidCredits ?? 0,
       creditsExpire: event.creditsExpire,
+      ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
       rates: event.rates,
       ...(event.currency === undefined
         ? state._tag === "Subscribed" && state.currency !== undefined
@@ -1186,6 +1192,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       credits: event.credits,
       prepaidCredits: event.prepaidCredits ?? 0,
       creditsExpire: event.creditsExpire,
+      ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
       rates: event.rates,
       ...(event.currency === undefined ? {} : { currency: event.currency }),
       ...(event.price === undefined ? {} : { price: event.price }),
@@ -1206,6 +1213,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         prorationInvoice: _previousInvoice,
         prorationId: _previousProrationId,
         pendingTier: _cancelled,
+        topUp: _previousTopUp,
         ...rest
       } = state;
       // Every prorated change takes the next id, including an identical change
@@ -1221,6 +1229,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         credits: event.credits,
         prepaidCredits: event.prepaidCredits ?? 0,
         creditsExpire: event.creditsExpire,
+        ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
         rates: event.rates,
         ...((event.currency ?? state.currency) === undefined
           ? {}
@@ -1365,6 +1374,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               ...(event.price === undefined ? {} : { price: event.price }),
               credits: event.credits,
               creditsExpire: event.creditsExpire,
+              ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
               rates: event.rates,
               ...(event.currency === undefined ? {} : { currency: event.currency }),
               ...(event.interval === undefined ? {} : { interval: event.interval }),

@@ -12,20 +12,18 @@ import type { Price } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { creditsOf } from "./Subscription.state.ts";
+import { creditsOf, topUpOf } from "./Subscription.state.ts";
 import { UsageRecorded } from "./TrackUsage.command.ts";
 
 /** A spend that can take an account's pool across the threshold. */
 export type CreditSpend = UsageRecorded | CreditsConsumed;
 
 /**
- * The two numbers a deployment states for auto top-up, plus the pack's terms
- * resolved from the catalog when the layer is built. `decide` never sees this;
- * only the policy does.
+ * The pack a deployment buys, resolved from the catalog when the layer is
+ * built. The threshold is not here: it is the standing's, because it differs by
+ * tier. `decide` never sees this; only the policy does.
  */
 export interface AutoTopUpTerms {
-  /** Credits at or below which a spend is a crossing. */
-  readonly threshold: number;
   /** The `kind: "one_off"` tier that is bought. */
   readonly tier: string;
   /** Credits the pack grants. */
@@ -44,23 +42,31 @@ export interface AutoTopUpTerms {
 export class AutoTopUpInvalid extends Schema.TaggedError<AutoTopUpInvalid>()("AutoTopUpInvalid", {
   /** The tier id the deployment named as the pack. */
   pack: Schema.String,
-  /** What is wrong with it, or with the threshold. */
-  reason: Schema.Literals(["threshold", "unknown-pack", "not-a-pack", "no-credits", "no-price"]),
+  /** What is wrong with the pack. */
+  reason: Schema.Literals(["unknown-pack", "not-a-pack", "no-credits", "no-price"]),
 }) {}
 
-/** What `Paykit.autoTopUp` resolves once: the threshold and the pack to buy. */
+/** What `Paykit.autoTopUp` resolves once: the pack to buy. */
 export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpTerms>()(
   "paykit/AutoTopUp",
 ) {}
 
 /**
  * The auto top-up policy's configuration. The pack is catalog data by id; the
- * threshold is a deployment choice, not a price, so it lives beside the model
- * rather than in the catalog.
+ * threshold is the tier's own field (`Tier.topUp`), so a free tier and an
+ * enterprise tier refill on the lines their pools need.
  *
  * ### Refilling a pool from a pack
- * **Example:** Buy a 100k pack when the account falls to 5k credits
+ * **Example:** Buy a 100k pack when a pro account falls to 5k credits
  * ```typescript
+ * const pro = Paykit.tier({
+ *   id: "pro",
+ *   price: { amount: 1_900, currency: "usd", interval: "month" },
+ *   credits: 50_000,
+ *   topUp: 5_000,
+ *   grants: [Paykit.allowance(messages, { included: 2_000 })],
+ * });
+ *
  * const credits = Paykit.tier({
  *   id: "credits_100k",
  *   kind: "one_off",
@@ -72,9 +78,7 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  * const layer = Paykit.Model.layer(
  *   Paykit.ModelHandlers.pipe(
  *     Layer.provideMerge(Paykit.paymentsRouter(provider)),
- *     Layer.provideMerge(
- *       Paykit.autoTopUp({ catalog, threshold: 5_000, pack: credits.id }).pipe(Layer.orDie),
- *     ),
+ *     Layer.provideMerge(Paykit.autoTopUp({ catalog, pack: credits.id }).pipe(Layer.orDie)),
  *   ),
  * );
  * ```
@@ -83,17 +87,12 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  */
 export const autoTopUp = (options: {
   readonly catalog: Catalog;
-  /** Credits at or below which a spend buys the pack. Zero refills on empty. */
-  readonly threshold: number;
   /** The `kind: "one_off"` tier to buy; its credits and price come from the catalog. */
   readonly pack: string;
 }): Layer.Layer<AutoTopUpConfig, AutoTopUpInvalid> =>
   Layer.effect(
     AutoTopUpConfig,
     Effect.gen(function* () {
-      if (!Number.isInteger(options.threshold) || options.threshold < 0) {
-        return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "threshold" });
-      }
       const pack = tierOf(options.catalog, options.pack);
       if (pack === null) {
         return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "unknown-pack" });
@@ -108,7 +107,6 @@ export const autoTopUp = (options: {
         return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "no-price" });
       }
       return {
-        threshold: options.threshold,
         tier: pack.id,
         amount: pack.credits,
         price: pack.price,
@@ -144,9 +142,15 @@ export const crossedThreshold = (event: CreditSpend, threshold: number): boolean
 export const topUpCommandId = (account: string, seq: number): string => `topup:${account}:${seq}`;
 
 /**
- * When a spend takes an account's credit pool across the configured threshold,
+ * When a spend takes an account's credit pool across its tier's top-up line,
  * buy the pack the deployment named: open an invoice for its price with the
  * account's provider, then record the purchase.
+ *
+ * The threshold is the standing's, carried on the tier's events, so a free
+ * tier and an enterprise tier refill on the lines their pools need. A tier
+ * without `topUp` never refills, and an account with no standing has no tier
+ * to read a line from; a tier change moves the line for the next spend rather
+ * than buying retroactively.
  *
  * The money and the credits are one record. The invoice is keyed by the
  * crossing, the `PurchaseCredits` command carries that same id, and the event
@@ -181,12 +185,15 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
 
     return Effect.fn("Paykit.AutoTopUp.react")(function* ({ key, event, envelope }) {
       if (config === null || router === null) return;
-      if (!crossedThreshold(event, config.threshold)) return;
 
       const standing = yield* subscriptions.state(key);
+      // The line is the tier's, not the deployment's: a tier that never stated
+      // one never refills, however the pack is configured.
+      const threshold = topUpOf(standing);
+      if (threshold === null || !crossedThreshold(event, threshold)) return;
       // The event is the crossing, but the policy runs later: a pool that has
       // already recovered means this pass is a redelivery, not a new need.
-      if (creditsOf(standing) > config.threshold) return;
+      if (creditsOf(standing) > threshold) return;
 
       const chosen = providerFor(router, standing.refs);
       if (chosen === null || !chosen.capabilities.has("invoice")) {

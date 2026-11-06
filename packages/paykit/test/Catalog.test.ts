@@ -22,6 +22,7 @@ import {
   CatalogOneOffCreditsExpire,
   CatalogOneOffGrant,
   CatalogOneOffWithoutPrice,
+  CatalogTopUpOnPack,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
   CatalogUnitPriceWithoutBilling,
@@ -29,6 +30,7 @@ import {
   CatalogUnlimitedOverage,
   allowancesOf,
   catalog,
+  creditTermsOf,
   defineCatalog,
   featureOf,
   tierOf,
@@ -392,6 +394,38 @@ describe("catalog", () => {
     expect(
       refusal(tier({ id: "free_pack", kind: "one_off", credits: 10, grants: [] })),
     ).toBeInstanceOf(CatalogOneOffWithoutPrice);
+  });
+
+  it("carries a tier's top-up line in its terms, and refuses one on a pack", () => {
+    const plan = tier({
+      id: "plan",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      credits: 5_000,
+      topUp: 500,
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const accepted = defineCatalog({ features: [messages], tiers: [plan] });
+    expect(Result.isSuccess(accepted)).toBe(true);
+    if (Result.isSuccess(accepted)) {
+      expect(creditTermsOf(accepted.success, "plan")?.topUp).toBe(500);
+    }
+
+    // A pack has no standing, so a threshold on it would never be read.
+    const pack = tier({
+      id: "pack_with_line",
+      kind: "one_off",
+      price: { amount: 100, currency: "usd", interval: "month" },
+      credits: 10,
+      topUp: 5,
+      grants: [],
+    });
+    const refused = defineCatalog({ features: [messages], tiers: [pack] });
+    expect(Result.isFailure(refused)).toBe(true);
+    if (Result.isFailure(refused)) {
+      expect(refused.failure).toBeInstanceOf(CatalogTopUpOnPack);
+      if (refused.failure._tag !== "CatalogTopUpOnPack") return;
+      expect(refused.failure.tier).toBe("pack_with_line");
+    }
   });
 
   it("accepts a postpaid unit price, and refuses a price or cap that cannot be billed", () => {

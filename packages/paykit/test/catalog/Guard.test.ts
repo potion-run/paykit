@@ -11,6 +11,7 @@ const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
+  topUp: 500,
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
 const ceilTier = tier({
@@ -35,6 +36,7 @@ const ceil = allowancesOf(testCatalog, "ceil")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const ceilPrice = { amount: 4900, currency: "usd", interval: "month" as const };
 const proTerms = creditTermsOf(testCatalog, "pro")!;
+const freeTerms = creditTermsOf(testCatalog, "free")!;
 
 describe("the catalog guard", () => {
   it("accepts a command whose fields match the catalog", () => {
@@ -46,8 +48,8 @@ describe("the catalog guard", () => {
         ...proTerms,
       }),
     ).toBe(null);
-    // A free tier carries no price, and that matches.
-    expect(catalogMismatchOf(testCatalog, { tier: "free", allowances: free, ...proTerms })).toBe(
+    // A free tier carries no price and no top-up line, and that matches.
+    expect(catalogMismatchOf(testCatalog, { tier: "free", allowances: free, ...freeTerms })).toBe(
       null,
     );
   });
@@ -61,6 +63,7 @@ describe("the catalog guard", () => {
       price: proPrice,
       credits: proTerms.credits + 1,
       creditsExpire: proTerms.creditsExpire,
+      topUp: proTerms.topUp,
       rates: proTerms.rates,
     });
     expect(pool?.field).toBe("credits");
@@ -71,6 +74,7 @@ describe("the catalog guard", () => {
       price: proPrice,
       credits: proTerms.credits,
       creditsExpire: "never",
+      topUp: proTerms.topUp,
       rates: proTerms.rates,
     });
     expect(expiry?.field).toBe("creditsExpire");
@@ -81,9 +85,38 @@ describe("the catalog guard", () => {
       price: proPrice,
       credits: proTerms.credits,
       creditsExpire: proTerms.creditsExpire,
+      topUp: proTerms.topUp,
       rates: { messages: { default: 1 } },
     });
     expect(rates?.field).toBe("rates");
+  });
+
+  it("refuses a top-up line the catalog never sold", () => {
+    const moved = catalogMismatchOf(testCatalog, {
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+      ...proTerms,
+      topUp: 1_000,
+    });
+    expect(moved?.field).toBe("topUp");
+
+    const omitted = catalogMismatchOf(testCatalog, {
+      tier: "pro",
+      allowances: pro,
+      price: proPrice,
+      credits: proTerms.credits,
+      creditsExpire: proTerms.creditsExpire,
+      rates: proTerms.rates,
+    });
+    expect(omitted?.field).toBe("topUp");
+
+    const freeClaim = catalogMismatchOf(testCatalog, {
+      tier: "free",
+      allowances: free,
+      topUp: 500,
+    });
+    expect(freeClaim?.field).toBe("topUp");
   });
 
   it("refuses a tier the catalog does not carry", () => {

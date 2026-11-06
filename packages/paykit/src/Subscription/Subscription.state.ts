@@ -10,7 +10,7 @@ import {
 } from "../Allowance.ts";
 import { CreditRateCards, type CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
-import { CreditsExpire, Interval, Price } from "../Tier.ts";
+import { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
 
 /** An account is the key of a Subscription. */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"));
@@ -99,6 +99,8 @@ export const PendingTier = Schema.Struct({
   /** The pool the standing keeps; a change is not a grant. */
   credits: Schema.Int,
   creditsExpire: CreditsExpire,
+  /** Credits at or below which the new tier's spends buy the deployment's pack. */
+  topUp: Schema.optionalKey(TopUpThreshold),
   rates: CreditRateCards,
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Interval),
@@ -168,6 +170,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   prepaidCredits: Schema.optionalKey(Schema.Int),
   /** Whether the plan's own credits expire at a period close. */
   creditsExpire: CreditsExpire,
+  /**
+   * Credits at or below which a spend buys the deployment's auto top-up pack.
+   * Absent means this tier never refills. It travels on the standing because
+   * `decide` is pure and the policy runs without the catalog.
+   */
+  topUp: Schema.optionalKey(TopUpThreshold),
   /** Every credit-priced feature's rate card, copied from the event that set it. */
   rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
@@ -258,6 +266,10 @@ export const usedOf = (state: SubscribedState, feature: string): number =>
 /** Money already billed for one feature this period, or `0`. */
 export const billedOf = (state: SubscribedState, feature: string): number =>
   state.billed?.[feature] ?? 0;
+
+/** The auto top-up line this standing holds, or `null` when it never refills. */
+export const topUpOf = (state: SubscriptionState): number | null =>
+  state._tag === "Subscribed" ? (state.topUp ?? null) : null;
 
 /**
  * The part of one usage event that is past `included`, and so billable. An

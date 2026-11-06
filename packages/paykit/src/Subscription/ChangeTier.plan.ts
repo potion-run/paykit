@@ -42,6 +42,7 @@ export const planChangeTier = (
       allowances: terms.allowances,
       credits: terms.credits,
       creditsExpire: terms.creditsExpire,
+      ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
       rates: terms.rates,
       ...(terms.price === undefined ? {} : { price: terms.price }),
       ...(proration === null ? {} : { proration }),

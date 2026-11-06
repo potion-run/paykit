@@ -17,8 +17,12 @@ import {
   autoTopUp,
   topUpCommandId,
 } from "../../src/Subscription/AutoTopUp.policy.ts";
+import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
-import { CreditsPurchased } from "../../src/Subscription/PurchaseCredits.command.ts";
+import {
+  CreditsPurchased,
+  PurchaseCredits,
+} from "../../src/Subscription/PurchaseCredits.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -29,6 +33,16 @@ const price = { amount: 1_900, currency: "usd", interval: "month" as const };
 
 const plan = tier({
   id: "plan",
+  price,
+  credits: 2_000,
+  topUp: 1_000,
+  grants: [allowance(messages, { included: 100 })],
+});
+
+// The same plan without a top-up line: the policy is installed, but this tier
+// never asks it to buy.
+const plain = tier({
+  id: "plain",
   price,
   credits: 2_000,
   grants: [allowance(messages, { included: 100 })],
@@ -55,7 +69,7 @@ const smallPack = tier({
 const testCatalog = Effect.runSync(
   catalog({
     features: [messages, ai],
-    tiers: [plan, pack, smallPack],
+    tiers: [plan, plain, pack, smallPack],
   }),
 );
 const terms = allowancesOf(testCatalog, "plan")!;
@@ -76,6 +90,7 @@ const subscribed = [
       price,
       credits: 2_000,
       creditsExpire: "period",
+      topUp: 1_000,
       rates,
     }),
   ),
@@ -84,6 +99,43 @@ const subscribed = [
     new SubscriptionActivated({
       tier: "plan",
       allowances: terms,
+      remaining: { messages: 100 },
+      credits: 2_000,
+      creditsExpire: "period",
+      topUp: 1_000,
+      rates,
+      periodStart: start,
+      periodEnd: monthLater,
+      anchorTz: "UTC",
+      interval: "month",
+      currency: "usd",
+      price,
+      statusAfter: "active",
+    }),
+  ),
+] as const;
+
+const plainTerms = allowancesOf(testCatalog, "plain")!;
+
+const subscribedPlain = [
+  Story.provide(Actor, system("test")),
+  Story.clock(start),
+  Story.when(
+    account,
+    new Subscribe({
+      tier: "plain",
+      allowances: plainTerms,
+      price,
+      credits: 2_000,
+      creditsExpire: "period",
+      rates,
+    }),
+  ),
+  Story.then(
+    account,
+    new SubscriptionActivated({
+      tier: "plain",
+      allowances: plainTerms,
       remaining: { messages: 100 },
       credits: 2_000,
       creditsExpire: "period",
@@ -99,10 +151,7 @@ const subscribed = [
   ),
 ] as const;
 
-const storyWith = (
-  player: MoneyProvider,
-  options: { readonly threshold: number; readonly pack: string } | null,
-) => {
+const storyWith = (player: MoneyProvider, options: { readonly pack: string } | null) => {
   const handlers = PaykitHandlers.pipe(
     Layer.provide(MemoryBillingReadStore),
     Layer.provideMerge(paymentsRouter(player)),
@@ -112,14 +161,16 @@ const storyWith = (
       options === null
         ? handlers
         : handlers.pipe(
-            Layer.provideMerge(autoTopUp({ catalog: testCatalog, ...options }).pipe(Layer.orDie)),
+            Layer.provideMerge(
+              autoTopUp({ catalog: testCatalog, pack: options.pack }).pipe(Layer.orDie),
+            ),
           ),
   });
 };
 
 it.effect("buys the pack when a spend takes the pool across the threshold", () => {
   const commandId = topUpCommandId(account.id, 2);
-  return storyWith(PaymentsMemory(), { threshold: 1_000, pack: "pack" })(
+  return storyWith(PaymentsMemory(), { pack: "pack" })(
     ...subscribed,
     // 2,000 credits spend down to 500: from above the threshold to below it.
     Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
@@ -155,13 +206,15 @@ it.effect("buys the pack when a spend takes the pool across the threshold", () =
         prepaidAfter: 5_000,
       }),
     ),
+    // The page carries the line the standing refills on, not just the pack.
+    Story.view(BillingState, account, { topUp: 1_000 }),
     Story.view(Entitlements, account, { credits: 5_500 }),
   );
 });
 
 it.effect("buys once per crossing, not once per spend below the threshold", () => {
   const commandId = topUpCommandId(account.id, 2);
-  return storyWith(PaymentsMemory(), { threshold: 1_000, pack: "pack_small" })(
+  return storyWith(PaymentsMemory(), { pack: "pack_small" })(
     ...subscribed,
     // 2,000 -> 900 crosses the line once.
     Story.when(account, new TrackUsage({ feature: "ai", amount: 1_100 })),
@@ -213,6 +266,69 @@ it.effect("buys once per crossing, not once per spend below the threshold", () =
   );
 });
 
+it.effect("does nothing for a tier that states no top-up line", () =>
+  // The policy is installed and the pack is valid, but this tier never asked
+  // to refill: the line is the tier's, not the deployment's.
+  storyWith(PaymentsMemory(), { pack: "pack" })(
+    ...subscribedPlain,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 500 }),
+  ),
+);
+
+it.effect("does nothing for a pool with no standing to read a line from", () =>
+  // A pack bought before any plan has a pool but no tier, so there is no line
+  // for the policy to cross. The deployment-wide threshold used to cover this.
+  storyWith(PaymentsMemory(), { pack: "pack" })(
+    Story.provide(Actor, system("test")),
+    Story.clock(start),
+    Story.when(
+      account,
+      new PurchaseCredits({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+      }),
+    ),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        balanceAfter: 5_000,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 4_600 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 4_600,
+        cost: 4_600,
+        creditsAfter: 400,
+        usedAfter: 4_600,
+        remainingAfter: 400,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 400 }),
+  ),
+);
+
 it.effect("does nothing when the deployment never opted in", () => {
   const story = storyWith(PaymentsMemory(), null);
   return story(
@@ -243,7 +359,7 @@ it.effect("refuses to grant credits when the provider cannot open an invoice", (
         createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
       },
     });
-    const story = storyWith(checkoutOnly, { threshold: 1_000, pack: "pack" });
+    const story = storyWith(checkoutOnly, { pack: "pack" });
     // The failure is the policy's defect, not a story expectation: the pack is
     // never recorded, because the invoice that would price it cannot be opened.
     const reason = yield* story(
@@ -285,23 +401,17 @@ const refusal = (options: Parameters<typeof autoTopUp>[0]) =>
 it.effect("refuses a config the catalog cannot back", () =>
   Effect.gen(function* () {
     const tier = { id: "broken", kind: "one_off", grants: [] };
-    expect(yield* refusal({ catalog: testCatalog, threshold: 1_000, pack: "nope" })).toBe(
-      "unknown-pack",
+    expect(yield* refusal({ catalog: testCatalog, pack: "nope" })).toBe("unknown-pack");
+    expect(yield* refusal({ catalog: testCatalog, pack: "plan" })).toBe("not-a-pack");
+    expect(yield* refusal({ catalog: handBuilt([{ ...tier }]), pack: "broken" })).toBe(
+      "no-credits",
     );
-    expect(yield* refusal({ catalog: testCatalog, threshold: 1_000, pack: "plan" })).toBe(
-      "not-a-pack",
-    );
-    expect(
-      yield* refusal({ catalog: handBuilt([{ ...tier }]), threshold: 1_000, pack: "broken" }),
-    ).toBe("no-credits");
     expect(
       yield* refusal({
         catalog: handBuilt([{ ...tier, credits: 100 }]),
-        threshold: 1_000,
         pack: "broken",
       }),
     ).toBe("no-price");
-    expect(yield* refusal({ catalog: testCatalog, threshold: -1, pack: "pack" })).toBe("threshold");
     expect(new AutoTopUpInvalid({ pack: "plan", reason: "not-a-pack" })._tag).toBe(
       "AutoTopUpInvalid",
     );

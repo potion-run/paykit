@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price } from "../Tier.ts";
+import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -42,6 +42,7 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
     price: Schema.optionalKey(Price),
     credits: Schema.Int,
     creditsExpire: CreditsExpire,
+    topUp: Schema.optionalKey(TopUpThreshold),
     rates: CreditRateCards,
   },
   events: [TierChangeScheduled],

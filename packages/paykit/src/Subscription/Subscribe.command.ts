@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price } from "../Tier.ts";
+import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -24,6 +24,8 @@ export class SubscriptionActivated extends Domain.Event("SubscriptionActivated",
   prepaidCredits: Schema.optionalKey(Schema.Int),
   /** Whether that pool expires at a period close or is kept. */
   creditsExpire: CreditsExpire,
+  /** Credits at or below which a spend buys the deployment's auto top-up pack. */
+  topUp: Schema.optionalKey(TopUpThreshold),
   /** Every credit-priced feature's rate card, so `check` can price a request. */
   rates: CreditRateCards,
   periodStart: Schema.DateTimeUtc,
@@ -46,6 +48,7 @@ export class Subscribe extends Domain.Command("Subscribe", {
     /** What the tier grants in credits, and when they expire. */
     credits: Schema.Int,
     creditsExpire: CreditsExpire,
+    topUp: Schema.optionalKey(TopUpThreshold),
     rates: CreditRateCards,
     anchorTz: Schema.optionalKey(Schema.String),
   },

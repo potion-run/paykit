@@ -4,8 +4,14 @@
 \* one property a rebuild, a read model and every invariant downstream rest on.
 \*
 \* Mirrors:
-\*   packages/paykit/src/Store/SqlAggregateStore.ts   (`send`: read, decide, append)
-\*   packages/paykit/src/Store/SqlEventLog.ts         (`append`)
+\*   packages/paykit/src/Store/SqlAggregateStore.ts   (`attemptSend`, `send`: read,
+\*     decide, append, re-decide on conflict)
+\*   packages/paykit/src/Store/SqlEventLog.ts         (`append`: lock, receipt,
+\*     `expectedVersion`)
+\*
+\* The model carries the version the decision was made on. Receipt dedupe and
+\* the bounded re-decide are not extra state here: they remove interleavings the
+\* model already rejects, and the tests named in spec/README.md pin them.
 \*
 \* Read spec/README.md beside this file before changing it.
 EXTENDS Naturals, FiniteSets, Sequences
@@ -59,9 +65,10 @@ Decide(w, amount) ==
         amount |-> amount]]
   /\ UNCHANGED <<version, pool, log, snapshot>>
 
-\* `append` publishes one event and one state row in one transaction. The
-\* version it stamps comes from the log's own sequence, so the log stays dense
-\* either way; the pool it writes comes from the decision, which may be stale.
+\* `append` locks the instance's state row, then publishes one event and one
+\* state row in one transaction. The version it stamps comes from the log's own
+\* sequence, so the log stays dense either way; the pool it writes comes from
+\* the decision, which may be stale.
 Commit(w) ==
   /\ decision[w].has
   /\ (ChecksVersion => decision[w].version = version)

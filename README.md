@@ -99,8 +99,9 @@ pnpm build         # emits lib/ for each published package
 ```
 
 [`spec/`](./spec) holds TLA+ models of the parts a test cannot reach: two writers on one account,
-a deadline firing mid-flight, an outbox that redelivers, a process dying between a side effect and
-the record of it. `pnpm spec` runs them through `tla-ts` — TLC without the JVM.
+a deadline firing mid-flight, a scheduled grant applied at the boundary, an outbox that redelivers, a
+process dying between a side effect and the record of it, and a top-up policy that runs twice on one
+crossing. `pnpm spec` runs them through `tla-ts` — TLC without the JVM.
 
 A published artifact is a different artefact from a passing test suite, so CI also builds and loads
 each `lib/index.js` in plain Node — the check that catches a runtime-only import reaching the root.

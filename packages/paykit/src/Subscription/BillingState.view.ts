@@ -6,7 +6,7 @@ import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
-import { Interval, Price } from "../Tier.ts";
+import { Interval, Price, TopUpThreshold } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import { PendingTier, SubscriptionStatus } from "./Subscription.state.ts";
 
@@ -21,6 +21,8 @@ export const BillingStateView = Schema.Struct({
   anchorTz: Schema.String,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
+  /** Credits at or below which a spend buys the deployment's auto top-up pack. */
+  topUp: Schema.optionalKey(TopUpThreshold),
   /**
    * How many payment failures this standing has recorded. The retries
    * themselves are the provider's; this is what paykit knows about them, and
@@ -104,6 +106,7 @@ export class BillingState extends Domain.View("BillingState", {
         prorationInvoice: _previousInvoice,
         graceUntil: _previousGrace,
         pendingTier: _previousPending,
+        topUp: _previousTopUp,
         ...rest
       } = view;
       return withAccount(
@@ -119,6 +122,7 @@ export class BillingState extends Domain.View("BillingState", {
           trialEndsAt: event.trialEndsAt,
           credits: event.credits,
           dunningAttempts: 0,
+          ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
           ...(event.price === undefined ? {} : { price: event.price }),
           ...(event.currency === undefined ? {} : { currency: event.currency }),
         },
@@ -137,6 +141,7 @@ export class BillingState extends Domain.View("BillingState", {
         graceUntil: _previousGrace,
         currency: _previousCurrency,
         pendingTier: _previousPending,
+        topUp: _previousTopUp,
         ...rest
       } = view;
       return withAccount(
@@ -151,6 +156,7 @@ export class BillingState extends Domain.View("BillingState", {
           cancelAtPeriodEnd: false,
           credits: event.credits,
           dunningAttempts: 0,
+          ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           ...(event.price === undefined ? {} : { price: event.price }),
         },
@@ -166,6 +172,7 @@ export class BillingState extends Domain.View("BillingState", {
         // applying it is why the close emitted this event, and a mid-period
         // `ChangeTier` clears it in the aggregate for the same reason.
         pendingTier: _previousPending,
+        topUp: _previousTopUp,
         ...rest
       } = view;
       return withAccount(
@@ -177,6 +184,7 @@ export class BillingState extends Domain.View("BillingState", {
           // takes the credits the event records. A mid-period change carries the
           // balance it already had.
           credits: event.credits,
+          ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
@@ -228,6 +236,7 @@ export class BillingState extends Domain.View("BillingState", {
             ...(event.price === undefined ? {} : { price: event.price }),
             credits: event.credits,
             creditsExpire: event.creditsExpire,
+            ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
             rates: event.rates,
             ...(event.currency === undefined ? {} : { currency: event.currency }),
             ...(event.interval === undefined ? {} : { interval: event.interval }),

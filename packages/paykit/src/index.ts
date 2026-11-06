@@ -26,7 +26,16 @@ export {
   unitPriceKey,
 } from "./Allowance.ts";
 export type { AllowanceInput } from "./Allowance.ts";
-export { CreditsExpire, Interval, Price, Tier, TierId, TierKind, tier } from "./Tier.ts";
+export {
+  CreditsExpire,
+  Interval,
+  Price,
+  Tier,
+  TierId,
+  TierKind,
+  TopUpThreshold,
+  tier,
+} from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
 export {
   Catalog,
@@ -49,6 +58,7 @@ export {
   CatalogOneOffCreditsExpire,
   CatalogOneOffGrant,
   CatalogOneOffWithoutPrice,
+  CatalogTopUpOnPack,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
   CatalogUnitPriceWithoutBilling,

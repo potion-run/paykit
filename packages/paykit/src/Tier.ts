@@ -25,6 +25,14 @@ export const CreditsExpire = Schema.Literals(["period", "never"]);
 export type CreditsExpire = typeof CreditsExpire.Type;
 
 /**
+ * Credits at or below which a spend buys the deployment's auto top-up pack.
+ * It is a line on the tier, not a price: the pack is the product, and this is
+ * when a plan's pool should be refilled.
+ */
+export const TopUpThreshold = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
+export type TopUpThreshold = typeof TopUpThreshold.Type;
+
+/**
  * How a tier is bought: a subscription opens a period, while a one-off pack is
  * a single payment that grants credits and never starts a period.
  */
@@ -46,6 +54,11 @@ export const Tier = Schema.Struct({
   credits: Schema.optionalKey(Schema.Int),
   /** @default "period" for a subscription, "never" for a one-off pack */
   creditsExpire: Schema.optionalKey(CreditsExpire),
+  /**
+   * Credits at or below which a spend buys the deployment's auto top-up pack.
+   * Absent means this tier never refills; a one-off pack cannot state one.
+   */
+  topUp: Schema.optionalKey(TopUpThreshold),
   grants: Schema.Array(Allowance),
 });
 export type Tier = typeof Tier.Type;
@@ -63,6 +76,11 @@ export interface TierInput {
   readonly credits?: number;
   /** @default "period" for a subscription, "never" for a one-off pack */
   readonly creditsExpire?: CreditsExpire;
+  /**
+   * Credits at or below which a spend buys the deployment's auto top-up pack.
+   * Absent means this tier never refills; a one-off pack cannot state one.
+   */
+  readonly topUp?: number;
   /**
    * What a subscription tier grants. Empty for a one-off pack, which sells only
    * credits; the catalog refuses either shape the wrong way round.
@@ -112,6 +130,7 @@ export const tier = (input: TierInput): Tier => {
     ...(input.price === undefined ? {} : { price: { ...input.price } }),
     ...(input.credits === undefined ? {} : { credits: input.credits }),
     ...(creditsExpire === undefined ? {} : { creditsExpire }),
+    ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
     grants: input.grants.map((grant) => ({ ...grant })),
   };
 };

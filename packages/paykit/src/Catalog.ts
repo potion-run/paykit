@@ -187,6 +187,15 @@ export class CatalogOneOffWithoutPrice extends Schema.TaggedError<CatalogOneOffW
   { tier: Schema.String },
 ) {}
 
+/**
+ * A one-off pack states a top-up threshold. A pack has no standing, so there is
+ * no spend for the threshold to observe; the field would never be read.
+ */
+export class CatalogTopUpOnPack extends Schema.TaggedError<CatalogTopUpOnPack>()(
+  "CatalogTopUpOnPack",
+  { tier: Schema.String },
+) {}
+
 /** A unit price where nothing is billed. A unit price only prices an overage. */
 export class CatalogUnitPriceWithoutBilling extends Schema.TaggedError<CatalogUnitPriceWithoutBilling>()(
   "CatalogUnitPriceWithoutBilling",
@@ -235,6 +244,7 @@ export const CatalogError = Schema.Union([
   CatalogOneOffCredits,
   CatalogOneOffCreditsExpire,
   CatalogOneOffWithoutPrice,
+  CatalogTopUpOnPack,
   CatalogUnitPriceWithoutBilling,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
@@ -333,6 +343,9 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       }
       if (tier.price === undefined) {
         return Result.fail(new CatalogOneOffWithoutPrice({ tier: tier.id }));
+      }
+      if (tier.topUp !== undefined) {
+        return Result.fail(new CatalogTopUpOnPack({ tier: tier.id }));
       }
       continue;
     }
@@ -470,12 +483,14 @@ export const creditRatesOf = (catalog: Catalog): CreditRateCards => {
   return rates;
 };
 
-/** The credit terms a tier sells: its grant, when it expires, and every rate. */
+/** The credit terms a tier sells: its grant, when it expires, every rate, and its top-up line. */
 export interface TierCreditTerms {
   readonly kind: TierKind;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
   readonly rates: CreditRateCards;
+  /** Credits at or below which a spend buys the deployment's pack. Absent means never. */
+  readonly topUp?: number;
 }
 
 /** What a tier grants in credits, with the defaults the catalog implies. */
@@ -487,6 +502,7 @@ export const creditTermsOf = (catalog: Catalog, tierId: string): TierCreditTerms
     credits: tier.credits ?? 0,
     creditsExpire: tier.creditsExpire ?? "period",
     rates: creditRatesOf(catalog),
+    ...(tier.topUp === undefined ? {} : { topUp: tier.topUp }),
   };
 };
 

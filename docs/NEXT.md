@@ -13,12 +13,14 @@ key), `build`, `exports:check`, `validate:publish-packages`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a
-postpaid `unitPrice` with a `moneyCap`, and a `kind: "one_off"` credit pack. What the runtime can do, as
+postpaid `unitPrice` with a `moneyCap`, a per-tier auto top-up line (`topUp`), and a `kind: "one_off"`
+credit pack. What the runtime can do, as
 command-named bindings: `Check` from local state, `TrackUsage`, `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
-spendable before a plan exists, auto top-up (a spend that crosses a threshold buys a pack and opens
-the invoice that prices it), a usage timeline folded from the account's events (one entry per
+spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line buys a
+pack and opens the invoice that prices it), a usage timeline folded from the account's events (one
+entry per
 billing fact, plus a per-period, per-feature rollup), postpaid usage priced per unit with a money
 cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
@@ -88,15 +90,16 @@ standing no command could leave until the period reset.
 ### 2. Worth building next
 
 **Auto top-up** is done ([ADR
-0013](./adr/0013-an-auto-top-up-is-a-purchase-on-a-crossing.md)):
-`Paykit.autoTopUp({ catalog, threshold, pack })` is a policy over `UsageRecorded` and
-`CreditsConsumed` that buys a one-off pack when a spend takes the pool from above the threshold to at
-or below it. The balance before the spend is on the event, so a second spend below the line is not a
-second crossing; the pack's price is opened as a provider invoice keyed by the crossing, and the
-credits are recorded with that invoice id. The pack is the cooldown; a provider without `invoice` is
-`ProviderCapabilityMissing`. What is left is a per-tier threshold (`Tier.topUp`, carried on the
-standing), a time cooldown as a scheduled command, and an off-session charge capability for a saved
-payment method.
+0013](./adr/0013-an-auto-top-up-is-a-purchase-on-a-crossing.md),
+[0016](./adr/0016-a-top-up-threshold-is-a-tier-field.md)):
+`Paykit.autoTopUp({ catalog, pack })` is a policy over `UsageRecorded` and `CreditsConsumed` that
+buys a one-off pack when a spend takes the pool from above the standing tier's `topUp` line to at or
+below it. The line is catalog data carried on the standing, so a free tier and an enterprise tier
+refill where their own grants run low. The balance before the spend is on the event, so a second
+spend below the line is not a second crossing; the pack's price is opened as a provider invoice keyed
+by the crossing, and the credits are recorded with that invoice id. The pack is the cooldown; a
+provider without `invoice` is `ProviderCapabilityMissing`. What is left is a time cooldown as a
+scheduled command and an off-session charge capability for a saved payment method.
 
 **A usage timeline** is done ([ADR
 0014](./adr/0014-a-usage-timeline-is-a-fold-over-the-account-log.md)): `timelineOf` /
@@ -182,10 +185,11 @@ continues.
 - **A timeline is a fold, not a log.** `timelineOf` / `appendTimeline` read `AccountEvents`; they
   store nothing, add no number an event did not carry, and nothing in `decide` or `check` reads
   them. `lastSeq` makes a redelivered event a no-op.
-- **A top-up is a crossing, not a level.** The balance before the spend is on the event
-  (`creditsAfter + cost`, `balanceAfter + amount`), so one crossing buys one pack and a spend that is
-  already below the line does not buy a second. The invoice id is on the event that records the
-  purchase.
+- **A top-up is a crossing, not a level.** The line is the standing tier's `topUp`, carried on the
+  activation, change and schedule events; a tier without one never refills. The balance before the
+  spend is on the event (`creditsAfter + cost`, `balanceAfter + amount`), so one crossing buys one
+  pack and a spend that is already below the line does not buy a second. The invoice id is on the
+  event that records the purchase.
 - **A missing capability is a tag.** `ProviderCapabilityMissing`, never a silent no-op.
 - **Nothing is deleted that a bill references.** Prices and products are retained; the event log is
   the record.

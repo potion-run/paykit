@@ -79,10 +79,19 @@ const commandOf = (
   if (terms === null || tier === null) return null;
   // The catalog-derived fields travel together: a command that carried the
   // allowances but not the credit terms would be refused by `CatalogGuard`.
-  const { allowances, credits, creditsExpire, rates } = terms;
+  const { allowances, credits, creditsExpire, topUp, rates } = terms;
   const price = tier.price === undefined ? {} : { price: tier.price };
+  const topUpField = topUp === undefined ? {} : { topUp };
   if (input.kind === "subscribe") {
-    return new Subscribe({ tier: input.tier, allowances, credits, creditsExpire, rates, ...price });
+    return new Subscribe({
+      tier: input.tier,
+      allowances,
+      credits,
+      creditsExpire,
+      ...topUpField,
+      rates,
+      ...price,
+    });
   }
   if (input.kind === "scheduleTierChange") {
     return new ScheduleTierChange({
@@ -90,6 +99,7 @@ const commandOf = (
       allowances,
       credits,
       creditsExpire,
+      ...topUpField,
       rates,
       ...price,
     });

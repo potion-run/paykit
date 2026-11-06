@@ -14,6 +14,8 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.featureOf).toBe("function");
   expect(Paykit.FeatureId).toBeDefined();
   expect(Paykit.TierId).toBeDefined();
+  expect(Paykit.TopUpThreshold).toBeDefined();
+  expect(Paykit.CatalogTopUpOnPack).toBeDefined();
   expect(Paykit.CatalogError).toBeDefined();
   expect(Paykit.messages.id).toBe("messages");
   expect(Paykit.MemoryStore()._tag).toBe("MemoryStore");

@@ -155,8 +155,9 @@ allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a ra
 (`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), a `cap`
 where nothing is billed (`CatalogCapWithoutBilling`), a unit price where nothing is billed
 (`CatalogUnitPriceWithoutBilling`), a money cap with no unit price
-(`CatalogMoneyCapWithoutUnitPrice`), mixed unit-price currencies (`CatalogUnitPriceCurrency`), and a
-price that is not positive whole minor units.
+(`CatalogMoneyCapWithoutUnitPrice`), mixed unit-price currencies (`CatalogUnitPriceCurrency`), a
+top-up line on a one-off pack (`CatalogTopUpOnPack`), and a price that is not positive whole minor
+units.
 
 `kind: "flag"` declares an on/off capability: a tier `grant`s it or does not, `check()` answers
 `{ allowed, remaining: null, resetsAt: null, standing }`, and `Track` and `Hold` refuse it with
@@ -177,7 +178,9 @@ credit-priced feature reports the same `remaining`, `track({ feature, amount, di
 `amount × rate` from it, and a request the pool cannot cover is refused with `CreditExceeded`.
 `check({ feature, amount, dimension })` prices the request before comparing it, so it answers from
 the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
-default) zeroes it at a period close while `"never"` keeps it.
+default) zeroes it at a period close while `"never"` keeps it. A tier may also state `topUp`, the
+credit line at or below which a spend buys the deployment's auto top-up pack; a one-off pack cannot
+state one.
 
 A postpaid allowance states a `unitPrice` in minor units and optionally a `moneyCap`. The billable
 part is only what is past `included`; `track()` records the charge and the feature's period total,
@@ -198,13 +201,14 @@ A `kind: "one_off"` tier is a prepaid pack: it grants credits, has no allowances
 `payment_succeeded` grants the credits. There is still one pool, but the part a pack bought is
 protected: a period close expires only the plan's credits, and spending drains the plan's first.
 
-A deployment can also refill the pool itself. `autoTopUp({ catalog, threshold, pack })` provides a
-policy that buys the named `kind: "one_off"` pack when a spend takes the pool from above the
-threshold to at or below it: it asks the account's provider for the pack's price as an invoice
-keyed by the crossing, and records the purchase with that invoice id. Only a spend crosses — a
-grant, an expiry or a hold reservation does not — and one crossing buys one pack, so the next
-refill costs at least the pack's credits in spending. A deployment that never provides the layer
-pays nothing for the policy.
+A deployment can also refill the pool itself. `autoTopUp({ catalog, pack })` provides a policy that
+buys the named `kind: "one_off"` pack when a spend takes the pool from above the tier's `topUp` line
+to at or below it: it asks the account's provider for the pack's price as an invoice keyed by the
+crossing, and records the purchase with that invoice id. The line is catalog data on the tier and
+rides the standing's events, so a free tier and an enterprise tier refill where their own grants run
+low; a tier without one never refills. Only a spend crosses — a grant, an expiry or a hold
+reservation does not — and one crossing buys one pack, so the next refill costs at least the pack's
+credits in spending. A deployment that never provides the layer pays nothing for the policy.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no

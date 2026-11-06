@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { messages } from "../../src/Feature.ts";
+import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { CurrencyMismatch } from "../../src/Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../../src/Subscription/NotSubscribed.rejection.ts";
@@ -60,6 +61,7 @@ const schedule = () =>
     allowances: { messages: small },
     credits: 0,
     creditsExpire: "period",
+    topUp: 20,
     rates: {},
   });
 
@@ -70,7 +72,11 @@ describe("a tier change scheduled for the boundary", () => {
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events).toHaveLength(1);
     expect(verdict.events[0]).toBeInstanceOf(TierChangeScheduled);
-    expect(verdict.events[0]).toMatchObject({ tier: "small", allowances: { messages: small } });
+    expect(verdict.events[0]).toMatchObject({
+      tier: "small",
+      allowances: { messages: small },
+      topUp: 20,
+    });
   });
 
   it("lands at the close, before the counters reset onto the new allowances", () => {
@@ -80,6 +86,7 @@ describe("a tier change scheduled for the boundary", () => {
         allowances: { messages: small },
         credits: 0,
         creditsExpire: "period",
+        topUp: 20,
         rates: {},
         currency: "usd",
         interval: "month",
@@ -102,8 +109,14 @@ describe("a tier change scheduled for the boundary", () => {
     expect(tags.indexOf("TierChanged")).toBe(0);
     expect(tags).toContain("PeriodClosed");
 
-    const [changed] = verdict.events as ReadonlyArray<{ _tag: string; allowances?: unknown }>;
+    const [changed] = verdict.events as ReadonlyArray<{
+      _tag: string;
+      allowances?: unknown;
+      topUp?: number;
+    }>;
     expect(changed?.allowances).toEqual({ messages: small });
+    expect(changed?.topUp).toBe(20);
+    expect((verdict.state as SubscribedState).topUp).toBe(20);
 
     const reset = verdict.events.find((event) => event._tag === "UsageReset");
     // The new tier's included count, not the old one and not the usage carried
@@ -118,6 +131,57 @@ describe("a tier change scheduled for the boundary", () => {
       context,
     });
     expect(verdict._tag).toBe("Rejected");
+  });
+});
+
+describe("a top-up line on the standing", () => {
+  it("moves with a mid-period change, and is cleared by a tier that states none", () => {
+    const state = subscribed({ topUp: 500 });
+    const verdict = Subscription.predict(
+      state,
+      new ChangeTier({
+        tier: "pro",
+        allowances: { messages: pro },
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+      }),
+      { id, now: start, context },
+    );
+    expect(verdict._tag).toBe("Accepted");
+    if (verdict._tag !== "Accepted") return;
+    // The new tier did not state a line, so the old one does not survive it.
+    expect(verdict.events[0]).not.toHaveProperty("topUp");
+    expect((verdict.state as SubscribedState).topUp).toBeUndefined();
+  });
+
+  it("lands with a scheduled change at the boundary", () => {
+    const state = subscribed({
+      topUp: 500,
+      pendingTier: {
+        tier: "small",
+        allowances: { messages: small },
+        credits: 0,
+        creditsExpire: "period",
+        topUp: 20,
+        rates: {},
+        currency: "usd",
+        interval: "month",
+      },
+    });
+    const verdict = Subscription.predict(
+      state,
+      new ClosePeriod({
+        periodEnd: state.period.end,
+        input: { periodEnd: state.period.end },
+      } as never),
+      { id, now: monthLater, context },
+    );
+    expect(verdict._tag).toBe("Accepted");
+    if (verdict._tag !== "Accepted") return;
+    const changed = verdict.events.find((event) => event._tag === "TierChanged");
+    expect(changed).toMatchObject({ topUp: 20 });
+    expect((verdict.state as SubscribedState).topUp).toBe(20);
   });
 });
 

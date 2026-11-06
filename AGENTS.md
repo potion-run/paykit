@@ -28,8 +28,9 @@ carries rules a reader needs before touching it, and add it to the workspace glo
 `tsconfig.json` project references in the same commit.
 
 `spec/` holds TLA+ models of what no test can reach — two writers on one account, a deadline firing
-mid-flight, an outbox that redelivers, a crash between a side effect and its record. They are
-checked by `pnpm spec`; read [`spec/README.md`](./spec/README.md) before adding or changing one.
+mid-flight, a scheduled grant applied at the boundary, an outbox that redelivers, a crash between a
+side effect and its record, and a top-up policy that runs twice on one crossing. They are checked by
+`pnpm spec`; read [`spec/README.md`](./spec/README.md) before adding or changing one.
 
 ## Repo rules
 
