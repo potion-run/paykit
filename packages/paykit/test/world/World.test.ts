@@ -11,7 +11,8 @@ import { BillingReadStore } from "../../src/BillingReadStore.ts";
 import { catalog } from "../../src/Catalog.ts";
 import { CatalogService } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
-import { Payments } from "../../src/Payments.ts";
+import { Payments, PaymentsRouter } from "../../src/Payments.ts";
+import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { tier } from "../../src/Tier.ts";
 import { paykitWorld } from "../../src/World.ts";
@@ -90,6 +91,34 @@ describe("paykitWorld", () => {
     }).pipe(
       Effect.provide(
         paykitWorld({ catalog: testCatalog, guards: DevGuards, providers: [PaymentsMemory()] }),
+      ),
+    ),
+  );
+
+  it.live("serves only the operator surface when the process asks for it", () =>
+    Effect.gen(function* () {
+      expect(yield* provided(Check)).toBe(false);
+      expect(yield* provided(GrantCredits)).toBe(true);
+      expect(yield* provided(CatalogService)).toBe(true);
+    }).pipe(
+      Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards, bindings: "admin" })),
+    ),
+  );
+
+  it.live("leaves the provider choice to the router when two are configured", () =>
+    Effect.gen(function* () {
+      // Merging both layers would shadow one by merge order; the account's own
+      // provider is selected from the router's refs instead.
+      expect(yield* provided(Payments)).toBe(false);
+      expect(yield* provided(PaymentsRouter)).toBe(true);
+      expect(yield* provided(Check)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        paykitWorld({
+          catalog: testCatalog,
+          guards: DevGuards,
+          providers: [PaymentsMemory(), PaymentsManual()],
+        }),
       ),
     ),
   );

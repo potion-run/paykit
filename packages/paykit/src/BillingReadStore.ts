@@ -71,6 +71,15 @@ export type BillingReadPage = typeof BillingReadPage.Type;
 const pageSizeOf = (query: BillingReadQuery): number =>
   Math.min(MAX_PAGE, Math.max(1, query.take ?? DEFAULT_PAGE));
 
+/**
+ * The one order a page and its cursor share. `localeCompare` is not it: its
+ * collation is locale-dependent and disagrees with the `<`/`>` comparison the
+ * `after` filter and SQL's `ORDER BY account` use, so an account that sorted
+ * before the cursor could be skipped by every later page.
+ */
+const compareAccounts = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
 /** The rows a query selects, in the order it walks them. */
 export const queryRows = (
   rows: ReadonlyArray<BillingReadRow>,
@@ -86,8 +95,8 @@ export const queryRows = (
     )
     .sort((left, right) =>
       order === "asc"
-        ? left.account.localeCompare(right.account)
-        : right.account.localeCompare(left.account),
+        ? compareAccounts(left.account, right.account)
+        : compareAccounts(right.account, left.account),
     );
   const after =
     query.after === undefined
