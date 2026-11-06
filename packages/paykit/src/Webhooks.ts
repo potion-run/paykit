@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
-import { tierOf, tierTermsOf } from "./Catalog.ts";
+import { tierOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
@@ -13,6 +13,7 @@ import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.comman
 import { Subscribe as SubscribeCommand } from "./Subscription/Subscribe.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
+import { purchaseCreditsInputOf, subscribeInputOf } from "./TierCommand.ts";
 
 /** The provider events paykit translates into its own commands. */
 export const WebhookKind = Schema.Literals([
@@ -127,18 +128,12 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (sold === null) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
-        const terms = tierTermsOf(catalog, sold.id);
+        const purchase = purchaseCreditsInputOf(catalog, sold.id);
+        if (purchase === null) {
+          return yield* new TierNotInCatalog({ tier: sold.id });
+        }
         yield* asSystem(
-          subscription.send(
-            ref,
-            new PurchaseCredits({
-              tier: sold.id,
-              amount: sold.credits ?? 0,
-              ...(sold.price === undefined ? {} : { price: sold.price }),
-              ...(terms === null ? {} : { rates: terms.rates }),
-            }),
-            { commandId: event.id },
-          ),
+          subscription.send(ref, new PurchaseCredits(purchase), { commandId: event.id }),
         );
         return "purchased" as const satisfies WebhookAction;
       });
@@ -147,26 +142,16 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (event.tier === undefined) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
-        const terms = tierTermsOf(catalog, event.tier);
-        if (terms === null) {
+        const activation = subscribeInputOf(
+          catalog,
+          event.tier,
+          event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz },
+        );
+        if (activation === null) {
           return yield* new TierNotInCatalog({ tier: event.tier });
         }
-        const tier = tierOf(catalog, event.tier);
         yield* asSystem(
-          subscription.send(
-            ref,
-            new SubscribeCommand({
-              tier: event.tier,
-              allowances: terms.allowances,
-              credits: terms.credits,
-              creditsExpire: terms.creditsExpire,
-              ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
-              rates: terms.rates,
-              ...(tier?.price === undefined ? {} : { price: tier.price }),
-              ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
-            }),
-            { commandId: event.id },
-          ),
+          subscription.send(ref, new SubscribeCommand(activation), { commandId: event.id }),
         );
         return "activated" as const satisfies WebhookAction;
       });

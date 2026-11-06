@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
-import { tierOf, tierTermsOf } from "../Catalog.ts";
+import { tierOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import {
   type PaymentError,
@@ -17,6 +17,7 @@ import { Entitlements } from "../Subscription/Entitlements.view.ts";
 import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { subscribeInputOf } from "../TierCommand.ts";
 
 /** What `Subscribe` asks for. */
 export interface SubscribeInput {
@@ -97,11 +98,10 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
 
   return Effect.fn("Paykit.Subscribe.start")(function* (input: SubscribeInput) {
     const tier = tierOf(catalog, input.tier);
-    const terms = tierTermsOf(catalog, input.tier);
-    if (tier === null || terms === null) {
+    if (tier === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
-    const { kind, allowances, credits, creditsExpire, topUp, rates } = terms;
+    const kind = tier.kind ?? "subscription";
     const ref = Subscription.ref(input.account);
     const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
     const standing = yield* subscription.state(ref);
@@ -110,21 +110,14 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       // A one-off tier is a pack of credits; without a price there is nothing
       // to buy. The catalog refuses this shape, so a runtime that sees it has
       // a stale catalog rather than a caller mistake.
-      if (kind === "one_off") return yield* new TierNotInCatalog({ tier: input.tier });
-      const receipt = yield* asSystem(
-        subscription.send(
-          ref,
-          new SubscribeCommand({
-            tier: tier.id,
-            allowances,
-            credits,
-            creditsExpire,
-            ...(topUp === undefined ? {} : { topUp }),
-            rates,
-            ...anchored,
-          }),
-        ),
-      );
+      if (kind === "one_off") {
+        return yield* new TierNotInCatalog({ tier: input.tier });
+      }
+      const activation = subscribeInputOf(catalog, input.tier, anchored);
+      if (activation === null) {
+        return yield* new TierNotInCatalog({ tier: input.tier });
+      }
+      const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(activation)));
       yield* entitlements.query(ref, { atLeast: receipt });
       return { activated: true } as const satisfies SubscribeResult;
     }

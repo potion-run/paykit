@@ -314,6 +314,13 @@ export {
   timelineOf,
 } from "./Timeline.ts";
 export type { TimelineInput } from "./Timeline.ts";
+export {
+  planChangeTier,
+  purchaseCreditsInputOf,
+  scheduleTierChangeInputOf,
+  subscribeInputOf,
+} from "./TierCommand.ts";
+export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";

@@ -1,6 +1,5 @@
 import type { AdminPreviewInput } from "@potion.run/paykit/Admin";
 import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
-import { tierTermsOf } from "@potion.run/paykit/Catalog";
 import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
 import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import {
@@ -9,6 +8,7 @@ import {
   SubscriptionStatus,
   standingOf,
 } from "@potion.run/paykit/Subscription/Subscription.state";
+import { scheduleTierChangeInputOf } from "@potion.run/paykit/TierCommand";
 import { appendTimeline, initialTimeline, type AccountEvent } from "@potion.run/paykit/Timeline";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
@@ -565,33 +565,22 @@ const send = (model: Model, target: AccountId, intent: BillingAdminIntent, comma
       // has ended), so the console builds it from the catalog it holds rather
       // than asking the server for a quote. The command's `CatalogGuard` is what
       // refuses a payload that disagrees with the deploy's catalog.
-      const terms = Option.match(model.catalog, {
+      const input = Option.match(model.catalog, {
         onNone: () => null,
-        onSome: (catalog) => tierTermsOf(catalog, intent.tier),
+        onSome: (catalog) => scheduleTierChangeInputOf(catalog, intent.tier),
       });
       return Command.mapMessage(
         BillingAdmin.ScheduleTierChange({
           target,
-          input:
-            terms === null
-              ? // No catalog, or no such tier: send an empty grant so the model
-                // answers `TierNotInCatalog` instead of the console guessing.
-                {
-                  tier: intent.tier,
-                  allowances: {},
-                  credits: 0,
-                  creditsExpire: "period" as const,
-                  rates: {},
-                }
-              : {
-                  tier: intent.tier,
-                  allowances: terms.allowances,
-                  credits: terms.credits,
-                  creditsExpire: terms.creditsExpire,
-                  ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
-                  rates: terms.rates,
-                  ...(terms.price === undefined ? {} : { price: terms.price }),
-                },
+          // No catalog, or no such tier: send an empty grant so the model
+          // answers `TierNotInCatalog` instead of the console guessing.
+          input: input ?? {
+            tier: intent.tier,
+            allowances: {},
+            credits: 0,
+            creditsExpire: "period" as const,
+            rates: {},
+          },
           commandId,
         }),
         wrap,

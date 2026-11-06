@@ -20,16 +20,17 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Proration, sameProration } from "../Proration.ts";
 import {
+  ChangeTier,
   DowngradeBelowCeiling,
   DowngradeBelowSpend,
   DowngradeBelowUsage,
 } from "../Subscription/ChangeTier.command.ts";
-import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { planChangeTier } from "../TierCommand.ts";
 import { AdminReadError, AdminReadFailed, AdminReadsRpcs } from "./Reads.ts";
 
 /** A tier change the console asks the server to quote or apply. */
@@ -165,7 +166,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         const commandId =
           input.commandId ?? (yield* Effect.sync(() => globalThis.crypto.randomUUID()));
         const result = yield* Effect.result(
-          asSystem(subscription.send(ref, plan.command, { commandId })),
+          asSystem(subscription.send(ref, new ChangeTier(plan.input), { commandId })),
         );
 
         if (Result.isFailure(result)) {
