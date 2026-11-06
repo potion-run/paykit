@@ -1,5 +1,5 @@
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
-import { initialTimeline } from "@potion.run/paykit/Timeline";
+import { initialTimeline } from "@potion.run/paykit/Read";
 import * as Option from "effect/Option";
 import { Command } from "foldkit";
 import type { Runtime } from "foldkit";

@@ -1,16 +1,12 @@
-import * as Domain from "@alchemy.run/domain";
 import {
   allowancesOf,
   catalog,
-  catalogLayer,
-  tierTermsOf,
+  subscribeInputOf,
   DevGuards,
   Manual,
-  MemoryBillingReadStore,
-  Model,
   ProviderCapabilityMissing,
   Paykit,
-  PaykitHandlers,
+  paykitWorld,
   type MoneyProvider,
   type WebhookRequest,
 } from "@potion.run/paykit";
@@ -23,15 +19,15 @@ import { billingCatalog } from "./catalog.ts";
 export const Catalog = Effect.runSync(catalog(billingCatalog));
 
 /**
- * The input a `Subscribe` or `ChangeTier` carries for a tier. A command has to
- * carry its own allowances and price because `decide` is pure — so this is the
- * one place the example turns a tier id into a command, and `CatalogGuard`
- * refuses anything that disagrees with the catalog.
+ * The input a `Subscribe` carries for a tier. `decide` is pure, so a command
+ * carries its own allowances and price; `subscribeInputOf` is the package's
+ * join, and `CatalogGuard` still refuses anything that disagrees with the
+ * catalog.
  */
 export const tierCommand = (tierId: string) => {
-  const terms = tierTermsOf(Catalog, tierId);
-  if (terms === null) throw new Error(`no tier ${tierId} in the catalog`);
-  return { tier: tierId, ...terms };
+  const input = subscribeInputOf(Catalog, tierId);
+  if (input === null) throw new Error(`no tier ${tierId} in the catalog`);
+  return input;
 };
 
 /** What a tier grants, for an assertion or a fixture. */
@@ -46,55 +42,25 @@ export const allowancesOfTier = (tier: string) => allowancesOf(Catalog, tier)!;
 export const Provider: MoneyProvider = Manual();
 
 /**
- * Everything the Worker and the test both need: the model with its projections,
- * the catalog the bindings read, the provider, and the two auth guards.
+ * The billing world the Worker and the test both serve.
  *
- * The only difference between this and a deployment is the platform: the
- * Worker provides `DomainCloudflare.layerDurableObjects()`, the test provides
- * `Domain.InMemory`. Nothing else changes, which is the point of the seam —
- * and the provider is a parameter for the same reason.
- *
- * `Layer.orDie` turns a layer-construction failure into a defect: a billing
- * stack that cannot build must crash at boot, never serve a degraded model.
+ * `paykitWorld` builds the same graph a deployment uses: the model, the
+ * catalog, the guards, the provider router and the tenant bindings. The only
+ * difference is the platform — the Worker passes
+ * `DomainCloudflare.layerDurableObjects()`, the test takes the default
+ * `Domain.InMemory` — and `Layer.orDie` at the Worker boundary keeps a stack
+ * that cannot build from serving a degraded model.
  */
-export const billingLayers = (provider: MoneyProvider) => {
-  const Providers = Paykit.paymentsRouter(provider);
-  const World = Layer.mergeAll(
-    // The guard needs the catalog, so it is provided to it rather than merged
-    // beside it: a guard that cannot read the catalog must not run at all.
-    Paykit.CatalogGuard.pipe(Layer.provideMerge(catalogLayer(Catalog))),
-    provider.payments,
-  ).pipe(
-    Layer.provideMerge(DevGuards),
-    // The store is provided to the handlers *and* merged outward, because
-    // `Paykit.List` reads the projection directly rather than through a view.
-    Layer.provideMerge(
-      Model.layer(
-        PaykitHandlers.pipe(
-          Layer.provide(MemoryBillingReadStore),
-          // The close-time usage policy resolves the account's provider from
-          // this router; without it a postpaid close is local-only.
-          Layer.provideMerge(Paykit.paymentsRouter(provider)),
-        ),
-      ),
-    ),
-    Layer.provideMerge(MemoryBillingReadStore),
-    Layer.provideMerge(catalogLayer(Catalog)),
-  );
-
-  // The bindings resolve the model, the catalog and the provider router when the
-  // layer is built, so they are provided rather than merged beside it.
-  return Layer.mergeAll(
-    World,
-    Paykit.BillingInProcess.pipe(
-      Layer.provide(World),
-      Layer.provide(Providers),
-      Layer.provide(catalogLayer(Catalog)),
-    ),
-    Providers,
-    catalogLayer(Catalog),
-  );
-};
+export const billingLayers = <R = never>(
+  provider: MoneyProvider,
+  platform?: Layer.Layer<any, never, R>,
+) =>
+  paykitWorld({
+    catalog: Catalog,
+    guards: DevGuards,
+    providers: [provider],
+    ...(platform === undefined ? {} : { platform }),
+  });
 
 /** The layers the tests run, over an in-memory platform. */
 export const BillingLayers = billingLayers(Provider);
@@ -157,4 +123,4 @@ export const track = Effect.fn("Example.track")(function* (account: string, feat
  * The example's own shape, for a test to run without a Cloudflare account.
  * A real deployment wraps the same layers around `layerDurableObjects`.
  */
-export const BillingTestLive = Layer.provide(BillingLayers, Domain.InMemory);
+export const BillingTestLive = BillingLayers;

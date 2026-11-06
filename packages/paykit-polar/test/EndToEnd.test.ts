@@ -14,17 +14,12 @@ import {
   prorate,
   system,
   tier,
+  ChangeTierCommand,
 } from "@potion.run/paykit";
 // These suites drive the implementation modules the binding layers delegate to:
 // the public surface names the tags (`Paykit.Webhook(account)`), and the vendor
 // end-to-end path is about the provider, not about the binding shape.
-import {
-  BillingInProcess,
-  Check,
-  ChargeProration,
-  Subscribe,
-} from "@potion.run/paykit/Billing/index";
-import { ChangeTier } from "@potion.run/paykit/Subscription/ChangeTier.command";
+import { BillingInProcess, Check, ChargeProration, Subscribe } from "@potion.run/paykit/Billing";
 import { handleWebhook } from "@potion.run/paykit/Webhooks";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -193,7 +188,7 @@ describe("Polar, from checkout to check()", () => {
         }) ?? undefined;
       yield* subscription.send(
         ref,
-        new ChangeTier({
+        new ChangeTierCommand({
           credits: 0,
           creditsExpire: "period",
           rates: {},

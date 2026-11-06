@@ -25,7 +25,6 @@ import {
  * Both are pure: the event is already schema-validated, and `decide` never reads
  * a catalog, so there is nothing to decode here and no failure to carry.
  *
- * @primitive
  */
 
 /**
@@ -130,7 +129,6 @@ export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStat
  * // { tier: "pro", credits: 5_000, prepaidCredits: 1_000, currency: "usd", ... }
  * ```
  *
- * @primitive
  */
 export const activationOf = <S extends SubscriptionStatus>(
   input: ActivationInput<S>,
@@ -213,7 +211,6 @@ export interface StandingGrant {
  * );
  * ```
  *
- * @primitive
  */
 export const standingFrom = (
   grant: StandingGrant,

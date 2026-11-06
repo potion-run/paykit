@@ -6,7 +6,7 @@ import * as Effect from "effect/Effect";
 import { actionsFor, type AdminAction } from "../../src/AdminActions.ts";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, admin } from "../../src/Auth/Actor.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import {
   BillingState,
@@ -14,7 +14,6 @@ import {
   type BillingStateView,
 } from "../../src/Subscription/BillingState.view.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
-import { planChangeTier } from "../../src/Subscription/ChangeTier.plan.ts";
 import { EnterGrace } from "../../src/Subscription/EnterGrace.command.ts";
 import {
   Entitlements,
@@ -34,6 +33,7 @@ import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { WithdrawTierChange } from "../../src/Subscription/WithdrawTierChange.command.ts";
 import { tier } from "../../src/Tier.ts";
+import { planChangeTier, scheduleTierChangeInputOf } from "../../src/TierCommand.ts";
 import {
   propertyAccount,
   Script,
@@ -335,23 +335,15 @@ const commandFor = (
       return new Resume();
     case "WithdrawTierChange":
       return new WithdrawTierChange();
-    case "ChangeTier":
-      return tierId === null
-        ? null
-        : (planChangeTier(generatedCatalog, tierId, state, now)?.command ?? null);
+    case "ChangeTier": {
+      if (tierId === null) return null;
+      const plan = planChangeTier(generatedCatalog, tierId, state, now);
+      return plan === null ? null : new ChangeTier(plan.input);
+    }
     case "ScheduleTierChange": {
       if (tierId === null) return null;
-      const terms = tierTermsOf(generatedCatalog, tierId);
-      return terms === null
-        ? null
-        : new ScheduleTierChange({
-            tier: tierId,
-            allowances: terms.allowances,
-            credits: terms.credits,
-            creditsExpire: terms.creditsExpire,
-            rates: terms.rates,
-            ...(terms.price === undefined ? {} : { price: terms.price }),
-          });
+      const input = scheduleTierChangeInputOf(generatedCatalog, tierId);
+      return input === null ? null : new ScheduleTierChange(input);
     }
   }
 };

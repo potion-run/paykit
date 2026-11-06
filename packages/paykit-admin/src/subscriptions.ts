@@ -1,5 +1,5 @@
 import { BillingAdmin } from "@potion.run/paykit/Foldkit";
-import { AccountId } from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountId } from "@potion.run/paykit/Read";
 import * as Option from "effect/Option";
 import { Subscription } from "foldkit";
 import { Message } from "./Message.ts";

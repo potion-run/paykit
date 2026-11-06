@@ -314,6 +314,13 @@ export {
   timelineOf,
 } from "./Timeline.ts";
 export type { TimelineInput } from "./Timeline.ts";
+export {
+  planChangeTier,
+  purchaseCreditsInputOf,
+  scheduleTierChangeInputOf,
+  subscribeInputOf,
+} from "./TierCommand.ts";
+export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
@@ -328,11 +335,15 @@ export {
 export type { VerifyOptions } from "./Verify.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
-export { PaykitHandlers, PaykitModel as Model } from "./Paykit.model.ts";
+export { PaykitHandlers, PaykitModel, PaykitModel as Model } from "./Paykit.model.ts";
+export { paykitWorld } from "./World.ts";
+export type { PaykitWorldOptions } from "./World.ts";
 export { BillingApi } from "./BillingApi.api.ts";
+export type { SubscribeInput, SubscribeResult } from "./Billing/Subscribe.operation.ts";
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";
 export { allowsOne } from "./Subscription/Entitlements.view.ts";
+export type { JudgedFeature } from "./Subscription/Allowance.verdict.ts";
 export { ProrationMismatch } from "./Subscription/ProrationMismatch.rejection.ts";
 export {
   Period,
@@ -356,7 +367,8 @@ export {
   mayActOn,
   system,
 } from "./Auth/Actor.ts";
-export type { ActorKind, ActorValue } from "./Auth/Actor.ts";
+export { ActorKind } from "./Auth/Actor.ts";
+export type { ActorValue } from "./Auth/Actor.ts";
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
 export { Admin, Session } from "./Auth/Guards.ts";
@@ -525,6 +537,7 @@ export { NotScheduled } from "./Subscription/NotScheduled.rejection.ts";
 export { NotSubscribed } from "./Subscription/NotSubscribed.rejection.ts";
 export { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
+export { TrialDeadlineNotLater } from "./Subscription/TrialDeadlineNotLater.rejection.ts";
 
 // ── 4. providers ────────────────────────────────────────────────────────────
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";

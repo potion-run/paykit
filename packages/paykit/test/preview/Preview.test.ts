@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,11 +5,8 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Preview } from "../../src/Billing/Preview.binding.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -37,18 +33,10 @@ const testCatalog = Effect.runSync(
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const account = "acct_preview";
 
-const World = bindingsWorld(
-  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
-    .pipe(Layer.provide(Domain.InMemory))
-    // The tenant bundle carries `List`, which reads the projection store.
-    .pipe(Layer.provideMerge(MemoryBillingReadStore))
-    .pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
-      ),
-    ),
-  { catalog: testCatalog },
-);
+const World = bindingsWorld({
+  catalog: testCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 

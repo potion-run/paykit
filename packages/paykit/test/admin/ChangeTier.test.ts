@@ -13,10 +13,11 @@ import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { sameProration, type Proration } from "../../src/Proration.ts";
-import { planChangeTier } from "../../src/Subscription/ChangeTier.plan.ts";
+import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
+import { planChangeTier } from "../../src/TierCommand.ts";
 import {
   decideAt,
   isAccepted,
@@ -168,7 +169,7 @@ it.effect("a quoted tier change is never refused for disagreeing with itself", (
       const plan = planChangeTier(generatedCatalog, tier, state, now);
       if (plan === null) return false;
 
-      const decision = decideAt(state, plan.command, now, "quote");
+      const decision = decideAt(state, new ChangeTier(plan.input), now, "quote");
       if (!isAccepted(decision)) {
         // A quote can be refused for the standing, the currency or a ceiling,
         // but never for its own arithmetic.

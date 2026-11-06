@@ -1,15 +1,16 @@
 import type { AdminPreviewInput } from "@potion.run/paykit/Admin";
-import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
-import { tierTermsOf } from "@potion.run/paykit/Catalog";
-import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
-import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
+import { AdminQueries, ApplyChangeTier, next } from "@potion.run/paykit/Foldkit";
 import {
+  type EntitlementsState,
+  type AccountEvent,
+  BillingReadRow,
   AccountId,
   Standing,
   SubscriptionStatus,
   standingOf,
-} from "@potion.run/paykit/Subscription/Subscription.state";
-import { appendTimeline, initialTimeline, type AccountEvent } from "@potion.run/paykit/Timeline";
+  appendTimeline,
+  initialTimeline,
+} from "@potion.run/paykit/Read";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
+import { draftFor, OperatorActions, parseDraft, updatedDraft } from "./actions.ts";
 import {
   devToolsBilling,
   devToolsEntitlements,
@@ -363,130 +365,6 @@ const updateCurrentVerify = (
   );
 };
 
-const positiveInt = (value: string): Result.Result<number, string> => {
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0
-    ? Result.succeed(parsed)
-    : Result.fail("Enter a positive whole amount in minor units.");
-};
-
-const nonEmpty = (value: string, label: string): Result.Result<string, string> =>
-  value.trim() === "" ? Result.fail(`Enter a ${label}.`) : Result.succeed(value.trim());
-
-const dateTime = (value: string, label: string): Result.Result<DateTime.Utc, string> => {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime())
-    ? Result.fail(`Enter a valid ${label}.`)
-    : Result.succeed(DateTime.fromDateUnsafe(parsed));
-};
-
-const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, string> => {
-  switch (draft.kind) {
-    case "GrantCredits":
-      return Result.map(positiveInt(draft.amount), (amount) => ({ kind: "GrantCredits", amount }));
-    case "ExtendTrial":
-      return Result.map(dateTime(draft.trialEndsAt, "trial end"), (trialEndsAt) => ({
-        kind: "ExtendTrial",
-        trialEndsAt,
-      }));
-    case "EnterGrace":
-      return Result.map(dateTime(draft.graceUntil, "grace deadline"), (graceUntil) => ({
-        kind: "EnterGrace",
-        graceUntil,
-      }));
-    case "RecordPayment":
-      return Result.flatMap(positiveInt(draft.amount), (amount) =>
-        Result.map(nonEmpty(draft.currency, "currency"), (currency) => ({
-          kind: "RecordPayment",
-          amount,
-          currency,
-        })),
-      );
-    case "RecordPaymentFailure":
-      return Result.flatMap(nonEmpty(draft.reason, "reason"), (reason) =>
-        Result.map(dateTime(draft.graceUntil, "grace deadline"), (graceUntil) => ({
-          kind: "RecordPaymentFailure",
-          reason,
-          graceUntil,
-        })),
-      );
-    case "Recover":
-    case "Expire":
-    case "ScheduleCancellation":
-    case "Resume":
-    case "WithdrawTierChange":
-      return Result.succeed({ kind: draft.kind });
-    case "ChangeTier":
-      return Result.map(nonEmpty(draft.tier, "tier"), (tier) => ({ kind: "ChangeTier", tier }));
-    case "ScheduleTierChange":
-      return Result.map(nonEmpty(draft.tier, "tier"), (tier) => ({
-        kind: "ScheduleTierChange",
-        tier,
-      }));
-  }
-};
-
-const draftFor = (kind: ActionDraft["kind"], billing: AccountState["billing"]): ActionDraft => {
-  const currency = Option.match(billing, {
-    onNone: () => "usd",
-    onSome: (state) => state.currency ?? "usd",
-  });
-  switch (kind) {
-    case "GrantCredits":
-      return { kind, amount: "" };
-    case "ExtendTrial":
-      return { kind, trialEndsAt: "" };
-    case "EnterGrace":
-      return { kind, graceUntil: "" };
-    case "RecordPayment":
-      return { kind, amount: "", currency };
-    case "RecordPaymentFailure":
-      return { kind, reason: "", graceUntil: "" };
-    case "Recover":
-    case "Expire":
-    case "ScheduleCancellation":
-    case "Resume":
-    case "WithdrawTierChange":
-      return { kind };
-    case "ChangeTier":
-    case "ScheduleTierChange":
-      return { kind, tier: "" };
-  }
-};
-
-const updatedDraft = (draft: ActionDraft, field: string, value: string): ActionDraft => {
-  switch (draft.kind) {
-    case "GrantCredits":
-      return field === "amount" ? { kind: "GrantCredits", amount: value } : draft;
-    case "ExtendTrial":
-      return field === "trialEndsAt" ? { kind: "ExtendTrial", trialEndsAt: value } : draft;
-    case "EnterGrace":
-      return field === "graceUntil" ? { kind: "EnterGrace", graceUntil: value } : draft;
-    case "RecordPayment":
-      if (field === "amount")
-        return { kind: "RecordPayment", amount: value, currency: draft.currency };
-      if (field === "currency")
-        return { kind: "RecordPayment", amount: draft.amount, currency: value };
-      return draft;
-    case "RecordPaymentFailure":
-      if (field === "reason")
-        return { kind: "RecordPaymentFailure", reason: value, graceUntil: draft.graceUntil };
-      if (field === "graceUntil")
-        return { kind: "RecordPaymentFailure", reason: draft.reason, graceUntil: value };
-      return draft;
-    case "Recover":
-    case "Expire":
-    case "ScheduleCancellation":
-    case "Resume":
-    case "WithdrawTierChange":
-      return draft;
-    case "ChangeTier":
-      return field === "tier" ? { kind: "ChangeTier", tier: value } : draft;
-    case "ScheduleTierChange":
-      return field === "tier" ? { kind: "ScheduleTierChange", tier: value } : draft;
-  }
-};
-
 type CommandFailure =
   | { readonly _tag: "Rejected"; readonly rejection: { readonly _tag: string } }
   | { readonly _tag: "Denied"; readonly error: { readonly _tag: string } }
@@ -503,100 +381,36 @@ const failureReason = (failure: CommandFailure): string =>
 
 type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" }>;
 
+/**
+ * Dispatch one parsed intent to the row that declared it. Each case is a
+ * one-line call because the row owns the command and its input; the switch is
+ * only what narrows `intent` to the row's member.
+ */
 const send = (model: Model, target: AccountId, intent: BillingAdminIntent, commandId: string) => {
-  const wrap = (message: typeof BillingAdmin.Message.Type) =>
-    Message.ReceivedAdminResult({ message });
+  const catalog = Option.getOrNull(model.catalog);
   switch (intent.kind) {
     case "GrantCredits":
-      return Command.mapMessage(
-        BillingAdmin.GrantCredits({ target, input: { amount: intent.amount }, commandId }),
-        wrap,
-      );
+      return OperatorActions.GrantCredits.send({ target, intent, commandId, catalog });
     case "ExtendTrial":
-      return Command.mapMessage(
-        BillingAdmin.ExtendTrial({
-          target,
-          input: { trialEndsAt: intent.trialEndsAt },
-          commandId,
-        }),
-        wrap,
-      );
+      return OperatorActions.ExtendTrial.send({ target, intent, commandId, catalog });
     case "EnterGrace":
-      return Command.mapMessage(
-        BillingAdmin.EnterGrace({ target, input: { graceUntil: intent.graceUntil }, commandId }),
-        wrap,
-      );
+      return OperatorActions.EnterGrace.send({ target, intent, commandId, catalog });
     case "RecordPayment":
-      return Command.mapMessage(
-        BillingAdmin.RecordPayment({
-          target,
-          input: { amount: intent.amount, currency: intent.currency },
-          commandId,
-        }),
-        wrap,
-      );
+      return OperatorActions.RecordPayment.send({ target, intent, commandId, catalog });
     case "RecordPaymentFailure":
-      return Command.mapMessage(
-        BillingAdmin.RecordPaymentFailure({
-          target,
-          input: { reason: intent.reason, graceUntil: intent.graceUntil },
-          commandId,
-        }),
-        wrap,
-      );
+      return OperatorActions.RecordPaymentFailure.send({ target, intent, commandId, catalog });
     case "Recover":
-      return Command.mapMessage(BillingAdmin.Recover({ target, input: {}, commandId }), wrap);
+      return OperatorActions.Recover.send({ target, intent, commandId, catalog });
     case "Expire":
-      return Command.mapMessage(BillingAdmin.Expire({ target, input: {}, commandId }), wrap);
+      return OperatorActions.Expire.send({ target, intent, commandId, catalog });
     case "ScheduleCancellation":
-      return Command.mapMessage(
-        BillingAdmin.ScheduleCancellation({ target, input: {}, commandId }),
-        wrap,
-      );
+      return OperatorActions.ScheduleCancellation.send({ target, intent, commandId, catalog });
     case "Resume":
-      return Command.mapMessage(BillingAdmin.Resume({ target, input: {}, commandId }), wrap);
+      return OperatorActions.Resume.send({ target, intent, commandId, catalog });
     case "WithdrawTierChange":
-      return Command.mapMessage(
-        BillingAdmin.WithdrawTierChange({ target, input: {}, commandId }),
-        wrap,
-      );
-    case "ScheduleTierChange": {
-      // A scheduled change carries no proration (the period it was scheduled in
-      // has ended), so the console builds it from the catalog it holds rather
-      // than asking the server for a quote. The command's `CatalogGuard` is what
-      // refuses a payload that disagrees with the deploy's catalog.
-      const terms = Option.match(model.catalog, {
-        onNone: () => null,
-        onSome: (catalog) => tierTermsOf(catalog, intent.tier),
-      });
-      return Command.mapMessage(
-        BillingAdmin.ScheduleTierChange({
-          target,
-          input:
-            terms === null
-              ? // No catalog, or no such tier: send an empty grant so the model
-                // answers `TierNotInCatalog` instead of the console guessing.
-                {
-                  tier: intent.tier,
-                  allowances: {},
-                  credits: 0,
-                  creditsExpire: "period" as const,
-                  rates: {},
-                }
-              : {
-                  tier: intent.tier,
-                  allowances: terms.allowances,
-                  credits: terms.credits,
-                  creditsExpire: terms.creditsExpire,
-                  ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
-                  rates: terms.rates,
-                  ...(terms.price === undefined ? {} : { price: terms.price }),
-                },
-          commandId,
-        }),
-        wrap,
-      );
-    }
+      return OperatorActions.WithdrawTierChange.send({ target, intent, commandId, catalog });
+    case "ScheduleTierChange":
+      return OperatorActions.ScheduleTierChange.send({ target, intent, commandId, catalog });
   }
 };
 
@@ -1619,7 +1433,11 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       if (Option.isNone(account.change) || Option.isNone(account.draft)) return { model };
       const change = account.change.value;
       const draft = account.draft.value;
-      if (change._tag !== "Quoted" || draft.kind !== "ChangeTier" || draft.tier !== change.tier) {
+      if (
+        change._tag !== "Quoted" ||
+        draft.kind !== "ChangeTier" ||
+        draft.values.tier !== change.tier
+      ) {
         return { model };
       }
       return applyChangeTier(model, account, change);

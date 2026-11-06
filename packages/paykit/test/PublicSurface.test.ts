@@ -5,6 +5,7 @@ import * as Paykit from "../src/index.ts";
 it("exports the four groups from the package root", () => {
   // deploy-time
   expect(typeof Paykit.Stack).toBe("function");
+  expect(typeof Paykit.paykitWorld).toBe("function");
   expect(typeof Paykit.tier).toBe("function");
   expect(typeof Paykit.feature).toBe("function");
   expect(typeof Paykit.allowance).toBe("function");
