@@ -62,7 +62,8 @@ export interface PolarClient {
   readonly createRefund: (request: {
     readonly orderId: string;
     readonly amount: number;
-  }) => Effect.Effect<unknown, PaymentDeclined>;
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly refundId: string }, PaymentDeclined>;
   /**
    * Ingest one metered-usage event. `externalId` is the idempotency key; Polar
    * dedupes by it, so a retried close is the same event.
@@ -190,11 +191,17 @@ export const polarBindings = (
                 Effect.map((invoice) => ({ invoiceId: invoice.invoiceId })),
               ),
         }),
-    createRefund: ({ chargeId, amount }) =>
-      client.createRefund({ orderId: chargeId, amount }).pipe(
-        Effect.mapError((cause) => declined("createRefund", cause)),
-        Effect.map(() => ({})),
-      ),
+    createRefund: ({ chargeId, amount, commandId }) =>
+      client
+        .createRefund({
+          orderId: chargeId,
+          amount,
+          ...(commandId === undefined ? {} : { commandId }),
+        })
+        .pipe(
+          Effect.mapError((cause) => declined("createRefund", cause)),
+          Effect.map((refund) => ({ refundId: refund.refundId })),
+        ),
     ...(client.reportUsage === undefined || where.meters === undefined
       ? {}
       : {

@@ -569,6 +569,10 @@ export class Entitlements extends Domain.View("Entitlements", {
     // the pool and every counter are untouched. The view still emits it so the
     // read-model projection sees the whole log.
     TopUpCooldownCleared: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // Money going back is not an entitlement: the pool and every counter are
+    // untouched (revoking credits is a separate `ConsumeCredits`). The view
+    // still emits it so the read-model projection sees the whole log.
+    RefundRecorded: (view, _event, context): EntitlementsState => withAccount(view, context),
     // Billing an upgrade moves money, not an entitlement; the view still emits
     // it so the read-model projection sees the whole log.
     ProrationInvoiced: (view, event, context): EntitlementsState =>

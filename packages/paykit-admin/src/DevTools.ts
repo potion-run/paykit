@@ -241,6 +241,18 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     tag: "TopUpCooldownCleared",
     body: body({}),
   },
+  {
+    tag: "RefundRecorded",
+    body: body({
+      chargeId: "ch_dev_1",
+      refundId: "re_dev_1",
+      amount: 1_900,
+      currency: "usd",
+      commandId: "refund_dev_1",
+      reason: "duplicate order",
+      refundedAfter: 1_900,
+    }),
+  },
 ];
 
 export const DevToolsTab = Schema.Literals(["events", "reads", "feed"]);

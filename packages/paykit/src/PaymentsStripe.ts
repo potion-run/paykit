@@ -49,7 +49,9 @@ export interface StripeBindings {
   readonly createRefund?: (args: {
     readonly chargeId: string;
     readonly amount: number;
-  }) => Effect.Effect<{}, PaymentError>;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly refundId: string }, PaymentError>;
   /**
    * Optional: take an amount from the customer's saved method, off-session.
    * A caller that cannot declares no `charge` capability, and the auto top-up
@@ -220,10 +222,22 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
               currency,
               ...(commandId === undefined ? {} : { commandId }),
             }),
-      refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
+      refund: ({
+        chargeId,
+        amount,
+        commandId,
+      }: {
+        chargeId: string;
+        amount: number;
+        commandId?: string;
+      }) =>
         props.bindings.createRefund === undefined
           ? missing("refund")
-          : props.bindings.createRefund({ chargeId, amount }),
+          : props.bindings.createRefund({
+              chargeId,
+              amount,
+              ...(commandId === undefined ? {} : { commandId }),
+            }),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
       reportUsage: (args: {

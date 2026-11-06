@@ -62,6 +62,7 @@ import {
   RecordProrationInvoice,
 } from "./RecordProrationInvoice.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
+import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.ts";
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
@@ -80,6 +81,7 @@ import { AccountId } from "./Subscription.id.ts";
 import {
   addInterval,
   allowsUsage,
+  chargedWith,
   availableOf,
   billedOf,
   billableUnitsOf,
@@ -97,6 +99,9 @@ import {
   remainingAfterRelease,
   remainingAfterSpending,
   remainingOf,
+  refundedOf,
+  refundedWith,
+  refundableOf,
   closingHold,
   reservedCreditsOf,
   reservedOf,
@@ -453,6 +458,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RecordProrationInvoice,
     GrantCredits,
     PurchaseCredits,
+    Refund,
     TopUpCooldownElapsed,
     ConsumeCredits,
     ScheduleCancellation,
@@ -1033,6 +1039,32 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    Refund: (state, command, { commandId }) => {
+      // A non-positive refund records nothing, like every other money command.
+      if (command.amount <= 0) return [];
+      // The ceiling is the money the log knows: a refund cannot exceed what
+      // this account was charged in its currency, minus what already went back.
+      const refundable = refundableOf(state, command.currency);
+      if (command.amount > refundable) {
+        return new RefundExceedsCharged({
+          currency: command.currency,
+          charged: refundable + (refundedOf(state)[command.currency] ?? 0),
+          refunded: refundedOf(state)[command.currency] ?? 0,
+          requested: command.amount,
+        });
+      }
+      return [
+        new RefundRecorded({
+          chargeId: command.chargeId,
+          refundId: command.refundId,
+          amount: command.amount,
+          currency: command.currency,
+          commandId,
+          ...(command.reason === undefined ? {} : { reason: command.reason }),
+          refundedAfter: (refundedOf(state)[command.currency] ?? 0) + command.amount,
+        }),
+      ];
+    },
     TopUpCooldownElapsed: (state, _command, { now }) => {
       // The deadline is scheduled, so an account with no cooldown and a fire
       // before the deadline are both ordinary states, not operator mistakes.
@@ -1284,7 +1316,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     PaymentRecorded: (state, event) =>
       state._tag === "Subscribed"
-        ? { ...state, status: event.statusAfter, graceUntil: undefined, dunningAttempts: 0 }
+        ? {
+            ...state,
+            status: event.statusAfter,
+            graceUntil: undefined,
+            dunningAttempts: 0,
+            charged: chargedWith(state, event.currency, event.amount),
+          }
         : state,
     PaymentFailed: (state, event) =>
       state._tag === "Subscribed"
@@ -1311,12 +1349,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             prepaidCredits: protectedAfterSpending(state, event.balanceAfter),
           }
         : state,
-    CreditsPurchased: (state, event) =>
-      state._tag === "Subscribed"
+    CreditsPurchased: (state, event) => {
+      // A purchase is money charged, with or without a standing: the ceiling a
+      // refund is measured against has to count a pack bought before a plan.
+      const charged =
+        event.price === undefined
+          ? state.charged
+          : chargedWith(state, event.price.currency, event.price.amount);
+      return state._tag === "Subscribed"
         ? {
             ...state,
             credits: event.balanceAfter,
             prepaidCredits: event.prepaidAfter,
+            ...(charged === undefined ? {} : { charged }),
             ...(event.cooldownUntil === undefined
               ? {}
               : { topUpCooldownUntil: event.cooldownUntil }),
@@ -1326,7 +1371,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             credits: event.balanceAfter,
             prepaidCredits: event.prepaidAfter,
             ...(event.rates === undefined ? {} : { rates: event.rates }),
-          },
+            ...(charged === undefined ? {} : { charged }),
+          };
+    },
+    RefundRecorded: (state, event) => ({
+      ...state,
+      refunded: refundedWith(state, event.currency, event.refundedAfter),
+      refunds: {
+        ...state.refunds,
+        [event.commandId]: {
+          refundId: event.refundId,
+          amount: event.amount,
+          currency: event.currency,
+          refundedAfter: event.refundedAfter,
+        },
+      },
+    }),
     TopUpCooldownCleared: (state) => {
       if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
       const { topUpCooldownUntil: _cleared, ...rest } = state;
@@ -1408,7 +1468,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     // The invoice is the outcome: the log now says what was billed and on what.
     ProrationInvoiced: (state, event) =>
-      state._tag === "Subscribed" ? { ...state, prorationInvoice: event.invoiceId } : state,
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            prorationInvoice: event.invoiceId,
+            charged: chargedWith(state, event.currency, event.amount),
+          }
+        : state,
     CreditsExpired: (state, event) =>
       state._tag === "Subscribed"
         ? {

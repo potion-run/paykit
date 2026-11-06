@@ -15,7 +15,7 @@ const stripeBindings: StripeBindings = {
     Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
-  createRefund: () => Effect.succeed({}),
+  createRefund: () => Effect.succeed({ refundId: "re_test" }),
   charge: ({ account }) => Effect.succeed({ chargeId: `ch_${account}` }),
 };
 
@@ -24,7 +24,7 @@ const polarBindings: PolarBindings = {
     Effect.succeed({ url: `https://polar.test/checkout/${productId}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://polar.test/portal/${account}` }),
-  createRefund: () => Effect.succeed({}),
+  createRefund: () => Effect.succeed({ refundId: "re_polar" }),
 };
 
 const providers: ReadonlyArray<readonly [string, MoneyProvider]> = [
@@ -142,13 +142,16 @@ describe("Payments conformance", () => {
       );
 
       it.effect(
-        "refund succeeds or is missing as declared",
+        "refund succeeds or is missing as declared, and answers the provider's id",
         () =>
           Effect.gen(function* () {
             const exit = yield* Effect.exit(
               (yield* Payments).refund({ chargeId: "ch_1", amount: 100 }),
             );
             expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("refund"));
+            if (Exit.isSuccess(exit)) {
+              expect(exit.value.refundId.length).toBeGreaterThan(0);
+            }
           }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
       );
 

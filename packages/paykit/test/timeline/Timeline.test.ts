@@ -7,6 +7,7 @@ import { CreditsGranted } from "../../src/Subscription/GrantCredits.command.ts";
 import { UsageReserved } from "../../src/Subscription/Hold.command.ts";
 import { CreditsPurchased } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { PaymentRecorded } from "../../src/Subscription/RecordPayment.command.ts";
+import { RefundRecorded } from "../../src/Subscription/Refund.command.ts";
 import { UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -136,6 +137,19 @@ const script = [
     monthLater,
   ),
   input(11, new CreditsExpired({ amount: 1_000, balanceAfter: 522 }), monthLater),
+  input(
+    12,
+    new RefundRecorded({
+      chargeId: "ch_1",
+      refundId: "re_1",
+      amount: 1_900,
+      currency: "usd",
+      commandId: "refund-1",
+      reason: "duplicate order",
+      refundedAfter: 1_900,
+    }),
+    monthLater,
+  ),
 ];
 
 it("folds the log into one entry per billing fact, in order", () => {
@@ -152,13 +166,19 @@ it("folds the log into one entry per billing fact, in order", () => {
     "payment",
     "period",
     "credit-expire",
+    "refund",
   ]);
   expect(timeline.entries[0]?.tier).toBe("pro");
   expect(timeline.entries[1]?.charge).toBe(100);
   expect(timeline.entries[3]?.holdId).toBe("hold_1");
   expect(timeline.entries[5]?.holdId).toBe("hold_1");
   expect(timeline.entries[6]?.invoiceId).toBe("in_1");
-  expect(timeline.lastSeq).toBe(11);
+  // Money going back is its own entry: an amount and a currency, not a
+  // negative payment and not a credit move.
+  expect(timeline.entries[11]?.refundId).toBe("re_1");
+  expect(timeline.entries[11]?.charge).toBe(1_900);
+  expect(timeline.entries[11]?.reason).toBe("duplicate order");
+  expect(timeline.lastSeq).toBe(12);
 });
 
 it("rolls each period up per feature, per credit move, and per hold", () => {

@@ -97,8 +97,16 @@ export const Payments = Domain.ExternalSystem("Payments", {
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
   refund: {
-    args: { chargeId: Schema.String, amount: Schema.Int },
-    success: {},
+    args: {
+      chargeId: Schema.String,
+      amount: Schema.Int,
+      /**
+       * Idempotency key for the refund: the operator's dedupe key, so a retry
+       * is the refund the provider already took rather than a second one.
+       */
+      commandId: Schema.optionalKey(Schema.String),
+    },
+    success: { refundId: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
   createPortal: {
@@ -147,7 +155,9 @@ export interface PaymentsService {
   readonly refund: (args: {
     readonly chargeId: string;
     readonly amount: number;
-  }) => Effect.Effect<void, PaymentError>;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly refundId: string }, PaymentError>;
   readonly createPortal: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;

@@ -28,6 +28,14 @@ export interface MemoryCharge {
   readonly commandId?: string;
 }
 
+/** One refund the memory provider took. */
+export interface MemoryRefund {
+  readonly refundId: string;
+  readonly chargeId: string;
+  readonly amount: number;
+  readonly commandId?: string;
+}
+
 /** One report the memory provider accepted, deduped by its command id. */
 export interface MemoryUsageReport {
   readonly account: string;
@@ -42,6 +50,8 @@ export interface MemoryPayments extends MoneyProvider<"memory"> {
   readonly reports: ReadonlyArray<MemoryUsageReport>;
   /** Every charge it took, so a test can tell a charge from an invoice. */
   readonly charges: ReadonlyArray<MemoryCharge>;
+  /** Every refund it took, so a test can read the money back out. */
+  readonly refunds: ReadonlyArray<MemoryRefund>;
 }
 
 /**
@@ -57,6 +67,9 @@ export const PaymentsMemory = (): MemoryPayments => {
   const charges: Array<MemoryCharge> = [];
   /** The charge a command id already took, for the same reason. */
   const chargeFor = new Map<string, string>();
+  const refunds: Array<MemoryRefund> = [];
+  /** The refund a command id already took, for the same reason. */
+  const refundFor = new Map<string, string>();
   const reported = new Set<string>();
   let sequence = 0;
 
@@ -143,11 +156,29 @@ export const PaymentsMemory = (): MemoryPayments => {
             return { chargeId };
           });
         },
-        refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
+        refund: ({
+          chargeId,
+          amount,
+          commandId,
+        }: {
+          chargeId: string;
+          amount: number;
+          commandId?: string;
+        }) =>
           Effect.sync(() => {
-            void chargeId;
-            void amount;
-            return {};
+            // The dedupe key is the operator's: a retried refund command is the
+            // refund that already went back, not a second one.
+            const previous = commandId === undefined ? undefined : refundFor.get(commandId);
+            if (previous !== undefined) return { refundId: previous };
+            const refundId = `re_${next()}`;
+            refunds.push({
+              refundId,
+              chargeId,
+              amount,
+              ...(commandId === undefined ? {} : { commandId }),
+            });
+            if (commandId !== undefined) refundFor.set(commandId, refundId);
+            return { refundId };
           }),
         createPortal: ({ account }: { account: string }) =>
           Effect.succeed({
@@ -183,5 +214,5 @@ export const PaymentsMemory = (): MemoryPayments => {
     Layer.succeed(PaymentsProvider, { name: "memory", capabilities }),
   );
 
-  return { name: "memory", kind: "memory", capabilities, payments, reports, charges };
+  return { name: "memory", kind: "memory", capabilities, payments, reports, charges, refunds };
 };

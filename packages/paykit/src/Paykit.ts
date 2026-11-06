@@ -138,6 +138,7 @@ export const Paykit = {
   Expire: Billing.Expire,
   RecordPayment: Billing.RecordPayment,
   RecordPaymentFailure: Billing.RecordPaymentFailure,
+  Refund: Billing.Refund,
   // the whole binding surface under one key, for a reader who wants it grouped
   Billing,
   // model

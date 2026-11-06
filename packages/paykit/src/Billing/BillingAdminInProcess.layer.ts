@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
+import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { EnterGrace as EnterGraceCommand } from "../Subscription/EnterGrace.command.ts";
 import { Expire as ExpireCommand } from "../Subscription/Expire.command.ts";
@@ -10,7 +11,9 @@ import { GrantCredits as GrantCreditsCommand } from "../Subscription/GrantCredit
 import { RecordPayment as RecordPaymentCommand } from "../Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure as RecordPaymentFailureCommand } from "../Subscription/RecordPaymentFailure.command.ts";
 import { Recover as RecoverCommand } from "../Subscription/Recover.command.ts";
+import { Refund as RefundCommand, RefundExceedsCharged } from "../Subscription/Refund.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { refundableOf, refundOfCommand, refundedOf } from "../Subscription/Subscription.state.ts";
 import {
   EnterGrace,
   Expire,
@@ -19,6 +22,7 @@ import {
   RecordPayment,
   RecordPaymentFailure,
   Recover,
+  Refund,
   standingSnapshot,
   toEnterGraceError,
   toExpireError,
@@ -27,6 +31,7 @@ import {
   toRecordPaymentError,
   toRecordPaymentFailureError,
   toRecoverError,
+  toRefundError,
 } from "./Admin.binding.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 
@@ -201,6 +206,91 @@ export const BillingAdminInProcess = Layer.mergeAll(
             billing.query(ref, { atLeast: receipt }),
           );
           return standingSnapshot(Option.getOrNull(view));
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    Refund,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const router = yield* Effect.serviceOption(PaymentsRouter);
+      return Effect.fn("Paykit.Refund")(function* (account) {
+        const ref = Subscription.ref(account);
+        return Effect.fn("Paykit.Refund.charge")(function* (request) {
+          const state = yield* subscription.state(ref);
+          // A retry with the same dedupe key is the refund the first attempt
+          // recorded: answer it instead of asking the ceiling for headroom that
+          // attempt already spent.
+          const previous = refundOfCommand(state, request.dedupeKey);
+          if (previous !== null) {
+            return {
+              refundId: previous.refundId,
+              refunded: previous.refundedAfter,
+              currency: previous.currency,
+            };
+          }
+          // The ceiling is checked here as well as in `decide`, because the
+          // provider call comes first: a refund the model would refuse must not
+          // take money out on the way to being refused.
+          const refundable = refundableOf(state, request.currency);
+          if (request.amount > refundable) {
+            return yield* bound(toRefundError)(
+              Effect.fail(
+                new RefundExceedsCharged({
+                  currency: request.currency,
+                  charged: refundable + (refundedOf(state)[request.currency] ?? 0),
+                  refunded: refundedOf(state)[request.currency] ?? 0,
+                  requested: request.amount,
+                }),
+              ),
+            );
+          }
+          const chosen = Option.match(router, {
+            onNone: () => null,
+            onSome: (set) => providerFor(set, state.refs),
+          });
+          const attempt = Effect.gen(function* () {
+            const payments = yield* Effect.serviceOption(Payments);
+            if (Option.isNone(payments)) {
+              return yield* new ProviderCapabilityMissing({
+                provider: chosen?.name ?? "none",
+                op: "refund",
+              });
+            }
+            const { refundId } = yield* payments.value.refund({
+              chargeId: request.chargeId,
+              amount: request.amount,
+              commandId: request.dedupeKey,
+            });
+            // The receipt is keyed by the operator's dedupe key, so a retry
+            // records the refund the provider already took rather than a second.
+            const receipt = yield* asSystem(
+              subscription.send(
+                ref,
+                new RefundCommand({
+                  chargeId: request.chargeId,
+                  refundId,
+                  amount: request.amount,
+                  currency: request.currency,
+                  ...(request.reason === undefined ? {} : { reason: request.reason }),
+                }),
+                { commandId: request.dedupeKey },
+              ),
+            );
+            const record = receipt.events.find((event) => event._tag === "RefundRecorded");
+            return {
+              refundId,
+              refunded:
+                record !== undefined && "refundedAfter" in record
+                  ? (record.refundedAfter as number)
+                  : (refundedOf(state)[request.currency] ?? 0) + request.amount,
+              currency: request.currency,
+            };
+          });
+          return yield* bound(toRefundError)(
+            chosen === null ? attempt : Effect.provide(attempt, chosen.payments),
+          );
         });
       });
     }),

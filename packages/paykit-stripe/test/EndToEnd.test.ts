@@ -60,7 +60,7 @@ const stripeClient = (asked: Array<Record<string, unknown>> = []): StripeClient 
       asked.push(request as never);
       return { invoiceId: "in_proration" };
     }),
-  createRefund: () => Effect.sync(() => ({})),
+  createRefund: () => Effect.sync(() => ({ refundId: "re_test" })),
 });
 
 const world = (client: StripeClient) => {

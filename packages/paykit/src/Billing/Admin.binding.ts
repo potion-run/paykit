@@ -3,11 +3,13 @@ import type * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
 import type { BillingStateView } from "../Subscription/BillingState.view.ts";
 import { AlreadyInGrace } from "../Subscription/EnterGrace.command.ts";
 import { TrialNotActive } from "../Subscription/ExtendTrial.command.ts";
 import { NotInGrace } from "../Subscription/NotInGrace.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { RefundExceedsCharged } from "../Subscription/Refund.command.ts";
 import type { SubscriptionStatus } from "../Subscription/Subscription.state.ts";
 import { TrialDeadlineNotLater } from "../Subscription/TrialDeadlineNotLater.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
@@ -80,6 +82,27 @@ export interface RecordPaymentFailureRequest {
   readonly dedupeKey: string;
 }
 
+/** Refund money that already left the customer, up to what the account was charged. */
+export interface RefundRequest {
+  /** The provider's reference for what is being refunded. */
+  readonly chargeId: string;
+  /** Minor units. A non-positive amount records nothing; too much is refused. */
+  readonly amount: number;
+  readonly currency: string;
+  /** Why the money went back, as an operator would tell a customer. */
+  readonly reason?: string;
+  /** The retry key, which is also the provider's idempotency key and the command id. */
+  readonly dedupeKey: string;
+}
+
+/** What a refund answers: the provider's id, and the currency's running total. */
+export interface RefundResult {
+  readonly refundId: string;
+  /** Minor units refunded in this currency so far, as the event recorded it. */
+  readonly refunded: number;
+  readonly currency: string;
+}
+
 /** The verbs with nothing to say but their retry key. */
 export interface AdminRequest {
   readonly dedupeKey: string;
@@ -103,6 +126,13 @@ const graceRefusals = [
 const recoverRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
 const expireRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
 const paymentRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
+const refundRefusals = [
+  RefundExceedsCharged,
+  ProviderCapabilityMissing,
+  PaymentDeclined,
+  Unauthenticated,
+  Forbidden,
+] as const;
 const paymentFailureRefusals = [Unauthenticated, Forbidden] as const;
 
 /** Every refusal this operator command can answer. */
@@ -112,6 +142,7 @@ export type EnterGraceRefusal = InstanceType<(typeof graceRefusals)[number]>;
 export type RecoverRefusal = InstanceType<(typeof recoverRefusals)[number]>;
 export type ExpireRefusal = InstanceType<(typeof expireRefusals)[number]>;
 export type RecordPaymentRefusal = InstanceType<(typeof paymentRefusals)[number]>;
+export type RefundRefusal = InstanceType<(typeof refundRefusals)[number]>;
 export type RecordPaymentFailureRefusal = InstanceType<(typeof paymentFailureRefusals)[number]>;
 
 export type GrantCreditsError = BindingError<GrantCreditsRefusal>;
@@ -120,6 +151,7 @@ export type EnterGraceError = BindingError<EnterGraceRefusal>;
 export type RecoverError = BindingError<RecoverRefusal>;
 export type ExpireError = BindingError<ExpireRefusal>;
 export type RecordPaymentError = BindingError<RecordPaymentRefusal>;
+export type RefundError = BindingError<RefundRefusal>;
 export type RecordPaymentFailureError = BindingError<RecordPaymentFailureRefusal>;
 
 /** A layer's own failure, as each binding's declared union. */
@@ -144,6 +176,7 @@ export const toRecordPaymentError = toBindingError(
   "Paykit.RecordPayment",
   oneOf<RecordPaymentRefusal>(paymentRefusals),
 );
+export const toRefundError = toBindingError("Paykit.Refund", oneOf<RefundRefusal>(refundRefusals));
 export const toRecordPaymentFailureError = toBindingError(
   "Paykit.RecordPaymentFailure",
   oneOf<RecordPaymentFailureRefusal>(paymentFailureRefusals),
@@ -169,6 +202,8 @@ export type ExpireVerb = (request: AdminRequest) => Effect.Effect<StandingSnapsh
 export type RecordPaymentVerb = (
   request: RecordPaymentRequest,
 ) => Effect.Effect<StandingSnapshot, RecordPaymentError>;
+/** The verb of a bound `Refund`. */
+export type RefundVerb = (request: RefundRequest) => Effect.Effect<RefundResult, RefundError>;
 /** The verb of a bound `RecordPaymentFailure`. */
 export type RecordPaymentFailureVerb = (
   request: RecordPaymentFailureRequest,
@@ -340,3 +375,46 @@ export interface RecordPaymentFailure extends Binding.Service<
 export const RecordPaymentFailure = Binding.Service<RecordPaymentFailure>(
   "Paykit.RecordPaymentFailure",
 );
+
+/**
+ * Send money back for a charge the account already paid.
+ *
+ * Three rules, from [ADR 0019](../../../../docs/adr/0019-a-refund-names-the-charge-it-reverses.md):
+ *
+ * - **The ceiling is what the log records.** A refund cannot exceed what the
+ *   account was charged in its currency, minus what already went back
+ *   (`RefundExceedsCharged`). The binding checks it before it calls the
+ *   provider, so a refund the model would refuse never leaves the account.
+ * - **The provider takes the money, the log records it.** `Payments.refund` is
+ *   keyed by `dedupeKey`, so a retry is the same refund at the vendor and the
+ *   same command here; the provider's refund id is what the event carries.
+ * - **A refund does not touch the pool.** Revoking credits is `ConsumeCredits`,
+ *   sent separately, so "money left" and "credits were burned" stay two facts.
+ *
+ * It is implemented where the provider is reachable — the in-process operator
+ * layer — because a console backend that owns only the Api cannot move money.
+ *
+ * ### Refunding a pack
+ * **Example:** Send back what a charge took
+ * ```typescript
+ * const refund = yield* Paykit.Refund(account);
+ * const { refundId, refunded } = yield* refund({
+ *   chargeId: "ch_123",
+ *   amount: 1900,
+ *   currency: "usd",
+ *   reason: "duplicate order",
+ *   dedupeKey: ticketId,
+ * });
+ * ```
+ *
+ * @binding
+ * @product Payments
+ * @provides Paykit.Refund
+ */
+export interface Refund extends Binding.Service<
+  Refund,
+  "Paykit.Refund",
+  (account: string) => Effect.Effect<RefundVerb>
+> {}
+
+export const Refund = Binding.Service<Refund>("Paykit.Refund");

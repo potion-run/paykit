@@ -16,7 +16,7 @@ const stripeFixture: StripeBindings = {
     Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
-  createRefund: () => Effect.succeed({}),
+  createRefund: () => Effect.succeed({ refundId: "re_test" }),
 };
 
 const polarBindings: PolarBindings = {
@@ -24,7 +24,7 @@ const polarBindings: PolarBindings = {
     Effect.succeed({ url: `https://polar.test/checkout/${productId}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://polar.test/portal/${account}` }),
-  createRefund: () => Effect.succeed({}),
+  createRefund: () => Effect.succeed({ refundId: "re_polar" }),
 };
 
 const withProvider = <A, E, R>(

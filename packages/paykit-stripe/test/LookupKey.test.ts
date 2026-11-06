@@ -14,7 +14,7 @@ const client = (asked: Array<Record<string, unknown>> = []): StripeClient => ({
     }),
   createBillingPortalSession: () => Effect.succeed({ url: "https://billing.stripe.test/portal" }),
   createInvoice: () => Effect.succeed({ invoiceId: "in_proration" }),
-  createRefund: () => Effect.succeed({}),
+  createRefund: () => Effect.succeed({ refundId: "re_test" }),
   resolvePrice: (lookupKey) =>
     Effect.succeed(lookupKey === "paykit:pro" ? "price_resolved" : "price_other"),
 });

@@ -395,6 +395,14 @@ const world = Layer.mergeAll(
   `commandId` so a redelivery is a replay, not a second charge. `Webhook()` is that edge as a
   binding — the model's services resolved once, an event applied per delivery — so a route builds
   it beside its other bindings instead of re-resolving the model on every call.
+- **A refund is a fact about money, capped by the log.** `Refund` records `RefundRecorded`
+  (`chargeId`, `refundId`, `amount`, `currency`, `refundedAfter`, `commandId`), and the ceiling is
+  what the log recorded as charged per currency — `PaymentRecorded`, `CreditsPurchased.price`,
+  `ProrationInvoiced` — less what went back: `RefundExceedsCharged`, never a negative payment. It is
+  an operator command (`Admin`), the provider call happens in the `Paykit.Refund` binding before the
+  command and is keyed by the operator's `dedupeKey`, and a refund never touches the credit pool
+  because revoking credits is `ConsumeCredits`
+  ([ADR 0019](../../docs/adr/0019-a-refund-names-the-charge-it-reverses.md)).
 - **A missing capability is a typed error**, `ProviderCapabilityMissing`, naming provider and
   op. The console hides the action; nothing degrades silently.
 - **The provider carries its own webhook.** Given a signing secret, `Stripe()` and `Polar()` return

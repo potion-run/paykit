@@ -130,6 +130,7 @@ export {
   RecordPayment,
   RecordPaymentFailure,
   Recover,
+  Refund,
   type AdminRequest,
   type EnterGraceError,
   type EnterGraceRequest,
@@ -151,6 +152,10 @@ export {
   type RecordPaymentVerb,
   type RecoverError,
   type RecoverVerb,
+  type RefundError,
+  type RefundRequest,
+  type RefundResult,
+  type RefundVerb,
   type StandingSnapshot,
 } from "./Admin.binding.ts";
 

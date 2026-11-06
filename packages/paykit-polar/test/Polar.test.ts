@@ -33,7 +33,7 @@ const recording = (asked: Array<Record<string, unknown>>): PolarClient => ({
   createRefund: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
-      return {};
+      return { refundId: "re_test" };
     }),
 });
 

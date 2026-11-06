@@ -30,6 +30,7 @@ export const TimelineKind = Schema.Literals([
   "credit-expire",
   "payment",
   "payment-failed",
+  "refund",
   "proration",
   "period",
 ]);
@@ -72,6 +73,8 @@ export const TimelineEntry = Schema.Struct({
   invoiceId: Schema.optionalKey(Schema.String),
   /** The charge an automatic top-up took from the saved method, when it could. */
   chargeId: Schema.optionalKey(Schema.String),
+  /** The provider's id for a refund it took. */
+  refundId: Schema.optionalKey(Schema.String),
   /** Why a payment failed. */
   reason: Schema.optionalKey(Schema.String),
 });
@@ -489,6 +492,20 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         kind: "payment",
         charge: event.amount,
         currency: event.currency,
+      };
+      return appended(timeline, entry);
+    }
+
+    case "RefundRecorded": {
+      // Money going back is its own fact: no pool, no counters, and no negative
+      // charge, so a reader cannot mistake it for a payment that never landed.
+      const entry: TimelineEntry = {
+        ...stamped(input, periodOf),
+        kind: "refund",
+        charge: event.amount,
+        currency: event.currency,
+        refundId: event.refundId,
+        ...(event.reason === undefined ? {} : { reason: event.reason }),
       };
       return appended(timeline, entry);
     }

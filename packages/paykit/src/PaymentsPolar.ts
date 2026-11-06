@@ -43,7 +43,8 @@ export interface PolarBindings {
   readonly createRefund: (args: {
     readonly chargeId: string;
     readonly amount: number;
-  }) => Effect.Effect<{}, PaymentError>;
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly refundId: string }, PaymentError>;
   /**
    * Optional: report a closed period's billable units to the vendor's meters.
    * A merchant of record that can ingest usage declares it; one that cannot
@@ -142,8 +143,20 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
               currency,
               ...(commandId === undefined ? {} : { commandId }),
             }),
-      refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
-        props.bindings.createRefund({ chargeId, amount }),
+      refund: ({
+        chargeId,
+        amount,
+        commandId,
+      }: {
+        chargeId: string;
+        amount: number;
+        commandId?: string;
+      }) =>
+        props.bindings.createRefund({
+          chargeId,
+          amount,
+          ...(commandId === undefined ? {} : { commandId }),
+        }),
       // Polar is a merchant of record: `createInvoice` finalizes an order, which
       // is itself an off-session attempt on the saved method. A second charge
       // op would be a second way to take one payment, so the port refuses it.

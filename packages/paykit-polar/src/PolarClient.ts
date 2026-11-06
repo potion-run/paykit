@@ -107,7 +107,11 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         order_id: request.orderId,
         amount: request.amount,
         reason: "customer_request",
-      }).pipe(Effect.asVoid, Effect.mapError(declined("createRefund")), Effect.provide(live)),
+      }).pipe(
+        Effect.provide(live),
+        Effect.mapError(declined("createRefund")),
+        Effect.map((refund) => ({ refundId: refund.id })),
+      ),
     // One event per feature. Polar's meter aggregates `metadata.units` with the
     // filter the deploy created, and `external_id` is the dedupe key: a
     // redelivered close is the same event rather than a second quantity.

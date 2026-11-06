@@ -65,7 +65,9 @@ export interface StripeClient {
   readonly createRefund?: (request: {
     readonly chargeId: string;
     readonly amount: number;
-  }) => Effect.Effect<{}, PaymentDeclined>;
+    /** Stable across retries, for the vendor's idempotency key. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly refundId: string }, PaymentDeclined>;
   /**
    * Take one amount from the customer's saved method, off-session: a confirmed
    * `PaymentIntent` rather than an invoice Stripe collects on its own schedule.
@@ -228,10 +230,20 @@ export const stripeClientBindings = (
     ...(client.createRefund === undefined
       ? {}
       : {
-          createRefund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
-            client.createRefund!({ chargeId, amount }).pipe(
-              Effect.mapError((cause) => declined("createRefund", cause)),
-            ),
+          createRefund: ({
+            chargeId,
+            amount,
+            commandId,
+          }: {
+            chargeId: string;
+            amount: number;
+            commandId?: string;
+          }) =>
+            client.createRefund!({
+              chargeId,
+              amount,
+              ...(commandId === undefined ? {} : { commandId }),
+            }).pipe(Effect.mapError((cause) => declined("createRefund", cause))),
         }),
     ...(client.reportUsage === undefined || where.meters === undefined
       ? {}

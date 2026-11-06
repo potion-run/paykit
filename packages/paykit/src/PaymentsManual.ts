@@ -18,6 +18,7 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set(["invoice", "refund
 export const PaymentsManual = (): MoneyProvider<"manual"> => {
   let sequence = 0;
   const invoiceFor = new Map<string, string>();
+  const refundFor = new Map<string, string>();
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "manual", op }));
 
@@ -34,7 +35,16 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
           if (commandId !== undefined) invoiceFor.set(commandId, invoiceId);
           return { invoiceId };
         }),
-      refund: () => Effect.succeed({}),
+      refund: ({ commandId }: { commandId?: string }) =>
+        Effect.sync(() => {
+          // A manual refund is a transfer back: the same dedupe key must answer
+          // the refund it already recorded.
+          const previous = commandId === undefined ? undefined : refundFor.get(commandId);
+          if (previous !== undefined) return { refundId: previous };
+          const refundId = `manual_refund_${++sequence}`;
+          if (commandId !== undefined) refundFor.set(commandId, refundId);
+          return { refundId };
+        }),
       createPortal: () => missing("createPortal"),
       // A manual invoice has a transfer behind it and no card to charge: a
       // charge is refused by capability, not faked as an invoice.

@@ -26,7 +26,7 @@ const recording = (asked: Array<Record<string, unknown>> = []): PolarClient => (
     }),
   createCustomerSession: () => Effect.sync(() => ({ url: "https://polar.test/portal" })),
   createInvoice: () => Effect.sync(() => ({ invoiceId: "ord_proration" })),
-  createRefund: () => Effect.sync(() => ({})),
+  createRefund: () => Effect.sync(() => ({ refundId: "re_test" })),
 });
 
 /** The provider a deployment swaps in: one call, and the routes come alive. */

@@ -8,7 +8,13 @@ import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price, TopUpThreshold } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { PendingTier, SubscriptionStatus } from "./Subscription.state.ts";
+import {
+  chargedWith,
+  MoneyByCurrency,
+  PendingTier,
+  refundedWith,
+  SubscriptionStatus,
+} from "./Subscription.state.ts";
 
 /** What a billing page shows. */
 export const BillingStateView = Schema.Struct({
@@ -29,6 +35,14 @@ export const BillingStateView = Schema.Struct({
    * is one sentence the page can say without reading the log.
    */
   topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
+   * Money this account was charged, per currency, in minor units. With
+   * `refunded` it is what a console offers to send back: "charged 4,900,
+   * refunded 0" is one sentence, and `Refund` caps itself by it.
+   */
+  charged: Schema.optionalKey(MoneyByCurrency),
+  /** Money that went back, per currency. */
+  refunded: Schema.optionalKey(MoneyByCurrency),
   /**
    * How many payment failures this standing has recorded. The retries
    * themselves are the provider's; this is what paykit knows about them, and
@@ -205,11 +219,31 @@ export class BillingState extends Domain.View("BillingState", {
       );
     },
     ProrationInvoiced: (view, event, context): BillingStateView =>
-      withAccount({ ...view, prorationInvoice: event.invoiceId }, context),
-    PaymentRecorded: (view, _event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          prorationInvoice: event.invoiceId,
+          charged: chargedWith(view, event.currency, event.amount),
+        },
+        context,
+      ),
+    PaymentRecorded: (view, event, context): BillingStateView =>
       // A payment settles the dunning run; the count starts over at the next
       // failure rather than carrying last quarter's.
-      withoutGrace({ ...view, status: "active", dunningAttempts: 0 }, context),
+      withoutGrace(
+        {
+          ...view,
+          status: "active",
+          dunningAttempts: 0,
+          charged: chargedWith(view, event.currency, event.amount),
+        },
+        context,
+      ),
+    RefundRecorded: (view, event, context): BillingStateView =>
+      withAccount(
+        { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
+        context,
+      ),
     PaymentFailed: (view, event, context): BillingStateView =>
       withAccount(
         {
@@ -231,6 +265,9 @@ export class BillingState extends Domain.View("BillingState", {
         {
           ...view,
           credits: event.balanceAfter,
+          ...(event.price === undefined
+            ? {}
+            : { charged: chargedWith(view, event.price.currency, event.price.amount) }),
           ...(event.cooldownUntil === undefined ? {} : { topUpCooldownUntil: event.cooldownUntil }),
         },
         context,

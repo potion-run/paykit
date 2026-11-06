@@ -12,6 +12,29 @@ import { CreditRateCards, type CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
 
+/**
+ * Money recorded per currency, in minor units. `charged` folds what paykit
+ * recorded as billed and paid; `refunded` folds what went back. A map rather
+ * than one number because an account may have been sold in one currency and
+ * billed in another (ADR 0019).
+ */
+export const MoneyByCurrency = Schema.Record(Schema.String, Schema.Int);
+export type MoneyByCurrency = typeof MoneyByCurrency.Type;
+
+/**
+ * One refund, keyed by the operator command that recorded it. The key is what
+ * makes a retried refund a replay rather than a second request against a
+ * ceiling the first one already spent (ADR 0019).
+ */
+export const RefundRecord = Schema.Struct({
+  refundId: Schema.String,
+  amount: Schema.Int,
+  currency: Schema.String,
+  /** The currency's refunded total after this refund. */
+  refundedAfter: Schema.Int,
+});
+export type RefundRecord = typeof RefundRecord.Type;
+
 /** An account is the key of a Subscription. */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"));
 export type AccountId = typeof AccountId.Type;
@@ -129,6 +152,12 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   remaining: Schema.optionalKey(Remaining),
   /** Usage keys already recorded, so a retry records once. */
   dedupeKeys: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+  /** Money this account was charged, per currency, as the log records it. */
+  charged: Schema.optionalKey(MoneyByCurrency),
+  /** Money that went back, per currency. A refund is capped by `charged`. */
+  refunded: Schema.optionalKey(MoneyByCurrency),
+  /** Every refund, keyed by the operator command that recorded it. */
+  refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
 });
 export type UnsubscribedState = typeof UnsubscribedState.Type;
 
@@ -183,6 +212,16 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * on a purchase a checkout completed.
    */
   topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
+   * Money this account was charged, per currency: a fold of `PaymentRecorded`,
+   * `CreditsPurchased.price` and `ProrationInvoiced`. It is the ceiling a
+   * refund is measured against (ADR 0019).
+   */
+  charged: Schema.optionalKey(MoneyByCurrency),
+  /** Money that went back, per currency: a fold of `RefundRecorded`. */
+  refunded: Schema.optionalKey(MoneyByCurrency),
+  /** Every refund, keyed by the operator command that recorded it. */
+  refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
   /** Every credit-priced feature's rate card, copied from the event that set it. */
   rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
@@ -285,6 +324,44 @@ export const topUpOf = (state: SubscriptionState): number | null =>
  */
 export const topUpCooldownOf = (state: SubscriptionState): DateTime.Utc | null =>
   state._tag === "Subscribed" ? (state.topUpCooldownUntil ?? null) : null;
+
+/** The money this account was charged, per currency. Absent folds to nothing. */
+export const chargedOf = (state: SubscriptionState): MoneyByCurrency => state.charged ?? {};
+
+/** The money that went back, per currency. Absent folds to nothing. */
+export const refundedOf = (state: SubscriptionState): MoneyByCurrency => state.refunded ?? {};
+
+/**
+ * What may still go back in one currency: charged minus refunded, never below
+ * zero. A currency the account was never charged in has nothing refundable.
+ */
+export const refundableOf = (state: SubscriptionState, currency: string): number =>
+  Math.max(0, (chargedOf(state)[currency] ?? 0) - (refundedOf(state)[currency] ?? 0));
+
+/**
+ * The refund one operator command recorded, if it already ran. A retry with the
+ * same command id answers this instead of spending ceiling the first attempt
+ * already spent.
+ */
+export const refundOfCommand = (state: SubscriptionState, commandId: string): RefundRecord | null =>
+  state.refunds?.[commandId] ?? null;
+
+/** Add a charge to the fold, leaving every other currency alone. */
+export const chargedWith = (
+  state: Pick<SubscriptionState, "charged">,
+  currency: string,
+  amount: number,
+): MoneyByCurrency => ({
+  ...state.charged,
+  [currency]: (state.charged?.[currency] ?? 0) + amount,
+});
+
+/** Set a currency's refunded total, as the event that recorded it says. */
+export const refundedWith = (
+  state: Pick<SubscriptionState, "refunded">,
+  currency: string,
+  total: number,
+): MoneyByCurrency => ({ ...state.refunded, [currency]: total });
 
 /**
  * The part of one usage event that is past `included`, and so billable. An

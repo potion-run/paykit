@@ -82,8 +82,12 @@ standing no command could leave until the period reset.
   catalog it already holds because a scheduled change carries no proration and so needs no quote.
 - **Console screens**: `paykit-admin` now shows balances, the period's priced usage, "why is this
   account on X" (`Preview`), open holds with their deadlines, verification against the deploy and a
-  manual grant. The one left is **refund**, and it is not a screen: paykit has no refund command, so
-  it needs a decision record — which event, which money, which provider call — first.
+  manual grant. **Refund** now has its decision ([ADR
+  0019](./adr/0019-a-refund-names-the-charge-it-reverses.md), [brief](./briefs/refund.md)) and its
+  model: `Refund` records `RefundRecorded`, the ceiling is what the log recorded as charged per
+  currency, and the `Paykit.Refund` binding takes the money through `Payments.refund` before the
+  command. What is left is the screen: a `AdminConsoleRpcs` op that runs the in-process binding on
+  the Worker that holds the provider, since the Api layer deliberately cannot move money.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
   purchasable. Both halves landed: `retiredPrices` decides and `RetiredPrices` lists and deactivates

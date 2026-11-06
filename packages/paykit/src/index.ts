@@ -274,6 +274,7 @@ export {
   RecordPayment,
   RecordPaymentFailure,
   Recover,
+  Refund,
 } from "./Billing/index.ts";
 export type {
   EnterGraceRequest,
@@ -282,6 +283,8 @@ export type {
   GrantCreditsResult,
   RecordPaymentFailureRequest,
   RecordPaymentRequest,
+  RefundRequest,
+  RefundResult,
   StandingSnapshot,
 } from "./Billing/index.ts";
 
@@ -486,6 +489,11 @@ export {
   RecordPayment as RecordPaymentCommand,
 } from "./Subscription/RecordPayment.command.ts";
 export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
+export {
+  Refund as RefundCommand,
+  RefundExceedsCharged,
+  RefundRecorded,
+} from "./Subscription/Refund.command.ts";
 export {
   TopUpCooldownCleared,
   TopUpCooldownElapsed,

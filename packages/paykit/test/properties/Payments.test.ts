@@ -22,7 +22,7 @@ const providerOf = (binds: Binds) => {
   const optional: Partial<StripeBindings> = {
     ...(binds.invoice ? { createInvoice: () => Effect.succeed({ invoiceId: "in_test" }) } : {}),
     ...(binds.charge ? { charge: () => Effect.succeed({ chargeId: "pi_test" }) } : {}),
-    ...(binds.refund ? { createRefund: () => Effect.succeed({}) } : {}),
+    ...(binds.refund ? { createRefund: () => Effect.succeed({ refundId: "re_test" }) } : {}),
     ...(binds.usage ? { reportUsage: () => Effect.succeed({}) } : {}),
   };
   return PaymentsStripe({

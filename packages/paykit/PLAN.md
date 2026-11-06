@@ -260,6 +260,7 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `Expire` | `SubscriptionExpired` | `NotInGrace` | `Admin` |
 | `GrantCredits` | `CreditsGranted` | `NotSubscribed` | `Admin` |
 | `PurchaseCredits` | `CreditsPurchased` | `NotSubscribed` | `Admin` |
+| `Refund` | `RefundRecorded` | `RefundExceedsCharged` | `Admin` |
 | `ExtendTrial` | `TrialExtended` | `NotSubscribed`, `TrialNotActive` | `Admin` |
 | `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `NotSubscribed`, `PeriodNotClosed` | — |
 | `PeriodEnded` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | — | — |

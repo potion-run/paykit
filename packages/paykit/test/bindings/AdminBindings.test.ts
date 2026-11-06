@@ -19,6 +19,7 @@ import {
   RecordPayment,
   RecordPaymentFailure,
   Recover,
+  Refund,
 } from "../../src/Billing/index.ts";
 import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { BillingAdminApi } from "../../src/BillingAdminApi.api.ts";
@@ -29,6 +30,8 @@ import { CatalogGuardLive } from "../../src/CatalogGuard.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { paymentsRouter } from "../../src/Payments.ts";
+import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 
@@ -58,6 +61,22 @@ const Model = PaykitModel.layer(PaykitHandlers)
 const adminInProcessWorld = Layer.mergeAll(BillingAdminInProcess, catalogLayer(testCatalog)).pipe(
   Layer.provideMerge(Model),
 );
+
+/**
+ * The in-process operator layer with a provider behind it. `Refund` is not on
+ * the admin Api (a console backend cannot take money out), so it is only here.
+ */
+/**
+ * The in-process operator layer with one provider behind it. The router has to
+ * be in the layer's own environment, not merged beside it: `BillingAdminInProcess`
+ * resolves it while the layer is built. Built per test, because the fake
+ * provider records what it was asked and the runner may retry a case.
+ */
+const adminWithPayments = (memory: ReturnType<typeof PaymentsMemory>) =>
+  Layer.merge(BillingAdminInProcess, catalogLayer(testCatalog)).pipe(
+    Layer.provideMerge(Model),
+    Layer.provide(paymentsRouter(memory)),
+  );
 
 /** The same, over the admin Api: its `Admin` middleware is on the path. */
 const adminApiWorld = Layer.mergeAll(BillingAdminApiLayer, catalogLayer(testCatalog)).pipe(
@@ -215,5 +234,83 @@ describe("the operator bindings", () => {
       expect(refused._tag).toBe("Failure");
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("TrialNotActive");
     }),
+  );
+});
+
+describe("refunding a charge", () => {
+  it.live("sends money back up to what the account was charged, once per dedupe key", () => {
+    const memory = PaymentsMemory();
+    return Effect.gen(function* () {
+      yield* subscribe;
+      const enterGrace = yield* EnterGrace(account);
+      const recordPayment = yield* RecordPayment(account);
+      const refund = yield* Refund(account);
+
+      // Nothing has been charged yet, so there is no ceiling to spend.
+      const refused = yield* Effect.exit(
+        refund({ chargeId: "ch_1", amount: 100, currency: "usd", dedupeKey: "refund-0" }),
+      );
+      expect(refused._tag).toBe("Failure");
+      if (refused._tag === "Failure")
+        expect(String(refused.cause)).toContain("RefundExceedsCharged");
+      // The refusal never reached the provider: no money left the account.
+      expect(memory.refunds.length).toBe(0);
+
+      // A payment is what makes money refundable.
+      yield* enterGrace({
+        graceUntil: DateTime.add(DateTime.makeUnsafe(Date.now()), { days: 7 }),
+        dedupeKey: "grace-refund",
+      });
+      yield* recordPayment({ amount: 1_900, currency: "usd", dedupeKey: "pay-refund" });
+
+      const first = yield* refund({
+        chargeId: "ch_1",
+        amount: 1_000,
+        currency: "usd",
+        reason: "duplicate order",
+        dedupeKey: "refund-1",
+      });
+      expect(first.refunded).toBe(1_000);
+      expect(first.refundId.length).toBeGreaterThan(0);
+
+      // The same dedupe key is the same refund, at the provider and here.
+      const retried = yield* refund({
+        chargeId: "ch_1",
+        amount: 1_000,
+        currency: "usd",
+        reason: "duplicate order",
+        dedupeKey: "refund-1",
+      });
+      expect(retried.refundId).toBe(first.refundId);
+      expect(memory.refunds.length).toBe(1);
+
+      // 900 is left: 901 is refused before the provider is asked.
+      const tooMuch = yield* Effect.exit(
+        refund({ chargeId: "ch_1", amount: 901, currency: "usd", dedupeKey: "refund-2" }),
+      );
+      expect(tooMuch._tag).toBe("Failure");
+      expect(memory.refunds.length).toBe(1);
+
+      const rest = yield* refund({
+        chargeId: "ch_1",
+        amount: 900,
+        currency: "usd",
+        dedupeKey: "refund-3",
+      });
+      expect(rest.refunded).toBe(1_900);
+      expect(memory.refunds.length).toBe(2);
+    }).pipe(Effect.provide(adminWithPayments(memory)));
+  });
+
+  it.live(
+    "is not on the admin Api layer, because only the model's process holds the provider",
+    () =>
+      Effect.gen(function* () {
+        const held = yield* Effect.serviceOption(Refund as never);
+        return Option.isSome(held);
+      }).pipe(
+        Effect.provide(adminApiWorld),
+        Effect.map((held) => expect(held).toBe(false)),
+      ),
   );
 });

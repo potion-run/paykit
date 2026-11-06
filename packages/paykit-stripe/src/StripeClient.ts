@@ -161,9 +161,25 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
       ),
     createRefund: (request) =>
       CreateRefund({ charge: request.chargeId, amount: request.amount }).pipe(
-        Effect.as({}),
-        Effect.mapError(declined("createRefund")),
+        // The operator's dedupe key is the vendor's idempotency key, so a retry
+        // is the refund Stripe already took.
+        (refund) =>
+          request.commandId === undefined
+            ? refund
+            : refund.pipe(Stripe.withRequestOptions({ idempotencyKey: request.commandId })),
         Effect.provide(live),
+        Effect.mapError(declined("createRefund")),
+        Effect.flatMap((refund) =>
+          refund.id === undefined
+            ? Effect.fail(
+                new PaymentDeclined({
+                  provider: "stripe",
+                  code: "stripe_error",
+                  message: "createRefund returned a refund with no id",
+                }),
+              )
+            : Effect.succeed({ refundId: refund.id }),
+        ),
       ),
     // Off-session: confirm the intent against the customer's default payment
     // method, so the money is taken at the crossing rather than on Stripe's own
