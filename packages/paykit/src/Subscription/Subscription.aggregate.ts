@@ -243,6 +243,10 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const credits = pending === undefined ? state.credits : pending.credits + prepaid;
   const creditsExpire = pending?.creditsExpire ?? state.creditsExpire;
   const nextPeriodStart = periodEnd;
+  // A scheduled change keeps the quantity a non-consumable feature holds, so
+  // its new remaining is the new cap less that quantity — not the new grant.
+  const pendingRemaining =
+    pending === undefined ? undefined : startingRemaining(pending.allowances, state.quantities);
   const moved =
     pending === undefined
       ? []
@@ -250,7 +254,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
           new TierChanged({
             tier: pending.tier,
             allowances: pending.allowances,
-            remaining: startingRemaining(pending.allowances),
+            remaining: pendingRemaining!,
             credits,
             ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
             creditsExpire,
@@ -282,10 +286,15 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
         // recorded against is not the one the next period runs on, so a
         // `resets: "never"` count belongs to the tier being left. A close with no
         // change keeps those counters, which is what makes them lifetime counts
-        // for the tier they were recorded on.
+        // for the tier they were recorded on. A quantity is never a counter, so
+        // it survives either way.
         pending === undefined
           ? resetOf(state, feature, allowance)
-          : { remaining: includedRemainingOf(allowance), carried: 0, kept: false },
+          : {
+              remaining: pendingRemaining![feature] ?? null,
+              carried: 0,
+              kept: isQuantityGrant(allowance),
+            },
       ] as const,
   );
   // A `resets: "never"` feature keeps its usage, holds and remainder, so the

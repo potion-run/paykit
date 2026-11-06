@@ -250,9 +250,12 @@ export type PricedLine = typeof PricedLine.Type;
 
 /**
  * Split the money between `before` and `after` billable units into the lines a
- * report and a read model carry. The sum of `amount` is the charge; the sum of
- * `quantity` is `after - before`. A band that charged nothing — because it was
- * already full — is not a line.
+ * report and a read model carry. The sum of `amount` is the charge; a line
+ * records the units that produced its money, so a line that charged nothing —
+ * because its package was already bought — is not a line. A volume price
+ * charges the whole total at the band it lands in, so a crossing also reprices
+ * the units already billed: its line carries that whole signed delta, which may
+ * be negative.
  */
 export const pricedLines = (
   pricing: Pricing,
@@ -275,7 +278,10 @@ export const pricedLines = (
   if (pricing._tag === "volume") {
     const chosen = pricing.bands.find((band) => to <= bandCeiling(band));
     if (chosen === undefined) return [];
-    const amount = priceOfUnits(chosen.unitPrice, to) - priceOfUnits(chosen.unitPrice, from);
+    // The band the total lands in prices every unit, so the event's money is
+    // what the new band charges for `to` less what the total cost before it —
+    // not the new band applied to `from`, which would hide the repricing.
+    const amount = priceOfUnits(chosen.unitPrice, to) - priceOf(pricing, from);
     return amount === 0
       ? []
       : [

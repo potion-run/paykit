@@ -8,6 +8,7 @@ import {
   nextResetAt,
   periodTiedReset,
   prepaidCreditsOf,
+  quantityAfterTierChange,
   type Period,
   type QuantityCounts,
   type SubscribedState,
@@ -59,15 +60,24 @@ export const startingQuantities = (allowances: Allowances): QuantityCounts =>
     ),
   );
 
-/** The spendable count every allowance starts a period with. */
-export const startingRemaining = (allowances: Allowances): Record<string, number | null> =>
+/**
+ * The spendable count every allowance starts a period with. A non-consumable
+ * feature is not a counter: a tier change keeps the quantity the account holds
+ * (or raises it to the new free grant), so its remaining is the new cap less
+ * that quantity. An activation passes no quantities, and starts at the grant.
+ */
+export const startingRemaining = (
+  allowances: Allowances,
+  quantities: QuantityCounts = {},
+): Record<string, number | null> =>
   Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
       if (isQuantityGrant(allowance)) {
         const included = typeof allowance.included === "number" ? allowance.included : 0;
+        const quantity = quantityAfterTierChange(quantities[feature] ?? included, included);
         return [
           feature,
-          allowance.cap === undefined ? null : Math.max(0, allowance.cap - included),
+          allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
         ];
       }
       return [feature, includedRemainingOf(allowance)];
