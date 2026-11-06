@@ -102,6 +102,10 @@ export {
   reconcileBillingStack,
   billingStackVersionOf,
 } from "./BillingStack.resource.ts";
+// The resource's shape, so a stack's inferred output is nameable from here. A
+// deploy that declares `Paykit.providers()` carries it in the stack's
+// requirements, and a declaration file cannot name it from `src/`.
+export type { BillingStackShape } from "./BillingStack.resource.ts";
 export { doctor } from "./Doctor.ts";
 export { Paykit } from "./Paykit.ts";
 export type { DoctorMismatch } from "./Doctor.ts";
@@ -135,7 +139,7 @@ export type {
   SqlValue,
 } from "./Store/Sql.ts";
 export { d1Executor } from "./Store/D1.ts";
-export type { D1Like } from "./Store/D1.ts";
+export type { D1Like, D1Prepared } from "./Store/D1.ts";
 export {
   MigrationError,
   MigrationHistoryConflictError,

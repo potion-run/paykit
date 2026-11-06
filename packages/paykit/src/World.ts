@@ -40,7 +40,7 @@ export interface PaykitWorldOptions<
    * `DomainCloudflare.layerDurableObjects()` and a SQL host provides
    * `Layer.succeed(Domain.Platform, platform)`.
    */
-  readonly platform?: Layer.Layer<any, never, R>;
+  readonly platform?: Layer.Layer<Domain.Platform, never, R>;
   /**
    * The read store the model's projections write and `List` reads. Defaults to
    * `MemoryBillingReadStore`; an SQL host provides `SqlBillingReadStore`.
