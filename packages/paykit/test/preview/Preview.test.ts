@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Preview } from "../../src/Billing/Preview.binding.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { allowancesOf, catalog, tierTermsOf } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -39,6 +39,38 @@ const World = bindingsWorld({
 });
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
+
+const eurPriced = (amount: number) => ({
+  amount,
+  currency: "usd",
+  interval: "month" as const,
+  additionalCurrencies: [{ currency: "eur", amount }],
+});
+
+const eurCatalog = Effect.runSync(
+  catalog({
+    features: [messages],
+    tiers: [
+      tier({
+        id: "pro",
+        price: eurPriced(1_900),
+        grants: [allowance(messages, { included: 2_000, overage: "bill" })],
+      }),
+      tier({
+        id: "scale",
+        price: eurPriced(9_900),
+        grants: [allowance(messages, { included: 5_000, overage: "block" })],
+      }),
+    ],
+  }),
+);
+
+const EurWorld = bindingsWorld({
+  catalog: eurCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
+
+const runEur = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(EurWorld));
 
 it.live("previews a subscribe without recording anything", () =>
   Effect.gen(function* () {
@@ -76,6 +108,41 @@ it.live("previews the charge a tier change would make", () =>
     expect(result.proration?.due).toBe(8000);
     expect(result.proration?.credit).toBe(1900);
   }).pipe(run),
+);
+
+it.live("previews a change and a schedule in the standing's currency", () =>
+  Effect.gen(function* () {
+    const account = "acct_preview_eur";
+    const subscription = yield* Subscription;
+    const terms = tierTermsOf(eurCatalog, "pro", "eur")!;
+    yield* subscription.send(
+      Subscription.ref(account),
+      new Subscribe({
+        tier: "pro",
+        allowances: terms.allowances,
+        credits: terms.credits,
+        creditsExpire: terms.creditsExpire,
+        rates: terms.rates,
+        price: terms.price,
+      }),
+    );
+
+    const preview = yield* Preview(account);
+    const change = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
+    expect(change._tag).toBe("accepted");
+    if (change._tag !== "accepted") return;
+    expect(change.proration?.currency).toBe("eur");
+    expect(
+      (change.events[0] as { readonly priceAfter?: { readonly currency?: string } }).priceAfter
+        ?.currency,
+    ).toBe("eur");
+
+    const scheduled = yield* preview({ command: { kind: "scheduleTierChange", tier: "scale" } });
+    expect(scheduled._tag).toBe("accepted");
+    if (scheduled._tag !== "accepted" || scheduled.state._tag !== "Subscribed") return;
+    expect(scheduled.state.pendingTier?.currency).toBe("eur");
+    expect(scheduled.state.pendingTier?.price?.currency).toBe("eur");
+  }).pipe(runEur),
 );
 
 it.live("a preview carries the rejection the write would return", () =>

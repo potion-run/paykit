@@ -1080,6 +1080,49 @@ describe("a change at the period end", () => {
     });
   });
 
+  it("sends a scheduled change at the standing's currency", () => {
+    const bilingual = tier({
+      id: "bilingual",
+      price: {
+        amount: 1_900,
+        currency: "usd",
+        interval: "month",
+        additionalCurrencies: [{ currency: "eur", amount: 1_800 }],
+      },
+      grants: [allowance(messages, { included: 2_000 })],
+    });
+    const multi = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, bilingual] }));
+    const seeded = init(
+      flags({
+        catalog: Schema.encodeSync(Catalog)(multi),
+        accounts: Schema.encodeSync(BillingReadPage)(page),
+      }),
+      url(),
+    ).model;
+    const opened = update(seeded, Message.ClickedAccount({ account })).model;
+    const inEuros = update(
+      opened,
+      Message.ReceivedBilling({
+        state: Option.some({ ...billing, currency: "eur" }),
+      }),
+    ).model;
+    const draft = update(inEuros, Message.ClickedAction({ action: "ScheduleTierChange" })).model;
+    const filled = update(
+      draft,
+      Message.UpdatedDraftField({ field: "tier", value: "bilingual" }),
+    ).model;
+
+    const result = update(filled, Message.ClickedSubmitAction());
+    expect(result.commands?.map((command) => command.name)).toEqual(["ScheduleTierChange"]);
+    expect(
+      (
+        result.commands?.[0]?.args as {
+          readonly input?: { readonly price?: { readonly currency?: string } };
+        }
+      )?.input?.price?.currency,
+    ).toBe("eur");
+  });
+
   it("sends a withdrawal for the scheduled change", () => {
     const opened = update(withBilling(), Message.ClickedAction({ action: "WithdrawTierChange" }));
     const result = update(opened.model, Message.ClickedSubmitAction());

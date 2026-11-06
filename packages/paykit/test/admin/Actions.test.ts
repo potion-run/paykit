@@ -217,6 +217,28 @@ describe("admin actions", () => {
     expect(descriptor?.tiers).toEqual(["scale"]);
   });
 
+  it("offers a tier that sells in the standing's additional currency", () => {
+    const bilingual = tier({
+      id: "bilingual",
+      price: {
+        amount: 1_900,
+        currency: "usd",
+        interval: "month",
+        additionalCurrencies: [{ currency: "eur", amount: 1_800 }],
+      },
+      grants: [allowance(messages, { included: 2_000 })],
+    });
+    const multi = Effect.runSync(catalog({ features: [messages], tiers: [pro, bilingual] }));
+    const offered = actionsFor({ ...state("active"), currency: "eur" }, { catalog: multi });
+
+    expect(offered.find((descriptor) => descriptor.action === "ChangeTier")?.tiers).toContain(
+      "bilingual",
+    );
+    expect(
+      offered.find((descriptor) => descriptor.action === "ScheduleTierChange")?.tiers,
+    ).toContain("bilingual");
+  });
+
   it("does not offer ChangeTier when there is no other tier", () => {
     const only = Effect.runSync(catalog({ features: [messages], tiers: [pro] }));
     expect(actions("active", { tier: "pro" }, { catalog: only })).not.toContain("ChangeTier");

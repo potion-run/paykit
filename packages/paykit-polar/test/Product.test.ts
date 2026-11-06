@@ -582,3 +582,33 @@ test.provider("creates a tiered metered price from the catalog's ladder", (stack
     expect(again.products.pro).toBe(sold.products.pro);
   }),
 );
+
+test.provider(
+  "adopts a tiered product after a lost state, and replaces a changed ladder",
+  (stack) =>
+    Effect.gen(function* () {
+      polar.reset();
+      const ladder = (infAmount: number) => ({
+        kind: "graduated" as const,
+        currency: "usd",
+        bands: [
+          { upTo: 100, amount: 1, currency: "usd" },
+          { upTo: "inf" as const, amount: infAmount, currency: "usd" },
+        ],
+      });
+      const tiers = (infAmount: number) => ({
+        pro: { price: proPrice, usage: { messages: ladder(infAmount) } },
+      });
+
+      const first = yield* stack.deploy(PolarPrices("Prices", { tiers: tiers(2) }));
+      const productId = first.products.pro;
+      yield* stack.destroy();
+
+      const adopted = yield* stack.deploy(PolarPrices("Prices", { tiers: tiers(2) }));
+      expect(adopted.products.pro).toBe(productId);
+
+      const changed = yield* stack.deploy(PolarPrices("Prices", { tiers: tiers(3) }));
+      expect(changed.products.pro).not.toBe(productId);
+      expect(polar.products.get(productId)?.is_archived).toBe(false);
+    }),
+);
