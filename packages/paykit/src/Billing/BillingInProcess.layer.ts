@@ -164,7 +164,10 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
-          yield* bound(toSetQuantityError)(entitlements.query(ref, { atLeast: receipt }));
+          const view = yield* bound(toSetQuantityError)(
+            entitlements.query(ref, { atLeast: receipt }),
+          );
+          const known = Option.getOrNull(view);
           // A provider that owns the subscription item's quantity is told the
           // new total. `immediate` makes it invoice the difference; `none`
           // leaves the next period to bill it. The local proration is still the
@@ -218,8 +221,11 @@ export const BillingInProcess = Layer.mergeAll(
               }
             }
           }
+          // A no-op decision records no event, so the reply cannot carry the
+          // quantity; the read model just caught up to the change and is the
+          // same number a caller reads next.
           return {
-            quantity: receipt.reply.quantityAfter,
+            quantity: known?.features[request.feature]?.quantity ?? receipt.reply.quantityAfter,
             ...(receipt.reply.proration === undefined
               ? {}
               : { proration: receipt.reply.proration }),
