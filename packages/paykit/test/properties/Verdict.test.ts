@@ -1,7 +1,7 @@
 import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Schema from "effect/Schema";
-import type { Included, Overage } from "../../src/Allowance.ts";
+import type { Included } from "../../src/Allowance.ts";
 import {
   capacityOf,
   downgradeOf,
@@ -9,11 +9,7 @@ import {
   type JudgedFeature,
 } from "../../src/Subscription/Allowance.verdict.ts";
 import { allowsOne } from "../../src/Subscription/Entitlements.view.ts";
-import {
-  creditRateOf,
-  spendCeilingOf,
-  type Standing,
-} from "../../src/Subscription/Subscription.state.ts";
+import { creditRateOf, spendCeilingOf } from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
 
 const IncludedSpec = Schema.Union([
@@ -238,23 +234,7 @@ describe("capacity verdicts", () => {
           feature,
           ask: { amount: 1 },
         });
-        const read = allowsOne(
-          spec.standing as Standing,
-          feature.overage as Overage,
-          feature.remaining,
-          feature.cap,
-          feature.carried,
-          {
-            unitPrice: feature.unitPrice,
-            moneyCap: feature.moneyCap,
-            billed: feature.billed,
-            used: feature.used,
-            reserved: feature.reserved,
-            included: feature.included,
-          },
-          feature.creditRates,
-        );
-        return read === (verdict._tag === "Allowed");
+        return allowsOne(spec.standing, feature) === (verdict._tag === "Allowed");
       },
       { runs: 200, size: 30 },
     ),
