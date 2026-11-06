@@ -1,13 +1,4 @@
-import * as Domain from "@alchemy.run/domain";
-import {
-  catalog,
-  catalogLayer,
-  Manual,
-  MemoryBillingReadStore,
-  Model,
-  Paykit,
-  PaykitHandlers,
-} from "@potion.run/paykit";
+import { catalog, Manual, paykitWorld } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { adminCatalog } from "./catalog.ts";
@@ -22,18 +13,21 @@ export const Provider = Manual();
 /**
  * The model, catalog, provider and cookie guards the admin Worker serves. The
  * guards read the same-origin session cookie, so the browser's live reads can
- * be pushed over a WebSocket. The test swaps
- * `DomainCloudflare.layerDurableObjects()` for `Domain.InMemory`; nothing else
- * changes.
+ * be pushed over a WebSocket. The process serves no binding: the Api and the
+ * console are resolved from the model directly.
+ *
+ * The only difference between this and the test is the platform — the Worker
+ * passes `DomainCloudflare.layerDurableObjects()`, the test takes the default
+ * `Domain.InMemory`.
  */
-export const BillingLayers = Layer.mergeAll(
-  Paykit.CatalogGuard.pipe(Layer.provideMerge(catalogLayer(Catalog))),
-  Provider.payments,
-).pipe(
-  Layer.provideMerge(CookieGuards),
-  Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),
-  Layer.provideMerge(MemoryBillingReadStore),
-);
+export const billingLayers = <R = never>(platform?: Layer.Layer<any, never, R>) =>
+  paykitWorld({
+    catalog: Catalog,
+    guards: CookieGuards,
+    providers: [Provider],
+    bindings: "none",
+    ...(platform === undefined ? {} : { platform }),
+  });
 
 /** The same world on an in-memory platform, for tests and local scripts. */
-export const BillingTestLive = Layer.provide(BillingLayers, Domain.InMemory);
+export const BillingTestLive = billingLayers();

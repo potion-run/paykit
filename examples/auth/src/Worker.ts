@@ -9,7 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { Auth, AuthGuards } from "./Auth.ts";
 import { AuthDatabase } from "./AuthDatabase.ts";
-import { BillingLayers } from "./Billing.ts";
+import { billingLayers } from "./Billing.ts";
 import { Page } from "./Page.ts";
 
 /** The status an authentication or purchase failure deserves. */
@@ -103,10 +103,10 @@ export const serve = Effect.gen(function* () {
  * database is the only D1 database, and Better Auth's schema is migrated at
  * deploy by `@alchemy.run/better-auth`.
  */
-const World = Layer.mergeAll(BillingLayers, AuthGuards).pipe(
-  Layer.provideMerge(DomainCloudflare.layerDurableObjects()),
-  Layer.provideMerge(Auth.layer.pipe(Layer.provide(CloudflareD1(AuthDatabase)))),
-);
+const World = Layer.mergeAll(
+  billingLayers(DomainCloudflare.layerDurableObjects()),
+  AuthGuards,
+).pipe(Layer.provideMerge(Auth.layer.pipe(Layer.provide(CloudflareD1(AuthDatabase)))));
 
 export default class AuthWorker extends Cloudflare.Worker<AuthWorker>()(
   "AuthWorker",

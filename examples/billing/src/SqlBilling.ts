@@ -1,11 +1,13 @@
 import * as Domain from "@alchemy.run/domain";
-import * as Paykit from "@potion.run/paykit";
-import { Model, PaykitHandlers } from "@potion.run/paykit";
-import { CatalogGuardLive, catalogLayer, DevGuards } from "@potion.run/paykit";
-import { d1Executor, type D1Like } from "@potion.run/paykit";
-import { SqlBillingReadStore } from "@potion.run/paykit";
-import { SqlEventLog } from "@potion.run/paykit";
-import { SqlPlatform } from "@potion.run/paykit";
+import {
+  DevGuards,
+  d1Executor,
+  type D1Like,
+  paykitWorld,
+  SqlBillingReadStore,
+  SqlEventLog,
+  SqlPlatform,
+} from "@potion.run/paykit";
 import * as Layer from "effect/Layer";
 import { Catalog } from "./Billing.ts";
 
@@ -42,24 +44,15 @@ export const billingOnSql = (
   const reads = SqlBillingReadStore(log);
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50 });
 
-  const model = Layer.mergeAll(
-    DevGuards,
-    CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(Catalog))),
-  ).pipe(
-    Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(reads)))),
-    Layer.provideMerge(reads),
-    Layer.provideMerge(Layer.succeed(Domain.Platform, platform)),
-    Layer.provideMerge(catalogLayer(Catalog)),
-  );
-
-  // The bindings resolve the model, the catalog and the provider router when the
-  // layer is built, so they are provided by the world rather than merged beside
-  // it — one world for the Worker, its routes and the tests.
-  const world = Layer.mergeAll(
-    model,
-    Paykit.BillingInProcess.pipe(Layer.provide(model)),
-    catalogLayer(Catalog),
-  );
+  // The same world a memory deployment builds, on this database: the read
+  // store is the SQL one and the platform is the SQL host, so the Worker, its
+  // routes and the tests all see one graph.
+  const world = paykitWorld({
+    catalog: Catalog,
+    platform: Layer.succeed(Domain.Platform, platform),
+    readStore: reads,
+    guards: DevGuards,
+  });
 
   return { log, world: Layer.orDie(world) as Layer.Layer<any, never, never> };
 };

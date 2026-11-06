@@ -10,9 +10,8 @@ import {
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import { BillingLayers } from "./Billing.ts";
+import { billingLayers } from "./Billing.ts";
 
 /** The status a refusal deserves. A bootstrap is a setup call, so only an
  * absent actor is a client error; everything else is the deployment's. */
@@ -73,8 +72,5 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
         return HttpServerResponse.text("Not Found", { status: 404 });
       }),
     };
-  }).pipe(
-    Effect.provide(BillingLayers.pipe(Layer.provideMerge(DomainCloudflare.layerDurableObjects()))),
-    Effect.orDie,
-  ),
+  }).pipe(Effect.provide(billingLayers(DomainCloudflare.layerDurableObjects())), Effect.orDie),
 ) {}

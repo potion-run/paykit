@@ -1,13 +1,8 @@
-import * as Domain from "@alchemy.run/domain";
 import {
   catalog,
-  catalogLayer,
   Manual,
-  MemoryBillingReadStore,
-  Model,
   type MoneyProvider,
-  Paykit,
-  PaykitHandlers,
+  paykitWorld,
   subscribeInputOf,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
@@ -25,32 +20,22 @@ export const Catalog = Effect.runSync(catalog(authCatalog));
 export const Provider: MoneyProvider = Manual();
 
 /**
- * The model on `MemoryStore`, so the example needs no billing database. The
- * auth database is a D1 database beside it — the two stores are unrelated, and
- * swapping this for `Paykit.SqlAggregateStore` changes nothing about auth.
- */
-export const BillingWorld = Layer.mergeAll(
-  Paykit.CatalogGuard.pipe(Layer.provideMerge(catalogLayer(Catalog))),
-  Provider.payments,
-).pipe(
-  Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),
-  Layer.provideMerge(MemoryBillingReadStore),
-  Layer.provideMerge(catalogLayer(Catalog)),
-);
-
-/**
- * The tenant and operator bindings over that world. The guards are not here:
- * the Worker provides them from its session, so the same model serves any
+ * The billing world on `MemoryStore`, so the example needs no billing
+ * database; the auth database is a D1 database beside it. The tenant and
+ * operator bindings are both served from one model, and the guards are not
+ * here: the Worker provides them from its session, so the same model serves any
  * identity provider.
  */
-export const BillingLayers = Layer.mergeAll(
-  BillingWorld,
-  Paykit.BillingInProcess.pipe(Layer.provide(BillingWorld)),
-  Paykit.BillingAdminInProcess.pipe(Layer.provide(BillingWorld)),
-);
+export const billingLayers = <R = never>(platform?: Layer.Layer<any, never, R>) =>
+  paykitWorld({
+    catalog: Catalog,
+    providers: [Provider],
+    bindings: "both",
+    ...(platform === undefined ? {} : { platform }),
+  });
 
-/** The same world on an in-memory platform, for the example's test. */
-export const BillingTestLive = Layer.provide(BillingLayers, Domain.InMemory);
+/** The example's test runs on the in-memory platform. */
+export const BillingTestLive = billingLayers();
 
 /**
  * The input a `Subscribe` carries for a tier. `decide` is pure and cannot look

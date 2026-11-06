@@ -5,8 +5,7 @@ import { AdminConsoleServer } from "@potion.run/paykit/Admin";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as Layer from "effect/Layer";
-import { BillingLayers } from "./Billing.ts";
+import { billingLayers } from "./Billing.ts";
 import { exampleActor, sessionCookies } from "./Session.ts";
 
 /**
@@ -46,8 +45,5 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
         return HttpServerResponse.text("Not Found", { status: 404 });
       }),
     };
-  }).pipe(
-    Effect.provide(BillingLayers.pipe(Layer.provideMerge(DomainCloudflare.layerDurableObjects()))),
-    Effect.orDie,
-  ),
+  }).pipe(Effect.provide(billingLayers(DomainCloudflare.layerDurableObjects())), Effect.orDie),
 ) {}

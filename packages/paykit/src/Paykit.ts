@@ -26,6 +26,7 @@ import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
 import { Verify, verifyState } from "./Verify.ts";
+import { paykitWorld } from "./World.ts";
 
 /**
  * The four export groups as one namespace, so the docs' `Paykit.feature(...)`
@@ -71,6 +72,7 @@ export const Paykit = {
   defineCatalog,
   CatalogGuard: CatalogGuardLive,
   Stack,
+  world: paykitWorld,
   providers,
   MemoryStore,
   Postgres,
