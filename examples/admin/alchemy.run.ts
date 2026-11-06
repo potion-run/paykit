@@ -15,7 +15,7 @@ import { adminCatalog } from "./src/catalog.ts";
  * provider key. The console's header pair is the development guard; a real
  * deployment replaces it with its own session and CSRF headers.
  */
-export default Alchemy.Stack(
+const Example: Alchemy.ConfiguredStack<any, any> = Alchemy.Stack(
   "PaykitAdminExample",
   {
     providers: Layer.mergeAll(Cloudflare.providers(), Paykit.providers()),
@@ -51,3 +51,4 @@ export default Alchemy.Stack(
     };
   }),
 );
+export default Example;

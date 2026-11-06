@@ -65,7 +65,7 @@ export const BillingStackAttrs = Schema.Struct({
 });
 export type BillingStackAttrs = typeof BillingStackAttrs.Type;
 
-export type BillingStackResource = Resource<
+export type BillingStackShape = Resource<
   "Paykit.BillingStack",
   BillingStackProps,
   BillingStackAttrs
@@ -77,7 +77,7 @@ export type BillingStackResource = Resource<
  * so the default removal policy is `retain`. Removing the resource never
  * cancels, refunds or deletes a provider's state.
  */
-export const BillingStack = Resource<BillingStackResource>("Paykit.BillingStack", {
+export const BillingStack = Resource<BillingStackShape>("Paykit.BillingStack", {
   defaultRemovalPolicy: "retain",
 });
 

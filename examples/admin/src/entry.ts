@@ -1,7 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
+import { BillingAdminApi } from "@potion.run/paykit";
 import { Console } from "@potion.run/paykit-admin";
 import { AdminChangeTierClient, AdminReadsClient } from "@potion.run/paykit/Admin";
-import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
 import "@potion.run/paykit-admin/styles.css";
 import "./global.css";
 import * as Effect from "effect/Effect";

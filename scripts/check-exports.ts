@@ -8,9 +8,10 @@
 // holds the two against each other and against `src/`, so a moved module or a
 // renamed entry fails here rather than at import time in a consumer.
 //
-// A package may also not reach into another package's `src/`: the export map is
-// the contract, and a `src/` path compiles today and breaks the moment a file
-// moves.
+// A package declares its entries explicitly: no `"./*"`, so an internal module
+// is not reachable from outside and can move without a breaking change. A package
+// may also not reach into another package's `src/`: the export map is the
+// contract, and a `src/` path compiles today and breaks the moment a file moves.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
@@ -36,25 +37,10 @@ const publishedConditions = (target: unknown): Record<string, string> | undefine
   return { types: `${lib}.d.ts`, bun: target, default: `${lib}.js` };
 };
 
-/** Whether some `exports` entry resolves `src/<rest>`, the file being `src/<rest>.ts`. */
-const reachable = (exportsMap: Readonly<Record<string, unknown>>, file: string): boolean => {
-  const subpath = `./${file.slice("src/".length, -".ts".length)}`;
-  return Object.entries(exportsMap).some(([key, target]) => {
-    if (typeof target !== "string") return false;
-    const star = key.indexOf("*");
-    if (star === -1) return target === `./${file}`;
-    const prefix = key.slice(0, star);
-    const suffix = key.slice(star + 1);
-    if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) return false;
-    const rest = subpath.slice(prefix.length, subpath.length - suffix.length);
-    return target.replace("*", rest) === `./${file}`;
-  });
-};
-
 /** Everything wrong with one package's export maps, as lines a human can act on. */
 const exportProblems = (
   { dir, raw }: WorkspacePackage,
-  sourceFiles: ReadonlyArray<string>,
+  files: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
   const dev = raw.exports;
   const publishConfig = raw.publishConfig as { exports?: unknown } | undefined;
@@ -110,9 +96,15 @@ const exportProblems = (
     }
   }
 
-  for (const file of sourceFiles) {
-    if (!reachable(devMap, file)) {
-      problems.push(`${dir}/${file} is not reachable from \`exports\``);
+  for (const [key, target] of Object.entries(devMap)) {
+    if (key.includes("*")) {
+      problems.push(`${dir}: "${key}" is a wildcard; declare each entry explicitly`);
+      continue;
+    }
+    if (typeof target !== "string" || !target.startsWith("./")) continue;
+    const file = target.slice(2);
+    if (!files.includes(file)) {
+      problems.push(`${dir}: "${key}" points at ${target}, which is not in the package`);
     }
   }
   return problems;
@@ -133,8 +125,7 @@ const check = Effect.fn("Exports.check")(function* () {
 
   for (const pkg of publishable) {
     const files = yield* filesUnder(path.join(root, pkg.dir));
-    const sourceFiles = files.filter((file) => file.startsWith("src/") && file.endsWith(".ts"));
-    const found = exportProblems(pkg, sourceFiles);
+    const found = exportProblems(pkg, files);
     if (found.length > 0) {
       problems.push(...found);
       invalid.add(pkg.dir);
@@ -164,7 +155,7 @@ const check = Effect.fn("Exports.check")(function* () {
     });
   }
   yield* Console.log(
-    `Checked ${publishable.length} packages: every export resolves and every source file is reachable.`,
+    `Checked ${publishable.length} packages: every declared entry resolves, and there is no wildcard.`,
   );
 });
 

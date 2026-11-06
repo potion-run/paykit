@@ -2,6 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import { allowance, catalog, messages, tier } from "@potion.run/paykit";
+import { Actor, system, DevGuards, PaykitHandlers, PaykitModel } from "@potion.run/paykit";
 import {
   AdminChangeTier,
   AdminChangeTierClient,
@@ -12,11 +13,7 @@ import {
   AdminReadsClient,
   AdminReadsHandlers,
 } from "@potion.run/paykit/Admin";
-import { Actor, system } from "@potion.run/paykit/Auth/Actor";
-import { DevGuards } from "@potion.run/paykit/Auth/FromHeaders";
-import { MemoryBillingReadStore } from "@potion.run/paykit/BillingReadStore";
-import { catalogLayer } from "@potion.run/paykit/CatalogService";
-import { PaykitHandlers, PaykitModel } from "@potion.run/paykit/Paykit.model";
+import { MemoryBillingReadStore, catalogLayer } from "@potion.run/paykit/Read";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";

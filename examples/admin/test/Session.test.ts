@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { Actor } from "@potion.run/paykit/Auth/Actor";
-import { Admin, Session } from "@potion.run/paykit/Auth/Guards";
+import { Actor, Admin, Session } from "@potion.run/paykit";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

@@ -1,5 +1,5 @@
 import { type ActorResolver, Paykit } from "@potion.run/paykit";
-import { ActorKind, type ActorValue } from "@potion.run/paykit/Auth/Actor";
+import { type ActorValue, ActorKind } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Cookies from "effect/http/Cookies";
 import * as Headers from "effect/http/Headers";
