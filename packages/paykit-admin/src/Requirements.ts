@@ -7,7 +7,8 @@ import type { Model } from "./Model.ts";
 /**
  * What the console needs at the runtime boundary: the `BillingAdminApi`
  * client for commands and keyed reads, and `AdminReads` for the cross-account
- * list, preview and verify. The host provides both as Foldkit resources.
+ * list, preview, verify, holds, provider refs and catalog. The host provides
+ * both as Foldkit resources.
  */
 export type ConsoleResources = BillingAdminClient | AdminReads | AdminChangeTier;
 

@@ -7,7 +7,7 @@ import type { Url } from "foldkit/url";
 import { initialDevToolsState } from "./DevTools.ts";
 import { Flags } from "./Flags.ts";
 import { Message } from "./Message.ts";
-import { HoldsState, Model, openedAccount } from "./Model.ts";
+import { HoldsState, Model, openedAccount, OverviewState, ProviderRefsState } from "./Model.ts";
 import type { ConsoleResources } from "./Requirements.ts";
 import { afterOf, filterOf, queryOf, routeOf } from "./Route.ts";
 import { decodeSnapshotFlags } from "./Snapshot.ts";
@@ -49,13 +49,32 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
     );
   }
 
-  // Holds are not part of the first-paint snapshot: the host seeds the two
-  // views and the cursor, and the entities are read once at boot.
+  // Holds and provider refs are not part of the first-paint snapshot: the host
+  // seeds the two views and the cursor, and the entities are read once at boot.
   const holdsRequest = route._tag === "Account" ? sent++ : null;
   if (holdsRequest !== null && route._tag === "Account") {
     commands.push(
       Command.mapMessage(
         AdminQueries.Holds({ requestId: holdsRequest, account: route.account }),
+        (message) => Message.ReceivedAdminQuery({ message }),
+      ),
+    );
+  }
+
+  const overviewRequest = route._tag === "Overview" ? sent++ : null;
+  if (overviewRequest !== null) {
+    commands.push(
+      Command.mapMessage(AdminQueries.Overview({ requestId: overviewRequest }), (message) =>
+        Message.ReceivedAdminQuery({ message }),
+      ),
+    );
+  }
+
+  const providerRefsRequest = route._tag === "Account" ? sent++ : null;
+  if (providerRefsRequest !== null && route._tag === "Account") {
+    commands.push(
+      Command.mapMessage(
+        AdminQueries.ProviderRefs({ requestId: providerRefsRequest, account: route.account }),
         (message) => Message.ReceivedAdminQuery({ message }),
       ),
     );
@@ -89,6 +108,19 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
                     error: Option.none(),
                   }),
                 ),
+          providerRefs:
+            providerRefsRequest === null
+              ? Option.none()
+              : Option.some(
+                  ProviderRefsState.make({
+                    requestId: providerRefsRequest,
+                    account: route.account,
+                    state: "Loading",
+                    asOf: Option.none(),
+                    refs: {},
+                    error: Option.none(),
+                  }),
+                ),
         })
       : Option.none();
 
@@ -113,6 +145,18 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
       asOf: Option.fromNullishOr(page?.asOf),
     },
     account,
+    overview:
+      overviewRequest === null
+        ? Option.none()
+        : Option.some(
+            OverviewState.make({
+              requestId: overviewRequest,
+              state: "Loading",
+              asOf: Option.none(),
+              overview: Option.none(),
+              error: Option.none(),
+            }),
+          ),
   });
 
   return commands.length === 0 ? { model } : { model, commands };

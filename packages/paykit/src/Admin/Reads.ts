@@ -17,7 +17,12 @@ import { Admin } from "../Auth/Guards.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { listOperation } from "../Billing/List.operation.ts";
 import { previewOperation, type PreviewResult } from "../Billing/Preview.operation.ts";
-import { BillingReadPage, BillingReadQuery } from "../BillingReadStore.ts";
+import {
+  BillingReadPage,
+  BillingReadQuery,
+  MAX_PAGE,
+  type BillingReadRow,
+} from "../BillingReadStore.ts";
 import { Catalog } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
@@ -36,7 +41,13 @@ import { CancellationScheduled } from "../Subscription/ScheduleCancellation.comm
 import { TierChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
 import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { HoldRecord, SubscriptionState } from "../Subscription/Subscription.state.ts";
+import {
+  HoldRecord,
+  Refs,
+  Standing,
+  SubscriptionState,
+  SubscriptionStatus,
+} from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { TierChangeWithdrawn } from "../Subscription/WithdrawTierChange.command.ts";
@@ -116,6 +127,142 @@ export const HoldsAnswer = Schema.Struct({
 });
 export type HoldsAnswer = typeof HoldsAnswer.Type;
 
+/** The vendor ids attached to one account, one entry per provider. */
+export const ProviderRefsAnswer = Schema.Struct({
+  account: Schema.String,
+  /** `provider -> { customer, subscription, checkout }`, opaque to the model. */
+  refs: Refs,
+  /** When the aggregate answered. A refs list is a snapshot, like the holds list. */
+  asOf: Schema.DateTimeUtc,
+});
+export type ProviderRefsAnswer = typeof ProviderRefsAnswer.Type;
+
+/** One currency's recurring revenue, from the rows and the catalog's prices. */
+export const RevenueSummary = Schema.Struct({
+  currency: Schema.String,
+  /** Monthly recurring revenue in minor units; an annual price is divided by 12. */
+  mrr: Schema.Int,
+  arr: Schema.Int,
+  /** Recurring revenue on trials, not yet paying. */
+  trialPipeline: Schema.Int,
+  /** The part of `mrr` that is in grace and may churn. */
+  atRisk: Schema.Int,
+  /** Recurring revenue already canceled or expired. */
+  churned: Schema.Int,
+});
+export type RevenueSummary = typeof RevenueSummary.Type;
+
+export const TierCount = Schema.Struct({ tier: Schema.String, count: Schema.Int });
+export type TierCount = typeof TierCount.Type;
+export const StatusCount = Schema.Struct({ status: SubscriptionStatus, count: Schema.Int });
+export type StatusCount = typeof StatusCount.Type;
+export const StandingCount = Schema.Struct({ standing: Standing, count: Schema.Int });
+export type StandingCount = typeof StandingCount.Type;
+
+/** A cross-account read for the dashboard: counts by dimension and MRR by currency. */
+export const BillingOverview = Schema.Struct({
+  asOf: Schema.DateTimeUtc,
+  accounts: Schema.Int,
+  byStatus: Schema.Array(StatusCount),
+  byStanding: Schema.Array(StandingCount),
+  byTier: Schema.Array(TierCount),
+  revenue: Schema.Array(RevenueSummary),
+});
+export type BillingOverview = typeof BillingOverview.Type;
+
+const STATUS_ORDER: ReadonlyArray<SubscriptionStatus> = [
+  "trialing",
+  "active",
+  "grace",
+  "canceled",
+  "expired",
+];
+const STANDING_ORDER: ReadonlyArray<Standing> = ["good", "grace", "blocked"];
+
+const monthlyPriceOf = (row: BillingReadRow, catalog: Catalog): number => {
+  const price = catalog.tiers.find((tier) => String(tier.id) === row.tier)?.price;
+  if (price === undefined) return 0;
+  return price.interval === "annual" ? Math.round(price.amount / 12) : price.amount;
+};
+
+const priceCurrencyOf = (row: BillingReadRow, catalog: Catalog): string | undefined =>
+  catalog.tiers.find((tier) => String(tier.id) === row.tier)?.price?.currency ?? row.currency;
+
+const overviewOf = (
+  rows: ReadonlyArray<BillingReadRow>,
+  catalog: Catalog,
+  asOf: DateTime.Utc,
+): BillingOverview => {
+  const statusCounts = new Map(STATUS_ORDER.map((status) => [status, 0]));
+  const standingCounts = new Map(STANDING_ORDER.map((standing) => [standing, 0]));
+  const tierCounts = new Map<string, number>(catalog.tiers.map((tier) => [String(tier.id), 0]));
+  const revenue = new Map<
+    string,
+    { mrr: number; trialPipeline: number; atRisk: number; churned: number }
+  >();
+  for (const row of rows) {
+    statusCounts.set(row.status, (statusCounts.get(row.status) ?? 0) + 1);
+    standingCounts.set(row.standing, (standingCounts.get(row.standing) ?? 0) + 1);
+    tierCounts.set(row.tier, (tierCounts.get(row.tier) ?? 0) + 1);
+    const currency = priceCurrencyOf(row, catalog);
+    const monthly = monthlyPriceOf(row, catalog);
+    if (currency === undefined || monthly === 0) continue;
+    const entry = revenue.get(currency) ?? {
+      mrr: 0,
+      trialPipeline: 0,
+      atRisk: 0,
+      churned: 0,
+    };
+    if (row.status === "active" || row.status === "grace") {
+      entry.mrr += monthly;
+      if (row.status === "grace") entry.atRisk += monthly;
+    } else if (row.status === "trialing") {
+      entry.trialPipeline += monthly;
+    } else {
+      entry.churned += monthly;
+    }
+    revenue.set(currency, entry);
+  }
+  return BillingOverview.make({
+    asOf,
+    accounts: rows.length,
+    byStatus: STATUS_ORDER.map((status) => ({ status, count: statusCounts.get(status) ?? 0 })),
+    byStanding: STANDING_ORDER.map((standing) => ({
+      standing,
+      count: standingCounts.get(standing) ?? 0,
+    })),
+    byTier: [...tierCounts].map(([tier, count]) => ({ tier, count })),
+    revenue: [...revenue]
+      .map(([currency, value]) => ({
+        currency,
+        mrr: value.mrr,
+        arr: value.mrr * 12,
+        trialPipeline: value.trialPipeline,
+        atRisk: value.atRisk,
+        churned: value.churned,
+      }))
+      .toSorted((left, right) => left.currency.localeCompare(right.currency)),
+  });
+};
+
+const allRows = (
+  list: (query?: BillingReadQuery) => Effect.Effect<BillingReadPage, AdminReadError>,
+): Effect.Effect<ReadonlyArray<BillingReadRow>, AdminReadError> =>
+  Effect.gen(function* () {
+    const rows: BillingReadRow[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const page = yield* list({
+        take: MAX_PAGE,
+        ...(after === undefined ? {} : { after }),
+      });
+      rows.push(...page.rows);
+      if (page.next === null || page.next === after) break;
+      after = page.next;
+    }
+    return rows;
+  });
+
 /** The preview request schema, matching `PreviewInput`'s `kind` discriminant. */
 export const PreviewCommandSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("subscribe"), tier: Schema.String }),
@@ -178,6 +325,10 @@ export interface AdminReadsShape {
   }) => Effect.Effect<ReadonlyArray<VerifyMismatch>, AdminReadError>;
   /** An account's holds, which the views fold away into reserved counts. */
   readonly holds: (account: string) => Effect.Effect<HoldsAnswer, AdminReadError>;
+  /** The vendor ids attached to an account, per provider. */
+  readonly providerRefs: (account: string) => Effect.Effect<ProviderRefsAnswer, AdminReadError>;
+  /** Cross-account counts and recurring revenue for the dashboard. */
+  readonly overview: () => Effect.Effect<BillingOverview, AdminReadError>;
   /** The catalog the deployment validated, for tier choices and prices. */
   readonly catalog: () => Effect.Effect<Catalog, AdminReadError>;
 }
@@ -234,6 +385,20 @@ export const makeAdminReads = Effect.gen(function* () {
           asOf: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
         });
       }),
+    providerRefs: (account) =>
+      Effect.gen(function* () {
+        const state = yield* subscription.state(Subscription.ref(account));
+        return ProviderRefsAnswer.make({
+          account,
+          refs: state.refs,
+          asOf: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+        });
+      }),
+    overview: () =>
+      Effect.gen(function* () {
+        const rows = yield* allRows(list);
+        return overviewOf(rows, catalog, DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+      }),
     catalog: () => Effect.succeed(catalog),
   } satisfies AdminReadsShape;
 });
@@ -269,6 +434,15 @@ export const AdminReadsRpcs = RpcGroup.make(
     success: HoldsAnswer,
     error: AdminReadError,
   }),
+  Rpc.make("ProviderRefs", {
+    payload: VerifyInput,
+    success: ProviderRefsAnswer,
+    error: AdminReadError,
+  }),
+  Rpc.make("Overview", {
+    success: BillingOverview,
+    error: AdminReadError,
+  }),
   Rpc.make("Catalog", {
     success: Catalog,
     error: AdminReadError,
@@ -301,6 +475,8 @@ export const AdminReadsHandlers = Effect.map(makeAdminReads, (reads) =>
     Preview: (input: AdminPreviewInput) => reads.preview(input),
     Verify: ({ account }: { readonly account: string }) => reads.verify({ account }),
     Holds: ({ account }: { readonly account: string }) => reads.holds(account),
+    ProviderRefs: ({ account }: { readonly account: string }) => reads.providerRefs(account),
+    Overview: () => reads.overview(),
     Catalog: () => reads.catalog(),
   }),
 );
@@ -341,6 +517,8 @@ export const AdminReadsClient = (
         preview: (input) => call(client.Preview(input)),
         verify: ({ account }) => call(client.Verify({ account })),
         holds: (account) => call(client.Holds({ account })),
+        providerRefs: (account) => call(client.ProviderRefs({ account })),
+        overview: () => call(client.Overview()),
         catalog: () => call(client.Catalog()),
       } satisfies AdminReadsShape;
     }),

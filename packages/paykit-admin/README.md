@@ -11,15 +11,25 @@ command id.
 | --- | --- |
 | `@potion.run/paykit-admin` | The `Console` program: `Flags`, `Model`, `init`, `update`, `subscriptions`, `routing`, `view` |
 | `@potion.run/paykit-admin/Console` | The same program from its own module |
-| `@potion.run/paykit-admin/ui` | The shadcn component kit: Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty and Tabs |
+| `@potion.run/paykit-admin/ui` | The shadcn component kit: Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty, Tabs, the static `MiniBars` strip and the `PieChart` donut |
 | `@potion.run/paykit-admin/DevTools` | The event table, tab list, `DevToolsState` schema and seed helpers behind the floating **Paykit dev tools** panel |
 | `@potion.run/paykit-admin/styles.css` | Optional default styles, scoped to `.pk-admin` |
 
 The console covers the account list, the standing and allowance panels, the
-period's priced usage, open holds with their deadlines, the billing timeline
-folded from the event feed, and the account event feed. Two read-only pages
-list the deploy's `Plans` and `Features` from the catalog the console already
-holds.
+period's priced usage, the full hold history, the billing timeline folded from
+the event feed, and a log-style account event feed with a volume strip. Two
+read-only pages list the deploy's `Plans` and `Features` from the catalog the
+console already holds.
+
+The overview page reads a cross-account aggregate through
+`AdminReads.overview`. It shows MRR, ARR, at-risk and trial-pipeline revenue,
+accounts by plan and status, a 10% monthly growth scenario, and the accounts
+on the loaded page that need attention. The account overview also shows the
+facts an operator checks after a payment failure or a tier change: the
+scheduled tier terms, the last proration and its invoice, the dunning count,
+the trial and grace deadlines, and the vendor refs attached by each provider.
+The allowance table carries the reset timestamp, rollover amount, credit
+rates, limits and current access, not just the count.
 
 The account page offers these actions: `GrantCredits`, `ExtendTrial`,
 `ChangeTier`, `EnterGrace`, `RecordPayment`, `RecordPaymentFailure`, `Recover`,
@@ -50,6 +60,7 @@ button all land on the same view:
 | `/?standing=grace&tier=pro` | The list, filtered |
 | `/?after=acct_50` | The next page, by the cursor the previous one returned |
 | `/accounts/:account` | One account, with the list's filters and page preserved |
+| `/overview` | Cross-account revenue, mix and projection |
 | `/plans` | The deploy's tiers, read only |
 | `/features` | The deploy's features, read only |
 
@@ -64,7 +75,7 @@ page cursor is in the URL too, so a refresh keeps the page and back walks it;
 changing a filter drops the cursor, because a cursor from another filter names
 a row that filter may not have.
 
-Run the app on its own origin (`/`, `/accounts/...`, `/plans` and
+Run the app on its own origin (`/`, `/accounts/...`, `/overview`, `/plans` and
 `/features` are the console's paths), and keep `/admin` and `/console` for the
 Api and read surfaces.
 
@@ -83,11 +94,17 @@ list as live.
 - **The account panel** is live: `Entitlements`, `BillingState` and
   `AccountEvents` are watches, so only the list needs the label.
 
-**Open holds** are the entities the allowance table folds into `reserved`
-counts, so they come from the aggregate through `AdminReads.holds`, once when
-the account opens and again when the event feed says a hold moved
-(`UsageReserved`, `UsageSettled`, `UsageReleased`). That panel says when it was
-read too; it shows the held-at and expiry times rather than a computed age.
+**Holds** are the entities the allowance table folds into `reserved` counts,
+so they come from the aggregate through `AdminReads.holds`, once when the
+account opens and again when the event feed says a hold moved
+(`UsageReserved`, `UsageSettled`, `UsageReleased`). The panel shows open,
+settled and released holds, with the rate, credits and both timestamps, and
+says when it was read.
+
+**Provider refs** are read through `AdminReads.providerRefs`, once when the
+account opens and again when the feed reports `ProviderRefAttached`. They are
+the vendor's customer, subscription and checkout ids, grouped by provider, and
+are read-only like the rest of the console.
 
 ## Seed the first paint
 
@@ -293,10 +310,10 @@ you.
 
 ## Serve the reads beside the admin Api
 
-The account list spans keys, so it is not a Domain Api read. `AdminReadsRpcs`
-is an Effect RPC group with the same `Admin` middleware as the admin
-commands, and `AdminChangeTierRpcs` adds the tier-change write. Both are
-merged into `AdminConsoleRpcs`.
+The account list and overview span keys, so they are not Domain Api reads.
+`AdminReadsRpcs` is an Effect RPC group with the same `Admin` middleware as
+the admin commands, and `AdminChangeTierRpcs` adds the tier-change write. Both
+are merged into `AdminConsoleRpcs`.
 
 `AdminConsoleServer` builds the Worker handler from the hosted model and
 captures the host’s middleware context once, the way `Domain.Api` serves an

@@ -17,8 +17,9 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   re-parsed with `routeOf`. Never keep a selection the URL cannot reproduce.
   Applying a route naming another account replaces the account state, which is
   what restarts its keyed reads. A filter change drops the page cursor; opening
-  an account keeps both. `/plans` and `/features` are read-only catalog pages;
-  they name no account and carry no list filter or page cursor.
+  an account keeps both. `/overview` is a cross-account read, and `/plans` and
+  `/features` are read-only catalog pages; the last three name no account and
+  carry no list filter or page cursor.
 - **A seeded snapshot is the first frame of a live read, not a second source.**
   `Flags` carries wire-encoded snapshots decoded by `decodeSnapshotFlags`; a
   snapshot that no longer decodes falls back to the live read. A seeded account
@@ -38,11 +39,21 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   (`asOf`); the panel always says when the rows were read or that the read time
   is unknown, and never presents them as live. Re-read it when the operator
   asks, when a filter or page changes, or after the console's own write lands.
+- **The overview is one aggregate read, not a second billing model.**
+  `AdminReads.overview` pages the `BillingRead` projection and derives MRR,
+  ARR, at-risk and trial-pipeline totals from the catalog's prices. The view
+  merges local devtools rows into that aggregate only for display; it never
+  writes those rows or presents the projection as live.
 - **Holds are entities, so they are read as entities.** The allowance table
   folds a hold into a `reserved` count; the holds panel reads the aggregate's
   holds through `AdminReads.holds` and re-reads them when the feed reports
   `UsageReserved`, `UsageSettled` or `UsageReleased`. It is a stamped snapshot
-  like the list, not a subscription.
+  like the list, not a subscription, and it shows settled and released history
+  beside the open rows.
+- **Provider refs are a separate read.** The panel reads
+  `AdminReads.providerRefs` once when the account opens and again on
+  `ProviderRefAttached`; the ids stay grouped by provider. They are never
+  inferred from the feed body or stored in the Model as billing state.
 - **A preview is a question, not a write.** `Preview` runs the same `decide` a
   command runs and records nothing, so it allocates no command id and never
   touches `pending`. The console's answers are `accepted`, `rejected` or
@@ -69,9 +80,9 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   and Textarea are the components the console composes; a new control needs a
   component that exists, not a local copy of its ARIA and keyboard behavior.
 - The local `src/ui` kit is the shadcn layer, ported from the yaka component
-  kit. Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty
-  and Tabs live there. New UI imports the kit; it does not hand-roll a second
-  button, field or table.
+  kit. Button, Card, Table, Input, Select, Textarea, Field, Badge, Alert, Empty,
+  Tabs, the static `MiniBars` strip and the `PieChart` donut live there. New
+  UI imports the kit; it does not hand-roll a second button, field or table.
 - Style from the shadcn tokens (`--pk-background`, `--pk-foreground`,
   `--pk-card`, `--pk-primary`, `--pk-muted-foreground`, `--pk-border`,
   `--pk-ring`, and the semantic status tokens). Do not add raw colors to a
@@ -79,7 +90,11 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - The local event lab is a development surface. It is enabled only through
   `Flags.devTools`, every dev-tools Message is inert while that flag is false,
   and it emits simulated events through the same `recordEvent` path the live
-  feed uses. It never calls the Api and never becomes a second write path.
+  feed uses. A lab payload is decoded to its aggregate event before that call,
+  so emitted events fold into the timeline instead of staying display-only.
+  The Reads tab can seed one configured account or a varied local set; those
+  rows appear in the list and overview overlay, never in the server projection.
+  It never calls the Api and never becomes a second write path.
   It is a floating trigger and a tabbed panel in the
   [rat-stack](https://github.com/joelhooks/rat-stack/tree/main) shape, not a
   section in the console layout, so the operator's page stays the page.

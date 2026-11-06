@@ -14,7 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Url } from "foldkit/url";
-import { devToolsEvents, subscriptionEventTags } from "../src/DevTools.ts";
+import { decodeDevToolsEvent, devToolsEvents, subscriptionEventTags } from "../src/DevTools.ts";
 import { Flags } from "../src/Flags.ts";
 import { init } from "../src/init.ts";
 import { Message } from "../src/Message.ts";
@@ -83,6 +83,7 @@ describe("the event lab", () => {
     for (const event of devToolsEvents) {
       const parsed = JSON.parse(event.body) as unknown;
       expect(typeof parsed).toBe("object");
+      expect(Option.isSome(decodeDevToolsEvent(event))).toBe(true);
     }
   });
 
@@ -122,6 +123,7 @@ describe("the event lab", () => {
     expect(account.events[0]?.body).toBe(event.body);
     expect(account.cursor).toEqual(Option.some(1));
     expect(result.model.devTools.emitted).toBe(1);
+    expect(account.timeline.entries[0]?.kind).toBe("credit-grant");
 
     const again = update(result.model, Message.ClickedEmitDevToolsEvent()).model;
     expect(openAccount(again).events[0]?.seq).toBe(2);
@@ -137,7 +139,11 @@ describe("the event lab", () => {
     expect(account.id).toBe("acct_dev");
     expect(account.events[0]?.tag).toBe(devToolsEvents[0]?.tag);
     expect(Option.isSome(account.billing)).toBe(true);
-    expect(result.commands?.map((command) => command.name)).toEqual(["GetHolds", "ReflectRoute"]);
+    expect(result.commands?.map((command) => command.name)).toEqual([
+      "GetHolds",
+      "GetProviderRefs",
+      "ReflectRoute",
+    ]);
   });
 
   it("emits every event, in order, and re-reads holds for the hold events", () => {
@@ -152,6 +158,7 @@ describe("the event lab", () => {
       "GetHolds",
       "GetHolds",
       "GetHolds",
+      "GetProviderRefs",
     ]);
   });
 
@@ -177,8 +184,47 @@ describe("the event lab", () => {
     const seededHolds = withStanding.holds;
     if (Option.isNone(seededHolds)) throw new Error("expected seeded holds");
     expect(seededHolds.value.state).toBe("Loaded");
-    expect(seededHolds.value.holds.length).toBe(2);
-    expect(seededHolds.value.holds.every((hold) => hold.status === "open")).toBe(true);
+    expect(seededHolds.value.holds.length).toBe(3);
+    expect(seededHolds.value.holds.filter((hold) => hold.status === "open").length).toBe(2);
+    expect(seededHolds.value.holds.some((hold) => hold.status === "settled")).toBe(true);
+
+    const seededRefs = withStanding.providerRefs;
+    if (Option.isNone(seededRefs)) throw new Error("expected seeded provider refs");
+    expect(seededRefs.value.state).toBe("Loaded");
+    expect(seededRefs.value.refs.manual?.customer).toBe("cus_acct_a");
+  });
+
+  it("seeds a configured account into the local list", () => {
+    const configured = update(
+      update(
+        update(seeded(true), Message.UpdatedDevToolsSeedTier({ value: "pro" })).model,
+        Message.UpdatedDevToolsSeedStatus({ value: "grace" }),
+      ).model,
+      Message.UpdatedDevToolsSeedCredits({ value: "777" }),
+    ).model;
+
+    const result = update(configured, Message.ClickedSeedDevToolsSnapshot());
+    const account = openAccount(result.model);
+    const billing = account.billing.pipe(Option.getOrThrow);
+    expect(billing.tier).toBe("pro");
+    expect(billing.status).toBe("grace");
+    expect(billing.credits).toBe(777);
+    expect(result.model.accounts.rows.some((row) => row.account === "acct_dev")).toBe(true);
+    expect(result.model.devTools.labRows.length).toBe(1);
+  });
+
+  it("seeds and clears a varied lab account set", () => {
+    const seededModel = update(seeded(true), Message.ClickedSeedDevToolsAccounts()).model;
+    expect(seededModel.devTools.labRows.length).toBe(12);
+    expect(
+      seededModel.accounts.rows.filter((row) => row.account.startsWith("acct_demo_")).length,
+    ).toBe(12);
+
+    const cleared = update(seededModel, Message.ClickedClearDevToolsAccounts()).model;
+    expect(cleared.devTools.labRows.length).toBe(0);
+    expect(cleared.accounts.rows.filter((row) => row.account.startsWith("acct_demo_")).length).toBe(
+      0,
+    );
   });
 
   it("opens an account from the lab when the list has no row for it", () => {
@@ -189,13 +235,17 @@ describe("the event lab", () => {
     expect(Option.isNone(model.account)).toBe(true);
 
     const result = update(model, Message.ClickedOpenDevToolsAccount());
-    expect(result.commands?.map((command) => command.name)).toEqual(["GetHolds", "ReflectRoute"]);
+    expect(result.commands?.map((command) => command.name)).toEqual([
+      "GetHolds",
+      "GetProviderRefs",
+      "ReflectRoute",
+    ]);
     const account = openAccount(result.model);
     expect(account.id).toBe("acct_empty");
     expect(Option.isSome(account.billing)).toBe(true);
     expect(Option.isSome(account.entitlements)).toBe(true);
     if (Option.isNone(account.holds)) throw new Error("expected seeded holds");
-    expect(account.holds.value.holds.length).toBe(2);
+    expect(account.holds.value.holds.length).toBe(3);
   });
 
   it("simulates the feed and read states, then resets them", () => {

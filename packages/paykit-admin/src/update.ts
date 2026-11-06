@@ -1,10 +1,13 @@
 import type { AdminPreviewInput } from "@potion.run/paykit/Admin";
+import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import { tierTermsOf } from "@potion.run/paykit/Catalog";
 import { AdminQueries, ApplyChangeTier, BillingAdmin, next } from "@potion.run/paykit/Foldkit";
+import type { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
 import {
   AccountId,
   Standing,
   SubscriptionStatus,
+  standingOf,
 } from "@potion.run/paykit/Subscription/Subscription.state";
 import { appendTimeline, initialTimeline, type AccountEvent } from "@potion.run/paykit/Timeline";
 import * as Array from "effect/Array";
@@ -23,6 +26,8 @@ import {
   devToolsEventOf,
   devToolsEvents,
   devToolsHolds,
+  devToolsProviderRefs,
+  decodeDevToolsEvent,
   nextEventSeq,
   simulatedAt,
 } from "./DevTools.ts";
@@ -42,10 +47,14 @@ import {
   HoldsState as HoldsStateSchema,
   type Model,
   openedAccount,
+  type OverviewState,
+  OverviewState as OverviewStateSchema,
   type Pending,
   Pending as PendingSchema,
   type PreviewState,
   PreviewState as PreviewStateSchema,
+  type ProviderRefsState,
+  ProviderRefsState as ProviderRefsStateSchema,
   type VerifyState,
   VerifyState as VerifyStateSchema,
 } from "./Model.ts";
@@ -162,6 +171,55 @@ const startHolds = (model: Model, account: AccountState): UpdateReturn => {
   };
 };
 
+/** Read the vendor ids the aggregate has attached to one account. */
+const startProviderRefs = (model: Model, account: AccountState): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  const previous = Option.getOrNull(account.providerRefs);
+  const next: ProviderRefsState = ProviderRefsStateSchema.make({
+    requestId,
+    account: account.id,
+    state: "Loading",
+    asOf: previous?.asOf ?? Option.none(),
+    refs: previous?.refs ?? {},
+    error: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      account: () => Option.some(modifyFields(account, { providerRefs: () => Option.some(next) })),
+    }),
+    commands: [
+      Command.mapMessage(AdminQueries.ProviderRefs({ requestId, account: account.id }), (message) =>
+        Message.ReceivedAdminQuery({ message }),
+      ),
+    ],
+  };
+};
+
+/** Read the cross-account dashboard: counts by dimension and recurring revenue. */
+const startOverview = (model: Model): UpdateReturn => {
+  const requestId = model.queryIds.sent;
+  const previous = Option.getOrNull(model.overview);
+  const next: OverviewState = OverviewStateSchema.make({
+    requestId,
+    state: "Loading",
+    asOf: previous?.asOf ?? Option.none(),
+    overview: previous?.overview ?? Option.none(),
+    error: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      queryIds: () => ({ sent: requestId + 1 }),
+      overview: () => Option.some(next),
+    }),
+    commands: [
+      Command.mapMessage(AdminQueries.Overview({ requestId }), (message) =>
+        Message.ReceivedAdminQuery({ message }),
+      ),
+    ],
+  };
+};
+
 /** Ask what `decide` would do with a command, without recording anything. */
 const startPreview = (
   model: Model,
@@ -249,6 +307,31 @@ const updateCurrentHolds = (
   if (account === null || current === null || current.requestId !== requestId) return { model };
   return updateAccount(model, (value) =>
     modifyFields(value, { holds: () => Option.some(change(current)) }),
+  );
+};
+
+/** Apply a dashboard answer only while its request is the current overview. */
+const updateCurrentOverview = (
+  model: Model,
+  requestId: number,
+  change: (current: OverviewState) => OverviewState,
+): UpdateReturn => {
+  const current = Option.getOrNull(model.overview);
+  if (current === null || current.requestId !== requestId) return { model };
+  return { model: modifyFields(model, { overview: () => Option.some(change(current)) }) };
+};
+
+/** Apply a provider-refs answer only while its request is the open refs read. */
+const updateCurrentProviderRefs = (
+  model: Model,
+  requestId: number,
+  change: (current: ProviderRefsState) => ProviderRefsState,
+): UpdateReturn => {
+  const account = openAccount(model);
+  const current = account === null ? null : Option.getOrNull(account.providerRefs);
+  if (account === null || current === null || current.requestId !== requestId) return { model };
+  return updateAccount(model, (value) =>
+    modifyFields(value, { providerRefs: () => Option.some(change(current)) }),
   );
 };
 
@@ -676,11 +759,17 @@ const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
   const listRead = listChanged
     ? startList(followed, filter, Option.getOrUndefined(after))
     : ({ model: followed } satisfies UpdateReturn);
-  // A newly opened account has no holds snapshot yet; the previous account's
-  // state is gone, so there is nothing to preserve.
-  const opened = sameAccount ? null : openAccount(listRead.model);
-  const holdsRead = opened === null ? null : startHolds(listRead.model, opened);
-  return holdsRead === null ? listRead : andThen(listRead, holdsRead);
+  const overviewRead =
+    route._tag === "Overview" && model.route._tag !== "Overview" ? startOverview(followed) : null;
+  const base = overviewRead === null ? listRead : andThen(listRead, overviewRead);
+  // A newly opened account has no holds or refs snapshot yet; the previous
+  // account's state is gone, so there is nothing to preserve.
+  const opened = sameAccount ? null : openAccount(base.model);
+  if (opened === null) return base;
+  const holdsRead = startHolds(base.model, opened);
+  const afterHolds = openAccount(holdsRead.model);
+  const refsRead = afterHolds === null ? null : startProviderRefs(holdsRead.model, afterHolds);
+  return andThen(base, refsRead === null ? holdsRead : andThen(holdsRead, refsRead));
 };
 
 /** Follow a route and reflect it into the address bar. */
@@ -704,11 +793,16 @@ const navigate = (model: Model, route: ConsoleRoute, history: "push" | "replace"
 const afterWrite = (model: Model): UpdateReturn =>
   startList(model, model.accounts.filter, Option.getOrUndefined(afterOf(model.route)));
 
-/** Re-read the list's current page and, when one is open, the account's holds. */
+/** Re-read the dashboard on Overview, or the list and open account elsewhere. */
 const refresh = (model: Model): UpdateReturn => {
+  if (model.route._tag === "Overview") return startOverview(model);
   const list = afterWrite(model);
   const account = openAccount(list.model);
-  return account === null ? list : andThen(list, startHolds(list.model, account));
+  if (account === null) return list;
+  const holds = startHolds(list.model, account);
+  const afterHolds = openAccount(holds.model);
+  const refs = afterHolds === null ? null : startProviderRefs(holds.model, afterHolds);
+  return andThen(list, refs === null ? holds : andThen(holds, refs));
 };
 
 /** One event as the feed reports it, before it reaches the account. */
@@ -767,11 +861,13 @@ const recordEvent = (model: Model, incoming: IncomingEvent): UpdateReturn => {
     ? accepted(nextModel, incoming.commandId)
     : nextModel;
   // A hold event is the one thing the allowance view's `reserved` count
-  // cannot date, so the panel re-reads the entity it folded away.
+  // cannot date, so the panel re-reads the entity it folded away. A provider
+  // ref attachment is the same kind of fact for the vendor ids.
   const opened = openAccount(settled);
-  return holdEvent(incoming.tag) && opened !== null
-    ? startHolds(settled, opened)
-    : { model: settled };
+  if (opened === null) return { model: settled };
+  if (holdEvent(incoming.tag)) return startHolds(settled, opened);
+  if (incoming.tag === "ProviderRefAttached") return startProviderRefs(settled, opened);
+  return { model: settled };
 };
 
 const updateDevTools = (
@@ -794,6 +890,10 @@ const recordDevToolsEvent = (model: Model, event: { tag: string; body: string })
     commandId: devToolsCommandId(model),
     tag: event.tag,
     body: event.body,
+    ...Option.match(decodeDevToolsEvent(event), {
+      onNone: () => ({}),
+      onSome: (decoded) => ({ event: decoded }),
+    }),
   });
   const next = updateDevTools(result.model, (devTools) => ({
     ...devTools,
@@ -828,6 +928,10 @@ const recordAllDevToolsEvents = (model: Model): UpdateReturn => {
       commandId: devToolsCommandId(model),
       tag: event.tag,
       body: event.body,
+      ...Option.match(decodeDevToolsEvent(event), {
+        onNone: () => ({}),
+        onSome: (decoded) => ({ event: decoded }),
+      }),
     });
     current = result.model;
     if (result.commands !== undefined) commands.push(...result.commands);
@@ -845,22 +949,92 @@ const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
   return andThen(opened, recordAllDevToolsEvents(opened.model));
 };
 
-/** Fill the live reads with a simulated standing, so the panels have a shape. */
-const seedDevToolsSnapshot = (model: Model): UpdateReturn => {
+const seedTierOf = (model: Model): string =>
+  Option.match(model.catalog, {
+    onNone: () => model.devTools.seedTier,
+    onSome: (catalog) =>
+      catalog.tiers.some((tier) => String(tier.id) === model.devTools.seedTier)
+        ? model.devTools.seedTier
+        : (catalog.tiers[0]?.id ?? model.devTools.seedTier),
+  });
+
+const nonNegativeInt = (value: string): number | undefined => {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
+const withUsage = (
+  entitlements: EntitlementsState,
+  usage: number | undefined,
+): EntitlementsState => {
+  if (usage === undefined) return entitlements;
+  const first = Object.entries(entitlements.features)[0];
+  if (first === undefined) return entitlements;
+  const [featureId, feature] = first;
+  const used =
+    feature.included === null || feature.included === "unlimited"
+      ? usage
+      : Math.min(feature.included, usage);
+  const remaining =
+    feature.included === null || feature.included === "unlimited"
+      ? null
+      : Math.max(0, feature.included - used - feature.reserved);
+  return {
+    ...entitlements,
+    features: { ...entitlements.features, [featureId]: { ...feature, used, remaining } },
+  };
+};
+
+const mergeRows = (
+  rows: ReadonlyArray<BillingReadRow>,
+  additions: ReadonlyArray<BillingReadRow>,
+): ReadonlyArray<BillingReadRow> => {
+  const byAccount = new Map(rows.map((row) => [row.account, row]));
+  for (const row of additions) byAccount.set(row.account, row);
+  return [...byAccount.values()].toSorted((left, right) =>
+    left.account.localeCompare(right.account),
+  );
+};
+
+const rowOf = (
+  account: AccountId,
+  tier: string,
+  status: SubscriptionStatus,
+  billing: ReturnType<typeof devToolsBilling>,
+  entitlements: EntitlementsState,
+): BillingReadRow =>
+  BillingReadRow.make({
+    account,
+    tier,
+    status,
+    standing: standingOf(status),
+    periodStart: billing.periodStart,
+    periodEnd: billing.periodEnd,
+    cancelAtPeriodEnd: billing.cancelAtPeriodEnd,
+    credits: billing.credits,
+    dunningAttempts: billing.dunningAttempts,
+    ...(billing.currency === undefined ? {} : { currency: billing.currency }),
+    features: entitlements.features,
+  });
+
+/** Fill the open account's reads with a simulated standing, and list it locally. */
+const seedOpenSnapshot = (model: Model): UpdateReturn => {
   const account = openAccount(model);
   if (account === null) return { model };
   const at = simulatedAt(nextEventSeq(account));
-  const status = Option.match(account.billing, {
-    onNone: () => "active" as const,
-    onSome: (billing) => billing.status,
-  });
+  const tier = seedTierOf(model);
+  const status = model.devTools.seedStatus;
+  const credits = nonNegativeInt(model.devTools.seedCredits);
+  const usage = nonNegativeInt(model.devTools.seedUsage);
   const holds = devToolsHolds(account.id, model.catalog, at);
-  const tier = Option.match(account.billing, {
-    onNone: () => undefined,
-    onSome: (billing) => billing.tier,
-  });
-  const billing = devToolsBilling(account.id, model.catalog, status, at, tier);
-  const entitlements = devToolsEntitlements(account.id, model.catalog, status, at, holds, tier);
+  const baseBilling = devToolsBilling(account.id, model.catalog, status, at, tier);
+  const billing = credits === undefined ? baseBilling : { ...baseBilling, credits };
+  const baseEntitlements = devToolsEntitlements(account.id, model.catalog, status, at, holds, tier);
+  const entitlements = {
+    ...withUsage(baseEntitlements, usage),
+    ...(credits === undefined ? {} : { credits }),
+  };
+  const row = rowOf(account.id, tier, status, billing, entitlements);
   const holdsState = HoldsStateSchema.make({
     requestId: Option.getOrElse(
       Option.map(account.holds, (current) => current.requestId),
@@ -872,14 +1046,109 @@ const seedDevToolsSnapshot = (model: Model): UpdateReturn => {
     holds,
     error: Option.none(),
   });
-  return updateAccount(model, (value) =>
-    modifyFields(value, {
-      billing: () => Option.some(billing),
-      entitlements: () => Option.some(entitlements),
-      holds: () => Option.some(holdsState),
-      error: () => Option.none(),
+  const refsState = ProviderRefsStateSchema.make({
+    requestId: Option.getOrElse(
+      Option.map(account.providerRefs, (current) => current.requestId),
+      () => 0,
+    ),
+    account: account.id,
+    state: "Loaded",
+    asOf: Option.some(at),
+    refs: devToolsProviderRefs(account.id),
+    error: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      devTools: (devTools) => ({
+        ...devTools,
+        labRows: mergeRows(devTools.labRows, [row]),
+      }),
+      accounts: (accounts) =>
+        modifyFields(accounts, { rows: () => mergeRows(accounts.rows, [row]) }),
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            billing: () => Option.some(billing),
+            entitlements: () => Option.some(entitlements),
+            holds: () => Option.some(holdsState),
+            providerRefs: () => Option.some(refsState),
+            error: () => Option.none(),
+          }),
+        ),
     }),
-  );
+  };
+};
+
+/** Seed the configurable lab account, opening it first when none is open. */
+const seedDevToolsSnapshot = (model: Model): UpdateReturn =>
+  openAccount(model) === null ? openDevToolsAccount(model) : seedOpenSnapshot(model);
+
+/** Seed a varied set of local accounts so lists, pies and metrics have a shape. */
+const seedDevToolsAccounts = (model: Model): UpdateReturn => {
+  if (!model.devTools.isEnabled) return { model };
+  const tiers = Option.match(model.catalog, {
+    onNone: () => ["free"],
+    onSome: (catalog) => catalog.tiers.map((tier) => String(tier.id)),
+  });
+  const statuses: ReadonlyArray<SubscriptionStatus> = [
+    "active",
+    "trialing",
+    "grace",
+    "active",
+    "active",
+    "canceled",
+    "active",
+    "trialing",
+    "active",
+    "expired",
+    "grace",
+    "active",
+  ];
+  const at = simulatedAt(1);
+  const rows = Array.makeBy(12, (index) => {
+    const account = AccountId.make(`acct_demo_${String(index + 1).padStart(2, "0")}`);
+    const tier = tiers[index % tiers.length] ?? "free";
+    const status = statuses[index % statuses.length] ?? "active";
+    const credits = 100 + index * 75;
+    const usage = 50 + index * 20;
+    const atForAccount = DateTime.add(at, { days: index });
+    const billing = {
+      ...devToolsBilling(account, model.catalog, status, atForAccount, tier),
+      credits,
+    };
+    const entitlements = {
+      ...withUsage(
+        devToolsEntitlements(account, model.catalog, status, atForAccount, [], tier),
+        usage,
+      ),
+      credits,
+    };
+    return rowOf(account, tier, status, billing, entitlements);
+  });
+  return {
+    model: modifyFields(model, {
+      devTools: (devTools) => ({
+        ...devTools,
+        labRows: mergeRows(devTools.labRows, rows),
+      }),
+      accounts: (accounts) =>
+        modifyFields(accounts, { rows: () => mergeRows(accounts.rows, rows) }),
+    }),
+  };
+};
+
+/** Remove the locally seeded accounts from the list and the lab overlay. */
+const clearDevToolsAccounts = (model: Model): UpdateReturn => {
+  const labAccounts = new Set(model.devTools.labRows.map((row) => row.account));
+  return {
+    model: modifyFields(model, {
+      devTools: (devTools) => ({ ...devTools, labRows: [] }),
+      accounts: (accounts) =>
+        modifyFields(accounts, {
+          rows: () => accounts.rows.filter((row) => !labAccounts.has(row.account)),
+        }),
+    }),
+  };
 };
 
 const newestEventSeq = (account: AccountState): number =>
@@ -898,7 +1167,7 @@ const openDevToolsAccount = (model: Model): UpdateReturn => {
     accountRoute(account, model.accounts.filter, afterOf(model.route)),
     "push",
   );
-  const seeded = seedDevToolsSnapshot(navigated.model);
+  const seeded = seedOpenSnapshot(navigated.model);
   return navigated.commands === undefined
     ? { model: seeded.model }
     : { model: seeded.model, commands: navigated.commands };
@@ -958,6 +1227,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClosedAccount: () =>
       navigate(model, accountsRoute(model.accounts.filter, afterOf(model.route)), "push"),
 
+    ClickedOverview: () => navigate(model, ConsoleRoute.Overview(), "push"),
+
     ClickedPlans: () => navigate(model, ConsoleRoute.Plans(), "push"),
 
     ClickedFeatures: () => navigate(model, ConsoleRoute.Features(), "push"),
@@ -997,7 +1268,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 model: modifyFields(model, {
                   accounts: (accounts) =>
                     modifyFields(accounts, {
-                      rows: () => page.rows,
+                      rows: () => mergeRows(page.rows, model.devTools.labRows),
                       next: () => Option.fromNullishOr(page.next),
                       state: () => "Loaded",
                       error: () => Option.none(),
@@ -1035,6 +1306,42 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         ),
         Match.tag("FailedHolds", ({ requestId, error }) =>
           updateCurrentHolds(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Failed",
+              error: () => Option.some(error._tag),
+            }),
+          ),
+        ),
+        Match.tag("SucceededProviderRefs", ({ requestId, answer }) =>
+          updateCurrentProviderRefs(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Loaded",
+              asOf: () => Option.some(answer.asOf),
+              refs: () => (answer.account === current.account ? answer.refs : current.refs),
+              error: () => Option.none(),
+            }),
+          ),
+        ),
+        Match.tag("FailedProviderRefs", ({ requestId, error }) =>
+          updateCurrentProviderRefs(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Failed",
+              error: () => Option.some(error._tag),
+            }),
+          ),
+        ),
+        Match.tag("SucceededOverview", ({ requestId, overview }) =>
+          updateCurrentOverview(model, requestId, (current) =>
+            modifyFields(current, {
+              state: () => "Loaded",
+              asOf: () => Option.some(overview.asOf),
+              overview: () => Option.some(overview),
+              error: () => Option.none(),
+            }),
+          ),
+        ),
+        Match.tag("FailedOverview", ({ requestId, error }) =>
+          updateCurrentOverview(model, requestId, (current) =>
             modifyFields(current, {
               state: () => "Failed",
               error: () => Option.some(error._tag),
@@ -1444,6 +1751,34 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         ? { model: updateDevTools(model, (devTools) => ({ ...devTools, commandId: value })) }
         : { model },
 
+    UpdatedDevToolsSeedTier: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, seedTier: value })) }
+        : { model },
+
+    UpdatedDevToolsSeedStatus: ({ value }) => {
+      if (!model.devTools.isEnabled) return { model };
+      const status = Schema.decodeUnknownOption(SubscriptionStatus)(value);
+      return Option.isNone(status)
+        ? { model }
+        : {
+            model: updateDevTools(model, (devTools) => ({
+              ...devTools,
+              seedStatus: status.value,
+            })),
+          };
+    },
+
+    UpdatedDevToolsSeedCredits: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, seedCredits: value })) }
+        : { model },
+
+    UpdatedDevToolsSeedUsage: ({ value }) =>
+      model.devTools.isEnabled
+        ? { model: updateDevTools(model, (devTools) => ({ ...devTools, seedUsage: value })) }
+        : { model },
+
     ClickedEmitDevToolsEvent: () => {
       if (!model.devTools.isEnabled) return { model };
       const event = devToolsEventOf(model.devTools.eventTag);
@@ -1455,6 +1790,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedSeedDevToolsSnapshot: () =>
       model.devTools.isEnabled ? seedDevToolsSnapshot(model) : { model },
+
+    ClickedSeedDevToolsAccounts: () =>
+      model.devTools.isEnabled ? seedDevToolsAccounts(model) : { model },
+
+    ClickedClearDevToolsAccounts: () =>
+      model.devTools.isEnabled ? clearDevToolsAccounts(model) : { model },
 
     ClickedCatchUpDevToolsFeed: () => {
       if (!model.devTools.isEnabled) return { model };
@@ -1491,7 +1832,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedResetDevTools: () => {
       if (!model.devTools.isEnabled) return { model };
-      const reset = updateDevTools(model, (devTools) => ({ ...devTools, emitted: 0 }));
+      const cleared = clearDevToolsAccounts(model);
+      const reset = updateDevTools(cleared.model, (devTools) => ({ ...devTools, emitted: 0 }));
       return updateAccount(reset, (account) =>
         modifyFields(account, {
           events: () => [],
@@ -1504,6 +1846,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           pending: () => [],
           notice: () => Option.none(),
           holds: () => Option.none(),
+          providerRefs: () => Option.none(),
           preview: () => Option.none(),
           verify: () => Option.none(),
         }),

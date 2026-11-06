@@ -9,8 +9,10 @@ import {
   AdminPreviewInput,
   AdminReadError,
   AdminReads,
+  BillingOverview,
   HoldsAnswer,
   PreviewAnswer,
+  ProviderRefsAnswer,
 } from "./Admin/Reads.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingReadPage, BillingReadQuery } from "./BillingReadStore.ts";
@@ -56,6 +58,10 @@ export const AdminQueryMessage = defineMessageUnion({
   FailedGetCatalog: { requestId: Schema.Int, error: AdminReadError },
   SucceededHolds: { requestId: Schema.Int, answer: HoldsAnswer },
   FailedHolds: { requestId: Schema.Int, error: AdminReadError },
+  SucceededProviderRefs: { requestId: Schema.Int, answer: ProviderRefsAnswer },
+  FailedProviderRefs: { requestId: Schema.Int, error: AdminReadError },
+  SucceededOverview: { requestId: Schema.Int, overview: BillingOverview },
+  FailedOverview: { requestId: Schema.Int, error: AdminReadError },
 });
 export type AdminQueryMessage = typeof AdminQueryMessage.Type;
 
@@ -129,6 +135,38 @@ export const GetHolds = Command.define("GetHolds", {
   }),
 });
 
+/**
+ * One account's provider refs. The aggregate keeps one vendor-id group per
+ * provider; the console reads them here rather than folding them into a view.
+ * One-shot: refs change when the account's events say one was attached.
+ */
+export const GetProviderRefs = Command.define("GetProviderRefs", {
+  args: { requestId: Schema.Int, account: Schema.String },
+  messages: [AdminQueryMessage],
+  execute: Effect.fn(function* ({ requestId, account }) {
+    const reads = yield* AdminReads;
+    return yield* withResult(
+      reads.providerRefs(account),
+      (answer) => AdminQueryMessage.SucceededProviderRefs({ requestId, answer }),
+      (error) => AdminQueryMessage.FailedProviderRefs({ requestId, error }),
+    );
+  }),
+});
+
+/** Cross-account counts and recurring revenue for the dashboard overview. */
+export const GetOverview = Command.define("GetOverview", {
+  args: { requestId: Schema.Int },
+  messages: [AdminQueryMessage],
+  execute: Effect.fn(function* ({ requestId }) {
+    const reads = yield* AdminReads;
+    return yield* withResult(
+      reads.overview(),
+      (overview) => AdminQueryMessage.SucceededOverview({ requestId, overview }),
+      (error) => AdminQueryMessage.FailedOverview({ requestId, error }),
+    );
+  }),
+});
+
 /** The catalog the deployment validated, for tier choices and prices. */
 export const GetCatalog = Command.define("GetCatalog", {
   args: { requestId: Schema.Int },
@@ -181,6 +219,8 @@ export const AdminQueries = {
   Preview: PreviewCommand,
   Verify: VerifyAccount,
   Holds: GetHolds,
+  ProviderRefs: GetProviderRefs,
+  Overview: GetOverview,
   Catalog: GetCatalog,
 };
 

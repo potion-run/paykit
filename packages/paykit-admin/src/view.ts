@@ -1,4 +1,4 @@
-import { actionsFor } from "@potion.run/paykit/Admin";
+import { BillingOverview, actionsFor } from "@potion.run/paykit/Admin";
 import type { Allowance } from "@potion.run/paykit/Allowance";
 import type { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import type { Catalog } from "@potion.run/paykit/Catalog";
@@ -31,6 +31,8 @@ import { card, cardDescription, cardHeader, cardTitle } from "./ui/card.ts";
 import { empty } from "./ui/empty.ts";
 import { field } from "./ui/field.ts";
 import { input } from "./ui/input.ts";
+import { miniBars } from "./ui/mini-bars.ts";
+import { pieChart, type PieSegment } from "./ui/pie-chart.ts";
 import { select } from "./ui/select.ts";
 import { table, tableBody, tableCell, tableHead, tableHeader, tableRow } from "./ui/table.ts";
 import { tab, tabList } from "./ui/tabs.ts";
@@ -69,6 +71,7 @@ const iconPaths = {
   arrowLeft: "M19 12H5 M12 19l-7-7 7-7",
   chevronRight: "m9 18 6-6-6-6",
   features: "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z",
+  overview: "M3 3v18h18 M7 15l4-4 3 3 5-6",
   plans: "M12 2 2 7l10 5 10-5-10-5Z M2 17l10 5 10-5 M2 12l10 5 10-5",
 } as const;
 
@@ -196,6 +199,13 @@ const sidebarView = (model: Model, h: HtmlBuilder<Message>): Html =>
         [h.Class("pk-nav"), h.AriaLabel("Console")],
         [
           navItem(
+            "Overview",
+            iconPaths.overview,
+            model.route._tag === "Overview",
+            Message.ClickedOverview(),
+            h,
+          ),
+          navItem(
             "Accounts",
             iconPaths.accounts,
             model.route._tag === "Accounts" || model.route._tag === "Account",
@@ -257,6 +267,8 @@ const breadcrumbItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<H
         icon(h, iconPaths.chevronRight, "pk-crumb-icon"),
         h.strong([], [model.route.account]),
       ];
+    case "Overview":
+      return [h.strong([], ["Overview"])];
     case "Plans":
       return [h.strong([], ["Plans"])];
     case "Features":
@@ -371,6 +383,27 @@ const pageHeadView = (model: Model, h: HtmlBuilder<Message>): Html => {
       });
     case "Accounts":
       return accountsPageHead(h);
+    case "Overview":
+      return h.div(
+        [h.Class("pk-page-head")],
+        [
+          h.div(
+            [],
+            [
+              h.p([h.Class("pk-eyebrow")], ["Billing"]),
+              h.h1([], ["Overview"]),
+              h.p(
+                [h.Class("pk-page-subtitle")],
+                ["Revenue, account mix and the next period's scenario."],
+              ),
+            ],
+          ),
+          h.div(
+            [h.Class("pk-page-actions")],
+            [button("Refresh", Message.ClickedRefresh(), h, { variant: "default" })],
+          ),
+        ],
+      );
     case "Plans":
       return catalogPageHead(
         "Plans",
@@ -411,6 +444,9 @@ const badgeVariantOf = (kind: string, value: string): BadgeVariant => {
   }
   if (kind === "holds") {
     return Number(value) === 0 ? "secondary" : "info";
+  }
+  if (kind === "hold") {
+    return value === "open" ? "info" : value === "settled" ? "success" : "secondary";
   }
   return "secondary";
 };
@@ -644,7 +680,7 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                                       h.span(
                                         [h.Class("pk-account-meta")],
                                         [
-                                          `${formatMoney(row.credits, row.currency)}${
+                                          `${row.credits} credits${
                                             row.cancelAtPeriodEnd ? " · cancels" : ""
                                           }`,
                                         ],
@@ -720,6 +756,16 @@ const catalogFeature = (catalog: Catalog, id: string, h: HtmlBuilder<Message>): 
   );
 };
 
+const featureDisplay = (
+  catalog: Option.Option<Catalog>,
+  id: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  Option.match(catalog, {
+    onNone: () => h.span([h.Class("pk-catalog-feature-name")], [id]),
+    onSome: (value) => catalogFeature(value, id, h),
+  });
+
 const includedLabel = (allowance: Allowance): string =>
   allowance.kind === "flag"
     ? "On / off"
@@ -741,40 +787,48 @@ const allowanceTerms = (allowance: Allowance): string => {
 
 const tierKindOf = (tier: Tier): "subscription" | "one_off" => tier.kind ?? "subscription";
 
+const grantsTable = (
+  catalog: Catalog,
+  allowances: ReadonlyArray<Allowance>,
+  ariaLabel: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  table(
+    h,
+    [
+      tableHeader(h, [
+        tableRow(h, [
+          tableHead(h, ["Feature"]),
+          tableHead(h, ["Included"]),
+          tableHead(h, ["Overage"]),
+          tableHead(h, ["Resets"]),
+          tableHead(h, ["Terms"]),
+        ]),
+      ]),
+      tableBody(
+        h,
+        allowances.map((allowance) =>
+          tableRow(
+            h,
+            [
+              tableCell(h, [catalogFeature(catalog, allowance.feature, h)]),
+              tableCell(h, [includedLabel(allowance)]),
+              tableCell(h, [allowance.overage]),
+              tableCell(h, [allowance.resets]),
+              tableCell(h, [allowanceTerms(allowance)]),
+            ],
+            { key: allowance.feature },
+          ),
+        ),
+      ),
+    ],
+    { ariaLabel },
+  );
+
 const planGrants = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html =>
   tier.grants.length === 0
     ? h.p([h.Class("pk-muted")], ["This pack sells credits only."])
-    : table(
-        h,
-        [
-          tableHeader(h, [
-            tableRow(h, [
-              tableHead(h, ["Feature"]),
-              tableHead(h, ["Included"]),
-              tableHead(h, ["Overage"]),
-              tableHead(h, ["Resets"]),
-              tableHead(h, ["Terms"]),
-            ]),
-          ]),
-          tableBody(
-            h,
-            tier.grants.map((allowance) =>
-              tableRow(
-                h,
-                [
-                  tableCell(h, [catalogFeature(catalog, allowance.feature, h)]),
-                  tableCell(h, [includedLabel(allowance)]),
-                  tableCell(h, [allowance.overage]),
-                  tableCell(h, [allowance.resets]),
-                  tableCell(h, [allowanceTerms(allowance)]),
-                ],
-                { key: allowance.feature },
-              ),
-            ),
-          ),
-        ],
-        { ariaLabel: `${tier.name ?? tier.id} grants` },
-      );
+    : grantsTable(catalog, tier.grants, `${tier.name ?? tier.id} grants`, h);
 
 const planCard = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html => {
   const kind = tierKindOf(tier);
@@ -1086,7 +1140,157 @@ const billingView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html =
     { className: "pk-billing" },
   );
 
-const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Html => {
+/**
+ * The billing facts an operator checks after a payment failure or a tier
+ * change: the scheduled terms, the last proration, and the recovery window.
+ */
+const adjustmentsView = (
+  billing: BillingStateView,
+  catalog: Option.Option<Catalog>,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const pending = billing.pendingTier;
+  const proration = billing.proration;
+  const catalogValue = Option.getOrNull(catalog);
+  return card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Adjustments"]),
+            cardDescription(h, [
+              "Scheduled terms, the last proration, and the payment-recovery window.",
+            ]),
+          ],
+        ),
+        billing.dunningAttempts === 0
+          ? catalogBadge("No dunning", "outline", h)
+          : catalogBadge(`${billing.dunningAttempts} dunning`, "warning", h),
+      ]),
+      h.dl(
+        [h.Class("pk-facts")],
+        [
+          h.div([], [h.dt([], ["Dunning attempts"]), h.dd([], [String(billing.dunningAttempts)])]),
+          h.div(
+            [],
+            [h.dt([], ["Trial ends"]), h.dd([], [formatOptionalDateTime(billing.trialEndsAt)])],
+          ),
+          h.div(
+            [],
+            [h.dt([], ["Grace until"]), h.dd([], [formatOptionalDateTime(billing.graceUntil)])],
+          ),
+          h.div([], [h.dt([], ["Billing anchor"]), h.dd([], [billing.anchorTz])]),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-adjustment")],
+        [
+          h.h3([h.Class("pk-adjustment-title")], ["Scheduled change"]),
+          pending === undefined
+            ? h.p([h.Class("pk-muted")], ["No tier change is scheduled."])
+            : h.div(
+                [h.Class("pk-adjustment-body")],
+                [
+                  h.div(
+                    [h.Class("pk-plan-meta")],
+                    [
+                      h.span(
+                        [],
+                        [
+                          h.strong([], [pending.tier]),
+                          ` scheduled for ${formatDateTime(billing.periodEnd)}`,
+                        ],
+                      ),
+                      h.span(
+                        [],
+                        [
+                          pending.price === undefined
+                            ? "Free"
+                            : `${formatMoney(pending.price.amount, pending.price.currency)} / ${pending.price.interval}`,
+                        ],
+                      ),
+                      h.span(
+                        [],
+                        [
+                          `${pending.credits.toLocaleString("en")} credits · ${
+                            pending.creditsExpire === "never"
+                              ? "never expire"
+                              : "expire at period end"
+                          }`,
+                        ],
+                      ),
+                    ],
+                  ),
+                  ...(catalogValue === null
+                    ? [h.p([h.Class("pk-muted")], ["Catalog unavailable; grants cannot be shown."])]
+                    : [
+                        grantsTable(
+                          catalogValue,
+                          Object.values(pending.allowances),
+                          "Scheduled tier grants",
+                          h,
+                        ),
+                      ]),
+                ],
+              ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-adjustment")],
+        [
+          h.h3([h.Class("pk-adjustment-title")], ["Proration"]),
+          proration === undefined
+            ? h.p([h.Class("pk-muted")], ["No proration recorded for this standing."])
+            : h.div(
+                [h.Class("pk-adjustment-body")],
+                [
+                  prorationPanel(proration, h),
+                  h.p(
+                    [h.Class("pk-as-of")],
+                    [
+                      billing.prorationInvoice === undefined
+                        ? "No invoice recorded yet."
+                        : `Invoice ${billing.prorationInvoice}`,
+                    ],
+                  ),
+                ],
+              ),
+        ],
+      ),
+    ],
+    { className: "pk-adjustments" },
+  );
+};
+
+const entitlementTerms = (
+  entitlements: EntitlementsState,
+  feature: EntitlementsState["features"][string],
+): string => {
+  if (feature.kind === "flag") return "—";
+  const terms = [`overage ${feature.overage}`];
+  if (feature.carried > 0) terms.push(`${feature.carried} carried`);
+  if (feature.creditRates !== undefined) {
+    terms.push(
+      `credits ${Object.entries(feature.creditRates)
+        .map(([dimension, credits]) => `${dimension}: ${credits}`)
+        .join(" · ")}`,
+    );
+  }
+  if (feature.cap !== undefined) terms.push(`${feature.cap} unit cap`);
+  if (feature.unitPrice !== undefined)
+    terms.push(`${formatMoney(feature.unitPrice.amount, feature.unitPrice.currency)} / unit`);
+  if (feature.moneyCap !== undefined)
+    terms.push(`${formatMoney(feature.moneyCap, entitlements.currency)} money cap`);
+  return terms.join(" · ");
+};
+
+const featureTable = (
+  entitlements: EntitlementsState,
+  catalog: Option.Option<Catalog>,
+  h: HtmlBuilder<Message>,
+): Html => {
   const entries = Object.entries(entitlements.features);
   return card(
     h,
@@ -1096,7 +1300,9 @@ const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>):
           [],
           [
             cardTitle(h, ["Allowances"]),
-            cardDescription(h, ["What this standing includes, and what is left to use."]),
+            cardDescription(h, [
+              "What this standing includes, what is left, and the terms behind it.",
+            ]),
           ],
         ),
         badge("holds", String(entries.length), h),
@@ -1113,30 +1319,70 @@ const featureTable = (entitlements: EntitlementsState, h: HtmlBuilder<Message>):
                 tableRow(h, [
                   tableHead(h, ["Feature"]),
                   tableHead(h, ["Included"]),
-                  tableHead(h, ["Used"]),
-                  tableHead(h, ["Reserved"]),
+                  tableHead(h, ["Used / held"]),
                   tableHead(h, ["Remaining"]),
-                  tableHead(h, ["Overage"]),
-                  tableHead(h, ["Resets"]),
+                  tableHead(h, ["Resets at"]),
+                  tableHead(h, ["Access"]),
+                  tableHead(h, ["Terms"]),
                 ]),
               ]),
               tableBody(
                 h,
-                entries.map(([name, feature]) =>
-                  tableRow(
+                entries.map(([name, feature]) => {
+                  const kind = feature.kind ?? "metered";
+                  return tableRow(
                     h,
                     [
-                      tableCell(h, [name]),
-                      tableCell(h, [String(feature.included)]),
-                      tableCell(h, [String(feature.used)]),
-                      tableCell(h, [String(feature.reserved)]),
-                      tableCell(h, [String(feature.remaining)]),
-                      tableCell(h, [feature.overage]),
-                      tableCell(h, [feature.resets]),
+                      tableCell(h, [
+                        h.div(
+                          [h.Class("pk-feature-cell")],
+                          [
+                            featureDisplay(catalog, name, h),
+                            catalogBadge(
+                              kind === "flag" ? "Flag" : "Metered",
+                              kind === "flag" ? "secondary" : "outline",
+                              h,
+                            ),
+                          ],
+                        ),
+                      ]),
+                      tableCell(h, [
+                        kind === "flag"
+                          ? "On / off"
+                          : feature.creditRates !== undefined
+                            ? "Credit pool"
+                            : feature.included === null
+                              ? "—"
+                              : feature.included === "unlimited"
+                                ? "Unlimited"
+                                : String(feature.included),
+                      ]),
+                      tableCell(h, [
+                        `${feature.used}${
+                          feature.reserved === 0 ? "" : ` / ${feature.reserved} held`
+                        }`,
+                      ]),
+                      tableCell(h, [feature.remaining === null ? "—" : String(feature.remaining)]),
+                      tableCell(h, [
+                        feature.resetsAt === null ? "Never" : formatDateTime(feature.resetsAt),
+                      ]),
+                      tableCell(h, [
+                        catalogBadge(
+                          feature.allowed ? "Allowed" : "Blocked",
+                          feature.allowed ? "success" : "destructive",
+                          h,
+                        ),
+                      ]),
+                      tableCell(h, [entitlementTerms(entitlements, feature)], {
+                        className: "pk-feature-terms",
+                      }),
                     ],
-                    { key: name },
-                  ),
-                ),
+                    {
+                      key: name,
+                      attributes: [h.DataAttribute("paykit-feature", name)],
+                    },
+                  );
+                }),
               ),
             ],
             { ariaLabel: "Allowances" },
@@ -1163,6 +1409,8 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   if (Option.isNone(account.holds)) return h.empty;
   const holds = account.holds.value;
   const open = holds.holds.filter((hold) => hold.status === "open");
+  const closed = holds.holds.filter((hold) => hold.status !== "open");
+  const rows = [...open, ...closed];
   const asOf = Option.getOrUndefined(holds.asOf);
   return card(
     h,
@@ -1171,8 +1419,8 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
         h.div(
           [],
           [
-            cardTitle(h, ["Open holds"]),
-            cardDescription(h, ["Reservations the allowance table folds into reserved counts."]),
+            cardTitle(h, ["Holds"]),
+            cardDescription(h, ["Every reservation, including the ones that settled or released."]),
             h.p(
               [
                 h.Class("pk-as-of"),
@@ -1185,7 +1433,13 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
             ),
           ],
         ),
-        badge("holds", String(open.length), h),
+        h.div(
+          [h.Class("pk-badges")],
+          [
+            badge("holds", String(open.length), h),
+            catalogBadge(`${closed.length} closed`, "secondary", h),
+          ],
+        ),
       ]),
       Option.match(holds.error, {
         onNone: () => h.empty,
@@ -1194,9 +1448,9 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
             alertDescription(h, [`Could not load holds: ${error}`]),
           ]),
       }),
-      open.length === 0
+      rows.length === 0
         ? empty(h, {
-            title: "No open holds.",
+            title: "No holds yet.",
             description:
               "A hold appears from the moment it is taken until it settles or is released.",
           })
@@ -1205,24 +1459,45 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
             [
               tableHeader(h, [
                 tableRow(h, [
+                  tableHead(h, ["Status"]),
                   tableHead(h, ["Hold"]),
                   tableHead(h, ["Feature"]),
                   tableHead(h, ["Amount"]),
-                  tableHead(h, ["Credits"]),
+                  tableHead(h, ["Terms"]),
                   tableHead(h, ["Held at"]),
                   tableHead(h, ["Expires"]),
                 ]),
               ]),
               tableBody(
                 h,
-                open.map((hold) =>
+                rows.map((hold) =>
                   tableRow(
                     h,
                     [
+                      tableCell(h, [badge("hold", hold.status, h)]),
                       tableCell(h, [hold.id], { className: "pk-account-id" }),
-                      tableCell(h, [hold.feature]),
+                      tableCell(h, [
+                        h.div(
+                          [h.Class("pk-catalog-feature")],
+                          [
+                            h.span([h.Class("pk-catalog-feature-name")], [hold.feature]),
+                            ...(hold.dimension === undefined
+                              ? []
+                              : [
+                                  h.span(
+                                    [h.Class("pk-catalog-feature-id")],
+                                    [`dimension ${hold.dimension}`],
+                                  ),
+                                ]),
+                          ],
+                        ),
+                      ]),
                       tableCell(h, [String(hold.amount)]),
-                      tableCell(h, [hold.cost === 0 ? "—" : `${hold.cost} credits`]),
+                      tableCell(h, [
+                        hold.rate === 0 && hold.cost === 0
+                          ? "counted"
+                          : `${hold.rate} rate · ${hold.cost} credits`,
+                      ]),
                       tableCell(h, [formatDateTime(hold.at)]),
                       tableCell(h, [formatDateTime(hold.expiresAt)]),
                     ],
@@ -1231,10 +1506,101 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
                 ),
               ),
             ],
-            { ariaLabel: "Open holds" },
+            { ariaLabel: "Holds" },
           ),
     ],
-    { className: "pk-holds", attributes: [h.DataAttribute("paykit-holds", String(open.length))] },
+    {
+      className: "pk-holds",
+      attributes: [
+        h.DataAttribute("paykit-holds", String(open.length)),
+        h.DataAttribute("paykit-hold-history", String(rows.length)),
+      ],
+    },
+  );
+};
+
+/**
+ * The vendor ids the aggregate attached to this account, one group per
+ * provider. The model never reads them; an operator uses them to find the
+ * matching object in the provider's dashboard.
+ */
+const providerRefsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
+  const current = Option.getOrNull(account.providerRefs);
+  if (current === null) return h.empty;
+  const entries = Object.entries(current.refs);
+  const asOf = Option.getOrUndefined(current.asOf);
+  return card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Provider refs"]),
+            cardDescription(h, ["Vendor ids attached by the billing provider."]),
+            h.p(
+              [
+                h.Class("pk-as-of"),
+                h.DataAttribute(
+                  "paykit-as-of",
+                  asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
+                ),
+              ],
+              [readLabel(current.asOf, current.state === "Loading")],
+            ),
+          ],
+        ),
+        catalogBadge(String(entries.length), entries.length === 0 ? "secondary" : "info", h),
+      ]),
+      Option.match(current.error, {
+        onNone: () => h.empty,
+        onSome: (error) =>
+          alert(h, { variant: "destructive" }, [
+            alertDescription(h, [`Could not load provider refs: ${error}`]),
+          ]),
+      }),
+      current.state === "Loading" && entries.length === 0
+        ? h.p([h.Class("pk-muted")], ["Reading provider refs…"])
+        : entries.length === 0
+          ? empty(h, {
+              title: "No provider refs.",
+              description:
+                "The provider attaches these when a checkout or subscription is recorded.",
+            })
+          : table(
+              h,
+              [
+                tableHeader(h, [
+                  tableRow(h, [
+                    tableHead(h, ["Provider"]),
+                    tableHead(h, ["Customer"]),
+                    tableHead(h, ["Subscription"]),
+                    tableHead(h, ["Checkout"]),
+                  ]),
+                ]),
+                tableBody(
+                  h,
+                  entries.map(([provider, refs]) =>
+                    tableRow(
+                      h,
+                      [
+                        tableCell(h, [h.span([h.Class("pk-plan-name")], [provider])]),
+                        tableCell(h, [refs.customer ?? "—"], { className: "pk-account-id" }),
+                        tableCell(h, [refs.subscription ?? "—"], { className: "pk-account-id" }),
+                        tableCell(h, [refs.checkout ?? "—"], { className: "pk-account-id" }),
+                      ],
+                      { key: provider },
+                    ),
+                  ),
+                ),
+              ],
+              { ariaLabel: "Provider refs" },
+            ),
+    ],
+    {
+      className: "pk-provider-refs",
+      attributes: [h.DataAttribute("paykit-provider-refs", String(entries.length))],
+    },
   );
 };
 
@@ -1737,6 +2103,57 @@ const pendingView = (pending: Pending, h: HtmlBuilder<Message>): Html =>
     ],
   );
 
+const eventVolumeView = (events: AccountState["events"], h: HtmlBuilder<Message>): Html => {
+  if (events.length === 0) return h.empty;
+  const hour = 60 * 60 * 1000;
+  const newest = events.reduce((max, event) => Math.max(max, event.at.epochMilliseconds), 0);
+  const start = newest - 24 * hour;
+  const counts = Array.from({ length: 24 }, () => 0);
+  for (const event of events) {
+    const index = Math.min(
+      23,
+      Math.max(0, Math.floor((event.at.epochMilliseconds - start) / hour)),
+    );
+    counts[index] = (counts[index] ?? 0) + 1;
+  }
+  return h.div(
+    [h.Class("pk-event-volume")],
+    [
+      h.div(
+        [h.Class("pk-event-volume-head")],
+        [
+          h.span([], ["Event volume · last 24 hours"]),
+          h.span([h.Class("pk-muted")], [`${events.length} loaded`]),
+        ],
+      ),
+      miniBars(h, {
+        values: counts,
+        className: "pk-event-volume-bars",
+        opacityRamp: true,
+        label: "Event volume over the last 24 hours",
+      }),
+    ],
+  );
+};
+
+const eventLogRow = (event: AccountState["events"][number], h: HtmlBuilder<Message>): Html =>
+  h.keyed("details")(
+    event.seq,
+    [h.Class("pk-log-row"), h.DataAttribute("paykit-event", event.tag)],
+    [
+      h.summary(
+        [h.Class("pk-log-summary")],
+        [
+          h.span([h.Class("pk-log-time")], [formatDateTime(event.at)]),
+          h.code([h.Class("pk-log-tag")], [event.tag]),
+          h.span([h.Class("pk-log-command")], [event.commandId]),
+          h.span([h.Class("pk-log-chevron")], [icon(h, iconPaths.chevronRight)]),
+        ],
+      ),
+      h.div([h.Class("pk-log-body")], [h.pre([], [event.body])]),
+    ],
+  );
+
 const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
   card(
     h,
@@ -1746,11 +2163,14 @@ const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
           [],
           [
             cardTitle(h, ["Events"]),
-            cardDescription(h, ["The account's complete event log, newest first."]),
+            cardDescription(h, [
+              "The complete event log, newest first. Open a row for its payload.",
+            ]),
           ],
         ),
         badge("feed", account.feed, h),
       ]),
+      eventVolumeView(account.events, h),
       Option.match(account.error, {
         onNone: () => h.empty,
         onSome: (error) => alert(h, { variant: "destructive" }, [alertDescription(h, [error])]),
@@ -1760,25 +2180,9 @@ const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
             title: "Waiting for the first event.",
             description: "The account's event stream fills this panel as it catches up.",
           })
-        : h.ol(
-            [h.Class("pk-events pk-event-log")],
-            account.events.map((event) =>
-              h.keyed("li")(
-                event.seq,
-                [h.Class("pk-event")],
-                [
-                  h.div(
-                    [h.Class("pk-event-head")],
-                    [
-                      h.code([], [event.tag]),
-                      h.span([h.Class("pk-muted")], [formatDateTime(event.at)]),
-                    ],
-                  ),
-                  h.div([h.Class("pk-muted")], [event.commandId]),
-                  h.pre([], [event.body]),
-                ],
-              ),
-            ),
+        : h.div(
+            [h.Class("pk-event-log pk-log-list"), h.Role("list")],
+            account.events.map((event) => eventLogRow(event, h)),
           ),
     ],
     { className: "pk-event-card" },
@@ -2017,8 +2421,15 @@ const accountView = (model: Model, account: AccountState, h: HtmlBuilder<Message
 
   const allowancesPanel = Option.match(account.entitlements, {
     onNone: () => h.empty,
-    onSome: (value) => featureTable(value, h),
+    onSome: (value) => featureTable(value, model.catalog, h),
   });
+
+  const adjustmentsPanel = Option.match(account.billing, {
+    onNone: () => h.empty,
+    onSome: (value) => adjustmentsView(value, model.catalog, h),
+  });
+
+  const providerRefsPanel = providerRefsView(account, h);
 
   const usagePanel = Option.match(account.entitlements, {
     onNone: () => h.empty,
@@ -2042,7 +2453,10 @@ const accountView = (model: Model, account: AccountState, h: HtmlBuilder<Message
         "What the standing includes and what this period has recorded.",
         [
           accountSummaryView(account, h),
-          h.div([h.Class("pk-overview-grid")], [billingPanel, allowancesPanel, usagePanel]),
+          h.div(
+            [h.Class("pk-overview-grid")],
+            [billingPanel, allowancesPanel, adjustmentsPanel, providerRefsPanel, usagePanel],
+          ),
         ],
         h,
       ),
@@ -2185,10 +2599,22 @@ const devToolsReadsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const isAccountOpen = account !== null;
   const status =
     account === null
-      ? "No account open."
+      ? `No account open · ${model.devTools.labRows.length} lab accounts`
       : `${account.id} · ${account.feed} · ${account.events.length} events · ${
           Option.isSome(account.billing) ? "standing seeded" : "no standing"
-        }`;
+        } · ${model.devTools.labRows.length} lab accounts`;
+  const tierOptions = Option.match(model.catalog, {
+    onNone: () => [{ value: model.devTools.seedTier, label: model.devTools.seedTier }],
+    onSome: (catalog) =>
+      catalog.tiers.map((tier) => ({
+        value: String(tier.id),
+        label: tier.name === undefined ? String(tier.id) : `${tier.name} (${tier.id})`,
+      })),
+  });
+  const statusOptions = ["trialing", "active", "grace", "canceled", "expired"].map((value) => ({
+    value,
+    label: value,
+  }));
 
   return h.div(
     [h.Class("pk-devtools-body")],
@@ -2196,24 +2622,65 @@ const devToolsReadsView = (model: Model, h: HtmlBuilder<Message>): Html => {
       h.p(
         [h.Class("pk-devtools-note")],
         [
-          "Open an account the deployment does not have, or seed the standing, allowances and holds of the open one.",
+          "Seed an account with the terms you choose, or seed a varied set. Lab rows are local to this browser: they appear in the list and the dashboard overlay, never in the server projection.",
         ],
       ),
-      textField(
-        "devtools-account-id",
-        "Account id",
-        model.devTools.accountId,
-        (value) => Message.UpdatedDevToolsAccountId({ value }),
-        h,
+      h.div(
+        [h.Class("pk-devtools-grid")],
+        [
+          textField(
+            "devtools-account-id",
+            "Account id",
+            model.devTools.accountId,
+            (value) => Message.UpdatedDevToolsAccountId({ value }),
+            h,
+          ),
+          selectField(
+            "devtools-seed-tier",
+            "Tier",
+            model.devTools.seedTier,
+            tierOptions,
+            (value) => Message.UpdatedDevToolsSeedTier({ value }),
+            h,
+          ),
+          selectField(
+            "devtools-seed-status",
+            "Status",
+            model.devTools.seedStatus,
+            statusOptions,
+            (value) => Message.UpdatedDevToolsSeedStatus({ value }),
+            h,
+          ),
+          textField(
+            "devtools-seed-credits",
+            "Credits",
+            model.devTools.seedCredits,
+            (value) => Message.UpdatedDevToolsSeedCredits({ value }),
+            h,
+            "number",
+          ),
+          textField(
+            "devtools-seed-usage",
+            "Usage (first feature)",
+            model.devTools.seedUsage,
+            (value) => Message.UpdatedDevToolsSeedUsage({ value }),
+            h,
+            "number",
+          ),
+        ],
       ),
       h.div(
         [h.Class("pk-devtools-actions")],
         [
+          button("Seed account", Message.ClickedSeedDevToolsSnapshot(), h, {
+            variant: "default",
+          }),
           button("Open account", Message.ClickedOpenDevToolsAccount(), h, {
             isDisabled: model.devTools.accountId.trim() === "",
           }),
-          button("Seed demo data", Message.ClickedSeedDevToolsSnapshot(), h, {
-            isDisabled: !isAccountOpen,
+          button("Seed 12 accounts", Message.ClickedSeedDevToolsAccounts(), h),
+          button("Clear lab accounts", Message.ClickedClearDevToolsAccounts(), h, {
+            isDisabled: model.devTools.labRows.length === 0,
           }),
           button("Fail reads", Message.ClickedFailDevToolsReads(), h, {
             isDisabled: !isAccountOpen,
@@ -2334,8 +2801,454 @@ const devToolsView = (model: Model, h: HtmlBuilder<Message>): Html =>
       )
     : h.empty;
 
+const PIE_COLORS = [
+  "var(--pk-primary)",
+  "var(--pk-info)",
+  "var(--pk-success)",
+  "var(--pk-warning)",
+  "var(--pk-destructive)",
+  "var(--pk-muted-foreground)",
+] as const;
+
+const STATUS_COLORS: Readonly<Record<string, string>> = {
+  trialing: "var(--pk-info)",
+  active: "var(--pk-success)",
+  grace: "var(--pk-warning)",
+  canceled: "var(--pk-destructive)",
+  expired: "var(--pk-muted-foreground)",
+};
+
+const capitalise = (value: string): string =>
+  value === "" ? value : `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
+
+const countOfStatus = (overview: BillingOverview, status: string): number =>
+  overview.byStatus.find((entry) => entry.status === status)?.count ?? 0;
+
+const countOfStanding = (overview: BillingOverview, standing: string): number =>
+  overview.byStanding.find((entry) => entry.standing === standing)?.count ?? 0;
+
+const tierLabel = (catalog: Option.Option<Catalog>, tier: string): string =>
+  Option.match(catalog, {
+    onNone: () => tier,
+    onSome: (value) => value.tiers.find((entry) => entry.id === tier)?.name ?? tier,
+  });
+
+const pieLegend = (segments: ReadonlyArray<PieSegment>, h: HtmlBuilder<Message>): Html =>
+  h.div(
+    [h.Class("pk-pie-legend")],
+    segments.map((segment) =>
+      h.div(
+        [h.Class("pk-pie-legend-row")],
+        [
+          h.span([h.Class("pk-pie-dot"), h.Style({ "background-color": segment.color })], []),
+          h.span([h.Class("pk-pie-legend-label")], [segment.label]),
+          h.span([h.Class("pk-pie-legend-count")], [String(segment.value)]),
+        ],
+      ),
+    ),
+  );
+
+const pieCard = (
+  title: string,
+  description: string,
+  segments: ReadonlyArray<PieSegment>,
+  centerValue: string,
+  centerLabel: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  card(
+    h,
+    [
+      cardHeader(h, [h.div([], [cardTitle(h, [title]), cardDescription(h, [description])])]),
+      segments.length === 0
+        ? empty(h, {
+            title: "No accounts yet.",
+            description: "The mix appears once accounts have loaded.",
+          })
+        : h.div(
+            [h.Class("pk-pie-layout")],
+            [
+              pieChart(h, {
+                segments,
+                centerValue,
+                centerLabel,
+                size: 144,
+                label: `${title}: ${centerValue} ${centerLabel}`,
+              }),
+              pieLegend(segments, h),
+            ],
+          ),
+    ],
+    { className: "pk-pie-card" },
+  );
+
+const revenueTable = (overview: BillingOverview, h: HtmlBuilder<Message>): Html =>
+  card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Revenue by currency"]),
+            cardDescription(h, ["Recurring revenue grouped by the currency it is billed in."]),
+          ],
+        ),
+      ]),
+      table(
+        h,
+        [
+          tableHeader(h, [
+            tableRow(h, [
+              tableHead(h, ["Currency"]),
+              tableHead(h, ["MRR"]),
+              tableHead(h, ["ARR"]),
+              tableHead(h, ["At risk"]),
+              tableHead(h, ["Trial pipeline"]),
+              tableHead(h, ["Churned"]),
+            ]),
+          ]),
+          tableBody(
+            h,
+            overview.revenue.map((entry) =>
+              tableRow(
+                h,
+                [
+                  tableCell(h, [entry.currency.toUpperCase()]),
+                  tableCell(h, [formatMoney(entry.mrr, entry.currency)]),
+                  tableCell(h, [formatMoney(entry.arr, entry.currency)]),
+                  tableCell(h, [formatMoney(entry.atRisk, entry.currency)]),
+                  tableCell(h, [formatMoney(entry.trialPipeline, entry.currency)]),
+                  tableCell(h, [formatMoney(entry.churned, entry.currency)]),
+                ],
+                { key: entry.currency },
+              ),
+            ),
+          ),
+        ],
+        { ariaLabel: "Revenue by currency" },
+      ),
+    ],
+    { className: "pk-revenue" },
+  );
+
+const attentionView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const rows = model.accounts.rows.filter(
+    (row) => row.standing !== "good" || row.cancelAtPeriodEnd,
+  );
+  return card(
+    h,
+    [
+      cardHeader(h, [
+        h.div(
+          [],
+          [
+            cardTitle(h, ["Needs attention"]),
+            cardDescription(h, ["Grace, blocked or canceling accounts on the loaded page."]),
+          ],
+        ),
+        h.span([h.Class("pk-count-pill")], [String(rows.length)]),
+      ]),
+      rows.length === 0
+        ? empty(h, {
+            title: "Nothing needs attention.",
+            description: "No account on the loaded page is in grace, blocked or canceling.",
+          })
+        : table(
+            h,
+            [
+              tableHeader(h, [
+                tableRow(h, [
+                  tableHead(h, ["Account"]),
+                  tableHead(h, ["Plan"]),
+                  tableHead(h, ["Standing"]),
+                  tableHead(h, ["Status"]),
+                  tableHead(h, ["Period end"]),
+                ]),
+              ]),
+              tableBody(
+                h,
+                rows.map((row) =>
+                  tableRow(
+                    h,
+                    [
+                      tableCell(h, [row.account], { className: "pk-account-id" }),
+                      tableCell(h, [row.tier]),
+                      tableCell(h, [badge("standing", row.standing, h)]),
+                      tableCell(h, [badge("status", row.status, h)]),
+                      tableCell(h, [formatDateTime(row.periodEnd)]),
+                    ],
+                    {
+                      key: row.account,
+                      className: "pk-row",
+                      attributes: [
+                        h.OnClick(Message.ClickedAccount({ account: AccountId.make(row.account) })),
+                      ],
+                    },
+                  ),
+                ),
+              ),
+            ],
+            { ariaLabel: "Accounts needing attention" },
+          ),
+    ],
+    { className: "pk-attention" },
+  );
+};
+
+/**
+ * Add the lab's local rows to the server aggregate. The dashboard is the one
+ * page where a devtools seed should be visible, and the server projection
+ * never sees those rows.
+ */
+const mergeOverview = (
+  base: BillingOverview,
+  labRows: ReadonlyArray<BillingReadRow>,
+  catalog: Option.Option<Catalog>,
+): BillingOverview => {
+  if (labRows.length === 0) return base;
+  const status = new Map(base.byStatus.map((entry) => [entry.status, entry.count]));
+  const standing = new Map(base.byStanding.map((entry) => [entry.standing, entry.count]));
+  const tiers = new Map(base.byTier.map((entry) => [entry.tier, entry.count]));
+  const revenue = new Map(base.revenue.map((entry) => [entry.currency, { ...entry }]));
+  const priceOf = (row: BillingReadRow, currency: string | undefined) =>
+    Option.match(catalog, {
+      onNone: () => ({
+        currency,
+        monthly: 0,
+      }),
+      onSome: (value) => {
+        const price = value.tiers.find((tier) => String(tier.id) === row.tier)?.price;
+        return price === undefined
+          ? { currency, monthly: 0 }
+          : {
+              currency: price.currency,
+              monthly: price.interval === "annual" ? Math.round(price.amount / 12) : price.amount,
+            };
+      },
+    });
+  for (const row of labRows) {
+    status.set(row.status, (status.get(row.status) ?? 0) + 1);
+    standing.set(row.standing, (standing.get(row.standing) ?? 0) + 1);
+    tiers.set(row.tier, (tiers.get(row.tier) ?? 0) + 1);
+    const { currency, monthly } = priceOf(row, row.currency);
+    if (currency === undefined || monthly === 0) continue;
+    const entry = revenue.get(currency) ?? {
+      currency,
+      mrr: 0,
+      arr: 0,
+      trialPipeline: 0,
+      atRisk: 0,
+      churned: 0,
+    };
+    if (row.status === "active" || row.status === "grace") {
+      entry.mrr += monthly;
+      if (row.status === "grace") entry.atRisk += monthly;
+    } else if (row.status === "trialing") {
+      entry.trialPipeline += monthly;
+    } else {
+      entry.churned += monthly;
+    }
+    entry.arr = entry.mrr * 12;
+    revenue.set(currency, entry);
+  }
+  return BillingOverview.make({
+    asOf: base.asOf,
+    accounts: base.accounts + labRows.length,
+    byStatus: base.byStatus.map((entry) => ({
+      status: entry.status,
+      count: status.get(entry.status) ?? 0,
+    })),
+    byStanding: base.byStanding.map((entry) => ({
+      standing: entry.standing,
+      count: standing.get(entry.standing) ?? 0,
+    })),
+    byTier: [...tiers].map(([tier, count]) => ({ tier, count })),
+    revenue: [...revenue.values()].toSorted((left, right) =>
+      left.currency.localeCompare(right.currency),
+    ),
+  });
+};
+
+const overviewView = (model: Model, h: HtmlBuilder<Message>): Html => {
+  const state = Option.getOrNull(model.overview);
+  if (state === null) {
+    return empty(h, {
+      title: "Loading the overview…",
+      description: "The dashboard aggregates every account when it opens.",
+    });
+  }
+  if (Option.isSome(state.error)) {
+    return alert(h, { variant: "destructive" }, [
+      alertDescription(h, [`Could not load the overview: ${state.error.value}`]),
+    ]);
+  }
+  const serverOverview = Option.getOrNull(state.overview);
+  if (serverOverview === null) {
+    return empty(h, {
+      title: "Loading the overview…",
+      description: "The dashboard aggregates every account when it opens.",
+    });
+  }
+  const labRows = model.devTools.isEnabled ? model.devTools.labRows : [];
+  const overview = mergeOverview(serverOverview, labRows, model.catalog);
+  const primary = overview.revenue[0];
+  const active = countOfStatus(overview, "active");
+  const trialing = countOfStatus(overview, "trialing");
+  const grace = countOfStatus(overview, "grace");
+  const paying = active + grace;
+  const mrr = primary?.mrr ?? 0;
+  const currency = primary?.currency;
+  const growth = Array.from({ length: 12 }, (_, index) => Math.round(mrr * 1.1 ** (index + 1)));
+  const projected = growth[growth.length - 1] ?? 0;
+  const tierSegments: ReadonlyArray<PieSegment> = overview.byTier
+    .filter((entry) => entry.count > 0)
+    .map((entry, index) => ({
+      label: tierLabel(model.catalog, entry.tier),
+      value: entry.count,
+      color: PIE_COLORS[index % PIE_COLORS.length] ?? "var(--pk-primary)",
+    }));
+  const statusSegments: ReadonlyArray<PieSegment> = overview.byStatus
+    .filter((entry) => entry.count > 0)
+    .map((entry) => ({
+      label: capitalise(entry.status),
+      value: entry.count,
+      color: STATUS_COLORS[entry.status] ?? "var(--pk-muted-foreground)",
+    }));
+  return h.div(
+    [h.Class("pk-overview-page"), h.DataAttribute("paykit-overview", "dashboard")],
+    [
+      h.div(
+        [h.Class("pk-stats")],
+        [
+          stat(
+            "MRR",
+            primary === undefined ? "—" : formatMoney(primary.mrr, primary.currency),
+            primary === undefined ? "No priced accounts" : `${paying} paying`,
+            "success",
+            h,
+          ),
+          stat(
+            "ARR",
+            primary === undefined ? "—" : formatMoney(primary.arr, primary.currency),
+            "Annualized run rate",
+            "success",
+            h,
+          ),
+          stat(
+            "At risk",
+            primary === undefined ? "—" : formatMoney(primary.atRisk, primary.currency),
+            `${grace} in grace`,
+            "warning",
+            h,
+          ),
+          stat(
+            "Trial pipeline",
+            primary === undefined ? "—" : formatMoney(primary.trialPipeline, primary.currency),
+            `${trialing} trialing`,
+            "info",
+            h,
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-overview-charts")],
+        [
+          pieCard(
+            "Accounts by plan",
+            "How the deployment's accounts are distributed across plans.",
+            tierSegments,
+            String(overview.accounts),
+            "accounts",
+            h,
+          ),
+          pieCard(
+            "Accounts by status",
+            "Where accounts sit in the subscription lifecycle.",
+            statusSegments,
+            String(overview.accounts),
+            "accounts",
+            h,
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("pk-overview-lower")],
+        [
+          card(
+            h,
+            [
+              cardHeader(h, [
+                h.div(
+                  [],
+                  [
+                    cardTitle(h, ["Growth scenario"]),
+                    cardDescription(h, [
+                      "Projected MRR at 10% monthly growth. A scenario, not a forecast.",
+                    ]),
+                  ],
+                ),
+                primary === undefined
+                  ? h.empty
+                  : catalogBadge(primary.currency.toUpperCase(), "outline", h),
+              ]),
+              growth.length === 0 || mrr === 0
+                ? empty(h, {
+                    title: "No recurring revenue to project.",
+                    description:
+                      "A priced, active account is needed before a projection can be drawn.",
+                  })
+                : h.div(
+                    [h.Class("pk-growth")],
+                    [
+                      miniBars(h, {
+                        values: growth,
+                        className: "pk-growth-bars",
+                        opacityRamp: true,
+                        label: "Projected MRR over the next 12 months",
+                      }),
+                      h.div(
+                        [h.Class("pk-growth-meta")],
+                        [
+                          h.span(
+                            [],
+                            [h.strong([], [formatMoney(projected, currency)]), " MRR in 12 months"],
+                          ),
+                          h.span(
+                            [],
+                            [
+                              h.strong([], [formatMoney(projected * 12, currency)]),
+                              " projected ARR",
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+            ],
+            { className: "pk-growth-card" },
+          ),
+          attentionView(model, h),
+        ],
+      ),
+      ...(overview.revenue.length > 0 ? [revenueTable(overview, h)] : []),
+      h.p(
+        [h.Class("pk-as-of")],
+        [
+          `Read ${formatDateTime(overview.asOf)} · ${overview.accounts} accounts · ${countOfStanding(
+            overview,
+            "good",
+          )} good standing`,
+        ],
+      ),
+    ],
+  );
+};
+
 const pageBodyView = (model: Model, h: HtmlBuilder<Message>): Html => {
   switch (model.route._tag) {
+    case "Overview":
+      return overviewView(model, h);
     case "Accounts":
       return accountsView(model, h);
     case "Account":

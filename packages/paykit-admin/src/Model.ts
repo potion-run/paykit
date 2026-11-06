@@ -1,5 +1,5 @@
 import type { AdminAction } from "@potion.run/paykit/Admin";
-import { PreviewAnswer, PreviewCommandSchema } from "@potion.run/paykit/Admin";
+import { BillingOverview, PreviewAnswer, PreviewCommandSchema } from "@potion.run/paykit/Admin";
 import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
 import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
 import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
@@ -9,7 +9,7 @@ import { CommandIds } from "@potion.run/paykit/Foldkit";
 import { Proration } from "@potion.run/paykit/Proration";
 import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
-import { AccountId, HoldRecord } from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountId, HoldRecord, Refs } from "@potion.run/paykit/Subscription/Subscription.state";
 import { UsageTimeline, initialTimeline } from "@potion.run/paykit/Timeline";
 import { VerifyMismatch } from "@potion.run/paykit/Verify";
 import * as Option from "effect/Option";
@@ -161,6 +161,30 @@ export const HoldsState = Schema.Struct({
 });
 export type HoldsState = typeof HoldsState.Type;
 
+/**
+ * One account's vendor ids, per provider. Refs are entities the aggregate
+ * records, not a fold, so an operator reads them as a stamped snapshot.
+ */
+export const ProviderRefsState = Schema.Struct({
+  requestId: Schema.Int,
+  account: Schema.String,
+  state: LoadState,
+  asOf: Schema.Option(Schema.DateTimeUtc),
+  refs: Refs,
+  error: Schema.Option(Schema.String),
+});
+export type ProviderRefsState = typeof ProviderRefsState.Type;
+
+/** A cross-account dashboard read, with the request that asked for it. */
+export const OverviewState = Schema.Struct({
+  requestId: Schema.Int,
+  state: LoadState,
+  asOf: Schema.Option(Schema.DateTimeUtc),
+  overview: Schema.Option(BillingOverview),
+  error: Schema.Option(Schema.String),
+});
+export type OverviewState = typeof OverviewState.Type;
+
 /** What `decide` would do with a command, asked without recording it. */
 export const PreviewState = Schema.Struct({
   requestId: Schema.Int,
@@ -202,6 +226,8 @@ export const AccountState = Schema.Struct({
   notice: Schema.Option(Schema.String),
   /** The holds the allowance view folds into `reserved` counts. */
   holds: Schema.Option(HoldsState),
+  /** The vendor ids attached to this account, one entry per provider. */
+  providerRefs: Schema.Option(ProviderRefsState),
   /** What the model would do, asked by the operator. */
   preview: Schema.Option(PreviewState),
   /** The tier the preview form would ask about, before it is asked. */
@@ -240,6 +266,8 @@ export const Model = Schema.Struct({
   route: ConsoleRoute,
   accounts: AccountsState,
   account: Schema.Option(AccountState),
+  /** The cross-account dashboard read; loaded when the overview page opens. */
+  overview: Schema.Option(OverviewState),
 });
 export type Model = typeof Model.Type;
 
@@ -258,6 +286,7 @@ export const openedAccount = (id: AccountId): AccountState => ({
   pending: [],
   notice: Option.none(),
   holds: Option.none(),
+  providerRefs: Option.none(),
   preview: Option.none(),
   previewTier: Option.none(),
   verify: Option.none(),

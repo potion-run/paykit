@@ -1,16 +1,19 @@
 import { Subscription, tierTermsOf, type Allowance } from "@potion.run/paykit";
 import type { Catalog } from "@potion.run/paykit";
+import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
 import type { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
 import type {
   EntitlementsState,
   FeatureEntitlement,
 } from "@potion.run/paykit/Subscription/Entitlements.view";
 import {
-  type AccountId,
+  AccountId,
   type HoldRecord,
-  type SubscriptionStatus,
+  type Refs,
+  SubscriptionStatus,
   standingOf,
 } from "@potion.run/paykit/Subscription/Subscription.state";
+import { AccountEvent } from "@potion.run/paykit/Timeline";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -45,7 +48,11 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     tag: "TrialStarted",
     body: body({
       tier: "pro",
+      allowances: {},
+      remaining: {},
       credits: 200,
+      creditsExpire: "period",
+      rates: {},
       periodStart: "2030-01-01T00:00:00Z",
       periodEnd: "2030-01-15T00:00:00Z",
       anchorTz: "UTC",
@@ -57,7 +64,11 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     tag: "SubscriptionActivated",
     body: body({
       tier: "pro",
+      allowances: {},
+      remaining: {},
       credits: 500,
+      creditsExpire: "period",
+      rates: {},
       periodStart: "2030-01-01T00:00:00Z",
       periodEnd: "2030-02-01T00:00:00Z",
       anchorTz: "UTC",
@@ -70,7 +81,11 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     tag: "TierChanged",
     body: body({
       tier: "pro",
+      allowances: {},
+      remaining: {},
       credits: 500,
+      creditsExpire: "period",
+      rates: {},
       currency: "usd",
       interval: "month",
       priceBefore: { amount: 900, currency: "usd", interval: "month" },
@@ -246,6 +261,12 @@ export const DevToolsState = Schema.Struct({
   eventBody: Schema.String,
   commandId: Schema.String,
   emitted: Schema.Int,
+  seedTier: Schema.String,
+  seedStatus: SubscriptionStatus,
+  seedCredits: Schema.String,
+  seedUsage: Schema.String,
+  /** Rows the lab seeded locally; they never reach the server projection. */
+  labRows: Schema.Array(BillingReadRow),
 });
 export type DevToolsState = typeof DevToolsState.Type;
 
@@ -261,11 +282,44 @@ export const initialDevToolsState = (isEnabled: boolean): DevToolsState => ({
   eventBody: firstEvent.body,
   commandId: "devtools_command",
   emitted: 0,
+  seedTier: "pro",
+  seedStatus: "active",
+  seedCredits: "500",
+  seedUsage: "250",
+  labRows: [],
 });
 
 /** The default payload for a tag, so changing the select resets the body. */
 export const devToolsEventOf = (tag: string): Option.Option<DevToolsEvent> =>
   Array.findFirst(devToolsEvents, (event) => event.tag === tag);
+
+/**
+ * Decode a lab payload back into the aggregate event it names. The body is
+ * display-only until now; this is what lets an emitted event enter the same
+ * timeline fold as the live feed.
+ */
+const reviveDates = (value: unknown): unknown => {
+  if (typeof value === "string") {
+    const date = DateTime.make(value);
+    return Option.isSome(date) ? date.value : value;
+  }
+  if (Array.isArray(value)) return value.map(reviveDates);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, reviveDates(entry)]),
+    );
+  }
+  return value;
+};
+
+export const decodeDevToolsEvent = (event: DevToolsEvent): Option.Option<AccountEvent> => {
+  try {
+    const body = reviveDates(JSON.parse(event.body)) as Record<string, unknown>;
+    return Schema.decodeUnknownOption(AccountEvent)({ _tag: event.tag, ...body });
+  } catch {
+    return Option.none();
+  }
+};
 
 /**
  * A deterministic clock for simulated events. A lab that read `Date.now()`
@@ -359,6 +413,18 @@ export const devToolsBilling = (
     Option.map(terms, (value) => value.credits),
     () => 0,
   );
+  const pending = Option.getOrUndefined(
+    Option.flatMap(catalog, (value) =>
+      Option.flatMap(
+        Array.findFirst(value.tiers, (entry) => entry.id !== tier),
+        (entry) =>
+          Option.map(Option.fromNullishOr(tierTermsOf(value, entry.id)), (pendingTerms) => ({
+            tier: entry.id,
+            terms: pendingTerms,
+          })),
+      ),
+    ),
+  );
   return {
     account,
     tier,
@@ -373,6 +439,24 @@ export const devToolsBilling = (
     ...(price === undefined ? {} : { price, currency: price.currency }),
     ...(status === "trialing" ? { trialEndsAt: DateTime.add(at, { days: 14 }) } : {}),
     ...(status === "grace" ? { graceUntil: DateTime.add(at, { days: 7 }) } : {}),
+    ...(pending === undefined
+      ? {}
+      : {
+          pendingTier: {
+            tier: pending.tier,
+            allowances: pending.terms.allowances,
+            credits: pending.terms.credits,
+            creditsExpire: pending.terms.creditsExpire,
+            rates: pending.terms.rates,
+            ...(pending.terms.price === undefined
+              ? {}
+              : {
+                  price: pending.terms.price,
+                  currency: pending.terms.price.currency,
+                  interval: pending.terms.price.interval,
+                }),
+          },
+        }),
   };
 };
 
@@ -390,7 +474,7 @@ export const devToolsEntitlements = (
   const allowances = Option.map(terms, (value) => value.allowances);
   const reservedOf = (feature: string): number =>
     Array.reduce(holds, 0, (total, hold) =>
-      hold.feature === feature ? total + hold.amount : total,
+      hold.feature === feature && hold.status === "open" ? total + hold.amount : total,
     );
   const features = Option.match(allowances, {
     onNone: () => {
@@ -436,14 +520,28 @@ export const devToolsEntitlements = (
   };
 };
 
-/** Two open holds, so the holds panel has entity rows to show. */
+/** One fake vendor reference per provider key, so the refs panel has rows. */
+export const devToolsProviderRefs = (account: AccountId): Refs => ({
+  manual: {
+    customer: `cus_${account}`,
+    subscription: `sub_${account}`,
+    checkout: `chk_${account}`,
+  },
+});
+
+/** Two open holds and one settled hold, so the hold history has every status. */
 export const devToolsHolds = (
   account: AccountId,
   catalog: Option.Option<Catalog>,
   at: DateTime.Utc,
 ): ReadonlyArray<HoldRecord> => {
   const feature = seedFeature(catalog);
-  const hold = (id: string, amount: number, hours: number): HoldRecord => ({
+  const hold = (
+    id: string,
+    amount: number,
+    hours: number,
+    status: HoldRecord["status"] = "open",
+  ): HoldRecord => ({
     id,
     feature,
     amount,
@@ -451,7 +549,11 @@ export const devToolsHolds = (
     cost: 0,
     at,
     expiresAt: DateTime.add(at, { hours }),
-    status: "open",
+    status,
   });
-  return [hold(`hold_${account}_1`, 120, 2), hold(`hold_${account}_2`, 40, 6)];
+  return [
+    hold(`hold_${account}_1`, 120, 2),
+    hold(`hold_${account}_2`, 40, 6),
+    hold(`hold_${account}_3`, 30, -2, "settled"),
+  ];
 };

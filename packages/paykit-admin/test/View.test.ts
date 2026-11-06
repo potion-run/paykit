@@ -8,6 +8,8 @@ import {
   messages,
   tier,
 } from "@potion.run/paykit";
+import { BillingOverview } from "@potion.run/paykit/Admin";
+import { AdminQueries } from "@potion.run/paykit/Foldkit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -85,6 +87,52 @@ describe("the console view", () => {
       const selected = update(opened, Message.SelectedDevToolsTab({ tab })).model;
       expect(render(selected).title).toBe("Paykit admin");
     }
+  });
+
+  it("renders the overview page", () => {
+    expect(render(model(false, "/overview")).title).toBe("Paykit admin");
+  });
+
+  it("renders a loaded overview with charts", () => {
+    const base = model(false, "/overview");
+    const requestId = Option.getOrThrow(base.overview).requestId;
+    const overview = BillingOverview.make({
+      asOf: at,
+      accounts: 3,
+      byStatus: [
+        { status: "trialing", count: 1 },
+        { status: "active", count: 1 },
+        { status: "grace", count: 1 },
+        { status: "canceled", count: 0 },
+        { status: "expired", count: 0 },
+      ],
+      byStanding: [
+        { standing: "good", count: 2 },
+        { standing: "grace", count: 1 },
+        { standing: "blocked", count: 0 },
+      ],
+      byTier: [
+        { tier: "free", count: 1 },
+        { tier: "pro", count: 2 },
+      ],
+      revenue: [
+        {
+          currency: "usd",
+          mrr: 3_800,
+          arr: 45_600,
+          trialPipeline: 1_900,
+          atRisk: 1_900,
+          churned: 0,
+        },
+      ],
+    });
+    const loaded = update(
+      base,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededOverview({ requestId, overview }),
+      }),
+    ).model;
+    expect(render(loaded).title).toBe("Paykit admin");
   });
 
   it("renders the catalog pages read only", () => {

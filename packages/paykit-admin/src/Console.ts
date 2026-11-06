@@ -33,6 +33,8 @@ export type {
   EventRow,
   HoldsState,
   Pending,
+  OverviewState,
   PreviewState,
+  ProviderRefsState,
   VerifyState,
 } from "./Model.ts";

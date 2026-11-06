@@ -11,6 +11,8 @@ export * as Card from "./card.ts";
 export * as Empty from "./empty.ts";
 export * as Field from "./field.ts";
 export * as Input from "./input.ts";
+export * as MiniBars from "./mini-bars.ts";
+export * as PieChart from "./pie-chart.ts";
 export * as Select from "./select.ts";
 export * as Table from "./table.ts";
 export * as Tabs from "./tabs.ts";

@@ -50,6 +50,7 @@ export const noFilter: AccountFilter = {
  * - `/` — the account list
  * - `/accounts/:account` — one account, with the list's filters preserved
  * - `/?standing=grace&tier=pro&after=acct_50` — a filtered page
+ * - `/overview` — cross-account revenue and account mix
  * - `/plans` — the deploy's tiers, read only
  * - `/features` — the deploy's features, read only
  *
@@ -58,6 +59,7 @@ export const noFilter: AccountFilter = {
 export const ConsoleRoute = Route.defineRouteUnion({
   Accounts: routeQueryFields,
   Account: { account: AccountId, ...routeQueryFields },
+  Overview: {},
   Plans: {},
   Features: {},
 });
@@ -76,11 +78,19 @@ const accountRouter = pipe(
   Route.mapTo(ConsoleRoute.Account),
 );
 
+const overviewRouter = pipe(Route.literal("overview"), Route.mapTo(ConsoleRoute.Overview));
+
 const plansRouter = pipe(Route.literal("plans"), Route.mapTo(ConsoleRoute.Plans));
 
 const featuresRouter = pipe(Route.literal("features"), Route.mapTo(ConsoleRoute.Features));
 
-const routeParser = Route.oneOf(accountRouter, plansRouter, featuresRouter, accountsRouter);
+const routeParser = Route.oneOf(
+  accountRouter,
+  overviewRouter,
+  plansRouter,
+  featuresRouter,
+  accountsRouter,
+);
 
 const parseRoute = Route.parseUrlWithFallback(routeParser, {
   // An unknown path or an unparseable filter is the unfiltered list, not a
@@ -143,6 +153,8 @@ export const reflectRoute = (route: ConsoleRoute): string => {
       return accountRouter({ account: route.account, ...filterOf(route), after: route.after });
     case "Accounts":
       return accountsRouter({ ...filterOf(route), after: route.after });
+    case "Overview":
+      return overviewRouter();
     case "Plans":
       return plansRouter();
     case "Features":

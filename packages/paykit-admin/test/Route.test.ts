@@ -48,6 +48,7 @@ describe("the console route", () => {
       accountRoute(account, noFilter),
       accountRoute(account, filter({ standing: Option.some("blocked") })),
       accountRoute(account, noFilter, Option.some("acct_b")),
+      ConsoleRoute.Overview(),
       ConsoleRoute.Plans(),
       ConsoleRoute.Features(),
     ];
@@ -67,6 +68,7 @@ describe("the console route", () => {
     // The page cursor is in the URL too, so a refresh keeps the page.
     expect(reflectRoute(accountsRoute(noFilter, Option.some("acct_b")))).toBe("/?after=acct_b");
     expect(afterOf(accountsRoute(noFilter, Option.some("acct_b")))).toEqual(Option.some("acct_b"));
+    expect(reflectRoute(ConsoleRoute.Overview())).toBe("/overview");
     expect(reflectRoute(ConsoleRoute.Plans())).toBe("/plans");
     expect(reflectRoute(ConsoleRoute.Features())).toBe("/features");
   });

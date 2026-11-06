@@ -457,7 +457,19 @@ describe("the console model", () => {
     expect(Option.isNone(features.model.account)).toBe(true);
   });
 
-  it("navigates to the read-only catalog pages", () => {
+  it("boots the overview from its URL", () => {
+    const result = init(
+      flags({
+        catalog: Schema.encodeSync(Catalog)(testCatalog),
+        accounts: Schema.encodeSync(BillingReadPage)(page),
+      }),
+      url("/overview"),
+    );
+    expect(result.model.route).toEqual(ConsoleRoute.Overview());
+    expect(result.commands?.map((command) => command.name)).toEqual(["GetOverview"]);
+  });
+
+  it("navigates to the overview and read-only catalog pages", () => {
     const plans = update(seeded(), Message.ClickedPlans());
     expect(plans.model.route).toEqual(ConsoleRoute.Plans());
     expect(Option.isNone(plans.model.account)).toBe(true);
@@ -472,6 +484,14 @@ describe("the console model", () => {
       url: "/features",
       replace: false,
     });
+
+    const overview = update(features.model, Message.ClickedOverview());
+    expect(overview.model.route).toEqual(ConsoleRoute.Overview());
+    expect(overview.commands?.find((command) => command.name === "ReflectRoute")?.args).toEqual({
+      url: "/overview",
+      replace: false,
+    });
+    expect(overview.commands?.some((command) => command.name === "GetOverview")).toBe(true);
   });
 
   it("opens the account the URL names and seeds it from flags", () => {
@@ -490,7 +510,10 @@ describe("the console model", () => {
       url(`/accounts/${account}`),
     );
     // The snapshots seed the views; holds are an entity and are read once.
-    expect(result.commands?.map((command) => command.name)).toEqual(["GetHolds"]);
+    expect(result.commands?.map((command) => command.name)).toEqual([
+      "GetHolds",
+      "GetProviderRefs",
+    ]);
     expect(result.model.route._tag).toBe("Account");
     if (Option.isNone(result.model.account)) return;
     const opened = result.model.account.value;
@@ -528,6 +551,7 @@ describe("the console model", () => {
       "GetCatalog",
       "ListAccounts",
       "GetHolds",
+      "GetProviderRefs",
     ]);
     const list = result.commands?.find((command) => command.name === "ListAccounts");
     expect(list?.args?.query).toEqual({ standing: "grace" });
@@ -538,6 +562,7 @@ describe("the console model", () => {
     // Opening an account reads its holds; the address bar follows the route.
     expect(navigated.commands?.map((command) => command.name).sort()).toEqual([
       "GetHolds",
+      "GetProviderRefs",
       "ReflectRoute",
     ]);
     const reflected = navigated.commands?.find((command) => command.name === "ReflectRoute")?.args
@@ -763,6 +788,50 @@ describe("the console model", () => {
         Option.getOrThrow,
       ),
     ).toBe(1);
+  });
+
+  it("reads provider refs and applies only the current answer", () => {
+    const opened = update(seeded(), Message.ClickedAccount({ account })).model;
+    const state = opened.account.pipe(
+      Option.flatMap((value) => value.providerRefs),
+      Option.getOrThrow,
+    );
+    const applied = update(
+      opened,
+      Message.ReceivedAdminQuery({
+        message: AdminQueries.Message.SucceededProviderRefs({
+          requestId: state.requestId,
+          answer: {
+            account,
+            refs: { manual: { customer: "cus_1", subscription: "sub_1" } },
+            asOf: at,
+          },
+        }),
+      }),
+    ).model;
+    const refs = applied.account.pipe(
+      Option.flatMap((value) => value.providerRefs),
+      Option.getOrThrow,
+    );
+    expect(refs.state).toBe("Loaded");
+    expect(refs.refs.manual?.customer).toBe("cus_1");
+
+    const event = update(
+      applied,
+      Message.ReceivedEvent({
+        seq: 1,
+        at,
+        commandId: "cmd_refs",
+        tag: "ProviderRefAttached",
+        body: "{}",
+        event: {
+          _tag: "ProviderRefAttached",
+          provider: "manual",
+          refs: { customer: "cus_2" },
+        } as never,
+      }),
+    );
+    expect(event.commands?.map((command) => command.name)).toEqual(["GetProviderRefs"]);
   });
 
   it("re-reads holds when the event feed says one moved", () => {

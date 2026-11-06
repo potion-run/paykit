@@ -87,6 +87,21 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
     }).pipe(Effect.provide(client));
 
     expect(catalog.tiers.map((entry) => entry.id)).toEqual(["free"]);
+
+    const providerRefs = yield* Effect.gen(function* () {
+      const reads = yield* AdminReads;
+      return yield* reads.providerRefs("acct_1");
+    }).pipe(Effect.provide(client));
+
+    expect(providerRefs.account).toBe("acct_1");
+    expect(providerRefs.refs).toEqual({});
+
+    const overview = yield* Effect.gen(function* () {
+      const reads = yield* AdminReads;
+      return yield* reads.overview();
+    }).pipe(Effect.provide(client));
+
+    expect(overview.accounts).toBe(0);
   }).pipe(Effect.provide(World)),
 );
 
