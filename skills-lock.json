@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "alchemy-domain": {
+      "source": "alchemy-run/alchemy",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/alchemy-domain/SKILL.md",
+      "computedHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "blume-update-docs": {
+      "source": "haydenbleasel/blume",
+      "sourceType": "github",
+      "skillPath": "skills/blume-update-docs/SKILL.md",
+      "computedHash": "484f1f58068762161d7322dfb52383684156b52a8998c44d918e80e9d91ec7a3"
+    },
+    "blume-write-skill": {
+      "source": "haydenbleasel/blume",
+      "sourceType": "github",
+      "skillPath": "skills/blume-write-skill/SKILL.md",
+      "computedHash": "f25a13c2ec6683d20c3e4bd695c1be963cd586ac9e332f296985cff9e2dd7fbc"
+    },
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "f768cb44209e0d30e3449b8f95ea3dc8293093f73cfe02127d530db43412cf76"
+    }
+  }
+}
