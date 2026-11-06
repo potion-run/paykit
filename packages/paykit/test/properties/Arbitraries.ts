@@ -71,6 +71,24 @@ export const testCatalog = Effect.runSync(
         credits: 5_000,
         grants: [allowance(messages, { included: 100, carryOver: true })],
       }),
+      // A capped allowance that also carries what it did not spend: the cap
+      // does not grow with the rollover, so a script that closes a period with
+      // units left is what exercises the ceiling's `carried` term.
+      tier({
+        id: "carry-cap",
+        price: { amount: 3_400, currency: "usd", interval: "month" },
+        credits: 5_000,
+        grants: [
+          allowance(messages, {
+            included: 100,
+            overage: "bill",
+            carryOver: true,
+            cap: 20,
+            unitPrice: { amount: 1, currency: "usd" },
+            moneyCap: 2_000,
+          }),
+        ],
+      }),
       tier({
         id: "prepaid",
         price: { amount: 4_900, currency: "usd", interval: "month" },
@@ -157,6 +175,7 @@ export const TierName = Schema.Literals([
   "scale",
   "unlimited",
   "carry",
+  "carry-cap",
   "prepaid",
   "metered",
   "capped",

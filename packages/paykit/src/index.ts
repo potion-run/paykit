@@ -333,6 +333,7 @@ export { BillingApi } from "./BillingApi.api.ts";
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";
 export { allowsOne } from "./Subscription/Entitlements.view.ts";
+export type { JudgedFeature } from "./Subscription/Allowance.verdict.ts";
 export { ProrationMismatch } from "./Subscription/ProrationMismatch.rejection.ts";
 export {
   Period,

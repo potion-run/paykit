@@ -18,7 +18,6 @@ import { chargeOf, creditRateOf, spendCeilingOf, type Standing } from "./Subscri
  * the order the write paths applied them, because the first refusal is the one
  * a caller sees.
  *
- * @primitive
  */
 
 /**
@@ -188,7 +187,6 @@ export const moneyOverflowOf = (feature: JudgedFeature, amount: number): MoneyOv
  * // { _tag: "Allowed" }
  * ```
  *
- * @primitive
  */
 export const capacityOf = (input: {
   readonly standing: Standing;
@@ -284,7 +282,6 @@ export type Downgrade =
  * // { _tag: "Ceiling", ceiling: 120, used: 130 }
  * ```
  *
- * @primitive
  */
 export const downgradeOf = (
   allowance: {

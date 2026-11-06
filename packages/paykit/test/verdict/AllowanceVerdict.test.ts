@@ -270,11 +270,16 @@ describe("allowsOne", () => {
   it("takes the rollover out of the cap, like the write path does", () => {
     // 100 included, 20 more billable, 20 carried: the ceiling is 120, and the
     // carried units spend it rather than extending it.
-    expect(allowsOne("good", "bill", 0, 20, 20, { included: 100, used: 120, reserved: 0 })).toBe(
-      false,
-    );
-    expect(allowsOne("good", "bill", 1, 20, 20, { included: 100, used: 119, reserved: 0 })).toBe(
-      true,
-    );
+    const at = (remaining: number) =>
+      judged({
+        overage: "bill",
+        included: 100,
+        cap: 20,
+        carried: 20,
+        used: 120 - remaining,
+        remaining,
+      });
+    expect(allowsOne("good", at(0))).toBe(false);
+    expect(allowsOne("good", at(1))).toBe(true);
   });
 });

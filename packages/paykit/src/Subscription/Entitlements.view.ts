@@ -8,14 +8,13 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
-import { capacityOf } from "./Allowance.verdict.ts";
+import { capacityOf, type JudgedFeature } from "./Allowance.verdict.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   SubscriptionStatus,
   Standing,
   includedRemainingOf,
   recordedCount,
-  spendHeadroomOf,
 } from "./Subscription.state.ts";
 
 /**
@@ -288,11 +287,11 @@ export class Entitlements extends Domain.View("Entitlements", {
                     }),
                 allowed: allowsOne(
                   view.standing,
-                  feature.overage,
-                  event.remainingAfter,
-                  feature.cap,
-                  feature.carried,
-                  moneyOf(feature, { billed, used: event.usedAfter }),
+                  judgedOf(feature, {
+                    billed,
+                    used: event.usedAfter,
+                    remaining: event.remainingAfter,
+                  }),
                 ),
               };
             })(),
@@ -324,11 +323,10 @@ export class Entitlements extends Domain.View("Entitlements", {
               remaining: event.remainingAfter,
               allowed: allowsOne(
                 view.standing,
-                feature.overage,
-                event.remainingAfter,
-                feature.cap,
-                feature.carried,
-                moneyOf(feature, { reserved: feature.reserved + event.amount }),
+                judgedOf(feature, {
+                  reserved: feature.reserved + event.amount,
+                  remaining: event.remainingAfter,
+                }),
               ),
             },
           },
@@ -360,12 +358,9 @@ export class Entitlements extends Domain.View("Entitlements", {
               remaining: event.remainingAfter,
               allowed: allowsOne(
                 view.standing,
-                feature.overage,
-                event.remainingAfter,
-                feature.cap,
-                feature.carried,
-                moneyOf(feature, {
+                judgedOf(feature, {
                   reserved: Math.max(0, feature.reserved - event.amount - event.released),
+                  remaining: event.remainingAfter,
                 }),
               ),
             },
@@ -394,12 +389,9 @@ export class Entitlements extends Domain.View("Entitlements", {
               remaining: event.remainingAfter,
               allowed: allowsOne(
                 view.standing,
-                feature.overage,
-                event.remainingAfter,
-                feature.cap,
-                feature.carried,
-                moneyOf(feature, {
+                judgedOf(feature, {
                   reserved: Math.max(0, feature.reserved - event.amount),
+                  remaining: event.remainingAfter,
                 }),
               ),
             },
@@ -462,12 +454,7 @@ export class Entitlements extends Domain.View("Entitlements", {
                     remaining: view.credits,
                     allowed: allowsOne(
                       view.standing,
-                      "block",
-                      view.credits,
-                      undefined,
-                      0,
-                      { included: null },
-                      value.creditRates,
+                      judgedOf(value, { used: 0, reserved: 0, remaining: view.credits }),
                     ),
                   },
                 ];
@@ -501,13 +488,11 @@ export class Entitlements extends Domain.View("Entitlements", {
                   ...(billed === undefined ? {} : { billed }),
                   allowed: allowsOne(
                     view.standing,
-                    value.overage,
-                    spendable,
-                    value.cap,
-                    event.carried[feature] ?? 0,
-                    moneyOf(value, {
+                    judgedOf(value, {
                       billed: billed ?? 0,
                       used: kept ? value.used : 0,
+                      remaining: spendable,
+                      carried: event.carried[feature] ?? 0,
                     }),
                   ),
                 },
@@ -589,78 +574,67 @@ export class Entitlements extends Domain.View("Entitlements", {
 const withPool = (view: EntitlementsState, balance: number): EntitlementsState =>
   withCreditsOf(view, balance, heldOf(view.features));
 
-/**
- * The money context a feature's next unit is judged against.
- */
-const moneyOf = (
-  feature: FeatureEntitlement,
-  over: { readonly billed?: number; readonly used?: number; readonly reserved?: number } = {},
-) => ({
-  unitPrice: feature.unitPrice,
-  moneyCap: feature.moneyCap,
-  billed: over.billed ?? feature.billed ?? 0,
-  used: over.used ?? feature.used,
-  reserved: over.reserved ?? feature.reserved,
-  included: feature.included,
-});
-
-/**
- * Whether one more unit is allowed, from the standing and the allowance.
- *
- * A reading of {@link capacityOf} at `amount: 1`, so the view's `allowed` and
- * `check()` cannot disagree: there is one rule, and this is the read model's
- * name for it. A `null` remaining is unbounded, so it always has room for one
- * more, however large the pool is.
- *
- * A caller that states no `money` context asks the ceiling in the read model's
- * own form — `remaining`, `cap` and `carried` — because it does not know the
- * included count. Every in-tree caller states one, including a credit-priced
- * feature whose `included` is `null`.
- */
-export const allowsOne = (
-  standing: Standing,
-  overage: Overage,
-  remaining: number | null,
-  cap?: number,
-  carried?: number,
-  money?: {
-    readonly unitPrice?: UnitPrice;
-    readonly moneyCap?: number;
+/** The facts a judgement reads, from a row's feature and the movement being applied. */
+const judgedOf = (
+  value: FeatureEntitlement,
+  over: {
     readonly billed?: number;
     readonly used?: number;
     readonly reserved?: number;
-    readonly included?: Included | null;
+    readonly remaining?: number | null;
+    readonly carried?: number;
+  } = {},
+): JudgedFeature => ({
+  overage: value.overage,
+  included: value.included,
+  ...(value.cap === undefined ? {} : { cap: value.cap }),
+  carried: over.carried ?? value.carried,
+  ...(value.moneyCap === undefined ? {} : { moneyCap: value.moneyCap }),
+  ...(value.unitPrice === undefined ? {} : { unitPrice: value.unitPrice }),
+  billed: over.billed ?? value.billed ?? 0,
+  used: over.used ?? value.used,
+  reserved: over.reserved ?? value.reserved,
+  remaining: over.remaining === undefined ? value.remaining : over.remaining,
+  ...(value.creditRates === undefined ? {} : { creditRates: value.creditRates }),
+});
+
+/** The same facts for an allowance the view is building, before a row exists. */
+const judgedAllowanceOf = (
+  allowance: {
+    readonly overage: Overage;
+    readonly included: Included;
+    readonly cap?: number;
+    readonly unitPrice?: UnitPrice;
+    readonly moneyCap?: number;
   },
-  creditRates?: CreditRates,
-): boolean => {
-  if (money === undefined) {
-    // `remaining` already has use and holds taken out, and `carried` is the
-    // extra `included` a rollover added, which a cap does not.
-    if (standing === "blocked") return false;
-    if (overage === "block" && remaining !== null && remaining < 1) return false;
-    const headroom = spendHeadroomOf({ remaining, cap, carried });
-    return headroom === null || headroom >= 1;
-  }
-  return (
-    capacityOf({
-      standing,
-      feature: {
-        overage,
-        included: money.included ?? null,
-        ...(cap === undefined ? {} : { cap }),
-        carried: carried ?? 0,
-        ...(money.moneyCap === undefined ? {} : { moneyCap: money.moneyCap }),
-        ...(money.unitPrice === undefined ? {} : { unitPrice: money.unitPrice }),
-        billed: money.billed ?? 0,
-        used: money.used ?? 0,
-        reserved: money.reserved ?? 0,
-        remaining,
-        ...(creditRates === undefined ? {} : { creditRates }),
-      },
-      ask: { amount: 1 },
-    })._tag === "Allowed"
-  );
-};
+  over: {
+    readonly remaining: number | null;
+    readonly used: number;
+    readonly reserved: number;
+    readonly billed: number;
+  },
+): JudgedFeature => ({
+  overage: allowance.overage,
+  included: allowance.included,
+  ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
+  carried: 0,
+  ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+  ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+  billed: over.billed,
+  used: over.used,
+  reserved: over.reserved,
+  remaining: over.remaining,
+});
+
+/**
+ * Whether one more unit is allowed, from the standing and the feature's facts.
+ *
+ * The read model's name for {@link capacityOf} at `amount: 1`, so the row's
+ * `allowed` and `check()` cannot disagree. A `null` remaining is unbounded, so
+ * it always has room for one more, however large the pool is.
+ */
+export const allowsOne = (standing: Standing, feature: JudgedFeature): boolean =>
+  capacityOf({ standing, feature, ask: { amount: 1 } })._tag === "Allowed";
 
 /**
  * A feature's spendable count: the outcome an event recorded, or what the
@@ -710,7 +684,16 @@ const creditFeatureOf = (
   remaining: credits - held,
   carried: 0,
   // "One more unit" is `check({ amount: 1 })`, which costs the default rate.
-  allowed: allowsOne(standing, "block", credits - held, undefined, 0, { included: null }, rates),
+  allowed: allowsOne(standing, {
+    overage: "block",
+    included: null,
+    carried: 0,
+    billed: 0,
+    used: previous?.used ?? 0,
+    reserved: held,
+    remaining: credits - held,
+    creditRates: rates,
+  }),
   overage: "block",
   resets: "never",
   resetsAt: null,
@@ -725,15 +708,7 @@ const creditFeatureOf = (
  */
 const rejudged = (value: FeatureEntitlement, standing: Standing): FeatureEntitlement => ({
   ...value,
-  allowed: allowsOne(
-    standing,
-    value.overage,
-    value.remaining,
-    value.cap,
-    value.carried,
-    moneyOf(value),
-    value.creditRates,
-  ),
+  allowed: allowsOne(standing, judgedOf(value)),
 });
 
 /** Move the standing, and rejudge every feature against it. */
@@ -811,13 +786,10 @@ const featuresOf = (
           remaining: spendable,
           // A period starts with no rollover; only `UsageReset` carries one in.
           carried: 0,
-          allowed: allowsOne(standing, allowance.overage, spendable, allowance.cap, undefined, {
-            unitPrice: allowance.unitPrice,
-            moneyCap: allowance.moneyCap,
-            billed,
-            used,
-            included: allowance.included,
-          }),
+          allowed: allowsOne(
+            standing,
+            judgedAllowanceOf(allowance, { remaining: spendable, used, reserved, billed }),
+          ),
           overage: allowance.overage,
           ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
           ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
