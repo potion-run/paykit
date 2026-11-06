@@ -244,11 +244,11 @@ export const polarBindings = (
 };
 
 /**
- * Polar as a merchant of record, ready for `Paykit.Stack`.
+ * Polar as a merchant of record, ready for `Paykit.BillingStack`.
  *
  * One call, no bindings to wire: `Polar()` returns the `Provider` the catalog
  * needs, with the tier → product mapping and the price the catalog states, so
- * `Stack` can refuse a mapping that disagrees at deploy time.
+ * `BillingStack` can refuse a mapping that disagrees at deploy time.
  *
  * It owns tax, receipts and payments; paykit keeps the entitlement. Polar's
  * benefits are written as a consequence of a tier change and never read back —
@@ -267,7 +267,7 @@ export const polarBindings = (
  *   tiers: { pro: { price: proPrice, productId: "prod_123" } },
  * });
  *
- * yield* Paykit.Stack("Billing", { providers: [polar], catalog });
+ * yield* Paykit.BillingStack("Billing", { providers: [polar], catalog });
  * ```
  *
  * @primitive

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
@@ -73,6 +74,40 @@ describe("paykitWorld", () => {
     }).pipe(
       Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards, bindings: "none" })),
     ),
+  );
+
+  it.live("accepts the catalog declaration, so a runtime needs no Effect.runSync", () =>
+    Effect.gen(function* () {
+      expect(yield* provided(Check)).toBe(true);
+      expect(yield* provided(CatalogService)).toBe(true);
+    }).pipe(
+      Effect.provide(
+        paykitWorld({
+          catalog: {
+            features: [messages],
+            tiers: [tier({ id: "free", grants: [allowance(messages, { included: 100 })] })],
+          },
+          guards: DevGuards,
+        }),
+      ),
+    ),
+  );
+
+  it.live("refuses a catalog that does not decode, in the layer's error channel", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Effect.serviceOption(CatalogService).pipe(
+          Effect.provide(
+            paykitWorld({
+              catalog: { features: [messages, messages], tiers: [] },
+              guards: DevGuards,
+            }),
+          ),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogDuplicateFeature");
+    }),
   );
 
   it.live("builds without guards, so a host can provide its own session", () =>

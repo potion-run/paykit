@@ -63,30 +63,51 @@ export const Tier = Schema.Struct({
 });
 export type Tier = typeof Tier.Type;
 
-/** A tier as an author writes it. */
-export interface TierInput {
+/** A subscription tier as an author writes it: at least one grant. */
+export interface SubscriptionTierInput {
   readonly id: string;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
   /** @default "subscription" */
-  readonly kind?: TierKind;
-  /** Omit for a free subscription tier. A one-off pack must state one. */
+  readonly kind?: "subscription";
+  /** Omit for a free subscription tier. */
   readonly price?: Price;
-  /** The credit pool this tier grants when it activates or is bought. */
+  /** The credit pool this tier grants when it activates. */
   readonly credits?: number;
-  /** @default "period" for a subscription, "never" for a one-off pack */
+  /** @default "period" */
   readonly creditsExpire?: CreditsExpire;
   /**
    * Credits at or below which a spend buys the deployment's auto top-up pack.
-   * Absent means this tier never refills; a one-off pack cannot state one.
+   * Absent means this tier never refills.
    */
   readonly topUp?: number;
   /**
-   * What a subscription tier grants. Empty for a one-off pack, which sells only
-   * credits; the catalog refuses either shape the wrong way round.
+   * What the tier grants. A subscription that grants nothing could never
+   * activate, so the tuple requires at least one allowance.
    */
-  readonly grants: readonly Allowance[];
+  readonly grants: readonly [Allowance, ...Allowance[]];
 }
+
+/** A one-off credit pack as an author writes it: a price, credits, no grants. */
+export interface OneOffTierInput {
+  readonly id: string;
+  /** Human-facing label for pricing pages and the console. */
+  readonly name?: string;
+  readonly kind: "one_off";
+  /** A pack is bought, so it must state a price. */
+  readonly price: Price;
+  /** The credits the buyer gets. */
+  readonly credits: number;
+  /** A pack outlives any plan, so its credits never expire. */
+  readonly creditsExpire?: "never";
+  /** A pack has no standing, so it cannot state a top-up line. */
+  readonly topUp?: never;
+  /** A pack sells credits, not a standing, so it grants no allowance. */
+  readonly grants?: readonly [];
+}
+
+/** A tier as an author writes it. */
+export type TierInput = SubscriptionTierInput | OneOffTierInput;
 
 /**
  * Declare a purchasable bundle. The catalog validates it; this stays pure.
@@ -123,6 +144,7 @@ export const tier = (input: TierInput): Tier => {
   // plan the account happens to be on, so the default is the same `"never"`
   // the catalog requires.
   const creditsExpire = input.creditsExpire ?? (kind === "one_off" ? "never" : undefined);
+  const grants = input.grants ?? [];
   return {
     id: input.id as TierId,
     ...(input.name === undefined ? {} : { name: input.name }),
@@ -131,6 +153,6 @@ export const tier = (input: TierInput): Tier => {
     ...(input.credits === undefined ? {} : { credits: input.credits }),
     ...(creditsExpire === undefined ? {} : { creditsExpire }),
     ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
-    grants: input.grants.map((grant) => ({ ...grant })),
+    grants: grants.map((grant) => ({ ...grant })),
   };
 };

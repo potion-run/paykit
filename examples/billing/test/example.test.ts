@@ -11,7 +11,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
-import { BillingTestLive, Catalog, tierCommand } from "../src/Billing.ts";
+import { BillingTestLive, Catalog } from "../src/Billing.ts";
+import { tierCommand } from "./support.ts";
 
 /** The aggregate key and the Api target are the same branded id. */
 const account = Subscription.ref("acct_example");

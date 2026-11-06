@@ -20,12 +20,12 @@ export const BillingStore = Schema.Union([
 ]);
 export type BillingStore = typeof BillingStore.Type;
 
-export const BillingStackProps = Schema.Struct({
+export const BillingStackRecord = Schema.Struct({
   catalog: Catalog,
   providers: Schema.optionalKey(Schema.Array(ProviderDescriptor)),
   store: Schema.optionalKey(BillingStore),
 });
-export type BillingStackProps = typeof BillingStackProps.Type;
+export type BillingStackRecord = typeof BillingStackRecord.Type;
 
 /**
  * The shape of what a stack records. Bump it whenever `BillingStackAttrs`
@@ -67,7 +67,7 @@ export type BillingStackAttrs = typeof BillingStackAttrs.Type;
 
 export type BillingStackShape = Resource<
   "Paykit.BillingStack",
-  BillingStackProps,
+  BillingStackRecord,
   BillingStackAttrs
 >;
 
@@ -91,7 +91,7 @@ export const BillingStack = Resource<BillingStackShape>("Paykit.BillingStack", {
  * rather than recording half a stack.
  */
 export const reconcileBillingStack = (
-  props: BillingStackProps | undefined,
+  props: BillingStackRecord | undefined,
 ): Effect.Effect<
   BillingStackAttrs,
   CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate

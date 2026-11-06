@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { lookupKeyOf, priceDeclarations, retiredPrices } from "../src/Prices.ts";
+import { lookupKeyOf, priceDeclarations, retiredPrices, soldTiers } from "../src/Prices.ts";
 
 const pro = { amount: 1900, currency: "usd", interval: "month" as const };
 const scale = { amount: 19_800, currency: "usd", interval: "annual" as const };
@@ -189,5 +189,32 @@ describe("the archive sweep", () => {
       stage,
     );
     expect(retired).toEqual([]);
+  });
+});
+
+describe("sold tiers", () => {
+  it("joins the keys StripePrices created back onto the catalog prices", () => {
+    const sold = {
+      prices: { pro: "paykit:prod:pro" },
+      usage: { pro: { messages: "paykit:prod:pro:usage:messages" } },
+      meters: { messages: "paykit_prod_messages" },
+    };
+    const unitPrice = { amount: 2, currency: "usd" };
+    expect(soldTiers({ pro: { price: pro, usage: { messages: unitPrice } } }, sold)).toEqual({
+      pro: {
+        price: pro,
+        lookupKey: "paykit:prod:pro",
+        usage: {
+          messages: { unitPrice, lookupKey: "paykit:prod:pro:usage:messages" },
+        },
+      },
+    });
+  });
+
+  it("omits the usage map when a tier has no billable feature", () => {
+    const sold = { prices: { pro: "paykit:prod:pro" }, usage: {}, meters: {} };
+    expect(soldTiers({ pro }, sold)).toEqual({
+      pro: { price: pro, lookupKey: "paykit:prod:pro" },
+    });
   });
 });

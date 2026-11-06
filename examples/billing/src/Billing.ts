@@ -1,41 +1,16 @@
 import {
-  allowancesOf,
-  catalog,
-  subscribeInputOf,
   DevGuards,
-  Manual,
-  ProviderCapabilityMissing,
-  Paykit,
-  paykitWorld,
-  TierNotInCatalog,
   type MoneyProvider,
-  type PaykitWorldOptions,
+  Paykit,
+  ProviderCapabilityMissing,
   type WebhookRequest,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { billingCatalog } from "./catalog.ts";
+import { billing } from "./billing.config.ts";
 
-/** The catalog, validated. A deploy that ships this file cannot sell a broken one. */
-export const Catalog = Effect.runSync(catalog(billingCatalog));
-
-/**
- * The input a `Subscribe` carries for a tier. `decide` is pure, so a command
- * carries its own allowances and price; `subscribeInputOf` is the package's
- * join, and `CatalogGuard` still refuses anything that disagrees with the
- * catalog.
- */
-export const tierCommand = (tierId: string) =>
-  Effect.gen(function* () {
-    const input = subscribeInputOf(Catalog, tierId);
-    // The catalog is validated at load, so a tier it does not sell is the same
-    // refusal the model gives: a tagged error the caller can match, not a throw.
-    if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
-    return input;
-  });
-
-/** What a tier grants, for an assertion or a fixture; `None` when it is not sold. */
-export const allowancesOfTier = (tier: string) => Option.fromNullishOr(allowancesOf(Catalog, tier));
+/** The catalog the deploy declares, for a test or a page that reads it. */
+export const Catalog = billing.catalog;
 
 /**
  * The provider the example runs by default: `Manual` sells through an invoice,
@@ -43,31 +18,21 @@ export const allowancesOfTier = (tier: string) => Option.fromNullishOr(allowance
  * `Polar({ ..., webhookSecret })` or `Stripe({ ..., webhookSecret })` lights up
  * the checkout and webhook routes below and nothing else moves.
  */
-export const Provider: MoneyProvider = Manual();
+export const Provider = billing.providers[0]!;
 
 /**
  * The billing world the Worker and the test both serve.
  *
- * `paykitWorld` builds the same graph a deployment uses: the model, the
+ * `Paykit.world` builds the same graph a deployment uses: the model, the
  * catalog, the guards, the provider router and the tenant bindings. The only
- * difference is the platform — the Worker passes
- * `DomainCloudflare.layerDurableObjects()`, the test takes the default
- * `Domain.InMemory` — and `Layer.orDie` at the Worker boundary keeps a stack
- * that cannot build from serving a degraded model.
+ * difference is the platform — the Worker passes a Durable Object or SQL host,
+ * the test takes the default `Domain.InMemory`. `Effect.orDie` at the Worker
+ * boundary keeps a stack that cannot build from serving a degraded model.
  */
-export const billingLayers = <R = never>(
-  provider: MoneyProvider,
-  platform?: PaykitWorldOptions<R>["platform"],
-) =>
-  paykitWorld({
-    catalog: Catalog,
-    guards: DevGuards,
-    providers: [provider],
-    ...(platform === undefined ? {} : { platform }),
-  });
-
-/** The layers the tests run, over an in-memory platform. */
-export const BillingLayers = billingLayers(Provider);
+export const BillingTestLive = Paykit.world({
+  ...billing,
+  guards: DevGuards,
+});
 
 /**
  * The two money routes as a binding, the way every other paykit primitive is
@@ -88,7 +53,7 @@ export const moneyRoutes = (provider: MoneyProvider) =>
       purchase: (account: string, tier: string) =>
         Effect.gen(function* () {
           const subscribe = yield* Paykit.Subscribe(account);
-          return yield* subscribe({ tier: tier });
+          return yield* subscribe({ tier });
         }),
 
       /**
@@ -137,9 +102,3 @@ export const track = Effect.fn("Example.track")(function* (
     ...(usage.dimension === undefined ? {} : { dimension: usage.dimension }),
   });
 });
-
-/**
- * The example's own shape, for a test to run without a Cloudflare account.
- * A real deployment wraps the same layers around `layerDurableObjects`.
- */
-export const BillingTestLive = BillingLayers;

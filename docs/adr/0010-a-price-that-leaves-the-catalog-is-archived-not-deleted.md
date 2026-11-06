@@ -79,3 +79,20 @@ right shape, and it is why the sweep is a separate resource a deploy opts into r
 The live test is the authority here, as with every other vendor write: a price created by the resource,
 a tier removed from the catalog, a second deploy, and an assertion through the Stripe SDK that the
 price is inactive and still retrievable.
+
+### Landed
+
+**Stripe** ([run 41971381878](https://github.com/potion-run/paykit/actions/runs/41971381878)):
+`lookupKeyPrefixOf`, `declaredLookupKeys` and `retiredPrices` in `paykit-stripe/src/Prices.ts`, and
+`RetiredPrices` in `paykit-stripe/src/RetiredPrices.ts` — a primitive, not a `Resource`, because the
+set it acts on is "the objects no stack owns any more", a value Alchemy cannot diff. The five refusals
+are unit tests, and `test/RetiredPrices.live.test.ts` is the authority.
+
+**Polar**: the same split in `paykit-polar`, over `name` and `metadata.paykit_tier` instead of a lookup
+key — `productNamePrefixOf`, `declaredProductNames` and `retiredProducts` in `Prices.ts`, and
+`RetiredProducts` in `RetiredProducts.ts`, which lists every product that is not archived and calls
+`productsUpdate({ is_archived: true })` on the ones the catalog stopped declaring. `is_archived` keeps
+the product, the orders that reference it, and the subscriptions priced by it, so a retired product
+stops being purchasable without a bill losing anything. Its live case is written and gated on
+`POLAR_ACCESS_TOKEN`; until that secret exists in `live.yml`, the sandbox run has not happened and the
+vendor field names are the ones this repository's `Product` resource already reads.

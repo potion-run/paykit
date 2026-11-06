@@ -1,22 +1,25 @@
 import { allowance, grant } from "./Allowance.ts";
 import { account as actorAccount, admin as actorAdmin, mayActOn } from "./Auth/Actor.ts";
+import { DevGuards } from "./Auth/FromHeaders.ts";
 import { AdminFrom, GuardsFrom, SessionFrom } from "./Auth/FromResolver.ts";
 import * as Billing from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
+import { BillingStack as BillingStackDeploy } from "./BillingStack.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
+import { httpStatus } from "./HttpStatus.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { paymentsRouter } from "./Payments.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
-import { MemoryStore, Postgres, Sqlite, Stack } from "./Stack.ts";
+import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
@@ -26,7 +29,7 @@ import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
 import { Verify, verifyState } from "./Verify.ts";
-import { paykitWorld } from "./World.ts";
+import { world } from "./World.ts";
 
 /**
  * The four export groups as one namespace, so the docs' `Paykit.feature(...)`
@@ -50,14 +53,14 @@ import { paykitWorld } from "./World.ts";
  *   grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
  * });
  *
- * const billing = yield* Paykit.Stack("Billing", {
+ * const billing = yield* Paykit.BillingStack("Billing", {
  *   store: Paykit.MemoryStore(),
  *   providers: [Paykit.Manual()],
  *   catalog: { features: [messages], tiers: [free, pro] },
  * });
  *
  * const subscribe = yield* Paykit.Subscribe(account);
- * yield* subscribe({ tier: "pro" as Paykit.TierId });
+ * yield* subscribe({ tier: "pro" });
  * ```
  *
  * @primitive
@@ -71,8 +74,9 @@ export const Paykit = {
   catalog,
   defineCatalog,
   CatalogGuard: CatalogGuardLive,
-  Stack,
-  world: paykitWorld,
+  BillingStack: BillingStackDeploy,
+  validateStack,
+  world,
   providers,
   MemoryStore,
   Postgres,
@@ -104,6 +108,7 @@ export const Paykit = {
   List: Billing.List,
   Webhook: Billing.Webhook,
   evaluateCheck,
+  httpStatus,
   timelineOf,
   appendTimeline,
   initialTimeline,
@@ -114,6 +119,7 @@ export const Paykit = {
   SessionFrom,
   AdminFrom,
   GuardsFrom,
+  DevGuards,
   mayActOn,
   actorAccount,
   actorAdmin,

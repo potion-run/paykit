@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { allowance, grant } from "../src/Allowance.ts";
+import { grant } from "../src/Allowance.ts";
 import {
   CatalogCarryOverNeverResets,
   CatalogCarryOverOnFlag,
@@ -35,8 +35,13 @@ import {
   featureOf,
   tierOf,
 } from "../src/Catalog.ts";
-import { feature, messages } from "../src/Feature.ts";
-import { TierId, tier } from "../src/Tier.ts";
+import { messages } from "../src/Feature.ts";
+import { TierId } from "../src/Tier.ts";
+import {
+  rawAllowance as allowance,
+  rawFeature as feature,
+  rawTier as tier,
+} from "./support/Raw.ts";
 
 const seats = feature({ id: "seats", name: "Seats" });
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });

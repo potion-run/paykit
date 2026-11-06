@@ -44,16 +44,32 @@ export const Feature = Schema.Struct({
 });
 export type Feature = typeof Feature.Type;
 
-/** A feature as an author writes it, before it gets its brand. */
-export interface FeatureInput {
+/** A metered feature as an author writes it: counted, or priced in credits. */
+export interface MeteredFeatureInput {
   readonly id: string;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
   /** @default "metered" */
-  readonly kind?: FeatureKind;
-  /** Credits per unit by dimension; `"default"` is required when present. */
-  readonly creditRates?: CreditRates;
+  readonly kind?: "metered";
+  /**
+   * Credits per unit by dimension. A rate card makes the feature credit-priced;
+   * `"default"` is required so a caller that names no dimension is still priced.
+   */
+  readonly creditRates?: CreditRates & { readonly default: number };
 }
+
+/** A flag as an author writes it: on or off, so it has nothing to spend. */
+export interface FlagFeatureInput {
+  readonly id: string;
+  /** Human-facing label for pricing pages and the console. */
+  readonly name?: string;
+  readonly kind: "flag";
+  /** A flag has no counter, so it cannot declare a rate card. */
+  readonly creditRates?: never;
+}
+
+/** A feature as an author writes it, before it gets its brand. */
+export type FeatureInput = MeteredFeatureInput | FlagFeatureInput;
 
 /**
  * Declare a feature. The catalog validates the id; this stays pure.
@@ -76,12 +92,26 @@ export interface FeatureInput {
  * });
  * ```
  */
-export const feature = (input: FeatureInput): Feature => ({
-  id: input.id as FeatureId,
-  ...(input.name === undefined ? {} : { name: input.name }),
-  kind: input.kind ?? "metered",
-  ...(input.creditRates === undefined ? {} : { creditRates: { ...input.creditRates } }),
-});
+export function feature<const K extends FeatureKind = "metered">(input: {
+  readonly id: string;
+  readonly name?: string;
+  readonly kind?: K;
+  readonly creditRates?: "flag" extends K ? never : CreditRates & { readonly default: number };
+}): Feature & { readonly kind: K };
+export function feature(input: FeatureInput): Feature;
+export function feature(input: {
+  readonly id: string;
+  readonly name?: string;
+  readonly kind?: FeatureKind;
+  readonly creditRates?: CreditRates;
+}): Feature {
+  return {
+    id: input.id as FeatureId,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    kind: input.kind ?? "metered",
+    ...(input.creditRates === undefined ? {} : { creditRates: { ...input.creditRates } }),
+  };
+}
 
 /**
  * Declarations for the features paykit ships. Import them, or call

@@ -25,10 +25,22 @@ export class CreditsPurchased extends Domain.Event("CreditsPurchased", {
    */
   invoiceId: Schema.optionalKey(Schema.String),
   /**
+   * The provider charge that paid for this pack, when the provider took the
+   * amount from the customer's saved method instead of invoicing it. Exactly
+   * one of `invoiceId` and `chargeId` is set on a purchase paykit opened.
+   */
+  chargeId: Schema.optionalKey(Schema.String),
+  /**
    * The catalog's rate cards, captured so a credits-only account can price
    * `check()` and `track()` before it has a plan.
    */
   rates: Schema.optionalKey(CreditRateCards),
+  /**
+   * When this top-up's cooldown ends, for a purchase a policy opened. Absent on
+   * a checkout's purchase and on a deployment that set no cooldown, so the field
+   * is evidence of a deployment decision rather than a standing rule.
+   */
+  cooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
   /** The pool after the purchase. */
   balanceAfter: Schema.Int,
   /** The part of the pool a one-off pack bought, and so never expires. */
@@ -55,11 +67,23 @@ export class PurchaseCredits extends Domain.Command("PurchaseCredits", {
     price: Schema.optionalKey(Price),
     /**
      * The invoice a top-up opened for this pack. Omitted on the webhook path,
-     * where the vendor's payment is the record and no invoice id is known.
+     * where the vendor's payment is the record and no invoice id is known, and
+     * on the charged path, which carries `chargeId` instead.
      */
     invoiceId: Schema.optionalKey(Schema.String),
+    /**
+     * The charge a top-up took from the customer's saved method. Present when
+     * the provider declared `charge` and the charge succeeded; the invoice is
+     * the fallback, never both.
+     */
+    chargeId: Schema.optionalKey(Schema.String),
     /** The catalog's rate cards, so the pool is spendable without a plan. */
     rates: Schema.optionalKey(CreditRateCards),
+    /**
+     * When the auto top-up cooldown this purchase opens ends. The policy sets
+     * it from the deployment's `cooldown`; a webhook purchase omits it.
+     */
+    cooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
   },
   events: [CreditsPurchased],
   rejects: [],

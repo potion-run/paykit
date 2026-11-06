@@ -18,15 +18,18 @@ credit pack. What the runtime can do, as
 command-named bindings: `Check` from local state, `TrackUsage`, `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
-spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line buys a
-pack and opens the invoice that prices it), a usage timeline folded from the account's events (one
+spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
+the saved method, or invoices it, and records the pack against that charge or invoice, with an
+optional cooldown that defers the next refill to a scheduled deadline), a usage timeline folded from
+the account's events (one
 entry per
 billing fact, plus a per-period, per-feature rollup), postpaid usage priced per unit with a money
 cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
-Stripe and Polar. What the deploy does: validates the catalog into `BillingStack`, and `StripePrices` /
-`PolarPrices` create the base prices and products its tiers are sold under, plus a meter and a
-metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
+Stripe and Polar, and which archiving sweeps keep a retired price or product from being sold
+(`RetiredPrices` in Stripe, `RetiredProducts` in Polar). What the deploy does: validates the catalog
+into `BillingStack`, and `StripePrices` / `PolarPrices` create the base prices and products its tiers
+are sold under, plus a meter and a metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.
 
 The client surface has a first-class Effect Atom module (`@potion.run/paykit/Atom`): `make` builds
@@ -83,9 +86,11 @@ standing no command could leave until the period reset.
   it needs a decision record — which event, which money, which provider call — first.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
-  purchasable. Both halves landed for Stripe — `retiredPrices` decides, `RetiredPrices` lists and
-  deactivates, and the live case proves a price is archived rather than deleted. What is left is the
-  Polar half, which waits on its sandbox token.
+  purchasable. Both halves landed: `retiredPrices` decides and `RetiredPrices` lists and deactivates
+  in `paykit-stripe`; `retiredProducts` decides and `RetiredProducts` lists and archives in
+  `paykit-polar`. The Stripe live case has run and proves a price is archived rather than deleted;
+  the Polar live case is written and gated on `POLAR_ACCESS_TOKEN`, which is the one thing left —
+  the same secret the rest of the Polar package waits on.
 
 ### 2. Worth building next
 
@@ -97,9 +102,16 @@ buys a one-off pack when a spend takes the pool from above the standing tier's `
 below it. The line is catalog data carried on the standing, so a free tier and an enterprise tier
 refill where their own grants run low. The balance before the spend is on the event, so a second
 spend below the line is not a second crossing; the pack's price is opened as a provider invoice keyed
-by the crossing, and the credits are recorded with that invoice id. The pack is the cooldown; a
-provider without `invoice` is `ProviderCapabilityMissing`. What is left is a time cooldown as a
-scheduled command and an off-session charge capability for a saved payment method.
+by the crossing, and the credits are recorded with that invoice id. What was left landed as two
+ADR-first slices: a time cooldown ([ADR
+0017](./adr/0017-a-top-up-cooldown-is-a-deadline-on-the-standing.md)) — `Paykit.autoTopUp({ catalog,
+pack, cooldown })` records `cooldownUntil` on the purchase, defers a crossing inside the window, and
+clears it with a scheduled `TopUpCooldownElapsed` at the deadline — and an off-session charge ([ADR
+0018](./adr/0018-a-saved-method-is-a-capability.md)) — an optional `charge` capability the policy
+prefers and falls back from to the invoice, recorded as `CreditsPurchased.chargeId`. A provider with
+neither capability is still `ProviderCapabilityMissing`, never a free pack. What is left is a
+per-tier cooldown (`Tier.topUp.cooldown`), a per-tier pack, and a `TopUpFailed` event for a decline
+the deployment must remember.
 
 **A usage timeline** is done ([ADR
 0014](./adr/0014-a-usage-timeline-is-a-fold-over-the-account-log.md)): `timelineOf` /
@@ -120,6 +132,18 @@ are the example's job.
   stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
   whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
   is a decision, not code, and it is the one thing here a host cannot do for itself.
+
+### 3. The configuration surface
+
+Landed ([the configuration brief](./briefs/billing-configuration.md)). The four examples export one
+`billing.config.ts` and pass it to three one-call surfaces: `Paykit.BillingStack` validates and
+records, `Paykit.world` builds the runtime graph with the catalog in the layer's error channel, and
+`PaykitAtom.make({ url, catalog })` builds the browser client. The catalog constructors are
+discriminated unions, so `"unlimited"` beside `overage: "bill"`, a cap without a bill, a flag with a
+rate card, and a one-off pack with grants are editor errors; the runtime validator still refuses the
+serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call. What is left is `PolarBilling`
+(its product ids are `Output<string>`s, so the join needs a decision), the server-side tier join that
+would remove the browser's catalog copy, and `Paykit.handler`.
 
 ## The live cases
 

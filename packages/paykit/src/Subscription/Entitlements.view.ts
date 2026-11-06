@@ -560,6 +560,10 @@ export class Entitlements extends Domain.View("Entitlements", {
     CreditsExpired: (view, event, context): EntitlementsState =>
       withAccount(withPool(view, event.balanceAfter), context),
     ProviderRefAttached: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // A cooldown bounds the deployment's spending, not what the account may use:
+    // the pool and every counter are untouched. The view still emits it so the
+    // read-model projection sees the whole log.
+    TopUpCooldownCleared: (view, _event, context): EntitlementsState => withAccount(view, context),
     // Billing an upgrade moves money, not an entitlement; the view still emits
     // it so the read-model projection sees the whole log.
     ProrationInvoiced: (view, event, context): EntitlementsState =>

@@ -2,13 +2,17 @@ import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { allowance, grant, type Allowance } from "../../src/Allowance.ts";
+import { grant, type Allowance } from "../../src/Allowance.ts";
 import type { CatalogInput } from "../../src/Catalog.ts";
 import { defineCatalog, tierTermsOf, type Catalog } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
-import { feature } from "../../src/Feature.ts";
-import { tier, type Tier } from "../../src/Tier.ts";
+import { type Tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
+import {
+  rawAllowance as allowance,
+  rawFeature as feature,
+  rawTier as tier,
+} from "../support/Raw.ts";
 
 const messages = feature({ id: "messages", name: "Messages" });
 const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });

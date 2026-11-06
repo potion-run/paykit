@@ -18,6 +18,17 @@ import type { Providers } from "./Providers.ts";
 export const productNameOf = (stage: string, tier: string): string =>
   `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}`;
 
+/**
+ * The prefix every product name this stage owns starts with. `paykit` is the
+ * library's, the stage is what keeps two stacks in one Polar organization
+ * apart, and the trailing colon is what stops `prod` from matching
+ * `production`.
+ *
+ * Meters share the prefix (`paykit:<stage>:meter:<feature>`), so a sweep over
+ * products narrows on the vendor's product list before this decides.
+ */
+export const productNamePrefixOf = (stage: string): string => `paykit:${encodeVendorPart(stage)}:`;
+
 /** The metadata key that names the paykit tier; Polar has no lookup key. */
 export const PAYKIT_TIER = "paykit_tier";
 
@@ -388,7 +399,8 @@ export const ProductProvider = () =>
     }),
 
     // Retention, not archival. A product an order references is financial
-    // history, and archiving a retired product is its own slice. `retain` on
-    // the declaration normally keeps the engine from calling this at all.
+    // history, so delete is a no-op and a retired product is left purchasable
+    // by the reconcile — `RetiredProducts` is the separate sweep that archives
+    // what the catalog stopped declaring.
     delete: () => Effect.void,
   });

@@ -111,11 +111,13 @@ const pro = Paykit.tier({
   grants: [Paykit.allowance(messages, { included: 2000, overage: "bill" })],
 });
 
-const billing = yield* Paykit.Stack("Billing", {
-  store: Paykit.Postgres({ url: Config.Redacted("DATABASE_URL"), schema: "billing" }),
-  providers: [Paykit.Stripe()],
+const billing = {
   catalog: { features: [messages], tiers: [free, pro] },
-});
+  providers: [Paykit.Stripe()],
+  store: Paykit.Postgres({ url: Config.Redacted("DATABASE_URL"), schema: "billing" }),
+};
+
+const recorded = yield* Paykit.BillingStack("Billing", billing);
 
 // 2. runtime — Binding.Services, one contract each, several implementations
 const check = yield* Paykit.Check(account);
@@ -133,15 +135,15 @@ yield* (yield* Paykit.ReleaseHold(account))({ holdId, dedupeKey: `${turnId}:rele
 // A hold still open at its `expiresAt` (15 minutes by default) is released by
 // `HoldSweep`, so a crash between hold and settle returns the capacity.
 
-const subscribe = yield* Paykit.Subscribe();
-yield* subscribe({ account, tier: "pro" });                        // => { url } | { invoiceId } | { activated: true }
+const subscribe = yield* Paykit.Subscribe(account);
+yield* subscribe({ tier: "pro" });                                // => { url } | { invoiceId } | { activated: true }
 
-const portal = yield* Paykit.Portal();
+const portal = yield* Paykit.Portal(account);
 const list = yield* Paykit.List();
 yield* list({ standing: "grace", take: 100 });                     // => { rows, next }
 
-const preview = yield* Paykit.Preview();
-yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+const preview = yield* Paykit.Preview(account);
+yield* preview({ command: { kind: "changeTier", tier: "scale" } });
 
 const verify = yield* Paykit.Verify();
 yield* verify({ account });                                        // => VerifyMismatch[]
@@ -161,7 +163,7 @@ Polar({ accessToken, origin, tiers })
 BillingMcp  BillingAdminMcp  BillingToolkit  BillingAdminToolkit  BillingCli
 ```
 
-`Paykit.Stack` is a convenience, not a requirement. A user who already runs one Durable
+`Paykit.BillingStack` is a convenience, not a requirement. A user who already runs one Durable
 Object per store hosts `Paykit.Model` inside it and provides the store layer themselves.
 That duality is the point of building on a model framework rather than writing a service.
 
@@ -368,15 +370,19 @@ no second log, and no read model that can disagree with the stream.
   that crashes between hold and settle does not keep capacity forever. The release is the same
   `UsageReleased` a caller's `Release` records, so a late settle is still `HoldSettled` and a late
   release is a replay.
-- `AutoTopUp` — a policy on `UsageRecorded` and `CreditsConsumed`. A spend that takes the credit pool
-  from above the standing tier's `topUp` line to at or below it buys the one-off pack the
-  deployment named: the policy opens an invoice for the pack's price keyed by the crossing and
-  records the purchase with that invoice id. The line travels on the standing (`Tier.topUp` -> the
-  activation, change and schedule events), so a free tier and an enterprise tier refill on the
-  numbers their pools need; a tier without one never refills. The balance before the spend is on the
-  event, so a spend while the pool is already below the line is not a second crossing; the pack is
-  the cooldown. A deployment that provides no `autoTopUp({ ... })` runs nothing, and a provider
-  without `invoice` is `ProviderCapabilityMissing` rather than a free pack.
+- `AutoTopUp` — a policy on `UsageRecorded`, `CreditsConsumed` and `TopUpCooldownCleared`. A spend
+  that takes the credit pool from above the standing tier's `topUp` line to at or below it buys the
+  one-off pack the deployment named: the policy charges the account's saved method when the provider
+  declares `charge`, falls back to an invoice when it does not, and records the purchase with that
+  `chargeId` or `invoiceId`, both keyed by the crossing. The line travels on the standing
+  (`Tier.topUp` -> the activation, change and schedule events), so a free tier and an enterprise tier
+  refill on the numbers their pools need; a tier without one never refills. The balance before the
+  spend is on the event, so a spend while the pool is already below the line is not a second
+  crossing. With a `cooldown`, the purchase records `cooldownUntil` and a crossing inside the window
+  is deferred; `TopUpCooldownElapsed` (scheduled at that deadline) clears the standing and the policy
+  re-asks, so the refill is delayed rather than refused. A deployment that provides no
+  `autoTopUp({ ... })` runs nothing, and a provider with neither `charge` nor `invoice` is
+  `ProviderCapabilityMissing` rather than a free pack.
 - Checkout is not a saga. `Subscribe` opens the provider's purchase path, stores its opaque
   reference with `AttachProviderRef`, and the provider's `payment_succeeded` or
   `checkout_completed` webhook activates the account. The provider event id is the command id,
@@ -405,7 +411,7 @@ Two provider kinds, one port. **Processors** (Stripe) move money; **merchants of
 (Polar, Paddle, Lemon Squeezy) also own tax, receipts and the customer portal. The required
 surface is what every provider can do anyway — sell through one purchase path (hosted checkout
 or invoice) and refund — and each provider declares the optional ops it adds.
-`Paykit.<Provider>()` returns `{ kind, ops, payments }`; `Stack` checks the ops the catalog
+`Paykit.<Provider>()` returns `{ kind, ops, payments }`; `BillingStack` checks the ops the catalog
 implies (a priced tier needs a purchase path) and exposes the rest as attributes. A binding
 that needs an absent op fails with `ProviderCapabilityMissing` — no silent degradation.
 
@@ -419,10 +425,10 @@ Four rules keep the port from re-forming around whichever provider shipped first
    and Stripe entitlements are written as a consequence of a tier change, where the provider
    has them; `check()` never reads them back.
 4. **The price has one meaning.** The catalog states it, the vendor package charges it, and
-   `Stack` refuses a mapping whose amount, currency or interval disagrees
+   `BillingStack` refuses a mapping whose amount, currency or interval disagrees
    (`CatalogPriceMismatch`), so drift is a deploy error rather than a wrong invoice.
 
-A Stack runs one or more providers: `paymentsRouter(...)` holds them in preference order, `refs`
+A billing stack runs one or more providers: `paymentsRouter(...)` holds them in preference order, `refs`
 stays keyed by provider, and a binding resolves the account's own provider before the fallback and
 provides only that provider's layer. Two providers sharing a name are refused
 (`ProviderDuplicate`), because `refs` could not tell them apart.
@@ -621,7 +627,7 @@ test kit so a billing library can be time-travelled, and properties generated an
 | M0 | Foundation | repo bootstrap, `Model`, `PaymentsMemory`, `Domain.InMemory` store, `Check` in-process | `Story` tests green, `Domain.verify` empty, CI runs |
 | M1 | Durable truth | `layerSql` for Postgres and SQLite/D1, event log, receipts, outbox, `migrate`, `doctor` | kill -9 mid-command loses no event and produces no duplicate |
 | M2 | Usage | `Track`, allowances, overage modes, reservations, period rollover by `schedule`, replay property | properties 2, 3, 5, 8 pass against generated sequences |
-| M3 | Catalog and two providers | `Stack`, `tier`/`feature` resources, webhook endpoint, `PaymentsStripe`, `PaymentsPolar`, conformance suite | the same story passes on `Memory`, `Manual`, `Stripe` and `Polar`, and `packages/paykit/src/Subscription/` is untouched |
+| M3 | Catalog and two providers | `BillingStack`, `tier`/`feature` resources, webhook endpoint, `PaymentsStripe`, `PaymentsPolar`, conformance suite | the same story passes on `Memory`, `Manual`, `Stripe` and `Polar`, and `packages/paykit/src/Subscription/` is untouched |
 | M4 | Money paths | purchase path, payment events, grace, dunning, proration, cancel/resume, credits | property 1, 4 and 7 pass; a failed charge recovers without a second charge |
 | M5 | Surfaces | `BillingApi`, `BillingAdminApi`, auth guards, `Surfaces` (MCP + CLI), `Preview`, `Verify`, `List`, foldkit console in `examples/` | an operator can answer "why is this account on pro" from the UI alone; an MCP client calling `BillingApi_TrackUsage_send` with an account header commits a real command and one without is refused |
 | M6 | Release | docs, `alchemy dev` quickstart on `Memory`, versioning policy, `0.1.0` | a stranger bills in ten minutes with no provider key |

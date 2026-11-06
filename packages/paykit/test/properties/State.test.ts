@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { allowance, grant, type Allowance } from "../../src/Allowance.ts";
+import { type Allowance } from "../../src/Allowance.ts";
 import { messages } from "../../src/Feature.ts";
 import {
   addInterval,
@@ -15,6 +15,7 @@ import {
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
+import { rawAllowance as allowance, rawGrant as grant } from "../support/Raw.ts";
 
 const IncludedSpec = Schema.Union([
   Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),

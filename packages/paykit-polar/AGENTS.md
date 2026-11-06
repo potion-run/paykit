@@ -47,7 +47,7 @@ const polar = Polar({
 
 | Export | What it is |
 | --- | --- |
-| `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.Stack` |
+| `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.BillingStack` |
 | `PolarTier` | where a tier lives in Polar, and the price the catalog states |
 | `PolarProps` | token, server, origin and the tier mapping |
 | `PolarClient` | the three Polar calls, as an interface a test stands in for |
@@ -55,6 +55,9 @@ const polar = Polar({
 | `PolarPrices(id, { tiers })` | creates the products, meters and metered prices the catalog states, and returns `{ products, meters }` |
 | `priceDeclarations(tiers, stage)` | the pure mapping: names, resource ids and the prices |
 | `productNameOf(stage, tier)` | `paykit:<stage>:<tier>`, the name that carries the stage |
+| `RetiredProducts(id, { tiers })` | archives the products a stage still sells that its catalog no longer declares, and returns `{ archived }` |
+| `retiredProducts(declarations, found, stage)` | the pure decision the sweep writes: ours, still sellable, undeclared |
+| `productNamePrefixOf(stage)` | `paykit:<stage>:`, the prefix a stage's sweep is scoped to |
 | `Product` | the `Polar.Product` resource a stack reconciles |
 | `Meter` | the `Polar.Meter` resource a metered price counts through |
 | `polarProviders({ accessToken, server })` | the provider layer a stack mounts so `PolarPrices` can run |
@@ -86,8 +89,11 @@ fixed price and every metered price; a changed metered price is a new product ge
 rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
 
 - **A product is never deleted.** A tier that leaves the catalog is retained: `RemovalPolicy.retain`
-  skips the provider's delete, so the product stays in Polar and only the state row goes away. It is
-  not archived — archiving a retired product is its own slice.
+  skips the provider's delete, so the product stays in Polar and only the state row goes away.
+  Retaining does not stop it being bought, which is what `RetiredProducts` closes: a sweep that
+  archives what the catalog stopped declaring, keyed by the stage-qualified name and
+  `metadata.paykit_tier`, with `is_archived` so the orders and subscriptions that reference it are
+  untouched ([ADR 0010](../paykit/docs/adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)).
 - **The tier is the identity, in Polar's own fields.** `metadata.paykit_tier = "<tier>"` plus the
   stage-qualified name `paykit:<stage>:<tier>`. A state-lost deploy finds the product by that pair
   instead of creating a second one, and a price change is a new generation of the same identity.
@@ -106,8 +112,11 @@ replaces the product (a new id, the old one kept), and the difference stops insi
   `Stack` refuses a mapping whose amount, currency or interval disagrees with the catalog.
 - **A missing capability is `ProviderCapabilityMissing`.** `Polar()` sells through checkout,
   refunds on request and opens the customer portal, so it declares `checkout`, `refund` and
-  `portal`, `invoice` when `invoiceProductId` is configured, and `usage` when `meters` is. A
-  binding that asks for an absent op fails with a typed error rather than silently doing nothing.
+  `portal`, `invoice` when `invoiceProductId` is configured, and `usage` when `meters` is. It
+  declares no `charge`: a merchant of record collects through its own invoice, and `ordersFinalize`
+  already attempts the saved method, so the auto top-up invoices here and takes the invoice record
+  ([ADR 0018](../paykit/docs/adr/0018-a-saved-method-is-a-capability.md)). A binding that asks for an
+  absent op fails with a typed error rather than silently doing nothing.
 - **A vendor failure is `PaymentDeclined`**, never a defect. The model must be able to record a
   failed charge. The one defect the webhook path has is a runtime without WebCrypto: nothing can
   be verified there, and that is a deployment to fix, not a request to refuse.

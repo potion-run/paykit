@@ -39,6 +39,11 @@ const recording = (asked: Array<Record<string, unknown>> = []): StripeClient => 
       asked.push(request as never);
       return {};
     }),
+  charge: (request) =>
+    Effect.sync(() => {
+      asked.push(request as never);
+      return { chargeId: "pi_off_session" };
+    }),
 });
 
 const runWith = <A, E, R>(provider: ReturnType<typeof Stripe>, effect: Effect.Effect<A, E, R>) =>
@@ -282,6 +287,7 @@ describe("Stripe as a paykit provider", () => {
     expect(provider.capabilities.has("checkout")).toBe(true);
     expect(provider.capabilities.has("invoice")).toBe(true);
     expect(provider.capabilities.has("refund")).toBe(true);
+    expect(provider.capabilities.has("charge")).toBe(true);
     expect(provider.prices).toEqual({ pro: proPrice });
     expect(stripePriceOf({ tiers }, "pro")).toEqual(proPrice);
     expect(stripePriceOf({ tiers }, "scale")).toBe(null);
@@ -301,6 +307,7 @@ describe("Stripe as a paykit provider", () => {
         client: partial,
       });
       expect(provider.capabilities.has("refund")).toBe(false);
+      expect(provider.capabilities.has("charge")).toBe(false);
       const error = yield* Effect.flip(
         runWith(
           provider,

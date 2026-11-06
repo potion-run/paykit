@@ -1,24 +1,15 @@
-import {
-  catalog,
-  Manual,
-  type MoneyProvider,
-  type PaykitWorldOptions,
-  paykitWorld,
-  subscribeInputOf,
-  TierNotInCatalog,
-} from "@potion.run/paykit";
-import * as Effect from "effect/Effect";
-import { authCatalog } from "./catalog.ts";
+import { Paykit } from "@potion.run/paykit";
+import { billing } from "./billing.config.ts";
 
-/** The catalog the deploy validates. */
-export const Catalog = Effect.runSync(catalog(authCatalog));
+/** The catalog the deploy declares, for a test or a page that reads it. */
+export const Catalog = billing.catalog;
 
 /**
  * The provider the example runs: `Manual` sells through an invoice, so no
  * provider key is needed. Replacing this with `Polar(...)` or `Stripe(...)` is
  * the whole provider change.
  */
-export const Provider: MoneyProvider = Manual();
+export const Provider = billing.providers[0]!;
 
 /**
  * The billing world on `MemoryStore`, so the example needs no billing
@@ -27,28 +18,7 @@ export const Provider: MoneyProvider = Manual();
  * here: the Worker provides them from its session, so the same model serves any
  * identity provider.
  */
-export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
-  paykitWorld({
-    catalog: Catalog,
-    providers: [Provider],
-    bindings: "both",
-    ...(platform === undefined ? {} : { platform }),
-  });
-
-/** The example's test runs on the in-memory platform. */
-export const BillingTestLive = billingLayers();
-
-/**
- * The input a `Subscribe` carries for a tier. `decide` is pure and cannot look
- * a price up; `subscribeInputOf` is the package's join, and `CatalogGuard`
- * still refuses anything that disagrees with the deploy.
- *
- * A tier the catalog does not sell is `TierNotInCatalog`, the same tagged
- * refusal the model gives — a value the caller matches, never a `throw`.
- */
-export const tierCommand = (tierId: string) =>
-  Effect.gen(function* () {
-    const input = subscribeInputOf(Catalog, tierId);
-    if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
-    return input;
-  });
+export const BillingTestLive = Paykit.world({
+  ...billing,
+  bindings: "both",
+});

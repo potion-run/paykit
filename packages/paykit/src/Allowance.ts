@@ -95,14 +95,8 @@ export type Allowance = typeof Allowance.Type;
 export const Allowances = Schema.Record(Schema.String, Allowance);
 export type Allowances = typeof Allowances.Type;
 
-/** The part of an allowance an author chooses; the rest has a default. */
-export interface AllowanceInput {
-  /** A count, or `"unlimited"` for one that never runs out. */
-  readonly included: Included;
-  /**
-   * @default "allow" when `included` is `"unlimited"`, `"block"` otherwise
-   */
-  readonly overage?: Overage;
+/** The fields every allowance shape shares. */
+interface AllowanceBase {
   /** @default "month" */
   readonly resets?: Resets;
   /**
@@ -111,22 +105,63 @@ export interface AllowanceInput {
    * @default false
    */
   readonly carryOver?: boolean;
-  /**
-   * Bill at most this many units past `included` this period. Requires
-   * `overage: "bill"`.
-   */
+}
+
+/** An allowance that never runs out; there is nothing past its end. */
+interface UnlimitedAllowanceInput extends AllowanceBase {
+  readonly included: "unlimited";
+  /** @default "allow" */
+  readonly overage?: "allow";
+  readonly cap?: never;
+  readonly unitPrice?: never;
+  readonly moneyCap?: never;
+}
+
+/** A count that blocks or allows past its end; nothing is billed. */
+interface UnbilledAllowanceInput extends AllowanceBase {
+  readonly included: number;
+  /** @default "block" */
+  readonly overage?: "block" | "allow";
+  readonly cap?: never;
+  readonly unitPrice?: never;
+  readonly moneyCap?: never;
+}
+
+/** A billed count with a unit cap, and no unit price yet. */
+interface BilledUnitsAllowanceInput extends AllowanceBase {
+  readonly included: number;
+  readonly overage: "bill";
+  /** The most units a period may bill past `included`. */
   readonly cap?: number;
-  /**
-   * What one billed unit costs, in minor units. Requires `overage: "bill"`.
-   * A tier's unit prices share one currency, and it must match the tier price.
-   */
+  /** What one billed unit costs. Without it the units are counted, not priced. */
   readonly unitPrice?: UnitPrice;
-  /**
-   * The most money this feature may bill in one period, in minor units.
-   * Requires `unitPrice`; the stricter of `cap` and `moneyCap` binds.
-   */
+  readonly moneyCap?: never;
+}
+
+/** A billed count with a unit price, and optionally a money ceiling. */
+interface BilledMoneyAllowanceInput extends AllowanceBase {
+  readonly included: number;
+  readonly overage: "bill";
+  readonly cap?: number;
+  readonly unitPrice: UnitPrice;
+  /** The most money this feature may bill in one period, in minor units. */
   readonly moneyCap?: number;
 }
+
+/**
+ * The part of an allowance an author chooses; the rest has a default.
+ *
+ * The shape is a union, not one interface with optional fields: a cap, a unit
+ * price or a money cap describes a bill, so it is only representable with
+ * `overage: "bill"`, and `"unlimited"` can only allow. The catalog still
+ * validates the serialized form; this makes the same contradiction an editor
+ * error for a TypeScript author.
+ */
+export type AllowanceInput =
+  | UnlimitedAllowanceInput
+  | UnbilledAllowanceInput
+  | BilledUnitsAllowanceInput
+  | BilledMoneyAllowanceInput;
 
 /**
  * Quote a declared feature in a tier. Taking the `Feature` value rather than
@@ -165,7 +200,18 @@ export interface AllowanceInput {
  * // { feature: "messages", kind: "metered", included: "unlimited", overage: "allow", resets: "month", carryOver: false }
  * ```
  */
-export const allowance = (feature: Feature, input: AllowanceInput): Allowance => ({
+type Metered<F extends Feature> = "metered" extends F["kind"]
+  ? F
+  : F["kind"] extends "flag"
+    ? never
+    : F;
+
+type Flag<F extends Feature> = "flag" extends F["kind"] ? F : F["kind"] extends "flag" ? F : never;
+
+export const allowance = <F extends Feature>(
+  feature: Metered<F>,
+  input: AllowanceInput,
+): Allowance => ({
   feature: feature.id,
   kind: "metered",
   included: input.included,
@@ -199,7 +245,7 @@ export const isFlagGrant = (allowance: { readonly kind?: AllowanceKind }): boole
  * // { feature: "sso", kind: "flag", included: 1, overage: "allow", resets: "never" }
  * ```
  */
-export const grant = (feature: Feature): Allowance => ({
+export const grant = <F extends Feature>(feature: Flag<F>): Allowance => ({
   feature: feature.id,
   kind: "flag",
   included: 1,

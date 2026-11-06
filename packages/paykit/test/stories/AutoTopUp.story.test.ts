@@ -1,6 +1,7 @@
 import { Story } from "@alchemy.run/domain/Story";
 import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
@@ -9,7 +10,13 @@ import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog, creditRatesOf, type Catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { Payments, paymentsRouter, type MoneyProvider } from "../../src/Payments.ts";
+import {
+  PaymentDeclined,
+  Payments,
+  paymentsRouter,
+  type MoneyProvider,
+} from "../../src/Payments.ts";
+import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { PaymentsStripe } from "../../src/PaymentsStripe.ts";
 import {
@@ -19,12 +26,14 @@ import {
 } from "../../src/Subscription/AutoTopUp.policy.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
+import { CreditsGranted, GrantCredits } from "../../src/Subscription/GrantCredits.command.ts";
 import {
   CreditsPurchased,
   PurchaseCredits,
 } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { TopUpCooldownCleared } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 
@@ -151,7 +160,10 @@ const subscribedPlain = [
   ),
 ] as const;
 
-const storyWith = (player: MoneyProvider, options: { readonly pack: string } | null) => {
+const storyWith = (
+  player: MoneyProvider,
+  options: { readonly pack: string; readonly cooldown?: Duration.Duration } | null,
+) => {
   const handlers = PaykitHandlers.pipe(
     Layer.provide(MemoryBillingReadStore),
     Layer.provideMerge(paymentsRouter(player)),
@@ -162,7 +174,11 @@ const storyWith = (player: MoneyProvider, options: { readonly pack: string } | n
         ? handlers
         : handlers.pipe(
             Layer.provideMerge(
-              autoTopUp({ catalog: testCatalog, pack: options.pack }).pipe(Layer.orDie),
+              autoTopUp({
+                catalog: testCatalog,
+                pack: options.pack,
+                ...(options.cooldown === undefined ? {} : { cooldown: options.cooldown }),
+              }).pipe(Layer.orDie),
             ),
           ),
   });
@@ -187,13 +203,13 @@ it.effect("buys the pack when a spend takes the pool across the threshold", () =
     ),
     // The policy asks the account's provider for the pack's price, keyed by
     // the crossing, then records the purchase with the invoice it opened.
-    Story.call(Payments.createInvoice, {
+    Story.call(Payments.charge, {
       account: account.id,
       amount: 4_900,
       currency: "usd",
       commandId,
     }),
-    Story.returned(Payments.createInvoice, { invoiceId: "in_1" }),
+    Story.returned(Payments.charge, { chargeId: "ch_1" }),
     Story.then(
       account,
       new CreditsPurchased({
@@ -201,7 +217,7 @@ it.effect("buys the pack when a spend takes the pool across the threshold", () =
         amount: 5_000,
         price: pack.price!,
         rates,
-        invoiceId: "in_1",
+        chargeId: "ch_1",
         balanceAfter: 5_500,
         prepaidAfter: 5_000,
       }),
@@ -229,13 +245,13 @@ it.effect("buys once per crossing, not once per spend below the threshold", () =
         remainingAfter: 900,
       }),
     ),
-    Story.call(Payments.createInvoice, {
+    Story.call(Payments.charge, {
       account: account.id,
       amount: 990,
       currency: "usd",
       commandId,
     }),
-    Story.returned(Payments.createInvoice, { invoiceId: "in_1" }),
+    Story.returned(Payments.charge, { chargeId: "ch_1" }),
     // The 100-credit pack lifts the pool exactly back to the line, so the
     // next spend is already below it: a spend is not a second crossing.
     Story.then(
@@ -245,7 +261,7 @@ it.effect("buys once per crossing, not once per spend below the threshold", () =
         amount: 100,
         price: smallPack.price!,
         rates,
-        invoiceId: "in_1",
+        chargeId: "ch_1",
         balanceAfter: 1_000,
         prepaidAfter: 100,
       }),
@@ -263,6 +279,255 @@ it.effect("buys once per crossing, not once per spend below the threshold", () =
       }),
     ),
     Story.view(Entitlements, account, { credits: 900 }),
+  );
+});
+
+const halfHour = Duration.minutes(30);
+const laterTen = at("2030-01-01T00:10:00Z");
+const cooldownEnds = at("2030-01-01T00:30:00Z");
+const nextCooldownEnds = at("2030-01-01T01:00:00Z");
+
+it.effect("defers a crossing inside the cooldown, then buys when the deadline clears it", () =>
+  storyWith(PaymentsMemory(), { pack: "pack", cooldown: halfHour })(
+    ...subscribed,
+    // 2,000 -> 500 crosses the line and buys a pack, which opens a 30-minute
+    // cooldown recorded on the event that bought it.
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.returned(Payments.charge, { chargeId: "ch_1" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        chargeId: "ch_1",
+        cooldownUntil: cooldownEnds,
+        balanceAfter: 5_500,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    // The page says when the next refill may buy, so an operator can tell a
+    // deferred crossing from a broken policy.
+    Story.view(BillingState, account, { topUpCooldownUntil: cooldownEnds }),
+    // A second crossing inside the window is deferred: the pool is spent down
+    // again and nothing is invoiced, because the pack is not the only bound.
+    Story.clock(laterTen),
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 5_000 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 5_000,
+        cost: 5_000,
+        creditsAfter: 500,
+        usedAfter: 6_500,
+        remainingAfter: 500,
+      }),
+    ),
+    // The scheduled deadline clears the cooldown, and the policy buys the
+    // refill it deferred rather than the one it refused.
+    Story.clock(cooldownEnds),
+    Story.then(account, new TopUpCooldownCleared()),
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 5),
+    }),
+    Story.returned(Payments.charge, { chargeId: "ch_2" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        chargeId: "ch_2",
+        cooldownUntil: nextCooldownEnds,
+        // The plan's credits were spent first, so what is left of the first
+        // pack is all prepaid: 10,000 bought, 4,500 burned.
+        balanceAfter: 5_500,
+        prepaidAfter: 5_500,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 5_500 }),
+  ),
+);
+
+it.effect("buys nothing when the pool recovered before the cooldown ended", () =>
+  storyWith(PaymentsMemory(), { pack: "pack", cooldown: halfHour })(
+    ...subscribed,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.returned(Payments.charge, { chargeId: "ch_1" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        chargeId: "ch_1",
+        cooldownUntil: cooldownEnds,
+        balanceAfter: 5_500,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    // A crossing inside the window, then a grant that lifts the pool back over
+    // the line before the deadline: the deferred refill is no longer needed.
+    Story.clock(laterTen),
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 5_000 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 5_000,
+        cost: 5_000,
+        creditsAfter: 500,
+        usedAfter: 6_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.when(account, new GrantCredits({ amount: 1_000 })),
+    Story.then(account, new CreditsGranted({ amount: 1_000, balanceAfter: 1_500 })),
+    Story.clock(cooldownEnds),
+    Story.then(account, new TopUpCooldownCleared()),
+    Story.view(Entitlements, account, { credits: 1_500 }),
+    Story.view(BillingState, account, { credits: 1_500 }),
+  ),
+);
+
+it.effect("invoices the pack when the provider has no saved method to charge", () =>
+  // A manual provider bills by transfer: it declares `invoice` and not
+  // `charge`, so the crossing takes the invoice path and nothing changes.
+  storyWith(PaymentsManual(), { pack: "pack" })(
+    ...subscribed,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.call(Payments.createInvoice, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.returned(Payments.createInvoice, { invoiceId: "manual_invoice_1" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        invoiceId: "manual_invoice_1",
+        balanceAfter: 5_500,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 5_500 }),
+  ),
+);
+
+it.effect("falls back to the invoice when the saved method is declined", () => {
+  // Declares `charge` and fails it: a declined card is not an account that may
+  // not be refilled, so the same crossing is invoiced instead.
+  const declined = new PaymentDeclined({
+    provider: "stripe",
+    code: "card_declined",
+    message: "the card was declined",
+  });
+  const processor = PaymentsStripe({
+    bindings: {
+      createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
+      createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
+      charge: () => Effect.fail(declined),
+      createInvoice: () => Effect.succeed({ invoiceId: "in_fallback" }),
+    },
+  });
+  return storyWith(processor, { pack: "pack" })(
+    ...subscribed,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.failed(Payments.charge, declined),
+    Story.call(Payments.createInvoice, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.returned(Payments.createInvoice, { invoiceId: "in_fallback" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        invoiceId: "in_fallback",
+        balanceAfter: 5_500,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 5_500 }),
   );
 });
 

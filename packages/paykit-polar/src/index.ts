@@ -5,13 +5,23 @@ export { Polar, polarBindings, polarLayer, polarPriceOf } from "./Polar.ts";
 export type { PolarClient, PolarProps, PolarServer, PolarTier } from "./Polar.ts";
 export { distilledPolarClient, POLAR_BASE_URL, polarBaseUrl } from "./PolarClient.ts";
 export type { PolarClientConfig } from "./PolarClient.ts";
-export { PolarPrices, priceDeclarations, productNameOf } from "./Prices.ts";
+export {
+  PolarPrices,
+  declaredProductNames,
+  priceDeclarations,
+  productNameOf,
+  productNamePrefixOf,
+  retiredProducts,
+} from "./Prices.ts";
 export type {
+  FoundProduct,
   ProductDeclaration,
   ProductUsageDeclaration,
   SoldPrices,
   SoldProduct,
 } from "./Prices.ts";
+export { RetiredProducts } from "./RetiredProducts.ts";
+export type { ArchivedProducts } from "./RetiredProducts.ts";
 export { PAYKIT_TIER, Product } from "./Product.ts";
 export type { ProductUsage } from "./Product.ts";
 export {

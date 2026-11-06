@@ -36,6 +36,9 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
         }),
       refund: () => Effect.succeed({}),
       createPortal: () => missing("createPortal"),
+      // A manual invoice has a transfer behind it and no card to charge: a
+      // charge is refused by capability, not faked as an invoice.
+      charge: () => missing("charge"),
       // A manual invoice can bill a period, but it has no meter to feed: the
       // deploy can sell a postpaid tier, and the close refuses rather than
       // pretending the usage reached a vendor.

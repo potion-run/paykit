@@ -1,10 +1,10 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { BillingStackResource, Paykit, providerDescriptor } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import AdminWorker from "./src/AdminWorker.ts";
-import { adminCatalog } from "./src/catalog.ts";
+import { billing } from "./src/billing.config.ts";
 
 /**
  * The admin example: one recorded billing stack, the Worker that serves the
@@ -22,17 +22,7 @@ const Example = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const billing = yield* Paykit.Stack("Billing", {
-      store: Paykit.MemoryStore(),
-      providers: [Paykit.Manual()],
-      catalog: adminCatalog,
-    }).pipe(Effect.orDie);
-
-    const recorded = yield* BillingStackResource("Billing", {
-      catalog: billing.catalog,
-      providers: billing.providers.map(providerDescriptor),
-      store: billing.store,
-    });
+    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
     const worker = yield* AdminWorker;
     const app = yield* Cloudflare.Website.Foldkit("PaykitAdmin", {

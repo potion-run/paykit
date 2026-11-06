@@ -144,6 +144,10 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
             }),
       refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
         props.bindings.createRefund({ chargeId, amount }),
+      // Polar is a merchant of record: `createInvoice` finalizes an order, which
+      // is itself an off-session attempt on the saved method. A second charge
+      // op would be a second way to take one payment, so the port refuses it.
+      charge: () => missing("charge"),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
       reportUsage: (args: {

@@ -1,5 +1,7 @@
 import type * as Domain from "@alchemy.run/domain";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -60,7 +62,8 @@ import {
   type TrackUsageResult,
 } from "./Billing/TrackUsage.binding.ts";
 import { BillingApi } from "./BillingApi.api.ts";
-import { type CatalogService } from "./CatalogService.ts";
+import { catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
+import { CatalogService, catalogLayer } from "./CatalogService.ts";
 import type { CheckResult } from "./Check.ts";
 import { type BillingStateView } from "./Subscription/BillingState.view.ts";
 import { type EntitlementsState } from "./Subscription/Entitlements.view.ts";
@@ -124,15 +127,8 @@ export type BillingAtomServices =
   | WithdrawTierChange
   | StartTrial;
 
-/** What `make` needs: one layer that reaches the Api and the catalog. */
-export interface BillingAtomOptions<E = never> {
-  /**
-   * The transport and the catalog, built once. A browser client is
-   * `BillingApi.layerClientHttp(url)` with `FetchHttpClient.layer` and the
-   * deploy's `catalogLayer(Catalog)`; a test is
-   * `BillingApi.layerClientInProcess` with the same catalog.
-   */
-  readonly layer: Layer.Layer<BillingClient | CatalogService, E, never>;
+/** What every `make` form shares: the runtime and the invalidation keys. */
+export interface BillingAtomBaseOptions {
   /**
    * The atom runtime factory to build on. Defaults to `Atom.runtime`; supply
    * the application's own factory to share its layers and invalidation.
@@ -145,6 +141,31 @@ export interface BillingAtomOptions<E = never> {
    */
   readonly reactivityKeys?: Partial<Record<BillingAtomVerb, Reactivity.KeysInput>>;
 }
+
+/**
+ * `make` over a layer you built: the transport and the catalog, built once. A
+ * test uses `BillingApi.layerClientInProcess`; a deployment with a custom
+ * transport uses this form.
+ */
+export interface BillingAtomLayerOptions<E = never> extends BillingAtomBaseOptions {
+  readonly layer: Layer.Layer<BillingClient | CatalogService, E, never>;
+}
+
+/**
+ * `make` over an HTTP Api: the common browser case. `make` builds the catalog
+ * layer and the Api client, and provides `FetchHttpClient` unless one is given.
+ */
+export interface BillingAtomUrlOptions extends BillingAtomBaseOptions {
+  /** The base URL of the served `BillingApi`, e.g. `/api/billing`. */
+  readonly url: string;
+  /** The catalog the deploy sells. It is validated into the client layer. */
+  readonly catalog: CatalogInput;
+  /** The HTTP client to use. Defaults to `FetchHttpClient.layer`. */
+  readonly httpClient?: Layer.Layer<HttpClient.HttpClient>;
+}
+
+/** What `make` needs: either a layer or an HTTP Api and its catalog. */
+export type BillingAtomOptions<E = never> = BillingAtomLayerOptions<E> | BillingAtomUrlOptions;
 
 /** The atoms one paykit client exposes. */
 export interface BillingAtoms<E = never> {
@@ -272,18 +293,13 @@ const billingAtom = <E>(
  * **Example:** A React page over a served paykit Api
  * ```typescript
  * import { RegistryProvider, useAtomSet, useAtomValue } from "@effect/atom-react";
- * import { BillingApi, catalogLayer } from "@potion.run/paykit";
  * import * as PaykitAtom from "@potion.run/paykit/Atom";
- * import { Layer } from "effect";
- * import * as FetchHttpClient from "effect/http/FetchHttpClient";
  * import * as AsyncResult from "effect/reactivity/AsyncResult";
- * import { Catalog } from "./catalog.ts";
+ * import { billingCatalog } from "./billing.config.ts";
  *
  * export const billing = PaykitAtom.make({
- *   layer: Layer.mergeAll(
- *     catalogLayer(Catalog),
- *     BillingApi.layerClientHttp("/api/billing").pipe(Layer.provide(FetchHttpClient.layer)),
- *   ),
+ *   url: "/api/billing",
+ *   catalog: billingCatalog,
  * });
  *
  * const entitlements = billing.entitlements("acct_1");
@@ -310,14 +326,28 @@ const billingAtom = <E>(
  * @primitive
  * @product Usage
  */
-export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E> => {
+const clientLayer = (options: BillingAtomUrlOptions) =>
+  Layer.unwrap(
+    Effect.map(catalog(options.catalog), (parsed) =>
+      Layer.mergeAll(
+        catalogLayer(parsed),
+        BillingApi.layerClientHttp(options.url).pipe(
+          Layer.provide(options.httpClient ?? FetchHttpClient.layer),
+        ),
+      ),
+    ),
+  );
+
+export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E | CatalogError> => {
+  const layer: Layer.Layer<BillingClient | CatalogService, E | CatalogError, never> =
+    "layer" in options ? options.layer : clientLayer(options);
   const factory = options.runtime ?? Atom.runtime;
   const runtime = factory(
     // `provideMerge` keeps the Api client and the catalog on the runtime, so an
     // application query — and a test that seeds a standing — can reach them
     // without rebuilding the transport.
-    BillingApiLayer.pipe(Layer.provideMerge(options.layer)),
-  ) as Atom.AtomRuntime<BillingAtomServices, E>;
+    BillingApiLayer.pipe(Layer.provideMerge(layer)),
+  ) as Atom.AtomRuntime<BillingAtomServices, E | CatalogError>;
 
   const withAccount = (account: string) =>
     factory.withReactivity(["paykit", accountReactivityKey(account)]);
@@ -328,15 +358,16 @@ export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E>
   // The Api client decodes a rejection into the schema `Instance<...>` form;
   // the public alias names the same class a caller matches, so the cast keeps
   // the atom's error channel readable at the call site.
-  const entitlements = Atom.family((account: string): BillingQuery<EntitlementsState, E> =>
-    Atom.withServerValueInitial(
-      entitlementsAtom(runtime, account) as BillingQuery<EntitlementsState, E>,
-    ).pipe(withAccount(account)),
+  const entitlements = Atom.family(
+    (account: string): BillingQuery<EntitlementsState, E | CatalogError> =>
+      Atom.withServerValueInitial(
+        entitlementsAtom(runtime, account) as BillingQuery<EntitlementsState, E | CatalogError>,
+      ).pipe(withAccount(account)),
   );
 
-  const billing = Atom.family((account: string): BillingQuery<BillingStateView, E> =>
+  const billing = Atom.family((account: string): BillingQuery<BillingStateView, E | CatalogError> =>
     Atom.withServerValueInitial(
-      billingAtom(runtime, account) as BillingQuery<BillingStateView, E>,
+      billingAtom(runtime, account) as BillingQuery<BillingStateView, E | CatalogError>,
     ).pipe(withAccount(account)),
   );
 
@@ -355,7 +386,7 @@ export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E>
         BillingAtomServices
       >,
     ) =>
-    (account: string): BillingMutation<Request, Result, Error, E> =>
+    (account: string): BillingMutation<Request, Result, Error, E | CatalogError> =>
       runtime.fn(
         (request: Request) =>
           Effect.gen(function* () {
@@ -368,7 +399,7 @@ export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E>
   // `check` answers a question; it writes nothing, so it invalidates nothing.
   // It is still a command atom because the amount is part of the request.
   const check = Atom.family(
-    (account: string): BillingMutation<CheckRequest, CheckResult, CheckError, E> =>
+    (account: string): BillingMutation<CheckRequest, CheckResult, CheckError, E | CatalogError> =>
       runtime.fn((request: CheckRequest) =>
         Effect.gen(function* () {
           const bound = yield* Check(account);

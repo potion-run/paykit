@@ -15,9 +15,9 @@ import {
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Catalog } from "../src/Billing.ts";
-import { tierCommand } from "../src/Billing.ts";
 import { billingCatalog } from "../src/catalog.ts";
 import { billingOnSql } from "../src/SqlBilling.ts";
+import { tierCommand } from "./support.ts";
 
 const account = Subscription.ref("acct_sql_example");
 const asAccount = { headers: { "x-paykit-actor": account.id } };

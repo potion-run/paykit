@@ -50,7 +50,8 @@ const stripe = Stripe({
 
 | Export | What it is |
 | --- | --- |
-| `Stripe(props)` | the whole thing: a `Provider<"processor">` for `Paykit.Stack` |
+| `StripeBilling(id, props)` | provisioning and the provider in one call; returns the `MoneyProvider` plus the keys it created |
+| `Stripe(props)` | the whole thing: a `Provider<"processor">` for `Paykit.BillingStack` |
 | `StripeTier` | where a tier lives in Stripe, and the price the catalog states |
 | `StripeProps` | key, origin and the tier mapping |
 | `StripeClient` | the Stripe calls, as an interface a test stands in for |
@@ -63,7 +64,11 @@ const stripe = Stripe({
 
 `Stripe()` builds the distilled client from `secretKey` when no `client` is given, so a deployment
 wires nothing. It returns what the catalog needs and nothing else: `kind`, `capabilities`,
-`payments` and `prices`, so `Stack` can check the mapping against the catalog at deploy time.
+`payments` and `prices`, so `BillingStack` can check the mapping against the catalog at deploy time.
+
+`StripeBilling(id, { secretKey, origin, tiers })` is the common deployment: it yields
+`StripePrices` and `Stripe` with the same tier map, so the user does not repeat the lookup keys.
+`StripePrices` and `Stripe` stay for a deployment that provisions and configures separately.
 
 `stripeWebhook()` is the other half of a deployment: the money plane is Stripe's, but the standing
 only moves when paykit applies the provider's event. The signature check is

@@ -4,7 +4,9 @@ import * as Paykit from "../src/index.ts";
 
 it("exports the four groups from the package root", () => {
   // deploy-time
-  expect(typeof Paykit.Stack).toBe("function");
+  expect(typeof Paykit.BillingStack).toBe("function");
+  expect(typeof Paykit.validateStack).toBe("function");
+  expect(typeof Paykit.world).toBe("function");
   expect(typeof Paykit.paykitWorld).toBe("function");
   expect(typeof Paykit.tier).toBe("function");
   expect(typeof Paykit.feature).toBe("function");
@@ -124,7 +126,7 @@ it.effect("a catalog built through the public helpers is the same one Stack vali
       price: { amount: 1900, currency: "usd", interval: "month" },
       grants: [Paykit.allowance(Paykit.messages, { included: 2000, overage: "bill" })],
     });
-    const billing = yield* Paykit.Stack("Billing", {
+    const billing = yield* Paykit.validateStack("Billing", {
       catalog: { features: [Paykit.messages], tiers: [free, pro] },
       providers: [Paykit.Memory()],
     });

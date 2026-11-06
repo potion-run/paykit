@@ -44,6 +44,12 @@ export type PaymentError = ProviderCapabilityMissing | PaymentDeclined;
 export const PaymentCapability = Schema.Literals([
   "checkout",
   "invoice",
+  /**
+   * Take an amount from the customer's saved method, without a checkout and
+   * without the vendor's collection schedule. An auto top-up prefers it and
+   * falls back to `invoice`.
+   */
+  "charge",
   "refund",
   "portal",
   "usage",
@@ -77,6 +83,17 @@ export const Payments = Domain.ExternalSystem("Payments", {
       commandId: Schema.optionalKey(Schema.String),
     },
     success: { invoiceId: Schema.String },
+    error: [ProviderCapabilityMissing, PaymentDeclined],
+  },
+  charge: {
+    args: {
+      account: Schema.String,
+      amount: Schema.Int,
+      currency: Schema.String,
+      /** The same idempotency key the invoice would have used: the crossing. */
+      commandId: Schema.optionalKey(Schema.String),
+    },
+    success: { chargeId: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
   refund: {
@@ -120,6 +137,13 @@ export interface PaymentsService {
     /** Stable across retries; a provider that can dedupe must use it. */
     readonly commandId?: string;
   }) => Effect.Effect<{ readonly invoiceId: string }, PaymentError>;
+  readonly charge: (args: {
+    readonly account: string;
+    readonly amount: number;
+    readonly currency: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly chargeId: string }, PaymentError>;
   readonly refund: (args: {
     readonly chargeId: string;
     readonly amount: number;

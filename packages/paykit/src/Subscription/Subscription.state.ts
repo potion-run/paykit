@@ -176,6 +176,13 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * `decide` is pure and the policy runs without the catalog.
    */
   topUp: Schema.optionalKey(TopUpThreshold),
+  /**
+   * When the last policy-opened top-up's cooldown ends. A crossing while this is
+   * set is deferred, not refused: `TopUpCooldownElapsed` clears it at the
+   * deadline and the policy re-asks. Absent on a deployment with no cooldown and
+   * on a purchase a checkout completed.
+   */
+  topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
   /** Every credit-priced feature's rate card, copied from the event that set it. */
   rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
@@ -270,6 +277,14 @@ export const billedOf = (state: SubscribedState, feature: string): number =>
 /** The auto top-up line this standing holds, or `null` when it never refills. */
 export const topUpOf = (state: SubscriptionState): number | null =>
   state._tag === "Subscribed" ? (state.topUp ?? null) : null;
+
+/**
+ * The deadline a top-up cooldown ends at, or `null` when one is not open. Only a
+ * standing can carry one: a cooldown is opened by a policy-opened purchase, and
+ * a threshold only a tier can state.
+ */
+export const topUpCooldownOf = (state: SubscriptionState): DateTime.Utc | null =>
+  state._tag === "Subscribed" ? (state.topUpCooldownUntil ?? null) : null;
 
 /**
  * The part of one usage event that is past `included`, and so billable. An

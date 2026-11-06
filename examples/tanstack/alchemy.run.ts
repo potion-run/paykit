@@ -1,10 +1,10 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { BillingStackResource, Paykit, providerDescriptor } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { billing } from "./src/billing.config.ts";
 import BillingWorker from "./src/BillingWorker.ts";
-import { tanstackCatalog } from "./src/catalog.ts";
 
 /**
  * A TanStack Start website and the paykit service behind it.
@@ -15,8 +15,10 @@ import { tanstackCatalog } from "./src/catalog.ts";
  * binding and hands every other request to TanStack Start — which is why the
  * browser's atom client can use a same-origin URL and only a cookie.
  *
- * `Paykit.Stack` validates the catalog at deploy; `BillingStackResource`
- * records the same declarations in stack state.
+ * `Paykit.BillingStack` validates the catalog and records the declaration in
+ * stack state in one call. The Worker and the browser read the same
+ * `src/billing.config.ts`, so the deploy, the runtime and the client cannot
+ * disagree about the catalog.
  */
 const Example = Alchemy.Stack(
   "PaykitTanstackExample",
@@ -25,17 +27,7 @@ const Example = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const billing = yield* Paykit.Stack("Billing", {
-      store: Paykit.MemoryStore(),
-      providers: [Paykit.Manual()],
-      catalog: tanstackCatalog,
-    }).pipe(Effect.orDie);
-
-    const recorded = yield* BillingStackResource("Billing", {
-      catalog: billing.catalog,
-      providers: billing.providers.map(providerDescriptor),
-      store: billing.store,
-    });
+    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
     const service = yield* BillingWorker;
     const site = yield* Cloudflare.Website.Vite("PaykitWebsite", {

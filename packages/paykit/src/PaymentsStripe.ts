@@ -51,6 +51,18 @@ export interface StripeBindings {
     readonly amount: number;
   }) => Effect.Effect<{}, PaymentError>;
   /**
+   * Optional: take an amount from the customer's saved method, off-session.
+   * A caller that cannot declares no `charge` capability, and the auto top-up
+   * falls back to `createInvoice`.
+   */
+  readonly charge?: (args: {
+    readonly account: string;
+    readonly amount: number;
+    readonly currency: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly chargeId: string }, PaymentError>;
+  /**
    * Optional: report a closed period's billable units to the vendor's meters.
    * A caller that cannot report declares no `usage` capability, and a close
    * that needs one fails with `ProviderCapabilityMissing`.
@@ -111,6 +123,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     "checkout",
     "portal",
     ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
+    ...(props.bindings.charge === undefined ? [] : (["charge"] as const)),
     ...(props.bindings.createRefund === undefined ? [] : (["refund"] as const)),
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
   ]);
@@ -183,6 +196,25 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
         props.bindings.createInvoice === undefined
           ? missing("createInvoice")
           : props.bindings.createInvoice({
+              account,
+              amount,
+              currency,
+              ...(commandId === undefined ? {} : { commandId }),
+            }),
+      charge: ({
+        account,
+        amount,
+        currency,
+        commandId,
+      }: {
+        account: string;
+        amount: number;
+        currency: string;
+        commandId?: string;
+      }) =>
+        props.bindings.charge === undefined
+          ? missing("charge")
+          : props.bindings.charge({
               account,
               amount,
               currency,

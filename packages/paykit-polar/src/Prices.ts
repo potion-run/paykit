@@ -4,9 +4,15 @@ import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
 import { Meter, meterEventNameOf } from "./Meter.ts";
-import { Product, productNameOf } from "./Product.ts";
+import { Product, productNameOf, productNamePrefixOf } from "./Product.ts";
 
 export { productNameOf };
+
+/**
+ * The prefix every product name this stage owns starts with, re-exported
+ * beside the name it completes so a sweep and a deploy read one convention.
+ */
+export { productNamePrefixOf };
 
 /** One meter a tier's usage is priced through. */
 export interface ProductUsageDeclaration {
@@ -104,6 +110,59 @@ export const priceDeclarations = (
                 })),
       };
     });
+
+/** A product the vendor holds, reduced to what the sweep decides on. */
+export interface FoundProduct {
+  /** Polar product id (`prod_…`). */
+  readonly id: string;
+  /** The stage-qualified name, `paykit:<encoded stage>:<encoded tier>`. */
+  readonly name: string;
+  /** `metadata.paykit_tier`, or `null` when the product carries none. */
+  readonly tier: string | null;
+  /** Whether Polar has archived the product. */
+  readonly archived: boolean;
+}
+
+/** Every name the catalog currently sells. Polar has no lookup key, so the name is the key. */
+export const declaredProductNames = (
+  declarations: ReadonlyArray<ProductDeclaration>,
+): ReadonlySet<string> => new Set(declarations.map((declaration) => declaration.name));
+
+/**
+ * The products this stage owns that the catalog no longer declares, and that
+ * Polar still offers for sale.
+ *
+ * A retired tier leaves its product behind: every resource is declared with
+ * `RemovalPolicy.retain`, which is what keeps a bill you already sent
+ * reproducible. What it does not do is stop the product being buyable, because
+ * a Polar product detached from a stack is still purchasable. This is the half
+ * that says which ones to archive.
+ *
+ * The identity is the pair `PolarPrices` writes: the stage-qualified name *and*
+ * `metadata.paykit_tier`. Both are required here, so a product someone created
+ * by hand under a name that happens to start with ours is not swept away, and
+ * the prefix keeps one stage's sweep out of another's catalog.
+ *
+ * Pure, so the decision is testable without a Polar organization: everything it
+ * needs is the catalog's declarations and the products the vendor holds.
+ */
+export const retiredProducts = (
+  declarations: ReadonlyArray<ProductDeclaration>,
+  found: ReadonlyArray<FoundProduct>,
+  stage: string,
+): ReadonlyArray<FoundProduct> => {
+  const prefix = productNamePrefixOf(stage);
+  const declared = declaredProductNames(declarations);
+  return found.filter(
+    (product) =>
+      !product.archived &&
+      product.tier !== null &&
+      product.name.startsWith(prefix) &&
+      // A product of another stage is still ours, and still not this stack's
+      // to archive.
+      !declared.has(product.name),
+  );
+};
 
 /** What a stack gets back: the Polar product id a tier is sold as. */
 export type SoldProduct = Output<string>;

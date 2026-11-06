@@ -83,17 +83,19 @@ export {
   ProviderDuplicate,
   ProviderDescriptor,
   Sqlite,
-  Stack,
   providerDescriptor,
   validateProviderMappings,
+  validateStack,
 } from "./Stack.ts";
-export type { BillingStack, StackProps, Store } from "./Stack.ts";
+export type { Store, ValidateStackProps, ValidatedBillingStack } from "./Stack.ts";
+export { BillingStack } from "./BillingStack.ts";
+export type { BillingDeployment, BillingStackProps } from "./BillingStack.ts";
 export {
   BILLING_STACK_VERSION,
   BillingStack as BillingStackResource,
   BillingStackAttrs,
-  BillingStackProps,
   BillingStackProvider,
+  BillingStackRecord,
   BillingStackStateTooNew,
   diffBillingStack,
   BillingStore,
@@ -288,6 +290,7 @@ export type { BindingError } from "./Billing/Bindings.ts";
 
 // The contracts the bindings answer with, and the pieces they do not own.
 export { CheckFailed, CheckStatus, CheckTransport, evaluateCheck, rowToState } from "./Check.ts";
+export { httpStatus } from "./HttpStatus.ts";
 export type { CheckInput, CheckResult } from "./Check.ts";
 export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
 export type { Proration as ProrationValue } from "./Proration.ts";
@@ -340,7 +343,7 @@ export type { VerifyOptions } from "./Verify.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel, PaykitModel as Model } from "./Paykit.model.ts";
-export { paykitWorld } from "./World.ts";
+export { paykitWorld, world } from "./World.ts";
 export type { PaykitWorldOptions } from "./World.ts";
 export { BillingApi } from "./BillingApi.api.ts";
 export type { SubscribeInput, SubscribeResult } from "./Billing/Subscribe.operation.ts";
@@ -483,6 +486,10 @@ export {
   RecordPayment as RecordPaymentCommand,
 } from "./Subscription/RecordPayment.command.ts";
 export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
+export {
+  TopUpCooldownCleared,
+  TopUpCooldownElapsed,
+} from "./Subscription/TopUpCooldownElapsed.command.ts";
 export {
   PaymentFailed,
   RecordPaymentFailure as RecordPaymentFailureCommand,

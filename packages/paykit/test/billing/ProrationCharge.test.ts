@@ -83,6 +83,8 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
                 return { invoiceId: `inv_${asked.length}` };
               })
             : Effect.fail(failWith),
+        charge: () =>
+          Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "charge" })),
         refund: () =>
           Effect.fail(new ProviderCapabilityMissing({ provider: "test", op: "refund" })),
         createPortal: () =>

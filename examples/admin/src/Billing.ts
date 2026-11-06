@@ -1,13 +1,12 @@
-import { catalog, Manual, type PaykitWorldOptions, paykitWorld } from "@potion.run/paykit";
-import * as Effect from "effect/Effect";
-import { adminCatalog } from "./catalog.ts";
+import { Paykit } from "@potion.run/paykit";
+import { billing } from "./billing.config.ts";
 import { CookieGuards } from "./Session.ts";
 
-/** The catalog the deploy validates. */
-export const Catalog = Effect.runSync(catalog(adminCatalog));
+/** The catalog the deploy declares, for a test or a page that reads it. */
+export const Catalog = billing.catalog;
 
 /** The example sells through an invoice; no provider key is needed. */
-export const Provider = Manual();
+export const Provider = billing.providers[0]!;
 
 /**
  * The model, catalog, provider and cookie guards the admin Worker serves. The
@@ -19,14 +18,8 @@ export const Provider = Manual();
  * passes `DomainCloudflare.layerDurableObjects()`, the test takes the default
  * `Domain.InMemory`.
  */
-export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
-  paykitWorld({
-    catalog: Catalog,
-    guards: CookieGuards,
-    providers: [Provider],
-    bindings: "none",
-    ...(platform === undefined ? {} : { platform }),
-  });
-
-/** The same world on an in-memory platform, for tests and local scripts. */
-export const BillingTestLive = billingLayers();
+export const BillingTestLive = Paykit.world({
+  ...billing,
+  guards: CookieGuards,
+  bindings: "none",
+});

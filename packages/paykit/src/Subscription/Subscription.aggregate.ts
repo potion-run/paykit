@@ -111,6 +111,7 @@ import {
   type SubscriptionStatus,
 } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
+import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
 import {
   AllowanceExceeded,
   CreditExceeded,
@@ -452,6 +453,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RecordProrationInvoice,
     GrantCredits,
     PurchaseCredits,
+    TopUpCooldownElapsed,
     ConsumeCredits,
     ScheduleCancellation,
     ScheduleTierChange,
@@ -1024,10 +1026,21 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.price === undefined ? {} : { price: command.price }),
           ...(command.rates === undefined ? {} : { rates: command.rates }),
           ...(command.invoiceId === undefined ? {} : { invoiceId: command.invoiceId }),
+          ...(command.chargeId === undefined ? {} : { chargeId: command.chargeId }),
+          ...(command.cooldownUntil === undefined ? {} : { cooldownUntil: command.cooldownUntil }),
           balanceAfter: creditsOf(state) + command.amount,
           prepaidAfter: prepaidCreditsOf(state) + command.amount,
         }),
       ];
+    },
+    TopUpCooldownElapsed: (state, _command, { now }) => {
+      // The deadline is scheduled, so an account with no cooldown and a fire
+      // before the deadline are both ordinary states, not operator mistakes.
+      if (state._tag !== "Subscribed") return [];
+      const until = state.topUpCooldownUntil;
+      if (until === undefined) return [];
+      if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(until)) return [];
+      return [new TopUpCooldownCleared()];
     },
     ConsumeCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
@@ -1300,13 +1313,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         : state,
     CreditsPurchased: (state, event) =>
       state._tag === "Subscribed"
-        ? { ...state, credits: event.balanceAfter, prepaidCredits: event.prepaidAfter }
+        ? {
+            ...state,
+            credits: event.balanceAfter,
+            prepaidCredits: event.prepaidAfter,
+            ...(event.cooldownUntil === undefined
+              ? {}
+              : { topUpCooldownUntil: event.cooldownUntil }),
+          }
         : {
             ...state,
             credits: event.balanceAfter,
             prepaidCredits: event.prepaidAfter,
             ...(event.rates === undefined ? {} : { rates: event.rates }),
           },
+    TopUpCooldownCleared: (state) => {
+      if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
+      const { topUpCooldownUntil: _cleared, ...rest } = state;
+      return rest;
+    },
     CreditsConsumed: (state, event) =>
       state._tag === "Subscribed"
         ? {

@@ -19,6 +19,7 @@ export {
   retiredPrices,
   lookupKeyPrefixOf,
   priceDeclarations,
+  soldTiers,
   tierOfDeclaration,
 } from "./Prices.ts";
 export type { PriceDeclaration, SoldPrice, SoldPrices, UsagePriceDeclaration } from "./Prices.ts";
@@ -28,3 +29,6 @@ export { stripeWebhook } from "./Webhooks.ts";
 export type { StripeWebhookError, StripeWebhookProps, StripeWebhookRequest } from "./Webhooks.ts";
 export { RetiredPrices } from "./RetiredPrices.ts";
 export type { ArchivedPrices } from "./RetiredPrices.ts";
+// Provisioning and the provider in one call, for the common deployment.
+export { StripeBilling } from "./StripeBilling.ts";
+export type { StripeBillingProps, StripeBillingProvider } from "./StripeBilling.ts";

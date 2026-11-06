@@ -99,7 +99,7 @@ export const Sqlite = (props: {
 });
 
 /** What a Stack declares. */
-export interface StackProps {
+export interface ValidateStackProps {
   /** Plain catalog data; provider ids belong in provider config, never here. */
   readonly catalog: CatalogInput;
   /**
@@ -112,7 +112,7 @@ export interface StackProps {
 }
 
 /** A validated stack: the catalog, the providers, and the store. */
-export interface BillingStack {
+export interface ValidatedBillingStack {
   readonly id: string;
   readonly catalog: Catalog;
   readonly providers: ReadonlyArray<MoneyProvider>;
@@ -250,16 +250,16 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
 };
 
 /**
- * Declare the billing stack: validate the catalog, refuse a provider price
- * that disagrees with it, refuse two providers that share a name, and refuse a
- * priced tier nothing can sell. The provider's own price ids never reach the
- * catalog.
+ * Validate a billing declaration without recording it: the catalog, every
+ * provider mapping, and the store. `Paykit.BillingStack` is the deploy call;
+ * this is the pure half, for a test or a tool that wants the validated value
+ * without an Alchemy stack.
  */
-export const Stack = (
+export const validateStack = (
   id: string,
-  props: StackProps,
+  props: ValidateStackProps,
 ): Effect.Effect<
-  BillingStack,
+  ValidatedBillingStack,
   CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate
 > =>
   Effect.gen(function* () {

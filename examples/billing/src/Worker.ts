@@ -1,6 +1,6 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
-import { ACTOR_HEADER, BillingAdminApi, BillingApi, type WebhookError } from "@potion.run/paykit";
+import { ACTOR_HEADER, BillingAdminApi, BillingApi, Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -14,21 +14,6 @@ import { billingOnSql } from "./SqlBilling.ts";
 /** The account a request acts for. A deployment reads its own session here. */
 const accountOf = (request: HttpServerRequest.HttpServerRequest): string | null =>
   request.headers[ACTOR_HEADER] ?? null;
-
-/** The status an error deserves, so a provider learns the right thing and retreats. */
-const statusOf = (error: WebhookError | { readonly _tag?: string }): number => {
-  switch (error._tag) {
-    case "WebhookSignatureInvalid":
-      return 401;
-    case "WebhookInvalid":
-    case "TierNotInCatalog":
-      return 400;
-    case "ProviderCapabilityMissing":
-      return 501;
-    default:
-      return 500;
-  }
-};
 
 /**
  * The five paths, served from one model hosted on one database.
@@ -78,7 +63,7 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
       if (Result.isFailure(purchase)) {
         return HttpServerResponse.jsonUnsafe(
           { error: purchase.failure._tag },
-          { status: statusOf(purchase.failure) },
+          { status: Paykit.httpStatus(purchase.failure) },
         );
       }
       return HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
@@ -96,7 +81,7 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
       }
       return HttpServerResponse.jsonUnsafe(
         { error: applied.failure._tag },
-        { status: statusOf(applied.failure) },
+        { status: Paykit.httpStatus(applied.failure) },
       );
     }
 
@@ -115,7 +100,7 @@ const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
     const request = yield* HttpServerRequest.HttpServerRequest;
     const billing = billingOnSql(yield* database.raw);
     const world = Layer.mergeAll(billing.world, Provider.payments);
-    return yield* handle(request).pipe(Effect.provide(world));
+    return yield* handle(request).pipe(Effect.provide(world), Effect.orDie);
   }),
 });
 

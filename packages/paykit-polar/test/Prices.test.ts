@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { priceDeclarations, productNameOf } from "../src/Prices.ts";
+import {
+  priceDeclarations,
+  productNameOf,
+  productNamePrefixOf,
+  retiredProducts,
+  type FoundProduct,
+} from "../src/Prices.ts";
 
 const pro = { amount: 1900, currency: "usd", interval: "month" as const };
 const scale = { amount: 19_800, currency: "usd", interval: "annual" as const };
@@ -89,5 +95,70 @@ describe("product declarations", () => {
 
   it("declares nothing for a catalog with no prices", () => {
     expect(priceDeclarations({}, stage)).toEqual([]);
+  });
+});
+
+describe("the archive sweep", () => {
+  const declared = priceDeclarations({ pro: { price: pro } }, stage);
+
+  const product = (input: {
+    readonly id: string;
+    readonly name: string;
+    readonly tier: string | null;
+    readonly archived?: boolean;
+  }): FoundProduct => ({ archived: false, ...input });
+
+  it("names the product whose tier left the catalog, and nothing else", () => {
+    const retired = retiredProducts(
+      declared,
+      [
+        product({ id: "prod_pro", name: "paykit:prod:pro", tier: "pro" }),
+        product({ id: "prod_scale", name: "paykit:prod:scale", tier: "scale" }),
+      ],
+      stage,
+    );
+    expect(retired.map((found) => found.id)).toEqual(["prod_scale"]);
+  });
+
+  it("leaves another stage's products alone, even though they share one organization", () => {
+    const retired = retiredProducts(
+      declared,
+      [product({ id: "prod_preview", name: "paykit:preview:pro", tier: "pro" })],
+      stage,
+    );
+    expect(retired).toEqual([]);
+  });
+
+  it("is idempotent: an archived product is not named a second time", () => {
+    const found = [
+      product({ id: "prod_scale", name: "paykit:prod:scale", tier: "scale", archived: true }),
+    ];
+    expect(retiredProducts(declared, found, stage)).toEqual([]);
+  });
+
+  it("leaves a product with no `paykit_tier` metadata alone: it is not this library's", () => {
+    const retired = retiredProducts(
+      declared,
+      [product({ id: "prod_manual", name: "paykit:prod:manual", tier: null })],
+      stage,
+    );
+    expect(retired).toEqual([]);
+  });
+
+  it("does not read `prod` as a prefix of `production`", () => {
+    const retired = retiredProducts(
+      declared,
+      [product({ id: "prod_other", name: "paykit:production:pro", tier: "pro" })],
+      stage,
+    );
+    expect(retired).toEqual([]);
+  });
+
+  it("scopes the prefix with a trailing colon, so a meter name never matches a tier", () => {
+    // A meter is named `paykit:<stage>:meter:<feature>`, so it shares the
+    // prefix; it is not a product, and the vendor's product list is what keeps
+    // it out of the sweep.
+    expect(productNamePrefixOf(stage)).toBe("paykit:prod:");
+    expect(productNamePrefixOf("preview 1")).toBe("paykit:preview_20_1:");
   });
 });

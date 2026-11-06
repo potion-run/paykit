@@ -1,5 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -12,7 +14,8 @@ import type { Price } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { creditsOf, topUpOf } from "./Subscription.state.ts";
+import { creditsOf, topUpCooldownOf, topUpOf } from "./Subscription.state.ts";
+import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
 import { UsageRecorded } from "./TrackUsage.command.ts";
 
 /** A spend that can take an account's pool across the threshold. */
@@ -32,6 +35,11 @@ export interface AutoTopUpTerms {
   readonly price: Price;
   /** The catalog's rate cards, so a pack can be spent before a plan exists. */
   readonly rates: CreditRateCards;
+  /**
+   * The shortest time between two policy-opened purchases, or `null` for none.
+   * The pack is the cooldown when this is absent, as it always was.
+   */
+  readonly cooldown: Duration.Duration | null;
 }
 
 /**
@@ -54,10 +62,13 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
 /**
  * The auto top-up policy's configuration. The pack is catalog data by id; the
  * threshold is the tier's own field (`Tier.topUp`), so a free tier and an
- * enterprise tier refill on the lines their pools need.
+ * enterprise tier refill on the lines their pools need. The cooldown is the
+ * deployment's: it bounds how often one account can be charged, not what the
+ * pack costs.
  *
  * ### Refilling a pool from a pack
- * **Example:** Buy a 100k pack when a pro account falls to 5k credits
+ * **Example:** Buy a 100k pack when a pro account falls to 5k credits, at most
+ * once an hour
  * ```typescript
  * const pro = Paykit.tier({
  *   id: "pro",
@@ -78,7 +89,11 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  * const layer = Paykit.Model.layer(
  *   Paykit.ModelHandlers.pipe(
  *     Layer.provideMerge(Paykit.paymentsRouter(provider)),
- *     Layer.provideMerge(Paykit.autoTopUp({ catalog, pack: credits.id }).pipe(Layer.orDie)),
+ *     Layer.provideMerge(
+ *       Paykit.autoTopUp({ catalog, pack: credits.id, cooldown: Duration.hours(1) }).pipe(
+ *         Layer.orDie,
+ *       ),
+ *     ),
  *   ),
  * );
  * ```
@@ -89,6 +104,11 @@ export const autoTopUp = (options: {
   readonly catalog: Catalog;
   /** The `kind: "one_off"` tier to buy; its credits and price come from the catalog. */
   readonly pack: string;
+  /**
+   * The shortest time between two policy-opened purchases. Absent, the pack is
+   * the only bound, so a pool that crosses again buys again.
+   */
+  readonly cooldown?: Duration.Duration;
 }): Layer.Layer<AutoTopUpConfig, AutoTopUpInvalid> =>
   Layer.effect(
     AutoTopUpConfig,
@@ -111,6 +131,7 @@ export const autoTopUp = (options: {
         amount: pack.credits,
         price: pack.price,
         rates: creditRatesOf(options.catalog),
+        cooldown: options.cooldown ?? null,
       } satisfies AutoTopUpTerms;
     }),
   );
@@ -142,6 +163,13 @@ export const crossedThreshold = (event: CreditSpend, threshold: number): boolean
 export const topUpCommandId = (account: string, seq: number): string => `topup:${account}:${seq}`;
 
 /**
+ * The id of the deadline that ends the cooldown a crossing opened. Derived from
+ * the crossing, so a redelivered spend schedules the same deadline once.
+ */
+export const topUpCooldownCommandId = (account: string, seq: number): string =>
+  `topup-cooldown:${account}:${seq}`;
+
+/**
  * When a spend takes an account's credit pool across its tier's top-up line,
  * buy the pack the deployment named: open an invoice for its price with the
  * account's provider, then record the purchase.
@@ -162,10 +190,17 @@ export const topUpCommandId = (account: string, seq: number): string => `topup:$
  * releases are not crossings, and a crossing whose pool has already recovered
  * is a late delivery rather than a reason to buy. A deployment that never
  * provides `AutoTopUpConfig` pays nothing for this policy.
+ *
+ * A deployment that sets a `cooldown` bounds how often one account can be
+ * charged. A crossing inside the cooldown is deferred rather than dropped: the
+ * deadline that clears it is itself an input, and when it arrives the policy
+ * asks the same question of the pool — is it still at or below the line? — and
+ * buys then. The deadline is recorded on the purchase, so a replay reproduces
+ * the standing without reading a clock.
  */
 export class AutoTopUp extends Domain.Policy("AutoTopUp", {
   from: Subscription,
-  on: [UsageRecorded, CreditsConsumed],
+  on: [UsageRecorded, CreditsConsumed, TopUpCooldownCleared],
 }) {}
 
 export const AutoTopUpLive = AutoTopUp.toLayer(
@@ -190,13 +225,28 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // The line is the tier's, not the deployment's: a tier that never stated
       // one never refills, however the pack is configured.
       const threshold = topUpOf(standing);
-      if (threshold === null || !crossedThreshold(event, threshold)) return;
-      // The event is the crossing, but the policy runs later: a pool that has
-      // already recovered means this pass is a redelivery, not a new need.
+      if (threshold === null) return;
+      // While a cooldown is open the deadline is the only thing that may buy,
+      // and it buys through its own event below. Dropping the crossing here is
+      // what defers it instead of buying a second pack inside the window.
+      if (topUpCooldownOf(standing) !== null) return;
+
+      // A spend has to cross the line; the end of a cooldown only has to leave
+      // the pool under it, because the crossing already happened and was
+      // deferred. Either way the pool is re-read: the event is the crossing,
+      // but the policy runs later, and a pool that has recovered means this
+      // pass is a redelivery rather than a new need.
+      const due =
+        event._tag === "TopUpCooldownCleared"
+          ? creditsOf(standing) <= threshold
+          : crossedThreshold(event, threshold);
+      if (!due) return;
       if (creditsOf(standing) > threshold) return;
 
       const chosen = providerFor(router, standing.refs);
-      if (chosen === null || !chosen.capabilities.has("invoice")) {
+      const canCharge = chosen !== null && chosen.capabilities.has("charge");
+      const canInvoice = chosen !== null && chosen.capabilities.has("invoice");
+      if (chosen === null || (!canCharge && !canInvoice)) {
         return yield* Effect.die(
           new ProviderCapabilityMissing({
             provider: chosen?.name ?? "none",
@@ -206,6 +256,25 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       }
 
       const commandId = topUpCommandId(key.id, envelope.seq);
+      // The deadline is measured from the crossing's own commit time, which the
+      // event already carries: a policy that read a clock would answer
+      // differently on a redelivery, and the standing would record a deadline
+      // the log does not explain.
+      const cooldownUntil =
+        config.cooldown === null ? null : DateTime.addDuration(envelope.at, config.cooldown);
+
+      // The deadline is written before the purchase that records it: a crash
+      // between the two leaves a command that fires against a standing with no
+      // cooldown (a no-op), never a cooldown nothing clears.
+      if (cooldownUntil !== null) {
+        yield* subscriptions
+          .schedule(key, new TopUpCooldownElapsed(), {
+            at: cooldownUntil,
+            commandId: topUpCooldownCommandId(key.id, envelope.seq),
+          })
+          .pipe(Effect.catchTag("AlreadyExecuted", () => Effect.void));
+      }
+
       const purchase = Effect.gen(function* () {
         const payments = yield* Effect.serviceOption(Payments);
         if (Option.isNone(payments)) {
@@ -214,12 +283,36 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
             op: "createInvoice",
           });
         }
-        const { invoiceId } = yield* payments.value.createInvoice({
+        const service = payments.value;
+        // Charge the saved method when the provider has one, because that is
+        // money taken at the crossing rather than money collected later. A
+        // charge that fails falls back to the invoice: a card that did not work
+        // is not an account that may not be refilled, and the invoice is the
+        // record paykit already keeps.
+        const money = {
           account: key.id,
           amount: config.price.amount,
           currency: config.price.currency,
           commandId,
-        });
+        };
+        const invoice = service
+          .createInvoice(money)
+          .pipe(Effect.map(({ invoiceId }) => ({ invoiceId })));
+        const paid = yield* canCharge
+          ? service.charge(money).pipe(
+              Effect.map(({ chargeId }) => ({ chargeId })),
+              Effect.catch(() =>
+                canInvoice
+                  ? invoice
+                  : Effect.fail(
+                      new ProviderCapabilityMissing({
+                        provider: chosen.name,
+                        op: "createInvoice",
+                      }),
+                    ),
+              ),
+            )
+          : invoice;
         // A redelivery is the same command id, which the store resolves to the
         // receipt it already recorded rather than a second pack.
         yield* asSystem(
@@ -230,7 +323,8 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
               amount: config.amount,
               price: config.price,
               rates: config.rates,
-              invoiceId,
+              ...paid,
+              ...(cooldownUntil === null ? {} : { cooldownUntil }),
             }),
             { commandId },
           ),

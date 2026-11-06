@@ -13,10 +13,20 @@ import {
 const capabilities: ReadonlySet<PaymentCapability> = new Set([
   "checkout",
   "invoice",
+  "charge",
   "refund",
   "portal",
   "usage",
 ]);
+
+/** One charge the memory provider took. */
+export interface MemoryCharge {
+  readonly chargeId: string;
+  readonly account: string;
+  readonly amount: number;
+  readonly currency: string;
+  readonly commandId?: string;
+}
 
 /** One report the memory provider accepted, deduped by its command id. */
 export interface MemoryUsageReport {
@@ -30,6 +40,8 @@ export interface MemoryUsageReport {
 /** The memory provider, plus the reports it accepted for a test to read. */
 export interface MemoryPayments extends MoneyProvider<"memory"> {
   readonly reports: ReadonlyArray<MemoryUsageReport>;
+  /** Every charge it took, so a test can tell a charge from an invoice. */
+  readonly charges: ReadonlyArray<MemoryCharge>;
 }
 
 /**
@@ -42,6 +54,9 @@ export const PaymentsMemory = (): MemoryPayments => {
   /** The invoice a command id already opened, so a retry is the same charge. */
   const invoiceFor = new Map<string, string>();
   const reports: Array<MemoryUsageReport> = [];
+  const charges: Array<MemoryCharge> = [];
+  /** The charge a command id already took, for the same reason. */
+  const chargeFor = new Map<string, string>();
   const reported = new Set<string>();
   let sequence = 0;
 
@@ -93,6 +108,41 @@ export const PaymentsMemory = (): MemoryPayments => {
             return { invoiceId: id };
           });
         },
+        charge: ({
+          account,
+          amount,
+          currency,
+          commandId,
+        }: {
+          account: string;
+          amount: number;
+          currency: string;
+          commandId?: string;
+        }) => {
+          if (amount <= 0) {
+            return Effect.fail(
+              new PaymentDeclined({
+                provider: "memory",
+                code: "invalid_amount",
+                message: "a charge needs a positive amount",
+              }),
+            );
+          }
+          return Effect.sync(() => {
+            const previous = commandId === undefined ? undefined : chargeFor.get(commandId);
+            if (previous !== undefined) return { chargeId: previous };
+            const chargeId = `ch_${next()}`;
+            charges.push({
+              chargeId,
+              account,
+              amount,
+              currency,
+              ...(commandId === undefined ? {} : { commandId }),
+            });
+            if (commandId !== undefined) chargeFor.set(commandId, chargeId);
+            return { chargeId };
+          });
+        },
         refund: ({ chargeId, amount }: { chargeId: string; amount: number }) =>
           Effect.sync(() => {
             void chargeId;
@@ -133,5 +183,5 @@ export const PaymentsMemory = (): MemoryPayments => {
     Layer.succeed(PaymentsProvider, { name: "memory", capabilities }),
   );
 
-  return { name: "memory", kind: "memory", capabilities, payments, reports };
+  return { name: "memory", kind: "memory", capabilities, payments, reports, charges };
 };

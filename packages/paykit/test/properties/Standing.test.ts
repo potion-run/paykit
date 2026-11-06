@@ -2,8 +2,8 @@ import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { allowance, grant, type Allowance, type Allowances } from "../../src/Allowance.ts";
-import { feature, type Feature } from "../../src/Feature.ts";
+import { grant, type Allowance, type Allowances } from "../../src/Allowance.ts";
+import { type Feature } from "../../src/Feature.ts";
 import { activationOf, standingFrom, type StandingGrant } from "../../src/Subscription/Standing.ts";
 import {
   initialSubscriptionState,
@@ -11,6 +11,7 @@ import {
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
+import { rawAllowance as allowance, rawFeature as feature } from "../support/Raw.ts";
 
 const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 

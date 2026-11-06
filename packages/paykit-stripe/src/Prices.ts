@@ -2,6 +2,7 @@ import * as Stripe from "@alchemy.run/stripe";
 import {
   encodeVendorPart,
   type Price,
+  type StripeTier,
   type TierId,
   type TierKind,
   type UnitPrice,
@@ -219,6 +220,41 @@ export interface SoldPrices {
 
 /** The old single-price handle, kept as a name for a caller that reads the map. */
 export type SoldPrice = string;
+
+/**
+ * The `Stripe({ tiers })` map for a set of catalog prices and the keys
+ * `StripePrices` created for them.
+ *
+ * Pure, so the join is testable without a Stripe account. The two inputs are
+ * the same tier map: a missing key is a programming error in the deploy, not a
+ * value the runtime should paper over.
+ */
+export const soldTiers = (
+  tiers: Readonly<Record<string, TierPrice>>,
+  sold: SoldPrices,
+): Readonly<Record<string, StripeTier>> =>
+  Object.fromEntries(
+    Object.entries(tiers).map(([tier, value]) => {
+      const { price, usage } = normalize(value);
+      const usagePrices = Object.fromEntries(
+        Object.entries(usage).map(([feature, unitPrice]) => [
+          feature,
+          {
+            unitPrice,
+            lookupKey: sold.usage[tier]?.[feature],
+          },
+        ]),
+      );
+      return [
+        tier,
+        {
+          price,
+          lookupKey: sold.prices[tier],
+          ...(Object.keys(usagePrices).length === 0 ? {} : { usage: usagePrices }),
+        },
+      ];
+    }),
+  );
 
 /**
  * The price resources a tier is sold through, reconciled from the catalog.

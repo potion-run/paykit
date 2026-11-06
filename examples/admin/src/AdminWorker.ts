@@ -1,12 +1,12 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
-import { BillingAdminApi } from "@potion.run/paykit";
+import { BillingAdminApi, Paykit } from "@potion.run/paykit";
 import { AdminConsoleServer } from "@potion.run/paykit/Admin";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { billingLayers } from "./Billing.ts";
-import { exampleActor, sessionCookies } from "./Session.ts";
+import { billing } from "./billing.config.ts";
+import { CookieGuards, exampleActor, sessionCookies } from "./Session.ts";
 
 /**
  * The admin surfaces, served from one model:
@@ -45,5 +45,15 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
         return HttpServerResponse.text("Not Found", { status: 404 });
       }),
     };
-  }).pipe(Effect.provide(billingLayers(DomainCloudflare.layerDurableObjects())), Effect.orDie),
+  }).pipe(
+    Effect.provide(
+      Paykit.world({
+        ...billing,
+        guards: CookieGuards,
+        bindings: "none",
+        platform: DomainCloudflare.layerDurableObjects(),
+      }),
+    ),
+    Effect.orDie,
+  ),
 ) {}

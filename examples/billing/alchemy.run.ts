@@ -1,19 +1,18 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
-import { BillingStackResource, Paykit, providerDescriptor } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { billingCatalog } from "./src/catalog.ts";
+import { billing } from "./src/billing.config.ts";
 import BillingWorker from "./src/Worker.ts";
 
 /**
  * The stack: one deploy-time billing stack and the Worker that serves it.
  *
- * `Paykit.Stack` validates the catalog and every provider price mapping before
- * anything is deployed. `BillingStackResource` then *records* the result in
- * Alchemy state — this is the resource, so a deploy re-runs `reconcile`,
- * a no-op deploy diffs to nothing, and `RemovalPolicy.RETAIN` keeps the
- * catalog and the ledger when the stack is destroyed.
+ * `Paykit.BillingStack` validates the catalog and every provider price mapping
+ * and records the result in Alchemy state in one call — a deploy re-runs
+ * `reconcile`, a no-op deploy diffs to nothing, and `RemovalPolicy.RETAIN`
+ * keeps the catalog and the ledger when the stack is destroyed.
  *
  * `Paykit.providers()` is what makes the resource callable at all: a resource
  * with no provider layer cannot reconcile.
@@ -30,18 +29,7 @@ const BillingExample = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const billing = yield* Paykit.Stack("Billing", {
-      store: Paykit.MemoryStore(),
-      providers: [Paykit.Manual()],
-      catalog: billingCatalog,
-    }).pipe(Effect.orDie);
-    // The same declarations, recorded in stack state. A catalog that fails to
-    // validate dies here rather than half-deploying.
-    const recorded = yield* BillingStackResource("Billing", {
-      catalog: billing.catalog,
-      providers: billing.providers.map(providerDescriptor),
-      store: billing.store,
-    });
+    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
     const worker = yield* BillingWorker;
     return {
       url: worker.url.as<string>(),

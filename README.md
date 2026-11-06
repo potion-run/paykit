@@ -31,20 +31,24 @@ const pro = Paykit.tier({
   grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
 });
 
-// The catalog is validated at deploy: a priced tier nothing can sell is a deploy error.
-yield* Paykit.Stack("Billing", {
-  store: Paykit.MemoryStore(),
-  providers: [Paykit.Manual()],
+// One declaration, read by the deploy, the Worker and the browser client.
+const billing = {
   catalog: { features: [messages], tiers: [pro] },
-});
+  providers: [Paykit.Manual()],
+  store: Paykit.MemoryStore(),
+};
+
+// The deploy validates the catalog, checks every provider mapping, and records
+// the result in stack state in one call.
+const recorded = yield* Paykit.BillingStack("Billing", billing);
 ```
 
 ```ts
-const check = yield* Paykit.Check();
-yield* check({ account, feature: "messages" });        // { allowed, remaining, resetsAt, standing }
+const check = yield* Paykit.Check(account);
+yield* check({ feature: "messages" });        // { allowed, remaining, resetsAt, standing }
 
-const track = yield* Paykit.Track();
-yield* track({ account, feature: "messages", dedupeKey: requestId });
+const track = yield* Paykit.TrackUsage(account);
+yield* track({ feature: "messages", dedupeKey: requestId });
 ```
 
 [`examples/billing`](./examples/billing) is a runnable Worker that bills with a real database and no

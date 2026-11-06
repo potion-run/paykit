@@ -4,6 +4,7 @@ import {
   type ActorValue,
   actorFromHeaders,
   BillingApi,
+  DevGuards,
   Paykit,
   Subscription,
 } from "@potion.run/paykit";
@@ -11,12 +12,7 @@ import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Result from "effect/Result";
-import { billingLayers } from "./Billing.ts";
-
-/** The status a refusal deserves. A bootstrap is a setup call, so only an
- * absent actor is a client error; everything else is the deployment's. */
-const statusOf = (error: { readonly _tag?: string }): number =>
-  error._tag === "TierNotInCatalog" ? 400 : 500;
+import { billing } from "./billing.config.ts";
 
 /**
  * The billing service for the TanStack Start app:
@@ -56,7 +52,7 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
             if (Result.isFailure(started)) {
               return HttpServerResponse.jsonUnsafe(
                 { error: started.failure._tag },
-                { status: statusOf(started.failure) },
+                { status: Paykit.httpStatus(started.failure) },
               );
             }
           }
@@ -72,5 +68,14 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
         return HttpServerResponse.text("Not Found", { status: 404 });
       }),
     };
-  }).pipe(Effect.provide(billingLayers(DomainCloudflare.layerDurableObjects())), Effect.orDie),
+  }).pipe(
+    Effect.provide(
+      Paykit.world({
+        ...billing,
+        guards: DevGuards,
+        platform: DomainCloudflare.layerDurableObjects(),
+      }),
+    ),
+    Effect.orDie,
+  ),
 ) {}

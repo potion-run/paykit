@@ -70,6 +70,8 @@ export const TimelineEntry = Schema.Struct({
   currency: Schema.optionalKey(Schema.String),
   /** The invoice an automatic top-up or a proration opened. */
   invoiceId: Schema.optionalKey(Schema.String),
+  /** The charge an automatic top-up took from the saved method, when it could. */
+  chargeId: Schema.optionalKey(Schema.String),
   /** Why a payment failed. */
   reason: Schema.optionalKey(Schema.String),
 });
@@ -432,6 +434,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         creditsAfter: event.balanceAfter,
         ...(event.price === undefined ? {} : { price: event.price }),
         ...(event.invoiceId === undefined ? {} : { invoiceId: event.invoiceId }),
+        ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
       };
       return appended(
         withPeriod(timeline, (value) =>

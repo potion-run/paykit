@@ -16,6 +16,7 @@ const stripeBindings: StripeBindings = {
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
   createRefund: () => Effect.succeed({}),
+  charge: ({ account }) => Effect.succeed({ chargeId: `ch_${account}` }),
 };
 
 const polarBindings: PolarBindings = {
@@ -102,6 +103,41 @@ describe("Payments conformance", () => {
             const first = yield* payments.createInvoice(request);
             const second = yield* payments.createInvoice(request);
             expect(second.invoiceId).toBe(first.invoiceId);
+          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
+      );
+
+      it.effect(
+        "charge succeeds or is missing as declared",
+        () =>
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(
+              (yield* Payments).charge({ account: "acct_1", amount: 1900, currency: "usd" }),
+            );
+            expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("charge"));
+            if (provider.capabilities.has("charge") && Exit.isSuccess(exit)) {
+              expect(exit.value.chargeId.length).toBeGreaterThan(0);
+            }
+            if (!provider.capabilities.has("charge") && Exit.isFailure(exit)) {
+              expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
+            }
+          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
+      );
+
+      it.effect(
+        "reuses the charge a command id already took",
+        () =>
+          Effect.gen(function* () {
+            if (!provider.capabilities.has("charge")) return;
+            const payments = yield* Payments;
+            const request = {
+              account: "acct_1",
+              amount: 1900,
+              currency: "usd",
+              commandId: "same-crossing",
+            } as const;
+            const first = yield* payments.charge(request);
+            const second = yield* payments.charge(request);
+            expect(second.chargeId).toBe(first.chargeId);
           }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
       );
 

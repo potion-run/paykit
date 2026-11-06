@@ -6,7 +6,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
 import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
@@ -36,8 +35,9 @@ import {
   TrackUsage,
   UsageRecorded,
 } from "../../src/Subscription/TrackUsage.command.ts";
-import { tier } from "../../src/Tier.ts";
 import { bindingsWorld } from "../support/Bindings.ts";
+import { rawAllowance as allowance } from "../support/Raw.ts";
+import { rawTier as tier } from "../support/Raw.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const price = { amount: 1900, currency: "usd", interval: "month" as const };

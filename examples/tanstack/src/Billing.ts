@@ -1,41 +1,17 @@
-import {
-  catalog,
-  DevGuards,
-  Manual,
-  type MoneyProvider,
-  type PaykitWorldOptions,
-  paykitWorld,
-} from "@potion.run/paykit";
-import * as Effect from "effect/Effect";
-import { tanstackCatalog } from "./catalog.ts";
+import { Paykit } from "@potion.run/paykit";
+import { billing } from "./billing.config.ts";
 
-/** The catalog the deploy validates. */
-export const Catalog = Effect.runSync(catalog(tanstackCatalog));
+/** The catalog the deploy declares, for a test or a page that reads it. */
+export const Catalog = billing.catalog;
 
-/** The example sells through an invoice, so it needs no provider key. */
-export const Provider: MoneyProvider = Manual();
+/** The provider the example runs; a test can swap it for a fake. */
+export const Provider = billing.providers[0]!;
 
 /**
- * The model, catalog, provider and development guard the Billing Worker
- * serves, plus the in-process operations. A purchase is an operation, not a
- * tenant command — it walks the provider's checkout or invoice path — so the
- * Worker that owns the provider is the only place it runs; the browser's atom
- * client never sees `Paykit.Subscribe`.
- *
- * `DevGuards` reads `x-paykit-actor`: the Website's server entry is the only
- * thing that sets it, from the browser's demo cookie. A real deployment
- * replaces `DevGuards` with `Paykit.GuardsFrom` over its session service, and
- * neither this file nor the Website changes.
+ * The layers the tests run, over an in-memory platform. The Worker builds the
+ * same world with `layerDurableObjects()`; only the platform changes.
  */
-export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
-  paykitWorld({
-    catalog: Catalog,
-    guards: DevGuards,
-    providers: [Provider],
-    bindings: "tenant",
-    ...(platform === undefined ? {} : { platform }),
-  });
-
-/** The layers the tests run, over an in-memory platform. */
-export const BillingLayers = billingLayers();
-export const BillingTestLive = BillingLayers;
+export const BillingTestLive = Paykit.world({
+  ...billing,
+  guards: Paykit.DevGuards,
+});

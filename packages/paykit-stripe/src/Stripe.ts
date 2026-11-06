@@ -67,6 +67,19 @@ export interface StripeClient {
     readonly amount: number;
   }) => Effect.Effect<{}, PaymentDeclined>;
   /**
+   * Take one amount from the customer's saved method, off-session: a confirmed
+   * `PaymentIntent` rather than an invoice Stripe collects on its own schedule.
+   * This is what an auto top-up prefers; without it the policy invoices.
+   */
+  readonly charge?: (request: {
+    readonly customerExternalId: string;
+    readonly amount: number;
+    readonly currency: string;
+    readonly description: string;
+    /** Stable across retries, for the vendor's idempotency key. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly chargeId: string }, PaymentDeclined>;
+  /**
    * Send one meter event. `identifier` is the vendor idempotency key, and
    * `timestamp` is in seconds since the epoch, as Stripe's API expects.
    */
@@ -190,6 +203,28 @@ export const stripeClientBindings = (
               Effect.mapError((cause) => declined("resolvePrice", cause)),
             ),
         }),
+    ...(client.charge === undefined
+      ? {}
+      : {
+          charge: ({
+            account,
+            amount,
+            currency,
+            commandId,
+          }: {
+            account: string;
+            amount: number;
+            currency: string;
+            commandId?: string;
+          }) =>
+            client.charge!({
+              customerExternalId: account,
+              amount,
+              currency,
+              description: where.invoiceDescription ?? "Plan change",
+              ...(commandId === undefined ? {} : { commandId }),
+            }).pipe(Effect.mapError((cause) => declined("charge", cause))),
+        }),
     ...(client.createRefund === undefined
       ? {}
       : {
@@ -251,11 +286,11 @@ export const stripeClientBindings = (
 };
 
 /**
- * Stripe as a processor, ready for `Paykit.Stack`.
+ * Stripe as a processor, ready for `Paykit.BillingStack`.
  *
  * One call, no bindings to wire: `Stripe()` returns the `Provider` the catalog
  * needs, with the tier → price mapping and the price the catalog states, so
- * `Stack` can refuse a mapping that disagrees at deploy time.
+ * `BillingStack` can refuse a mapping that disagrees at deploy time.
  *
  * It moves money; paykit keeps the entitlement, and `check()` answers from
  * paykit's own read model rather than from anything read back out of Stripe.
@@ -269,7 +304,7 @@ export const stripeClientBindings = (
  *   tiers: { pro: { price: proPrice, priceId: "price_123" } },
  * });
  *
- * yield* Paykit.Stack("Billing", { providers: [stripe], catalog });
+ * yield* Paykit.BillingStack("Billing", { providers: [stripe], catalog });
  * ```
  *
  * @primitive

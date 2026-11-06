@@ -24,6 +24,12 @@ export const BillingStateView = Schema.Struct({
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
   topUp: Schema.optionalKey(TopUpThreshold),
   /**
+   * When the last top-up's cooldown ends. Present means a crossing is deferred
+   * until then, so "refilling below 5,000 credits, next refill allowed at 09:30"
+   * is one sentence the page can say without reading the log.
+   */
+  topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
    * How many payment failures this standing has recorded. The retries
    * themselves are the provider's; this is what paykit knows about them, and
    * the billing page is where an operator sees it before extending grace.
@@ -107,6 +113,7 @@ export class BillingState extends Domain.View("BillingState", {
         graceUntil: _previousGrace,
         pendingTier: _previousPending,
         topUp: _previousTopUp,
+        topUpCooldownUntil: _previousCooldown,
         ...rest
       } = view;
       return withAccount(
@@ -215,7 +222,18 @@ export class BillingState extends Domain.View("BillingState", {
     CreditsGranted: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsPurchased: (view, event, context): BillingStateView =>
-      withAccount({ ...view, credits: event.balanceAfter }, context),
+      withAccount(
+        {
+          ...view,
+          credits: event.balanceAfter,
+          ...(event.cooldownUntil === undefined ? {} : { topUpCooldownUntil: event.cooldownUntil }),
+        },
+        context,
+      ),
+    TopUpCooldownCleared: (view, _event, context): BillingStateView => {
+      const { topUpCooldownUntil: _cleared, ...rest } = view;
+      return withAccount(rest, context);
+    },
     CreditsConsumed: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsExpired: (view, event, context): BillingStateView =>

@@ -142,16 +142,19 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   `CreditsPurchased`, never `TierChanged`, and never create a second standing. The standing tracks
   `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only
   `credits - prepaidCredits`, and spending drains the plan's credits before the protected pool.
-- An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, pack })`
-  provides `AutoTopUp`, which buys the named `kind: "one_off"` pack when a spend takes the pool from
-  above the standing tier's `topUp` line to at or below it. The line is catalog data (`Tier.topUp`)
-  carried on the standing like `pendingTier`, because a free tier and an enterprise tier need
-  different lines and `decide` never sees the catalog. A tier without it never refills. The balance
-  before the event is derived from the event (`creditsAfter + cost`, `balanceAfter + amount`), so a
-  second spend below the line is not a second crossing, and a grant, an expiry or a hold reservation
-  never triggers one. It opens the pack's price as an invoice keyed by the crossing and records
-  `PurchaseCredits` with that `invoiceId`, so the money and the credits are one record; the pack is
-  the cooldown, and a provider without `invoice` is `ProviderCapabilityMissing`, never a free pack.
+- An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, pack,
+  cooldown? })` provides `AutoTopUp`, which buys the named `kind: "one_off"` pack when a spend takes
+  the pool from above the standing tier's `topUp` line to at or below it. The line is catalog data
+  (`Tier.topUp`) carried on the standing like `pendingTier`, because a free tier and an enterprise
+  tier need different lines and `decide` never sees the catalog. A tier without it never refills.
+  The balance before the event is derived from the event (`creditsAfter + cost`, `balanceAfter +
+  amount`), so a second spend below the line is not a second crossing, and a grant, an expiry or a
+  hold reservation never triggers one. It charges the account's saved method when the provider
+  declares `charge`, falls back to an invoice when it does not, and records `PurchaseCredits` with
+  that `chargeId` or `invoiceId`, so the money and the credits are one record. A provider with
+  neither capability is `ProviderCapabilityMissing`, never a free pack. With a `cooldown`, the
+  purchase carries `cooldownUntil`, a crossing inside it is deferred rather than dropped, and
+  `TopUpCooldownElapsed` clears the standing at the deadline so the policy re-asks.
 - Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.

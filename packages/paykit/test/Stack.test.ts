@@ -16,7 +16,7 @@ import {
   NoPurchasePath,
   Postgres,
   ProviderDuplicate,
-  Stack,
+  validateStack,
   providerDescriptor,
   validateProviderMappings,
 } from "../src/Stack.ts";
@@ -44,7 +44,7 @@ const postpaidCatalog = { features: [messages], tiers: [postpaidTier] };
 describe("Stack", () => {
   it.effect("accepts a catalog and exposes the providers and store", () =>
     Effect.gen(function* () {
-      const billing = yield* Stack("Billing", {
+      const billing = yield* validateStack("Billing", {
         catalog: proCatalog,
         providers: [PaymentsMemory()],
         store: MemoryStore(),
@@ -59,7 +59,7 @@ describe("Stack", () => {
   it.effect("refuses a duplicate tier through the catalog error", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        Stack("Billing", { catalog: { features: [messages], tiers: [proTier, proTier] } }),
+        validateStack("Billing", { catalog: { features: [messages], tiers: [proTier, proTier] } }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogDuplicateTier");
@@ -73,7 +73,7 @@ describe("Stack", () => {
         grants: [allowance(feature({ id: "ghost" }), { included: 1 })],
       });
       const exit = yield* Effect.exit(
-        Stack("Billing", { catalog: { features: [messages], tiers: [haunted] } }),
+        validateStack("Billing", { catalog: { features: [messages], tiers: [haunted] } }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogUnknownFeature");
@@ -87,7 +87,7 @@ describe("Stack", () => {
         prices: { pro: { amount: 2000, currency: "usd", interval: "month" as const } },
       };
       const exit = yield* Effect.exit(
-        Stack("Billing", { catalog: proCatalog, providers: [provider] }),
+        validateStack("Billing", { catalog: proCatalog, providers: [provider] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -110,7 +110,7 @@ describe("Stack", () => {
         prices: { postpaid: proPrice },
         unitPrices: { postpaid: { messages: unitPrice } },
       };
-      const billing = yield* Stack("Billing", {
+      const billing = yield* validateStack("Billing", {
         catalog: postpaidCatalog,
         providers: [provider],
       });
@@ -128,7 +128,7 @@ describe("Stack", () => {
         unitPrices: { postpaid: { messages: { amount: 3, currency: "usd" } } },
       };
       const error = yield* Effect.flip(
-        Stack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
+        validateStack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
       );
       expect(error._tag).toBe("CatalogPriceMismatch");
       if (error._tag === "CatalogPriceMismatch") {
@@ -147,7 +147,7 @@ describe("Stack", () => {
         unitPrices: { pro: { messages: unitPrice } },
       };
       const error = yield* Effect.flip(
-        Stack("Billing", { catalog: proCatalog, providers: [provider] }),
+        validateStack("Billing", { catalog: proCatalog, providers: [provider] }),
       );
       expect(error._tag).toBe("CatalogPriceMismatch");
       if (error._tag === "CatalogPriceMismatch") expect(error.field).toBe("unitPrice.messages");
@@ -161,7 +161,7 @@ describe("Stack", () => {
         prices: { postpaid: proPrice },
       };
       const error = yield* Effect.flip(
-        Stack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
+        validateStack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
       );
       expect(error._tag).toBe("CatalogPriceMismatch");
       if (error._tag === "CatalogPriceMismatch") {
@@ -175,7 +175,7 @@ describe("Stack", () => {
     Effect.gen(function* () {
       const manual = { ...PaymentsManual(), capabilities: new Set(["refund"] as const) };
       const exit = yield* Effect.exit(
-        Stack("Billing", { catalog: proCatalog, providers: [manual] }),
+        validateStack("Billing", { catalog: proCatalog, providers: [manual] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("NoPurchasePath");
@@ -185,7 +185,7 @@ describe("Stack", () => {
 
   it.effect("keeps a database URL redacted in the store descriptor", () =>
     Effect.gen(function* () {
-      const billing = yield* Stack("Billing", {
+      const billing = yield* validateStack("Billing", {
         catalog: proCatalog,
         providers: [PaymentsMemory()],
         store: Postgres({
@@ -202,7 +202,7 @@ describe("Stack", () => {
 
   it.effect("keeps two providers apart, so an account stays on the one it paid through", () =>
     Effect.gen(function* () {
-      const billing = yield* Stack("Billing", {
+      const billing = yield* validateStack("Billing", {
         catalog: proCatalog,
         providers: [PaymentsMemory(), PaymentsManual()],
       });
@@ -213,7 +213,7 @@ describe("Stack", () => {
   it.effect("refuses two providers that share a name, which `refs` cannot tell apart", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        Stack("Billing", {
+        validateStack("Billing", {
           catalog: proCatalog,
           providers: [PaymentsMemory(), PaymentsMemory()],
         }),
@@ -248,7 +248,7 @@ describe("Stack", () => {
 
   it("provider descriptors validate the same way the Stack effect does", () => {
     const parsed = Effect.runSync(
-      Stack("Billing", { catalog: proCatalog, providers: [PaymentsMemory()] }),
+      validateStack("Billing", { catalog: proCatalog, providers: [PaymentsMemory()] }),
     );
     expect(validateProviderMappings(parsed.catalog, [providerDescriptor(PaymentsMemory())])).toBe(
       null,

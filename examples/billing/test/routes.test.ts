@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { Check, Subscription } from "@potion.run/paykit";
+import { Check, DevGuards, Paykit, Subscription, type MoneyProvider } from "@potion.run/paykit";
 import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { billingLayers, moneyRoutes, Provider } from "../src/Billing.ts";
+import { billing } from "../src/billing.config.ts";
+import { moneyRoutes, Provider } from "../src/Billing.ts";
 
 const account = "acct_routes";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
@@ -32,7 +33,8 @@ const polar = (asked: Array<Record<string, unknown>> = []) =>
     client: recording(asked),
   });
 
-const world = (provider: ReturnType<typeof polar> | typeof Provider) => billingLayers(provider);
+const world = (provider: MoneyProvider) =>
+  Paykit.world({ ...billing, providers: [provider], guards: DevGuards });
 
 /** An independent HMAC over Polar's signed string, as a delivery would carry. */
 const signed = (body: unknown): { headers: Record<string, string>; body: string } => {

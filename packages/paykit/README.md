@@ -46,27 +46,28 @@ const pro = Paykit.tier({
   grants: [Paykit.allowance(messages, { included: 2000, overage: "bill" })],
 });
 
-const billing = yield* Paykit.Stack("Billing", {
-  store: Paykit.MemoryStore(),
-  providers: [Paykit.Memory()],
+const billing = {
   catalog: { features: [messages], tiers: [free, pro] },
-});
+  providers: [Paykit.Memory()],
+  store: Paykit.MemoryStore(),
+};
 
-// An in-process host for tests and `alchemy dev`.
-const ModelWorld = Paykit.Model.layer(Paykit.PaykitHandlers)
-  .pipe(Layer.provideMerge(Paykit.MemoryBillingReadStore))
-  .pipe(Layer.provide(Domain.InMemory));
-const World = Layer.mergeAll(ModelWorld, Paykit.catalogLayer(billing.catalog));
+// The deploy validates and records the declaration.
+const recorded = yield* Paykit.BillingStack("Billing", billing);
+
+// The runtime graph: the model, the catalog, the router and the bindings.
+// A Worker passes its platform; a test and `alchemy dev` take the default.
+const World = Paykit.world({ ...billing, guards: Paykit.DevGuards });
 
 yield* Effect.gen(function* () {
-  const subscribe = yield* Paykit.Subscribe();
-  const track = yield* Paykit.Track();
-  const check = yield* Paykit.Check();
+  const subscribe = yield* Paykit.Subscribe("acct_1");
+  const track = yield* Paykit.TrackUsage("acct_1");
+  const check = yield* Paykit.Check("acct_1");
 
-  yield* subscribe({ account: "acct_1", tier: "free" });
-  yield* track({ account: "acct_1", feature: "messages", amount: 1, dedupeKey: "req_1" });
+  yield* subscribe({ tier: "free" });
+  yield* track({ feature: "messages", amount: 1, dedupeKey: "req_1" });
 
-  const answer = yield* check({ account: "acct_1", feature: "messages", amount: 1 });
+  const answer = yield* check({ feature: "messages", amount: 1 });
   // { allowed: true, remaining: 99, resetsAt, standing: "good" }
 }).pipe(Effect.provide(World));
 ```

@@ -7,6 +7,7 @@ import {
   CreateInvoice,
   CreateInvoiceFinalize,
   CreateInvoiceitem,
+  CreatePaymentIntent,
   CreateRefund,
 } from "@distilled.cloud/stripe/stripe";
 import { PaymentDeclined } from "@potion.run/paykit";
@@ -163,6 +164,36 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         Effect.as({}),
         Effect.mapError(declined("createRefund")),
         Effect.provide(live),
+      ),
+    // Off-session: confirm the intent against the customer's default payment
+    // method, so the money is taken at the crossing rather than on Stripe's own
+    // collection schedule. The crossing's id is the idempotency key, so a retry
+    // is the intent it already created.
+    charge: (request) =>
+      CreatePaymentIntent({
+        customer: request.customerExternalId,
+        amount: request.amount,
+        currency: request.currency,
+        confirm: true,
+        off_session: true,
+        description: request.description,
+        ...(request.commandId === undefined
+          ? {}
+          : { metadata: { paykit_command_id: request.commandId } }),
+      }).pipe(
+        Effect.provide(live),
+        Effect.mapError(declined("charge")),
+        Effect.flatMap((intent) =>
+          intent.id === undefined
+            ? Effect.fail(
+                new PaymentDeclined({
+                  provider: "stripe",
+                  code: "stripe_error",
+                  message: "charge returned a payment intent with no id",
+                }),
+              )
+            : Effect.succeed({ chargeId: intent.id }),
+        ),
       ),
     // One meter event per feature, carrying the billable quantity. Stripe's
     // `identifier` is the idempotency contract: the close's period id plus the

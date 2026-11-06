@@ -237,6 +237,10 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     tag: "ProviderRefAttached",
     body: body({ provider: "manual", refs: {} }),
   },
+  {
+    tag: "TopUpCooldownCleared",
+    body: body({}),
+  },
 ];
 
 export const DevToolsTab = Schema.Literals(["events", "reads", "feed"]);

@@ -3,13 +3,13 @@ import {
   DevGuards,
   d1Executor,
   type D1Like,
-  paykitWorld,
+  Paykit,
   SqlBillingReadStore,
   SqlEventLog,
   SqlPlatform,
 } from "@potion.run/paykit";
 import * as Layer from "effect/Layer";
-import { Catalog } from "./Billing.ts";
+import { billing } from "./billing.config.ts";
 
 /**
  * The same world a memory host builds, on a database: the read store is the SQL
@@ -21,8 +21,8 @@ import { Catalog } from "./Billing.ts";
  * `Layer.Layer<any>` would be a second copy of the graph that can drift.
  */
 const sqlWorld = (log: SqlEventLog, platform: Domain.Platform["Service"]) =>
-  paykitWorld({
-    catalog: Catalog,
+  Paykit.world({
+    ...billing,
     platform: Layer.succeed(Domain.Platform, platform),
     readStore: SqlBillingReadStore(log),
     guards: DevGuards,

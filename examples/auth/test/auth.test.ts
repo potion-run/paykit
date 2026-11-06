@@ -9,8 +9,9 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import { type AuthInstance, actorOf, Auth, authGuards } from "../src/Auth.ts";
-import { BillingTestLive, tierCommand } from "../src/Billing.ts";
+import { BillingTestLive } from "../src/Billing.ts";
 import { serve } from "../src/Worker.ts";
+import { tierCommand } from "./support.ts";
 
 const secret = "test-secret-test-secret-test-secret";
 const adminEmail = "ops@example.com";

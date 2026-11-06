@@ -9,26 +9,8 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { Auth, AuthGuards } from "./Auth.ts";
 import { AuthDatabase } from "./AuthDatabase.ts";
-import { billingLayers } from "./Billing.ts";
+import { billing } from "./billing.config.ts";
 import { Page } from "./Page.ts";
-
-/** The status an authentication or purchase failure deserves. */
-const statusOf = (error: { readonly _tag?: string }): number => {
-  switch (error._tag) {
-    case "TierNotInCatalog":
-      return 400;
-    case "Unauthenticated":
-      return 401;
-    case "Forbidden":
-      return 403;
-    case "PaymentDeclined":
-      return 402;
-    case "ProviderCapabilityMissing":
-      return 501;
-    default:
-      return 500;
-  }
-};
 
 /**
  * One Worker, four doors:
@@ -83,7 +65,7 @@ export const serve = Effect.gen(function* () {
         if (Result.isFailure(purchase)) {
           return HttpServerResponse.jsonUnsafe(
             { error: purchase.failure._tag },
-            { status: statusOf(purchase.failure) },
+            { status: Paykit.httpStatus(purchase.failure) },
           );
         }
         return HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
@@ -104,7 +86,11 @@ export const serve = Effect.gen(function* () {
  * deploy by `@alchemy.run/better-auth`.
  */
 const World = Layer.mergeAll(
-  billingLayers(DomainCloudflare.layerDurableObjects()),
+  Paykit.world({
+    ...billing,
+    bindings: "both",
+    platform: DomainCloudflare.layerDurableObjects(),
+  }),
   AuthGuards,
 ).pipe(Layer.provideMerge(Auth.layer.pipe(Layer.provide(CloudflareD1(AuthDatabase)))));
 
