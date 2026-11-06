@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { allowance } from "../../src/Allowance.ts";
+import { allowance, type Allowance } from "../../src/Allowance.ts";
 import { defineCatalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import type { ProviderDescriptor } from "../../src/Stack.ts";
@@ -240,5 +240,176 @@ describe("a provider that owns the subscription quantity", () => {
         expect(result.actual).not.toBe(result.expected);
       }
     }
+  });
+});
+
+const SeatSpec = Schema.Struct({
+  billable: Schema.Boolean,
+  included: Included,
+  seatPrice: Amount,
+  capExtra: Schema.optionalKey(CapExtra),
+});
+type SeatSpec = typeof SeatSpec.Type;
+
+/** A tier that grants one or more non-consumable features. */
+const ScopeTier = Schema.Struct({
+  currency: Currency,
+  price: Amount,
+  seats: Schema.Array(SeatSpec).pipe(
+    Schema.check(Schema.isMinLength(1)),
+    Schema.check(Schema.isMaxLength(3)),
+  ),
+});
+type ScopeTier = typeof ScopeTier.Type;
+
+const ScopeCase = Schema.Struct({
+  tiers: Schema.Array(ScopeTier).pipe(
+    Schema.check(Schema.isMinLength(1)),
+    Schema.check(Schema.isMaxLength(3)),
+  ),
+  scope: Schema.Literals(["feature", "subscription"]),
+  quantity: Schema.Boolean,
+});
+type ScopeCase = typeof ScopeCase.Type;
+
+/** The seat features a scope case may grant, declared once for the catalog. */
+const seatFeatures = ["seat_0", "seat_1", "seat_2"].map((id) =>
+  feature({ id, name: id, kind: "non_consumable" }),
+);
+
+const scopeCatalogOf = (input: ScopeCase) => {
+  const tiers = input.tiers.map((spec, index) =>
+    tier({
+      id: tierId(index),
+      price: { amount: spec.price, currency: spec.currency, interval: "month" },
+      grants: spec.seats.map((seat, seatIndex) =>
+        allowance(seatFeatures[seatIndex]!, {
+          included: seat.included,
+          overage: seat.billable ? "bill" : "allow",
+          ...(seat.billable
+            ? {
+                pricing: {
+                  kind: "unit" as const,
+                  amount: seat.seatPrice,
+                  currency: spec.currency,
+                },
+              }
+            : {}),
+          ...(seat.capExtra === undefined
+            ? {}
+            : { cap: Math.max(1, seat.included + seat.capExtra) }),
+        }),
+      ) as [Allowance, ...Allowance[]],
+    }),
+  );
+  return defineCatalog({ features: seatFeatures, tiers });
+};
+
+const scopeProviderOf = (input: ScopeCase): ProviderDescriptor => ({
+  name: "memory",
+  kind: "memory",
+  webhook: false,
+  capabilities: ["checkout", ...(input.quantity ? (["quantity"] as const) : [])],
+  prices: Object.fromEntries(
+    input.tiers.map((spec, index) => [
+      tierId(index),
+      { amount: spec.price, currency: spec.currency, interval: "month" as const },
+    ]),
+  ),
+  seatPrices: Object.fromEntries(
+    input.tiers.map((spec, index) => [
+      tierId(index),
+      Object.fromEntries(
+        spec.seats.flatMap((seat, seatIndex) =>
+          seat.billable
+            ? [[`seat_${seatIndex}`, { amount: seat.seatPrice, currency: spec.currency }] as const]
+            : [],
+        ),
+      ),
+    ]),
+  ),
+  ...(input.quantity ? { seatScope: input.scope } : {}),
+});
+
+/**
+ * A subscription-wide seat count is one number on the vendor's subscription, so
+ * a tier with two billable seats would make the update ambiguous. The refusal
+ * comes after every seat price has been checked, and a per-feature scope keeps
+ * the same catalog valid.
+ */
+const expectedScopeMismatchOf = (input: ScopeCase) => {
+  if (!input.quantity || input.scope !== "subscription") return null;
+  for (const [index, spec] of input.tiers.entries()) {
+    const billable = spec.seats.filter((seat) => seat.billable).length;
+    if (billable > 1) return { tier: tierId(index), actual: String(billable) };
+  }
+  return null;
+};
+
+describe("a subscription-wide seat count", () => {
+  it.effect("owns at most one billable seat feature per tier", () =>
+    assertProperty(
+      Arbitrary.schema(ScopeCase),
+      (input) => {
+        const catalog = scopeCatalogOf(input);
+        if (Result.isFailure(catalog)) return false;
+        const expected = expectedScopeMismatchOf(input);
+        const result = validateProviderMappings(catalog.success, [scopeProviderOf(input)]);
+        if (expected === null) return result === null;
+        if (result === null || errorTagOf(result) !== "CatalogPriceMismatch") return false;
+        const mismatch = result as {
+          readonly tier: string;
+          readonly field: string;
+          readonly expected: string;
+          readonly actual: string;
+        };
+        return (
+          mismatch.tier === expected.tier &&
+          mismatch.field === "seatPrices" &&
+          mismatch.expected === "one billable seat feature" &&
+          mismatch.actual === expected.actual
+        );
+      },
+      { runs: 80, size: 30 },
+    ),
+  );
+
+  it("refuses two billable seats on a subscription scope and accepts them per feature", () => {
+    const twoSeats = (scope: "feature" | "subscription"): ProviderDescriptor => ({
+      name: "memory",
+      kind: "memory",
+      webhook: false,
+      capabilities: ["checkout", "quantity"],
+      prices: { tier_0: { amount: 1_900, currency: "usd", interval: "month" } },
+      seatPrices: {
+        tier_0: {
+          seat_0: { amount: 1_000, currency: "usd" },
+          seat_1: { amount: 2_000, currency: "usd" },
+        },
+      },
+      seatScope: scope,
+    });
+    const input: ScopeCase = {
+      quantity: true,
+      scope: "subscription",
+      tiers: [
+        {
+          currency: "usd",
+          price: 1_900,
+          seats: [
+            { billable: true, included: 5, seatPrice: 1_000 },
+            { billable: true, included: 1, seatPrice: 2_000 },
+          ],
+        },
+      ],
+    };
+    const catalog = Result.getOrThrow(scopeCatalogOf(input));
+    const subscription = validateProviderMappings(catalog, [twoSeats("subscription")]);
+    expect(subscription?._tag).toBe("CatalogPriceMismatch");
+    if (subscription?._tag === "CatalogPriceMismatch") {
+      expect(subscription.field).toBe("seatPrices");
+      expect(subscription.actual).toBe("2");
+    }
+    expect(validateProviderMappings(catalog, [twoSeats("feature")])).toBe(null);
   });
 });
