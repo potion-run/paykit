@@ -2,15 +2,11 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { Overage } from "./Allowance.ts";
 import type { BillingReadRow } from "./BillingReadStore.ts";
+import { capacityOf } from "./Subscription/Allowance.verdict.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
-import {
-  Standing,
-  SubscriptionStatus,
-  chargeOf,
-  creditRateOf,
-  spendHeadroomOf,
-} from "./Subscription/Subscription.state.ts";
+import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
 
 /** What a caller asks before doing work. */
 export const CheckInput = Schema.Struct({
@@ -61,7 +57,7 @@ export const evaluateCheck = (
       Record<
         string,
         {
-          readonly overage: string;
+          readonly overage: Overage;
           readonly remaining: number | null;
           readonly resetsAt: DateTime.Utc | null;
           /** Present on a credit-priced feature, whose `remaining` is the pool. */
@@ -94,41 +90,30 @@ export const evaluateCheck = (
     return { allowed: false, remaining: 0, resetsAt: null, standing: state.standing };
   }
   const amount = input.amount ?? 1;
-  // A credit-priced feature is priced before it is compared: the pool must
-  // cover `amount × rate`, not `amount`. Everything else is a count.
-  const needed =
-    feature.creditRates === undefined
-      ? amount
-      : amount * creditRateOf(feature.creditRates, input.dimension);
-  // A cap is the ceiling, not the standing: at it the account is out of what it
-  // bought, which is why `allowed` can be false while `standing` stays `good`.
-  const headroom = spendHeadroomOf({
-    remaining: feature.remaining,
-    cap: feature.cap,
-    carried: feature.carried,
+  // One judgement, the same one `decide` runs: the `allowed` a row carries and
+  // the answer `check()` gives cannot disagree because there is one rule.
+  const verdict = capacityOf({
+    standing: state.standing,
+    feature: {
+      overage: feature.overage,
+      included: feature.included ?? null,
+      ...(feature.cap === undefined ? {} : { cap: feature.cap }),
+      carried: feature.carried ?? 0,
+      ...(feature.moneyCap === undefined ? {} : { moneyCap: feature.moneyCap }),
+      ...(feature.unitPrice === undefined ? {} : { unitPrice: feature.unitPrice }),
+      billed: feature.billed ?? 0,
+      used: feature.used ?? 0,
+      reserved: feature.reserved ?? 0,
+      remaining: feature.remaining,
+      ...(feature.creditRates === undefined ? {} : { creditRates: feature.creditRates }),
+    },
+    ask: {
+      amount,
+      ...(input.dimension === undefined ? {} : { dimension: input.dimension }),
+    },
   });
-  // Postpaid usage is judged in money too: only the part beyond `included` is
-  // billable, and a money ceiling refuses the same request a quantity cap would.
-  // Open holds are promised units, so the ceiling judges this event and them
-  // as one run past `used`; counting each from the same base would give the
-  // included room away twice.
-  const promised = chargeOf(
-    feature.unitPrice,
-    feature.included ?? null,
-    feature.used ?? 0,
-    amount + (feature.reserved ?? 0),
-  );
-  const moneyAllowed =
-    feature.moneyCap === undefined || (feature.billed ?? 0) + promised <= feature.moneyCap;
-  // A `null` remaining is an allowance that never runs out: it always has room,
-  // and the answer reports the absence of a count rather than a number.
-  const allowed =
-    state.standing !== "blocked" &&
-    (feature.overage !== "block" || feature.remaining === null || needed <= feature.remaining) &&
-    (headroom === null || needed <= headroom) &&
-    moneyAllowed;
   return {
-    allowed,
+    allowed: verdict._tag === "Allowed",
     remaining: feature.remaining,
     resetsAt: feature.resetsAt,
     standing: state.standing,

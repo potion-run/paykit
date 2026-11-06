@@ -1,8 +1,8 @@
 import * as Schema from "effect/Schema";
 import { allowancesOf, type Catalog } from "./Catalog.ts";
+import { downgradeOf } from "./Subscription/Allowance.verdict.ts";
 import type { BillingStateView } from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
-import { spendCeilingOf } from "./Subscription/Subscription.state.ts";
 import type { Tier } from "./Tier.ts";
 
 /**
@@ -92,20 +92,13 @@ const changeTiers = (
       // `Hold` refuses until the period resets.
       return Object.values(allowances).every((allowance) => {
         const feature = entitlements.features[allowance.feature];
-        const used = feature?.used ?? 0;
-        const reserved = feature?.reserved ?? 0;
-        if (
-          allowance.overage === "block" &&
-          allowance.included !== "unlimited" &&
-          used + reserved > allowance.included
-        ) {
-          return false;
-        }
-        if (allowance.moneyCap !== undefined && (feature?.billed ?? 0) > allowance.moneyCap) {
-          return false;
-        }
-        const ceiling = spendCeilingOf(allowance);
-        return ceiling === null || used + reserved <= ceiling;
+        return (
+          downgradeOf(allowance, {
+            used: feature?.used ?? 0,
+            reserved: feature?.reserved ?? 0,
+            billed: feature?.billed ?? 0,
+          })._tag === "Allowed"
+        );
       });
     })
     .map((tier) => tier.id);

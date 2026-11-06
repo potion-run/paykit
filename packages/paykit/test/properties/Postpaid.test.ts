@@ -87,7 +87,7 @@ const viewOf = (state: SubscribedState) => ({
   standing: "good" as const,
   features: {
     messages: {
-      overage: "bill",
+      overage: "bill" as const,
       remaining: remainingOf(state, "messages"),
       resetsAt: null,
       carried: 0,

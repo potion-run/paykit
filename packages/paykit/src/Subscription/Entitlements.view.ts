@@ -8,12 +8,11 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { CreditRates } from "../Feature.ts";
 import { Proration } from "../Proration.ts";
+import { capacityOf } from "./Allowance.verdict.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   SubscriptionStatus,
   Standing,
-  chargeOf,
-  creditRateOf,
   includedRemainingOf,
   recordedCount,
   spendHeadroomOf,
@@ -461,9 +460,15 @@ export class Entitlements extends Domain.View("Entitlements", {
                     used: 0,
                     reserved: 0,
                     remaining: view.credits,
-                    allowed:
-                      view.standing !== "blocked" &&
-                      view.credits >= creditRateOf(value.creditRates, undefined),
+                    allowed: allowsOne(
+                      view.standing,
+                      "block",
+                      view.credits,
+                      undefined,
+                      0,
+                      { included: null },
+                      value.creditRates,
+                    ),
                   },
                 ];
               }
@@ -585,12 +590,8 @@ const withPool = (view: EntitlementsState, balance: number): EntitlementsState =
   withCreditsOf(view, balance, heldOf(view.features));
 
 /**
- * Whether one more unit is allowed, from the standing and the allowance. Pure,
- * and the same rule `evaluateCheck` applies at `amount: 1`, so the view and
- * `check()` cannot disagree. A `null` remaining is unbounded, so it always has
- * room for one more.
+ * The money context a feature's next unit is judged against.
  */
-/** The money context a feature's next unit is judged against. */
 const moneyOf = (
   feature: FeatureEntitlement,
   over: { readonly billed?: number; readonly used?: number; readonly reserved?: number } = {},
@@ -603,6 +604,19 @@ const moneyOf = (
   included: feature.included,
 });
 
+/**
+ * Whether one more unit is allowed, from the standing and the allowance.
+ *
+ * A reading of {@link capacityOf} at `amount: 1`, so the view's `allowed` and
+ * `check()` cannot disagree: there is one rule, and this is the read model's
+ * name for it. A `null` remaining is unbounded, so it always has room for one
+ * more, however large the pool is.
+ *
+ * A caller that states no `money` context asks the ceiling in the read model's
+ * own form — `remaining`, `cap` and `carried` — because it does not know the
+ * included count. Every in-tree caller states one, including a credit-priced
+ * feature whose `included` is `null`.
+ */
 export const allowsOne = (
   standing: Standing,
   overage: Overage,
@@ -617,25 +631,35 @@ export const allowsOne = (
     readonly reserved?: number;
     readonly included?: Included | null;
   },
+  creditRates?: CreditRates,
 ): boolean => {
-  if (standing === "blocked") return false;
-  // A money cap is a ceiling on money, not on units: the next unit is refused
-  // when its charge would pass what the feature may bill this period.
-  if (money?.moneyCap !== undefined) {
-    // One more unit plus every open hold, as one run past `used`.
-    const promised = chargeOf(
-      money.unitPrice,
-      money.included ?? null,
-      money.used ?? 0,
-      1 + (money.reserved ?? 0),
-    );
-    if ((money.billed ?? 0) + promised > money.moneyCap) return false;
+  if (money === undefined) {
+    // `remaining` already has use and holds taken out, and `carried` is the
+    // extra `included` a rollover added, which a cap does not.
+    if (standing === "blocked") return false;
+    if (overage === "block" && remaining !== null && remaining < 1) return false;
+    const headroom = spendHeadroomOf({ remaining, cap, carried });
+    return headroom === null || headroom >= 1;
   }
-  if (overage === "block" && remaining !== null && remaining < 1) return false;
-  // A capped feature answers from the ceiling, not from the standing: at the
-  // ceiling the account is out of what it bought, not in trouble.
-  const headroom = spendHeadroomOf({ remaining, cap, carried });
-  return headroom === null || headroom >= 1;
+  return (
+    capacityOf({
+      standing,
+      feature: {
+        overage,
+        included: money.included ?? null,
+        ...(cap === undefined ? {} : { cap }),
+        carried: carried ?? 0,
+        ...(money.moneyCap === undefined ? {} : { moneyCap: money.moneyCap }),
+        ...(money.unitPrice === undefined ? {} : { unitPrice: money.unitPrice }),
+        billed: money.billed ?? 0,
+        used: money.used ?? 0,
+        reserved: money.reserved ?? 0,
+        remaining,
+        ...(creditRates === undefined ? {} : { creditRates }),
+      },
+      ask: { amount: 1 },
+    })._tag === "Allowed"
+  );
 };
 
 /**
@@ -686,7 +710,7 @@ const creditFeatureOf = (
   remaining: credits - held,
   carried: 0,
   // "One more unit" is `check({ amount: 1 })`, which costs the default rate.
-  allowed: standing !== "blocked" && credits - held >= creditRateOf(rates, undefined),
+  allowed: allowsOne(standing, "block", credits - held, undefined, 0, { included: null }, rates),
   overage: "block",
   resets: "never",
   resetsAt: null,
@@ -701,21 +725,15 @@ const creditFeatureOf = (
  */
 const rejudged = (value: FeatureEntitlement, standing: Standing): FeatureEntitlement => ({
   ...value,
-  allowed:
-    value.creditRates === undefined
-      ? allowsOne(
-          standing,
-          value.overage,
-          value.remaining,
-          value.cap,
-          value.carried,
-          moneyOf(value),
-        )
-      : // A credit-priced feature spends the shared pool, so one more unit costs
-        // the default rate of its card.
-        standing !== "blocked" &&
-        value.remaining !== null &&
-        value.remaining >= creditRateOf(value.creditRates, undefined),
+  allowed: allowsOne(
+    standing,
+    value.overage,
+    value.remaining,
+    value.cap,
+    value.carried,
+    moneyOf(value),
+    value.creditRates,
+  ),
 });
 
 /** Move the standing, and rejudge every feature against it. */
