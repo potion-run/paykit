@@ -2,6 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Schema from "effect/Schema";
 import {
+  asPricing,
   chargeOfPricing,
   priceKey,
   priceOf,
@@ -9,7 +10,9 @@ import {
   pricedLines,
   pricesOf,
   pricing,
+  pricingKey,
   soleUnitPriceOf,
+  unitAmountDecimalOf,
   unitsOf,
   type PriceBandInput,
   type Pricing,
@@ -83,6 +86,9 @@ const build = (spec: PricingSpec): Pricing =>
 
 const kindOf = (spec: PricingSpec): "unit" | "graduated" | "volume" =>
   spec._tag === "unit" ? "unit" : spec.kind;
+
+const same = (left: unknown, right: unknown): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
 
 const sum = (values: ReadonlyArray<number>): number =>
   values.reduce((total, value) => total + value, 0);
@@ -305,5 +311,83 @@ describe("the price identity", () => {
     expect(priceOf(graduated, 10)).toBe(20);
     expect(priceOf(graduated, 12)).toBe(22);
     expect(pricedLines(graduated, 9, 12).map((line) => line.amount)).toEqual([2, 2]);
+  });
+});
+
+describe("a pricing written in any of the forms the deploy accepts", () => {
+  /**
+   * A normalized `Pricing`, the one-rate `UnitPrice` shorthand and the
+   * authoring `PricingInput` all name the same price. `asPricing` is the one
+   * place that maps them, so the catalog, the provider configs and the stack
+   * cannot disagree about what a declaration means.
+   */
+  it.effect("normalizes all three forms to the same pricing", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          pricing: PricingSpec,
+          unitPrice: UnitPriceSpec,
+        }),
+      ),
+      ({ pricing: spec, unitPrice }) => {
+        const input =
+          spec._tag === "unit"
+            ? { kind: "unit" as const, ...spec.unitPrice }
+            : {
+                kind: spec.kind,
+                currency: spec.currency,
+                bands: ladderOf(spec.bands, spec.currency),
+              };
+        const built = pricing(input);
+
+        if (!same(asPricing(input), built)) return false;
+        if (!same(asPricing(built), built)) return false;
+        if (!same(asPricing(asPricing(input)), built)) return false;
+        const wrapped = asPricing(unitPrice);
+        if (wrapped._tag !== "unit" || !same(wrapped.unitPrice, unitPrice)) return false;
+        return pricingKey(asPricing(input)) === pricingKey(built);
+      },
+      { runs: 100, size: 30 },
+    ),
+  );
+
+  /**
+   * A vendor that prices one unit at a time sees a package as a decimal: `$5
+   * per 1,000` is `"0.5"` cents per unit, rounded to the twelve places the
+   * vendor APIs accept. Multiplying that decimal back by the package size is
+   * the amount the catalog stated, so the vendor bills the same money.
+   */
+  it.effect("states a package as the per-unit decimal a vendor accepts", () =>
+    assertProperty(
+      Arbitrary.schema(
+        Schema.Struct({
+          amount: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 100_000 }))),
+          units: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10_000 }))),
+        }),
+      ),
+      ({ amount, units }) => {
+        const decimal = unitAmountDecimalOf({ amount, currency: "usd", units });
+        if (units === 1) return decimal === String(amount);
+
+        const [whole, fraction = ""] = decimal.split(".");
+        if (!/^\d+$/.test(whole)) return false;
+        if (fraction !== "" && !/^\d+$/.test(fraction)) return false;
+        if (fraction.length > 12) return false;
+        if (fraction.endsWith("0")) return false;
+
+        const scale = 10n ** 12n;
+        const scaled = BigInt(whole) * scale + BigInt((fraction + "0".repeat(12)).slice(0, 12));
+        const expected = (BigInt(amount) * scale + BigInt(units) / 2n) / BigInt(units);
+        return scaled === expected;
+      },
+      { runs: 120, size: 30 },
+    ),
+  );
+
+  it("leaves a decimal a vendor already wrote as it is", () => {
+    // A price read back from a vendor may already be the per-unit decimal.
+    expect(unitAmountDecimalOf({ amount: 0.5, currency: "usd" })).toBe("0.5");
+    expect(unitAmountDecimalOf({ amount: 1_000, currency: "usd", units: 1_000 })).toBe("1");
+    expect(unitAmountDecimalOf({ amount: 500, currency: "usd", units: 1_000 })).toBe("0.5");
   });
 });
