@@ -17,6 +17,7 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set([
   "refund",
   "portal",
   "usage",
+  "quantity",
 ]);
 
 /** One charge the memory provider took. */
@@ -26,6 +27,17 @@ export interface MemoryCharge {
   readonly amount: number;
   readonly currency: string;
   readonly commandId?: string;
+}
+
+/** One quantity the memory provider set on a subscription. */
+export interface MemoryQuantityChange {
+  readonly account: string;
+  readonly subscription: string;
+  readonly tier: string;
+  readonly feature: string;
+  readonly quantity: number;
+  readonly proration: "immediate" | "none";
+  readonly commandId: string;
 }
 
 /** One refund the memory provider took. */
@@ -52,6 +64,8 @@ export interface MemoryPayments extends MoneyProvider<"memory"> {
   readonly charges: ReadonlyArray<MemoryCharge>;
   /** Every refund it took, so a test can read the money back out. */
   readonly refunds: ReadonlyArray<MemoryRefund>;
+  /** Every quantity change it accepted, so a test can tell the vendor saw it. */
+  readonly quantities: ReadonlyArray<MemoryQuantityChange>;
 }
 
 /**
@@ -68,6 +82,7 @@ export const PaymentsMemory = (): MemoryPayments => {
   /** The charge a command id already took, for the same reason. */
   const chargeFor = new Map<string, string>();
   const refunds: Array<MemoryRefund> = [];
+  const quantities: Array<MemoryQuantityChange> = [];
   /** The refund a command id already took, for the same reason. */
   const refundFor = new Map<string, string>();
   const reported = new Set<string>();
@@ -184,6 +199,21 @@ export const PaymentsMemory = (): MemoryPayments => {
           Effect.succeed({
             url: `https://paykit.memory/portal/${encodeURIComponent(account)}`,
           }),
+        setQuantity: (args: {
+          account: string;
+          subscription: string;
+          tier: string;
+          feature: string;
+          quantity: number;
+          proration: "immediate" | "none";
+          commandId: string;
+        }) =>
+          Effect.sync(() => {
+            const previous = quantities.find((change) => change.commandId === args.commandId);
+            if (previous === undefined) quantities.push(args);
+            // An immediate proration opens an invoice; `none` defers it.
+            return args.proration === "immediate" ? { invoiceId: `in_${next()}` } : {};
+          }),
         reportUsage: (args: {
           account: string;
           periodStart: DateTime.Utc;
@@ -214,5 +244,14 @@ export const PaymentsMemory = (): MemoryPayments => {
     Layer.succeed(PaymentsProvider, { name: "memory", capabilities }),
   );
 
-  return { name: "memory", kind: "memory", capabilities, payments, reports, charges, refunds };
+  return {
+    name: "memory",
+    kind: "memory",
+    capabilities,
+    payments,
+    reports,
+    charges,
+    refunds,
+    quantities,
+  };
 };

@@ -80,6 +80,57 @@ describe("Stripe as a paykit provider", () => {
     }),
   );
 
+  it.effect("sets a subscription item's seat quantity and records the invoice", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const seatPrice = { amount: 1_000, currency: "usd" } as const;
+      const provider = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+        tiers: {
+          pro: {
+            price: proPrice,
+            priceId: "price_123",
+            seats: { seats: { unitPrice: seatPrice, priceId: "price_seat" } },
+          },
+        },
+        client: {
+          ...recording(asked),
+          setSubscriptionItemQuantity: (request) =>
+            Effect.sync(() => {
+              asked.push(request as never);
+              return { invoiceId: "in_seat" };
+            }),
+        },
+      });
+
+      expect(provider.capabilities.has("quantity")).toBe(true);
+      expect(provider.seatPrices).toEqual({ pro: { seats: seatPrice } });
+      const result = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).setQuantity({
+            account: "acct_1",
+            subscription: "sub_1",
+            tier: "pro",
+            feature: "seats",
+            quantity: 8,
+            proration: "immediate",
+            commandId: "seats:add",
+          });
+        }),
+      );
+      expect(result).toEqual({ invoiceId: "in_seat" });
+      expect(asked[0]).toMatchObject({
+        subscription: "sub_1",
+        priceId: "price_seat",
+        quantity: 8,
+        proration: "immediate",
+        commandId: "seats:add",
+      });
+    }),
+  );
+
   it.effect("attaches the metered price and reports the period's units", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];

@@ -22,7 +22,8 @@ free grant, a cap, a per-seat price and `SetQuantity` / `ChargeQuantityProration
 period does not own is its own command (`ResetAllowance`), and a banded price records one
 `PricedLine` per price an event crossed. What the runtime can do, as
 command-named bindings: `Check` from local state, `TrackUsage`, `SetQuantity` for a seat change
-(with `ChargeQuantityProration` collecting its proration), `Hold`/`SettleHold`/`ReleaseHold` as
+(the vendor's subscription-item quantity when the provider declares `quantity`, otherwise
+`ChargeQuantityProration` collecting the local proration), `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
 spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
@@ -33,8 +34,9 @@ entry per
 billing fact, plus a per-period, per-feature rollup), postpaid usage priced per unit with a money
 cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
-Stripe and Polar, and which archiving sweeps keep a retired price or product from being sold
-(`RetiredPrices` in Stripe, `RetiredProducts` in Polar). What the deploy does: validates the catalog
+Stripe and Polar, which archiving sweeps keep a retired price or product from being sold
+(`RetiredPrices` in Stripe, `RetiredProducts` in Polar), and the Stripe seat prices that let the
+subscription item own a seat count. What the deploy does: validates the catalog
 into `BillingStack`, and `StripePrices` / `PolarPrices` create the base prices and products its tiers
 are sold under, plus a meter and a metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.

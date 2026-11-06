@@ -65,6 +65,17 @@ export interface StripeBindings {
     readonly commandId?: string;
   }) => Effect.Effect<{ readonly chargeId: string }, PaymentError>;
   /**
+   * Optional: set a subscription item's quantity. A caller that cannot declares
+   * no `quantity` capability, and a seat change stays a local proration.
+   */
+  readonly setQuantity?: (args: {
+    readonly subscription: string;
+    readonly priceId: string;
+    readonly quantity: number;
+    readonly proration: "immediate" | "none";
+    readonly commandId: string;
+  }) => Effect.Effect<{ readonly invoiceId?: string }, PaymentError>;
+  /**
    * Optional: report a closed period's billable units to the vendor's meters.
    * A caller that cannot report declares no `usage` capability, and a close
    * that needs one fails with `ProviderCapabilityMissing`.
@@ -104,6 +115,12 @@ export interface StripeTier {
    * the checkout attaches the meter rather than billing only locally.
    */
   readonly usage?: Readonly<Record<string, StripeUsagePrice>>;
+  /**
+   * One recurring seat price per non-consumable feature. The subscription item
+   * quantity is what `SetQuantity` updates; the price is what the vendor
+   * invoices.
+   */
+  readonly seats?: Readonly<Record<string, StripeUsagePrice>>;
 }
 
 export interface StripeProps {
@@ -128,6 +145,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     ...(props.bindings.charge === undefined ? [] : (["charge"] as const)),
     ...(props.bindings.createRefund === undefined ? [] : (["refund"] as const)),
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
+    ...(props.bindings.setQuantity === undefined ? [] : (["quantity"] as const)),
   ]);
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "stripe", op }));
@@ -240,6 +258,52 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
+      setQuantity: ({
+        account: _account,
+        subscription,
+        tier,
+        feature,
+        quantity,
+        proration,
+        commandId,
+      }: {
+        account: string;
+        subscription: string;
+        tier: string;
+        feature: string;
+        quantity: number;
+        proration: "immediate" | "none";
+        commandId: string;
+      }) => {
+        if (props.bindings.setQuantity === undefined) return missing("setQuantity");
+        const seat = props.tiers?.[tier]?.seats?.[feature];
+        if (seat === undefined) {
+          return Effect.fail(
+            new PaymentDeclined({
+              provider: "stripe",
+              code: "price_not_configured",
+              message: `no Stripe seat price for ${tier}/${feature}`,
+            }),
+          );
+        }
+        const price =
+          seat.priceId !== undefined
+            ? Effect.succeed(seat.priceId)
+            : seat.lookupKey !== undefined && props.bindings.resolvePrice !== undefined
+              ? props.bindings.resolvePrice(seat.lookupKey)
+              : Effect.fail(
+                  new PaymentDeclined({
+                    provider: "stripe",
+                    code: "price_not_configured",
+                    message: `seat ${tier}/${feature} has no priceId and no resolvable lookupKey`,
+                  }),
+                );
+        return price.pipe(
+          Effect.flatMap((priceId) =>
+            props.bindings.setQuantity!({ subscription, priceId, quantity, proration, commandId }),
+          ),
+        );
+      },
       reportUsage: (args: {
         account: string;
         periodStart: DateTime.Utc;
@@ -275,6 +339,21 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     ),
   );
 
+  const seatPrices = Object.fromEntries(
+    Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
+      mapped.seats === undefined
+        ? []
+        : [
+            [
+              tier,
+              Object.fromEntries(
+                Object.entries(mapped.seats).map(([feature, seat]) => [feature, seat.unitPrice]),
+              ),
+            ] as const,
+          ],
+    ),
+  );
+
   return {
     name: "stripe",
     kind: "processor",
@@ -282,6 +361,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
     ...(Object.keys(unitPrices).length === 0 ? {} : { unitPrices }),
+    ...(Object.keys(seatPrices).length === 0 ? {} : { seatPrices }),
     ...(props.webhook === undefined ? {} : { webhook: props.webhook }),
   };
 };

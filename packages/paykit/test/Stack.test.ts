@@ -232,6 +232,50 @@ describe("Stack", () => {
     }),
   );
 
+  it.effect("requires a seat price from a provider that owns the subscription quantity", () =>
+    Effect.gen(function* () {
+      const seats = feature({ id: "seats", kind: "non_consumable" });
+      const seatTier = tier({
+        id: "team",
+        price: proPrice,
+        grants: [
+          allowance(seats, {
+            included: 5,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 1_000, currency: "usd" },
+            cap: 20,
+          }),
+        ],
+      });
+      const seatCatalog = { features: [seats], tiers: [seatTier] };
+      const missing = yield* Effect.flip(
+        validateStack("Billing", {
+          catalog: seatCatalog,
+          providers: [{ ...PaymentsMemory(), prices: { team: proPrice } }],
+          store: MemoryStore(),
+        }),
+      );
+      expect(missing._tag).toBe("CatalogPriceMismatch");
+      if (missing._tag === "CatalogPriceMismatch") {
+        expect(missing.field).toBe("seatPrice.seats");
+        expect(missing.actual).toBe("missing");
+      }
+
+      const billing = yield* validateStack("Billing", {
+        catalog: seatCatalog,
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { team: proPrice },
+            seatPrices: { team: { seats: { amount: 1_000, currency: "usd" } } },
+          },
+        ],
+        store: MemoryStore(),
+      });
+      expect(billing.id).toBe("Billing");
+    }),
+  );
+
   it.effect("accepts a one-rate pricing the provider maps", () =>
     Effect.gen(function* () {
       const oneRate = tier({

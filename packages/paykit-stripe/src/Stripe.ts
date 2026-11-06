@@ -82,6 +82,19 @@ export interface StripeClient {
     readonly commandId?: string;
   }) => Effect.Effect<{ readonly chargeId: string }, PaymentDeclined>;
   /**
+   * Set one subscription item's quantity, which is how a seat change reaches
+   * the vendor invoice. `proration` says whether Stripe invoices the
+   * difference now or leaves it to the next period.
+   */
+  readonly setSubscriptionItemQuantity?: (request: {
+    readonly subscription: string;
+    readonly priceId: string;
+    readonly quantity: number;
+    readonly proration: "immediate" | "none";
+    /** Stable across retries, for the vendor's idempotency key. */
+    readonly commandId: string;
+  }) => Effect.Effect<{ readonly invoiceId?: string }, PaymentDeclined>;
+  /**
    * Send one meter event. `identifier` is the vendor idempotency key, and
    * `timestamp` is in seconds since the epoch, as Stripe's API expects.
    */
@@ -244,6 +257,20 @@ export const stripeClientBindings = (
               amount,
               ...(commandId === undefined ? {} : { commandId }),
             }).pipe(Effect.mapError((cause) => declined("createRefund", cause))),
+        }),
+    ...(client.setSubscriptionItemQuantity === undefined
+      ? {}
+      : {
+          setQuantity: (request: {
+            subscription: string;
+            priceId: string;
+            quantity: number;
+            proration: "immediate" | "none";
+            commandId: string;
+          }) =>
+            client.setSubscriptionItemQuantity!(request).pipe(
+              Effect.mapError((cause) => declined("setSubscriptionItemQuantity", cause)),
+            ),
         }),
     ...(client.reportUsage === undefined || where.meters === undefined
       ? {}

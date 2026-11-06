@@ -37,6 +37,18 @@ export interface UsagePriceDeclaration {
  * Pure, so the mapping is testable without a network: the ids and the lookup
  * key are conventions, and a convention deserves a test rather than a deploy.
  */
+/** One recurring seat price the catalog states for a tier. */
+export interface SeatPriceDeclaration {
+  /** The non-consumable feature the price counts. */
+  readonly feature: string;
+  /** What one seat costs per period, in minor units. */
+  readonly unitPrice: UnitPrice;
+  /** Logical id of the seat `Price` resource. */
+  readonly priceResource: string;
+  /** `paykit:<stage>:<tier>:seat:<feature>`. */
+  readonly lookupKey: string;
+}
+
 export interface PriceDeclaration {
   /** The tier the price belongs to, and the key of the returned map. */
   readonly tier: string;
@@ -53,6 +65,8 @@ export interface PriceDeclaration {
   readonly interval: "month" | "year";
   /** One metered price per billable feature, ordered by feature id. */
   readonly usage: ReadonlyArray<UsagePriceDeclaration>;
+  /** One recurring price per non-consumable feature, ordered by feature id. */
+  readonly seats: ReadonlyArray<SeatPriceDeclaration>;
 }
 
 /** A tier's price, optionally with the kind that says how it is sold and its meters. */
@@ -67,6 +81,8 @@ export type TierPrice =
        * not attach metered prices to a one-time price.
        */
       readonly usage?: Readonly<Record<string, UnitPrice>>;
+      /** One recurring per-seat price per non-consumable feature. */
+      readonly seats?: Readonly<Record<string, UnitPrice>>;
     };
 
 const normalize = (
@@ -75,14 +91,16 @@ const normalize = (
   readonly price: Price;
   readonly kind: TierKind;
   readonly usage: Readonly<Record<string, UnitPrice>>;
+  readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>
   "price" in value
     ? {
         price: value.price,
         kind: value.kind ?? "subscription",
         usage: value.usage ?? {},
+        seats: value.seats ?? {},
       }
-    : { price: value, kind: "subscription", usage: {} };
+    : { price: value, kind: "subscription", usage: {}, seats: {} };
 
 export const lookupKeyOf = (stage: string, tier: string): string =>
   `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}`;
@@ -94,6 +112,10 @@ export const lookupKeyOf = (stage: string, tier: string): string =>
  */
 export const meteredLookupKeyOf = (stage: string, tier: string, feature: string): string =>
   `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}:usage:${encodeVendorPart(feature)}`;
+
+/** The lookup key of one tier's seat price for a feature. */
+export const seatLookupKeyOf = (stage: string, tier: string, feature: string): string =>
+  `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}:seat:${encodeVendorPart(feature)}`;
 
 /**
  * The meter event name for a feature. Stripe keeps event names unique per
@@ -176,7 +198,7 @@ export const priceDeclarations = (
   Object.entries(tiers)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([tier, value]) => {
-      const { price, kind, usage } = normalize(value);
+      const { price, kind, usage, seats } = normalize(value);
       return {
         tier,
         kind,
@@ -201,6 +223,17 @@ export const priceDeclarations = (
                   eventName: meterEventNameOf(stage, feature),
                   lookupKey: meteredLookupKeyOf(stage, tier, feature),
                 })),
+        seats:
+          kind === "one_off"
+            ? []
+            : Object.entries(seats)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([feature, unitPrice]) => ({
+                  feature,
+                  unitPrice,
+                  priceResource: `Price_${tier}_Seat_${feature}`,
+                  lookupKey: seatLookupKeyOf(stage, tier, feature),
+                })),
       };
     });
 
@@ -214,6 +247,8 @@ export interface SoldPrices {
   readonly prices: Readonly<Record<string, string>>;
   /** tier → feature → metered price lookup key */
   readonly usage: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** tier → feature → seat price lookup key */
+  readonly seats: Readonly<Record<string, Readonly<Record<string, string>>>>;
   /** feature → meter event name */
   readonly meters: Readonly<Record<string, string>>;
 }
@@ -232,7 +267,7 @@ export const soldTiers = (
 ): Readonly<Record<string, StripeTier>> =>
   Object.fromEntries(
     Object.entries(tiers).map(([tier, value]) => {
-      const { price, usage } = normalize(value);
+      const { price, usage, seats } = normalize(value);
       const usagePrices = Object.fromEntries(
         Object.entries(usage).map(([feature, unitPrice]) => [
           feature,
@@ -242,12 +277,19 @@ export const soldTiers = (
           },
         ]),
       );
+      const seatPrices = Object.fromEntries(
+        Object.entries(seats).map(([feature, unitPrice]) => [
+          feature,
+          { unitPrice, lookupKey: sold.seats[tier]?.[feature] },
+        ]),
+      );
       return [
         tier,
         {
           price,
           lookupKey: sold.prices[tier],
           ...(Object.keys(usagePrices).length === 0 ? {} : { usage: usagePrices }),
+          ...(Object.keys(seatPrices).length === 0 ? {} : { seats: seatPrices }),
         },
       ];
     }),
@@ -319,6 +361,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
   const declarations = priceDeclarations(props.tiers, stack.stage);
   const prices: Record<string, string> = {};
   const usage: Record<string, Record<string, string>> = {};
+  const seats: Record<string, Record<string, string>> = {};
   const meters: Record<string, string> = {};
 
   // One meter per feature, not per tier: a feature is one thing the customer
@@ -377,9 +420,22 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       metered[price.feature] = price.lookupKey;
     }
     usage[declaration.tier] = metered;
+
+    const seatPrices: Record<string, string> = {};
+    for (const seat of declaration.seats) {
+      yield* Stripe.Price(`${id}${seat.priceResource}`, {
+        product,
+        currency: seat.unitPrice.currency,
+        unitAmount: seat.unitPrice.amount,
+        recurring: { interval: declaration.interval },
+        lookupKey: seat.lookupKey,
+      }).pipe(RemovalPolicy.retain());
+      seatPrices[seat.feature] = seat.lookupKey;
+    }
+    seats[declaration.tier] = seatPrices;
   }
 
-  return { prices, usage, meters } as SoldPrices;
+  return { prices, usage, seats, meters } as SoldPrices;
 });
 
 /** The tier id a declaration was built from, narrowed for a caller that reads it back. */

@@ -241,9 +241,14 @@ if (proration !== undefined && proration.due > 0) {
 
 `SetQuantity` sets the total, including the free grant; the billable difference
 is prorated for the rest of the period, and `prorate: "period_end"` defers the
-charge to the boundary. `TrackUsage` and `Hold` refuse a seat with
-`FeatureNotConsumable`. `check()` answers from the cap, not from a spendable
-count, and the row carries `quantity`, `included`, `cap` and `remaining`.
+charge to the boundary. A provider that declares `quantity` — Stripe, through
+`StripePrices` and the seat prices on `StripeBilling` — is told the new total and
+updates the subscription item, so the next renewal bills it; the invoice it
+opens is recorded on the pending proration. A provider without `quantity` keeps
+the local path, and `ChargeQuantityProration` collects it. `TrackUsage` and
+`Hold` refuse a seat with `FeatureNotConsumable`. `check()` answers from the cap,
+not from a spendable count, and the row carries `quantity`, `included`, `cap`
+and `remaining`.
 
 ### Resets, variants and currencies
 

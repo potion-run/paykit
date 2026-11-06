@@ -2,6 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
 import type { Proration } from "../Proration.ts";
 import { FeatureNotConsumable } from "../Subscription/FeatureNotConsumable.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
@@ -44,6 +45,8 @@ const refusals = [
   QuantityCapExceeded,
   QuantityExceeded,
   StandingBlocksUsage,
+  ProviderCapabilityMissing,
+  PaymentDeclined,
   Unauthenticated,
   Forbidden,
 ] as const;

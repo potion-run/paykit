@@ -53,6 +53,9 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
       // deploy can sell a postpaid tier, and the close refuses rather than
       // pretending the usage reached a vendor.
       reportUsage: () => missing("reportUsage"),
+      // A manual provider has no subscription item to set; a seat change stays
+      // a local proration for `ChargeQuantityProration`.
+      setQuantity: () => missing("setQuantity"),
     }),
   );
   const payments = Layer.merge(

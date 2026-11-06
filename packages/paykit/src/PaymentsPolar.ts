@@ -163,6 +163,9 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
       charge: () => missing("charge"),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
+      // Polar's seat count is subscription-wide and its update surface is not
+      // wired yet; a seat change stays a local proration.
+      setQuantity: () => missing("setQuantity"),
       reportUsage: (args: {
         account: string;
         periodStart: DateTime.Utc;

@@ -59,6 +59,7 @@ describe("price declarations", () => {
         currency: "usd",
         interval: "month",
         usage: [],
+        seats: [],
       },
       {
         tier: "scale",
@@ -70,6 +71,27 @@ describe("price declarations", () => {
         currency: "usd",
         interval: "year",
         usage: [],
+        seats: [],
+      },
+    ]);
+  });
+
+  it("declares a recurring seat price for each non-consumable feature", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          seats: { seats: { amount: 1_000, currency: "usd" } },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.seats).toEqual([
+      {
+        feature: "seats",
+        unitPrice: { amount: 1_000, currency: "usd" },
+        priceResource: "Price_pro_Seat_seats",
+        lookupKey: "paykit:prod:pro:seat:seats",
       },
     ]);
   });
@@ -197,6 +219,7 @@ describe("sold tiers", () => {
     const sold = {
       prices: { pro: "paykit:prod:pro" },
       usage: { pro: { messages: "paykit:prod:pro:usage:messages" } },
+      seats: {},
       meters: { messages: "paykit_prod_messages" },
     };
     const unitPrice = { amount: 2, currency: "usd" };
@@ -211,8 +234,27 @@ describe("sold tiers", () => {
     });
   });
 
+  it("joins the seat price keys back onto the catalog prices", () => {
+    const sold = {
+      prices: { pro: "paykit:prod:pro" },
+      usage: {},
+      seats: { pro: { seats: "paykit:prod:pro:seat:seats" } },
+      meters: {},
+    };
+    const unitPrice = { amount: 1_000, currency: "usd" };
+    expect(soldTiers({ pro: { price: pro, seats: { seats: unitPrice } } }, sold)).toEqual({
+      pro: {
+        price: pro,
+        lookupKey: "paykit:prod:pro",
+        seats: {
+          seats: { unitPrice, lookupKey: "paykit:prod:pro:seat:seats" },
+        },
+      },
+    });
+  });
+
   it("omits the usage map when a tier has no billable feature", () => {
-    const sold = { prices: { pro: "paykit:prod:pro" }, usage: {}, meters: {} };
+    const sold = { prices: { pro: "paykit:prod:pro" }, usage: {}, seats: {}, meters: {} };
     expect(soldTiers({ pro }, sold)).toEqual({
       pro: { price: pro, lookupKey: "paykit:prod:pro" },
     });

@@ -6,11 +6,13 @@ import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
+import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
 import { Hold as HoldCommand } from "../Subscription/Hold.command.ts";
+import { RecordQuantityProrationInvoice } from "../Subscription/QuantityProration.command.ts";
 import { ReleaseHold as ReleaseHoldCommand } from "../Subscription/ReleaseHold.command.ts";
 import { Resume as ResumeCommand } from "../Subscription/Resume.command.ts";
 import { ScheduleCancellation as ScheduleCancellationCommand } from "../Subscription/ScheduleCancellation.command.ts";
@@ -145,6 +147,7 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+      const router = Option.getOrNull(yield* Effect.serviceOption(PaymentsRouter));
       return Effect.fn("Paykit.SetQuantity")(function* (account) {
         const ref = Subscription.ref(account);
         return Effect.fn("Paykit.SetQuantity.set")(function* (request) {
@@ -162,6 +165,59 @@ export const BillingInProcess = Layer.mergeAll(
             ),
           );
           yield* bound(toSetQuantityError)(entitlements.query(ref, { atLeast: receipt }));
+          // A provider that owns the subscription item's quantity is told the
+          // new total. `immediate` makes it invoice the difference; `none`
+          // leaves the next period to bill it. The local proration is still the
+          // record; an invoice the vendor opens is recorded on it.
+          const state = yield* subscription.state(ref);
+          if (state._tag === "Subscribed" && router !== null) {
+            const chosen = providerFor(router, state.refs);
+            const vendorSubscription =
+              chosen === null ? undefined : state.refs[chosen.name]?.subscription;
+            const allowance = state.allowances[request.feature];
+            if (chosen !== null && vendorSubscription !== undefined && allowance !== undefined) {
+              if (chosen.capabilities.has("quantity")) {
+                const attempt = Effect.gen(function* () {
+                  const payments = yield* Effect.serviceOption(Payments);
+                  if (Option.isNone(payments)) {
+                    return yield* new ProviderCapabilityMissing({
+                      provider: chosen.name,
+                      op: "setQuantity",
+                    });
+                  }
+                  const result = yield* Option.getOrThrow(payments).setQuantity({
+                    account,
+                    subscription: vendorSubscription,
+                    tier: state.tier,
+                    feature: request.feature,
+                    quantity: request.quantity,
+                    proration: allowance.prorate === "period_end" ? "none" : "immediate",
+                    commandId: request.dedupeKey,
+                  });
+                  const proration = receipt.reply.proration;
+                  if (result.invoiceId !== undefined && proration !== undefined) {
+                    // A second attempt at the same change finds the invoice
+                    // already recorded; that is the replay, not a failure.
+                    yield* bound(toSetQuantityError)(
+                      asSystem(
+                        subscription.send(
+                          ref,
+                          new RecordQuantityProrationInvoice({
+                            prorationId: request.dedupeKey,
+                            invoiceId: result.invoiceId,
+                            amount: proration.due,
+                            currency: proration.currency,
+                          }),
+                          { commandId: `quantity-proration:${request.dedupeKey}` },
+                        ),
+                      ).pipe(Effect.catchTag("NoQuantityProrationDue", () => Effect.void)),
+                    );
+                  }
+                });
+                yield* chosen === null ? attempt : Effect.provide(attempt, chosen.payments);
+              }
+            }
+          }
           return {
             quantity: receipt.reply.quantityAfter,
             ...(receipt.reply.proration === undefined

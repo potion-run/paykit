@@ -9,6 +9,8 @@ import {
   CreateInvoiceitem,
   CreatePaymentIntent,
   CreateRefund,
+  GetSubscription,
+  UpdateSubscription,
 } from "@distilled.cloud/stripe/stripe";
 import { PaymentDeclined } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
@@ -211,6 +213,37 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             : Effect.succeed({ chargeId: intent.id }),
         ),
       ),
+    // Set the seat quantity on the subscription item whose price is the seat
+    // price. `always_invoice` makes Stripe invoice the proration now; `none`
+    // leaves it to the next renewal. The change's id is the idempotency key,
+    // so a retry sets the same quantity rather than a second change.
+    setSubscriptionItemQuantity: (request) =>
+      Effect.gen(function* () {
+        const subscription = yield* GetSubscription({
+          subscription_exposed_id: request.subscription,
+        });
+        const item = subscription.items.data.find(
+          (candidate) => candidate.price?.id === request.priceId,
+        );
+        if (item === undefined) {
+          return yield* new PaymentDeclined({
+            provider: "stripe",
+            code: "subscription_item_missing",
+            message: `subscription ${request.subscription} has no item for ${request.priceId}`,
+          });
+        }
+        const update = UpdateSubscription({
+          subscription_exposed_id: request.subscription,
+          items: [{ id: item.id, quantity: request.quantity }],
+          proration_behavior: request.proration === "immediate" ? "always_invoice" : "none",
+        });
+        const updated = yield* request.commandId === undefined
+          ? update
+          : update.pipe(Stripe.withRequestOptions({ idempotencyKey: request.commandId }));
+        const latest = updated.latest_invoice;
+        const invoiceId = typeof latest === "string" ? latest : latest?.id;
+        return invoiceId === undefined ? {} : { invoiceId };
+      }).pipe(Effect.mapError(declined("setSubscriptionItemQuantity")), Effect.provide(live)),
     // One meter event per feature, carrying the billable quantity. Stripe's
     // `identifier` is the idempotency contract: the close's period id plus the
     // feature, so a retry is the same event rather than a second quantity.

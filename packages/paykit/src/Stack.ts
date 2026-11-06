@@ -49,6 +49,10 @@ export const ProviderDescriptor = Schema.Struct({
   unitPrices: Schema.optional(
     Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
   ),
+  /** What the provider charges per seat, per tier and feature. */
+  seatPrices: Schema.optional(
+    Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
+  ),
 });
 export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
@@ -60,6 +64,7 @@ export const providerDescriptor = (provider: MoneyProvider): ProviderDescriptor 
   capabilities: [...provider.capabilities],
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
   ...(provider.unitPrices === undefined ? {} : { unitPrices: provider.unitPrices }),
+  ...(provider.seatPrices === undefined ? {} : { seatPrices: provider.seatPrices }),
 });
 
 /** The store a Stack writes its event log to. */
@@ -169,6 +174,39 @@ export const validateProviderMappings = (
         const expected = pricing === null ? undefined : (soleUnitPriceOf(pricing) ?? undefined);
         const mismatch = checkUnitPrice(tier.id, featureId, expected, unitPrice);
         if (mismatch !== null) return mismatch;
+      }
+    }
+    // A provider that owns the subscription item's quantity must map every
+    // billable seat, or the seat change would reach a vendor that has no price
+    // to put it on. A provider without the capability keeps the local
+    // proration, so it is not asked for one.
+    if (provider.capabilities.includes("quantity")) {
+      for (const [tierId] of Object.entries(provider.prices ?? {})) {
+        const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+        if (tier === undefined) continue;
+        for (const grant of tier.grants) {
+          if (!isQuantityGrant(grant) || grant.overage !== "bill") continue;
+          const pricing = pricingOf(grant);
+          const unitPrice = pricing === null ? null : soleUnitPriceOf(pricing);
+          if (unitPrice === null) continue;
+          const mapped = provider.seatPrices?.[tierId]?.[grant.feature];
+          if (mapped === undefined) {
+            return new CatalogPriceMismatch({
+              tier: tierId,
+              field: `seatPrice.${grant.feature}`,
+              expected: `${unitPrice.amount} ${unitPrice.currency}`,
+              actual: "missing",
+            });
+          }
+          if (mapped.amount !== unitPrice.amount || mapped.currency !== unitPrice.currency) {
+            return new CatalogPriceMismatch({
+              tier: tierId,
+              field: `seatPrice.${grant.feature}`,
+              expected: `${unitPrice.amount} ${unitPrice.currency}`,
+              actual: `${mapped.amount} ${mapped.currency}`,
+            });
+          }
+        }
       }
     }
     // A provider that can meter a postpaid tier must map every billable

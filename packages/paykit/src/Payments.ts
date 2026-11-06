@@ -53,6 +53,12 @@ export const PaymentCapability = Schema.Literals([
   "refund",
   "portal",
   "usage",
+  /**
+   * Set a subscription item's quantity, which is how a seat change reaches the
+   * vendor's next invoice. A provider that cannot declares no `quantity`, and
+   * the seat change stays a local proration for `ChargeQuantityProration`.
+   */
+  "quantity",
 ]);
 export type PaymentCapability = typeof PaymentCapability.Type;
 
@@ -114,6 +120,31 @@ export const Payments = Domain.ExternalSystem("Payments", {
     success: { url: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
+  setQuantity: {
+    args: {
+      account: Schema.String,
+      /** The vendor subscription the quantity belongs to. */
+      subscription: Schema.String,
+      /** The tier the seat price belongs to. */
+      tier: Schema.String,
+      /** The non-consumable feature whose quantity changed. */
+      feature: Schema.String,
+      /** The total quantity to hold, including the free grant. */
+      quantity: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+      /**
+       * What the vendor does with the difference: `immediate` invoices the
+       * proration now, `none` lets the next period bill the new quantity.
+       */
+      proration: Schema.Literals(["immediate", "none"]),
+      /** Idempotency key: the quantity change, so a retry is one update. */
+      commandId: Schema.String,
+    },
+    success: {
+      /** The invoice the vendor opened for an immediate proration, when it did. */
+      invoiceId: Schema.optionalKey(Schema.String),
+    },
+    error: [ProviderCapabilityMissing, PaymentDeclined],
+  },
   reportUsage: {
     args: {
       account: Schema.String,
@@ -169,6 +200,19 @@ export interface PaymentsService {
     readonly lines: ReadonlyArray<UsageLine>;
     readonly commandId: string;
   }) => Effect.Effect<{}, PaymentError>;
+  readonly setQuantity: (args: {
+    readonly account: string;
+    /** The vendor subscription the quantity belongs to. */
+    readonly subscription: string;
+    readonly tier: string;
+    readonly feature: string;
+    /** The total quantity to hold, including the free grant. */
+    readonly quantity: number;
+    /** `immediate` invoices the difference; `none` bills it next period. */
+    readonly proration: "immediate" | "none";
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId: string;
+  }) => Effect.Effect<{ readonly invoiceId?: string }, PaymentError>;
 }
 
 /** The provider behind the `Payments` service: its name and declared ops. */
@@ -224,6 +268,12 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
    * is a refusal, never a runtime conversion.
    */
   readonly unitPrices?: UnitPriceMap;
+  /**
+   * What the provider charges per seat, per tier and feature. A provider that
+   * declares `quantity` must map every billable seat; a disagreement is a
+   * deploy refusal, like a unit price.
+   */
+  readonly seatPrices?: UnitPriceMap;
   /**
    * How this provider reports a payment, when it can. A provider that sells a
    * priced tier but cannot say it was paid leaves the account waiting for a
