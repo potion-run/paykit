@@ -154,3 +154,78 @@ test.provider.skipIf(!hasKey)(
       expect(sold.meters.messages.startsWith("paykit_")).toBe(true);
     }),
 );
+
+test.provider.skipIf(!hasKey)(
+  "creates a package transform and a tiered price, and keeps the replaced ladder",
+  (stack) =>
+    Effect.gen(function* () {
+      const key = apiKey!;
+      yield* stack.destroy();
+
+      const tiers = {
+        package: {
+          price: proPrice,
+          usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+        },
+        ladder: {
+          price: proPrice,
+          usage: {
+            messages: {
+              kind: "graduated",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          },
+        },
+      } as const;
+
+      const sold = yield* stack.deploy(StripePrices("Prices", { tiers }));
+      const priceOf = (lookupKey: string) =>
+        GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
+          Effect.provide(live(key)),
+          Effect.map((prices) => prices.data[0]),
+        );
+
+      const packagePrice = yield* priceOf(sold.usage.package.messages);
+      expect(packagePrice?.billing_scheme).toBe("per_unit");
+      expect(packagePrice?.unit_amount).toBe(500);
+      expect(packagePrice?.transform_quantity).toEqual({ divide_by: 1_000, round: "up" });
+
+      const ladderPrice = yield* priceOf(sold.usage.ladder.messages);
+      expect(ladderPrice?.billing_scheme).toBe("tiered");
+      expect(ladderPrice?.tiers_mode).toBe("graduated");
+      expect(
+        ladderPrice?.tiers?.map((tier) => ({ upTo: tier.up_to, amount: tier.unit_amount })),
+      ).toEqual([
+        { upTo: 100, amount: 1 },
+        { upTo: null, amount: 2 },
+      ]);
+
+      const changed = yield* stack.deploy(
+        StripePrices("Prices", {
+          tiers: {
+            ...tiers,
+            ladder: {
+              ...tiers.ladder,
+              usage: {
+                messages: {
+                  ...tiers.ladder.usage.messages,
+                  bands: [
+                    { upTo: 100, amount: 1, currency: "usd" },
+                    { upTo: "inf", amount: 3, currency: "usd" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      );
+      const replaced = yield* priceOf(changed.usage.ladder.messages);
+      expect(replaced?.id).not.toBe(ladderPrice?.id);
+      const previous = yield* GetPrice({ price: ladderPrice!.id! }).pipe(Effect.provide(live(key)));
+      expect(previous.id).toBe(ladderPrice?.id);
+    }),
+);
