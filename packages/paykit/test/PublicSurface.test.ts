@@ -145,4 +145,16 @@ it("vocabulary is exported as API", () => {
     "expired",
   ]);
   expect(Paykit.Standing.literals).toEqual(["good", "grace", "blocked"]);
+  expect(typeof Paykit.standingPhaseOf).toBe("function");
+  expect(typeof Paykit.standingConditionsOf).toBe("function");
+  expect(Paykit.StandingPhase).toBeDefined();
+  expect(Paykit.isStandingPhaseEdge("Active", "Grace")).toBe(true);
+  expect(Paykit.isStandingPhaseEdge("Expired", "Grace")).toBe(false);
+  expect(Paykit.nextStandingPhase("Grace", "expire")).toBe("Expired");
+  expect(typeof Paykit.standingTransitionOf).toBe("function");
+  expect(typeof Paykit.standingPhaseOfView).toBe("function");
+  expect(typeof Paykit.standingPhaseTagOfStatus).toBe("function");
+  expect(typeof Paykit.webhookActionOf).toBe("function");
+  expect(Paykit.WEBHOOK_TRANSITIONS.payment_failed.Expired).toBe("ignored");
+  expect(Paykit.nextHoldStatus("open", "expire")).toBe("expired");
 });

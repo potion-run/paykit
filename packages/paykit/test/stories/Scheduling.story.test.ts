@@ -489,6 +489,7 @@ it.effect("HoldSweep releases a counted hold when its deadline arrives, with no 
         amount: 400,
         cost: 0,
         remainingAfter: 2_000,
+        reason: "expired",
       }),
     ),
     Story.view(Entitlements, account, {
@@ -544,6 +545,7 @@ it.effect("HoldSweep returns a credit hold's credits to the one shared pool", ()
         amount: 100,
         cost: 1_000,
         remainingAfter: 50_000,
+        reason: "expired",
       }),
     ),
     Story.view(Entitlements, account, {

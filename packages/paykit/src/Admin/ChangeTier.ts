@@ -28,6 +28,7 @@ import {
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
+import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { planChangeTier } from "../TierCommand.ts";
@@ -52,6 +53,7 @@ export type ChangeTierRequest = typeof ChangeTierRequest.Type;
 export const ChangeTierRejection = Schema.Union([
   TierNotInCatalog,
   NotSubscribed,
+  StandingEnded,
   CurrencyMismatch,
   DowngradeBelowUsage,
   DowngradeBelowSpend,

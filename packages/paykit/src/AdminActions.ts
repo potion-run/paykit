@@ -3,6 +3,7 @@ import { allowancesOf, type Catalog } from "./Catalog.ts";
 import { downgradeOf } from "./Subscription/Allowance.verdict.ts";
 import type { BillingStateView } from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
+import { standingPhaseTagOfStatus } from "./Subscription/StandingPhase.ts";
 import type { Tier } from "./Tier.ts";
 
 /**
@@ -162,13 +163,14 @@ export const actionsFor = (
     readonly entitlements?: EntitlementsState;
   } = {},
 ): ReadonlyArray<AdminActionDescriptor> => {
-  if (state.status === "expired" || state.status === "canceled") return [];
+  const phase = standingPhaseTagOfStatus(state.status);
+  if (phase === "Expired" || phase === "Canceled") return [];
 
   const tiers = changeTiers(state, options.catalog, options.entitlements);
   const scheduled = scheduleTiers(state, options.catalog);
-  const isTrialing = state.status === "trialing";
-  const isActive = state.status === "active";
-  const isGrace = state.status === "grace";
+  const isTrialing = phase === "Trialing";
+  const isActive = phase === "Active";
+  const isGrace = phase === "Grace";
 
   const isOffered = (action: AdminAction): boolean => {
     switch (action) {

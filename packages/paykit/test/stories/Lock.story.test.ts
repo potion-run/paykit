@@ -13,6 +13,11 @@ import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadS
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import {
+  CreditsExpired,
+  PeriodClosed,
+  UsageReset,
+} from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import {
   Hold,
@@ -197,7 +202,7 @@ it.effect("refuses what a hold may not do, each with its own tag", () =>
         remaining: 1_600,
       }),
     ),
-    // A released hold was never billed, so a settle refuses it.
+    // A released hold was never billed, so a settle after it is a no-op.
     Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
     Story.then(
       account,
@@ -207,10 +212,12 @@ it.effect("refuses what a hold may not do, each with its own tag", () =>
         amount: 400,
         cost: 0,
         remainingAfter: 2_000,
+        reason: "released",
       }),
     ),
     Story.when(account, new SettleHold({ holdId: "hold_a" })),
-    Story.rejected(new HoldSettled({ holdId: "hold_a", feature: "messages" })),
+    Story.then(account),
+    Story.replied({ billed: 0, released: 0 }),
   ),
 );
 
@@ -278,12 +285,15 @@ it.effect("a settled hold cannot be released, and a late release still returns u
         amount: 50,
         cost: 0,
         remainingAfter: 1_900,
+        // The sweep fired at `quarter` before the release command; the hold
+        // was already expired when the caller asked.
+        reason: "expired",
       }),
     ),
   ),
 );
 
-it.effect("the sweep releases a hold at its deadline, so a settle is refused", () =>
+it.effect("the sweep releases a hold at its deadline, so a settle has nothing to bill", () =>
   story(
     ...subscribed,
     Story.when(account, new Hold({ holdId: "hold_a", feature: "messages", amount: 400 })),
@@ -298,6 +308,7 @@ it.effect("the sweep releases a hold at its deadline, so a settle is refused", (
         amount: 400,
         cost: 0,
         remainingAfter: 2_000,
+        reason: "expired",
       }),
     ),
     Story.view(Entitlements, account, {
@@ -317,10 +328,62 @@ it.effect("the sweep releases a hold at its deadline, so a settle is refused", (
     }),
     // The work was never billed, so a late settle has nothing to bill.
     Story.when(account, new SettleHold({ holdId: "hold_a" })),
-    Story.rejected(new HoldSettled({ holdId: "hold_a", feature: "messages" })),
+    Story.then(account),
+    Story.replied({ billed: 0, released: 0 }),
     // A late release is the same cleanup, recorded once.
     Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
     Story.then(account),
+  ),
+);
+
+it.effect("a period close releases an open hold with a reset reason", () =>
+  story(
+    ...subscribed,
+    Story.when(
+      account,
+      new Hold({
+        holdId: "hold_close",
+        feature: "messages",
+        amount: 400,
+        expiresAt: at("2030-02-02T00:00:00Z"),
+      }),
+    ),
+    Story.then(
+      account,
+      new UsageReserved({
+        holdId: "hold_close",
+        feature: "messages",
+        amount: 400,
+        rate: 0,
+        cost: 0,
+        at: start,
+        expiresAt: at("2030-02-02T00:00:00Z"),
+        remainingAfter: 1_600,
+      }),
+    ),
+    Story.clock(monthLater),
+    Story.then(
+      account,
+      new UsageReleased({
+        holdId: "hold_close",
+        feature: "messages",
+        amount: 400,
+        cost: 0,
+        remainingAfter: 2_000,
+        reason: "reset",
+      }),
+      new PeriodClosed({
+        periodStart: start,
+        periodEnd: monthLater,
+        nextPeriodStart: monthLater,
+        nextPeriodEnd: at("2030-03-01T00:00:00Z"),
+        statusAfter: "active",
+        standingAfter: "good",
+        cancelAtPeriodEndAfter: false,
+      }),
+      new UsageReset({ remaining: { messages: 2_000 }, carried: { messages: 0 } }),
+      new CreditsExpired({ amount: 0, balanceAfter: 0 }),
+    ),
   ),
 );
 
@@ -463,6 +526,7 @@ it.effect("returns what a credit hold did not spend, in credits", () =>
         // 100 units at 10 credits is 1,000 credits back, not 100.
         cost: 1_000,
         remainingAfter: 50_000,
+        reason: "released",
       }),
     ),
   ),

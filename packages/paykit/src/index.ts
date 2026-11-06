@@ -304,11 +304,14 @@ export type {
   PreviewResult,
 } from "./Billing/Preview.operation.ts";
 export {
+  WEBHOOK_PHASES,
+  WEBHOOK_TRANSITIONS,
   WebhookAction,
   WebhookEvent,
   WebhookInvalid,
   WebhookKind,
   WebhookSignatureInvalid,
+  webhookActionOf,
 } from "./Webhooks.ts";
 export type { PaymentsWebhook, WebhookError, WebhookRequest } from "./Webhooks.ts";
 export {
@@ -369,6 +372,36 @@ export type {
   SubscriptionState,
   UnsubscribedState,
 } from "./Subscription/Subscription.state.ts";
+export {
+  STANDING_PHASE_EDGES,
+  STANDING_PHASE_TRANSITIONS,
+  STANDING_TRANSITIONS,
+  StandingConditions,
+  StandingPhase,
+  StandingPhaseTag,
+  TopUpCooldownCondition,
+  ProrationCondition,
+  isStandingPhaseEdge,
+  nextStandingPhase,
+  standingConditionsOf,
+  standingPhaseEdge,
+  standingPhaseOf,
+  standingPhaseOfView,
+  standingPhaseTagOfStatus,
+  standingTransitionOf,
+} from "./Subscription/StandingPhase.ts";
+export type {
+  StandingPhaseEdge,
+  StandingPhaseView,
+  StandingTransition,
+} from "./Subscription/StandingPhase.ts";
+export {
+  HOLD_STATUS_TRANSITIONS,
+  HOLD_TRANSITIONS,
+  holdTransitionOf,
+  nextHoldStatus,
+} from "./Subscription/HoldPhase.ts";
+export type { HoldTransition } from "./Subscription/HoldPhase.ts";
 // ── auth ────────────────────────────────────────────────────────────────────
 export {
   Actor,
@@ -547,10 +580,12 @@ export {
   RecordProrationInvoice,
 } from "./Subscription/RecordProrationInvoice.command.ts";
 export { AlreadyCanceled } from "./Subscription/AlreadyCanceled.rejection.ts";
+export { AlreadySubscribed } from "./Subscription/AlreadySubscribed.rejection.ts";
 export { CurrencyMismatch } from "./Subscription/CurrencyMismatch.rejection.ts";
 export { NotInGrace } from "./Subscription/NotInGrace.rejection.ts";
 export { NotScheduled } from "./Subscription/NotScheduled.rejection.ts";
 export { NotSubscribed } from "./Subscription/NotSubscribed.rejection.ts";
+export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
 export { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 export { TrialDeadlineNotLater } from "./Subscription/TrialDeadlineNotLater.rejection.ts";

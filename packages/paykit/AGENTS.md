@@ -177,6 +177,18 @@ Adding or changing a command touches the same set of files under `src/`, in this
 Done when `Domain.verify(Model)` returns empty, the stories are green, and the properties are
 green against generated sequences that include the new command.
 
+`Subscription/StandingPhase.ts` is the read-side phase. `standingPhaseOf` names the tag and the
+deadline that will move it, with `overdue` for the window between the clock and the scheduled
+command; `standingConditionsOf` names the orthogonal state (trial latch, scheduled cancellation,
+pending tier, cooldown, holds, proration, unplanned credits). `STANDING_PHASE_TRANSITIONS` is a
+total table — every phase answers every move, with an impossible move as a self-edge — in the shape
+of Alchemy's `SQLITE_TRANSITIONS`. `STANDING_PHASE_EDGES` is the annotated view of the same table.
+`test/standing/Phase.test.ts` walks `decide` against it: a command that moves a standing somewhere
+the table does not name fails there, so a new edge is an edit to one table, not a silent widening of
+the lifecycle. The hold's `HOLD_STATUS_TRANSITIONS` and the webhook edge's `WEBHOOK_TRANSITIONS`
+use the same total-table shape: a closed hold is absorbing, and an event that records nothing is
+`ignored` rather than a missing branch.
+
 ## Surfaces
 
 Tenant and admin are two `Api`s over one model, with different middleware and different blast

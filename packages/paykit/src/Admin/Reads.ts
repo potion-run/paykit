@@ -39,6 +39,7 @@ import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { CancellationScheduled } from "../Subscription/ScheduleCancellation.command.ts";
 import { TierChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
+import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import {
@@ -78,6 +79,7 @@ export type PreviewEvents = typeof PreviewEvents.Type;
 export const PreviewRejection = Schema.Union([
   TierNotInCatalog,
   NotSubscribed,
+  StandingEnded,
   CurrencyMismatch,
   DowngradeBelowUsage,
   DowngradeBelowSpend,

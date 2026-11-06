@@ -3,6 +3,7 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { type PaymentError, PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
+import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 import type { SubscribeResult } from "./Subscribe.operation.ts";
@@ -21,6 +22,7 @@ export interface SubscribeRequest {
 }
 
 const refusals = [
+  AlreadySubscribed,
   TierNotInCatalog,
   PaymentDeclined,
   ProviderCapabilityMissing,

@@ -16,6 +16,12 @@ export class UsageReleased extends Domain.Event("UsageReleased", {
   /** Credits the hold reserved; `0` for a feature counted in its own units. */
   cost: Schema.Int,
   remainingAfter: Schema.NullOr(Schema.Int),
+  /**
+   * Why the units came back: a caller released them, the deadline swept them,
+   * or a period close cleared them. Absent on events written before the field,
+   * which are releases.
+   */
+  reason: Schema.optionalKey(Schema.Literals(["released", "expired", "reset"])),
 }) {}
 
 /**

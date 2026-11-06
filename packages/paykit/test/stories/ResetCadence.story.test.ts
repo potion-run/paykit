@@ -16,6 +16,7 @@ import {
 } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
+import { UsageReleased } from "../../src/Subscription/ReleaseHold.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -229,6 +230,14 @@ it.effect(
       Story.clock(monthLater),
       Story.then(
         account,
+        new UsageReleased({
+          holdId: "msg-hold",
+          feature: "messages",
+          amount: 20,
+          cost: 0,
+          remainingAfter: 100,
+          reason: "reset",
+        }),
         new PeriodClosed({
           periodStart: start,
           periodEnd: monthLater,

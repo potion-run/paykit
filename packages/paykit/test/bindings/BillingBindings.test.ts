@@ -409,8 +409,10 @@ describe("paykit bindings", () => {
       );
 
       // A priced tier opens the provider's path; the standing activates when the
-      // webhook arrives, not here.
-      const purchase = yield* subscribe({ tier: "pro" });
+      // webhook arrives, not here. This is a fresh account: a plan on an open
+      // standing is `ChangeTier`, not a second `Subscribe`.
+      const paid = yield* SubscribeBinding("acct_bindings_paid");
+      const purchase = yield* paid({ tier: "pro" });
       expect("url" in purchase && purchase.url).toContain("checkout");
     }).pipe(Effect.provide(inProcessWorld)),
   );

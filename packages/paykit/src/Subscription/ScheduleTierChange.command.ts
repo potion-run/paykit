@@ -8,6 +8,7 @@ import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
+import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { PendingTier } from "./Subscription.state.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -46,6 +47,6 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
     rates: CreditRateCards,
   },
   events: [TierChangeScheduled],
-  rejects: [NotSubscribed, TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
+  rejects: [NotSubscribed, StandingEnded, TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
   middleware: [Session, CatalogGuard],
 }) {}

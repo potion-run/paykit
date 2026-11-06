@@ -10,8 +10,10 @@ import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "./Subscription/RecordPaymentFailure.command.ts";
 import { ScheduleCancellation } from "./Subscription/ScheduleCancellation.command.ts";
+import { standingPhaseTagOfStatus, type StandingPhaseTag } from "./Subscription/StandingPhase.ts";
 import { Subscribe as SubscribeCommand } from "./Subscription/Subscribe.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
+import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
 import { purchaseCreditsInputOf, subscribeInputOf } from "./TierCommand.ts";
 
@@ -93,6 +95,81 @@ export const WebhookAction = Schema.Literals([
 ]);
 export type WebhookAction = typeof WebhookAction.Type;
 
+/** Every phase a delivery can find a standing in. */
+export const WEBHOOK_PHASES: ReadonlyArray<StandingPhaseTag> = [
+  "Unsubscribed",
+  "Trialing",
+  "Active",
+  "Grace",
+  "Expired",
+  "Canceled",
+];
+
+/**
+ * What one provider event does to one standing phase. A total table, so the
+ * edge's `if` chain is a lookup: an event that records nothing is `ignored`,
+ * not a missing branch. The rows are the provider's four kinds; the columns
+ * are the same phases `STANDING_PHASE_TRANSITIONS` uses.
+ *
+ * A one-off pack is handled before the table: it buys credits whether or not a
+ * standing exists, so it is `purchased` in every phase and never an activation.
+ *
+ * @primitive
+ */
+export const WEBHOOK_TRANSITIONS: Record<WebhookKind, Record<StandingPhaseTag, WebhookAction>> = {
+  checkout_completed: {
+    Unsubscribed: "activated",
+    Trialing: "ignored",
+    Active: "ignored",
+    Grace: "ignored",
+    Expired: "activated",
+    Canceled: "activated",
+  },
+  payment_succeeded: {
+    Unsubscribed: "activated",
+    Trialing: "ignored",
+    Active: "ignored",
+    Grace: "recovered",
+    Expired: "activated",
+    Canceled: "ignored",
+  },
+  payment_failed: {
+    Unsubscribed: "ignored",
+    Trialing: "failed",
+    Active: "failed",
+    Grace: "failed",
+    Expired: "ignored",
+    Canceled: "ignored",
+  },
+  subscription_canceled: {
+    Unsubscribed: "ignored",
+    Trialing: "canceled",
+    Active: "canceled",
+    Grace: "canceled",
+    Expired: "ignored",
+    Canceled: "ignored",
+  },
+};
+
+/**
+ * The action one delivery names, from the event's kind and the standing it
+ * found. A caller that has already handled `oneOff` can use this to skip the
+ * branch chain; the operation uses it for exactly that.
+ *
+ * ### Classifying a delivery
+ * **Example:** A payment failure for an expired account
+ * ```typescript
+ * webhookActionOf("payment_failed", expiredState); // "ignored"
+ * ```
+ *
+ * @primitive
+ */
+export const webhookActionOf = (kind: WebhookKind, state: SubscriptionState): WebhookAction => {
+  const phase =
+    state._tag === "Unsubscribed" ? "Unsubscribed" : standingPhaseTagOfStatus(state.status);
+  return WEBHOOK_TRANSITIONS[kind][phase];
+};
+
 /**
  * The webhook edge as a binding: the model's services resolved once, an event
  * applied per delivery. A Worker route builds this beside its other bindings, so
@@ -150,57 +227,54 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (activation === null) {
           return yield* new TierNotInCatalog({ tier: event.tier });
         }
-        yield* asSystem(
+        // A delivery that raced a newer activation is a replay, not a failed
+        // hook: the command refuses to reset an open standing, and the provider
+        // does not need to retry it.
+        return yield* asSystem(
           subscription.send(ref, new SubscribeCommand(activation), { commandId: event.id }),
+        ).pipe(
+          Effect.as("activated" as const satisfies WebhookAction),
+          Effect.catchTag("AlreadySubscribed", () =>
+            Effect.succeed("ignored" as const satisfies WebhookAction),
+          ),
         );
-        return "activated" as const satisfies WebhookAction;
       });
 
-      switch (event.kind) {
-        case "checkout_completed": {
-          if (oneOff) return yield* purchase;
-          // A standing already exists: this is either a redelivery with a new
-          // provider id or a checkout that lost the race with a payment that
-          // activated the account. Activating again would reset the period and
-          // forget what was recorded in between, so it is a replay.
-          if (
-            state._tag === "Subscribed" &&
-            state.status !== "canceled" &&
-            state.status !== "expired"
-          ) {
-            return "ignored" as const satisfies WebhookAction;
-          }
-          return yield* activate;
+      // A pack is a purchase in every phase; everything else is the table.
+      if (oneOff && (event.kind === "checkout_completed" || event.kind === "payment_succeeded")) {
+        return yield* purchase;
+      }
+      // The amount and currency are evidence a payment path needs before the
+      // table can say "recovered" or "activated"; an ignored delivery still
+      // fails the same validation it always did.
+      if (event.kind === "payment_succeeded") {
+        if (event.amount === undefined) {
+          return yield* new WebhookInvalid({ event: event.id, field: "amount" });
         }
+        if (event.currency === undefined) {
+          return yield* new WebhookInvalid({ event: event.id, field: "currency" });
+        }
+      }
 
-        case "payment_succeeded": {
-          if (oneOff) return yield* purchase;
-          if (event.amount === undefined) {
+      switch (webhookActionOf(event.kind, state)) {
+        case "purchased":
+          return yield* purchase;
+        case "activated":
+          return yield* activate;
+        case "recovered": {
+          if (event.amount === undefined || event.currency === undefined) {
             return yield* new WebhookInvalid({ event: event.id, field: "amount" });
           }
-          if (event.currency === undefined) {
-            return yield* new WebhookInvalid({ event: event.id, field: "currency" });
-          }
-          if (state._tag === "Subscribed" && state.status === "grace") {
-            yield* asSystem(
-              subscription.send(
-                ref,
-                new RecordPayment({ amount: event.amount, currency: event.currency }),
-                { commandId: event.id },
-              ),
-            );
-            return "recovered" as const satisfies WebhookAction;
-          }
-          if (state._tag === "Unsubscribed" || state.status === "expired") {
-            return yield* activate;
-          }
-          return "ignored" as const satisfies WebhookAction;
+          yield* asSystem(
+            subscription.send(
+              ref,
+              new RecordPayment({ amount: event.amount, currency: event.currency }),
+              { commandId: event.id },
+            ),
+          );
+          return "recovered" as const satisfies WebhookAction;
         }
-
-        case "payment_failed": {
-          if (state._tag !== "Subscribed" || state.status === "canceled") {
-            return "ignored" as const satisfies WebhookAction;
-          }
+        case "failed": {
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
           yield* asSystem(
             subscription.send(
@@ -214,18 +288,10 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           );
           return "failed" as const satisfies WebhookAction;
         }
-
-        case "subscription_canceled": {
+        case "canceled":
           // A cancellation is a standing change, not only an active-account
           // one: a customer may cancel while in grace or on a trial. Allowing
           // it there is what lets a failure and a cancellation commute.
-          if (
-            state._tag !== "Subscribed" ||
-            state.status === "canceled" ||
-            state.status === "expired"
-          ) {
-            return "ignored" as const satisfies WebhookAction;
-          }
           return yield* asSystem(
             subscription.send(ref, new ScheduleCancellation(), { commandId: event.id }),
           ).pipe(
@@ -234,7 +300,8 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
               Effect.succeed("ignored" as const satisfies WebhookAction),
             ),
           );
-        }
+        case "ignored":
+          return "ignored" as const satisfies WebhookAction;
       }
     });
 

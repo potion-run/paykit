@@ -2,6 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
+import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
 /** The balance is smaller than the amount asked for. */
@@ -23,7 +24,7 @@ export class ConsumeCredits extends Domain.Command("ConsumeCredits", {
   target: AccountId,
   input: { amount: Schema.Int },
   events: [CreditsConsumed],
-  rejects: [NotSubscribed, CreditExceedsBalance],
+  rejects: [NotSubscribed, StandingEnded, CreditExceedsBalance],
   reply: { balance: Schema.Int },
   middleware: [Session],
 }) {}

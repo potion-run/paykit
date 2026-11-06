@@ -12,6 +12,7 @@ import {
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
+import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
@@ -36,6 +37,7 @@ export interface ChangeTierResult {
 const refusals = [
   TierNotInCatalog,
   NotSubscribed,
+  StandingEnded,
   CurrencyMismatch,
   DowngradeBelowUsage,
   DowngradeBelowSpend,

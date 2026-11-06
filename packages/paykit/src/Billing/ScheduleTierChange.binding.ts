@@ -5,6 +5,7 @@ import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
@@ -34,6 +35,7 @@ export interface PendingTierResult {
 
 const scheduleRefusals = [
   NotSubscribed,
+  StandingEnded,
   TierNotInCatalog,
   CurrencyMismatch,
   CatalogMismatch,

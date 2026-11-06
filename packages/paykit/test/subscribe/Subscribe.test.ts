@@ -62,6 +62,27 @@ describe("Subscribe purchase path", () => {
     }).pipe(withMemory),
   );
 
+  it.live("refuses a second activation on an open standing", () =>
+    Effect.gen(function* () {
+      const subscribe = yield* Subscribe(account);
+      yield* subscribe({ tier: "free" });
+      const refused = yield* Effect.flip(subscribe({ tier: "free" }));
+      expect(refused._tag).toBe("AlreadySubscribed");
+      // The first standing is untouched.
+      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free" });
+    }).pipe(withMemory),
+  );
+
+  it.live("refuses a second plan before opening a provider checkout", () =>
+    Effect.gen(function* () {
+      const subscribe = yield* Subscribe(account);
+      yield* subscribe({ tier: "free" });
+      const refused = yield* Effect.flip(subscribe({ tier: "pro" }));
+      expect(refused._tag).toBe("AlreadySubscribed");
+      expect((yield* state)._tag).toBe("Subscribed");
+    }).pipe(withMemory),
+  );
+
   it.live("opens a hosted checkout and stores its reference before standing exists", () =>
     Effect.gen(function* () {
       const subscribe = yield* Subscribe(account);

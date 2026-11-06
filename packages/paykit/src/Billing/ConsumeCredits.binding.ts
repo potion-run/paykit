@@ -4,6 +4,7 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CreditExceedsBalance } from "../Subscription/ConsumeCredits.command.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Credits to spend from the account's pool. */
@@ -19,7 +20,13 @@ export interface ConsumeCreditsResult {
   readonly balance: number;
 }
 
-const refusals = [NotSubscribed, CreditExceedsBalance, Unauthenticated, Forbidden] as const;
+const refusals = [
+  NotSubscribed,
+  StandingEnded,
+  CreditExceedsBalance,
+  Unauthenticated,
+  Forbidden,
+] as const;
 
 /** Every refusal this command can answer. */
 export type ConsumeCreditsRefusal = InstanceType<(typeof refusals)[number]>;

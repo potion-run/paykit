@@ -98,7 +98,6 @@ describe("holds", () => {
             const hold = holdOf(before, step.holdId);
             if (step._tag === "Settle") {
               if (hold === null) return decision._tag === "HoldUnknown";
-              if (hold.status === "released") return decision._tag === "HoldSettled";
               if (step.amount !== undefined && step.amount > hold.amount) {
                 return decision._tag === "HoldExceeded";
               }
@@ -117,9 +116,11 @@ describe("holds", () => {
               );
             }
             if (step._tag === "Settle") {
-              return holdOf(before, step.holdId)?.status === "settled";
+              const status = holdOf(before, step.holdId)?.status;
+              return status === "settled" || status === "released" || status === "expired";
             }
-            return holdOf(before, step.holdId)?.status === "released";
+            const status = holdOf(before, step.holdId)?.status;
+            return status === "released" || status === "expired";
           }
 
           const evolved = evolveAt(state, decision, start, `step-${index}`);
@@ -333,9 +334,9 @@ describe("holds", () => {
     expect(swept.map((event) => event._tag)).toEqual(["UsageReleased"]);
     expect((swept[0] as unknown as { readonly remainingAfter: number }).remainingAfter).toBe(100);
     const released = evolveAt(state, swept, expiresAt, "sweep") as SubscribedState;
-    expect(holdOf(released, "hold-expiring")?.status).toBe("released");
+    expect(holdOf(released, "hold-expiring")?.status).toBe("expired");
 
-    // Once the units are back, a settle is a billed-hold refusal and a second
+    // Once the units are back, a settle is an idempotent no-op and a second
     // sweep is a replay.
     const settledAfter = decideAt(
       released,
@@ -343,7 +344,7 @@ describe("holds", () => {
       expiresAt,
       "settle-after",
     );
-    expect(!isAccepted(settledAfter) && settledAfter._tag).toBe("HoldSettled");
+    expect(isAccepted(settledAfter) && settledAfter.length).toBe(0);
     const again = decideAt(
       released,
       new HoldElapsed({ holdId: "hold-expiring" }),
@@ -405,7 +406,7 @@ describe("holds", () => {
         if (!isAccepted(sweep) || sweep.length !== 1) return false;
         if (sweep[0]?._tag !== "UsageReleased") return false;
         const released = evolveAt(state, sweep, at, "sweep") as SubscribedState;
-        if (released.holds["hold-swept"]?.status !== "released") return false;
+        if (released.holds["hold-swept"]?.status !== "expired") return false;
         if (reservedOf(released, "messages") !== 0) return false;
         // The units return to the allowance; a sweep is a cleanup, not a charge.
         if (released.remaining.messages !== 100) return false;

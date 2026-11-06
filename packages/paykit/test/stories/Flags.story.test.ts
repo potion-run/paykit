@@ -13,7 +13,9 @@ import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadS
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import { prorate } from "../../src/Proration.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
+import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -189,13 +191,20 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     // A granted flag: allowed, with no count and no reset to wait for.
     const receipt = yield* subscription.send(
       readAccount,
-      new Subscribe({
+      new ChangeTier({
         credits: 0,
         creditsExpire: "period",
         rates: {},
         tier: "enterprise",
         allowances: enterprise,
         price,
+        proration:
+          prorate({
+            from: undefined,
+            to: price,
+            period: { start, end: monthLater },
+            at: start,
+          }) ?? undefined,
       }),
       { commandId: "flags-enterprise" },
     );

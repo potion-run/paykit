@@ -9,6 +9,7 @@ import {
   type Tier,
   type TimelineEntry,
   AccountId,
+  standingPhaseOfView,
 } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
@@ -1184,6 +1185,13 @@ const adjustmentsView = (
             [],
             [h.dt([], ["Grace until"]), h.dd([], [formatOptionalDateTime(billing.graceUntil)])],
           ),
+          h.div(
+            [],
+            [
+              h.dt([], ["Refill cooldown"]),
+              h.dd([], [formatOptionalDateTime(billing.topUpCooldownUntil)]),
+            ],
+          ),
           h.div([], [h.dt([], ["Billing anchor"]), h.dd([], [billing.anchorTz])]),
         ],
       ),
@@ -2304,6 +2312,16 @@ const accountSummaryView = (account: AccountState, h: HtmlBuilder<Message>): Htm
     billing.price === undefined
       ? "Free plan"
       : `${formatMoney(billing.price.amount, billing.price.currency)} / ${billing.price.interval}`;
+  // The holds read carries the timestamp the page was last proven current;
+  // using it as the phase clock says "overdue as of the read", never "overdue
+  // as of whenever this render happened".
+  const holds = Option.getOrNull(account.holds);
+  const readAt = holds === null ? null : Option.getOrNull(holds.asOf);
+  const phase = readAt === null ? null : standingPhaseOfView(billing, readAt);
+  const statusDetail =
+    phase === null
+      ? `Standing: ${standingValueOf(billing.status)}`
+      : `Phase: ${phase._tag}${"overdue" in phase && phase.overdue ? " · overdue" : ""}`;
   return h.div(
     [
       h.Class("pk-stats"),
@@ -2312,7 +2330,7 @@ const accountSummaryView = (account: AccountState, h: HtmlBuilder<Message>): Htm
     ],
     [
       stat("Plan", billing.tier, price, "info", h),
-      stat("Status", billing.status, `Standing: ${standingValueOf(billing.status)}`, statusTone, h),
+      stat("Status", billing.status, statusDetail, statusTone, h),
       stat(
         "Credits",
         formatMoney(billing.credits, billing.currency),

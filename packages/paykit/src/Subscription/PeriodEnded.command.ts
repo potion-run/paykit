@@ -2,6 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { TierChanged } from "./ChangeTier.command.ts";
 import { CreditsExpired, PeriodClosed, UsageReset } from "./ClosePeriod.command.ts";
+import { UsageReleased } from "./ReleaseHold.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 
 /**
@@ -14,6 +15,6 @@ export class PeriodEnded extends Domain.Command("PeriodEnded", {
   input: { periodEnd: Schema.DateTimeUtc },
   // A scheduled tier change lands before the reset, so the new tier's
   // allowances are the ones the next period starts on.
-  events: [TierChanged, PeriodClosed, UsageReset, CreditsExpired],
+  events: [TierChanged, UsageReleased, PeriodClosed, UsageReset, CreditsExpired],
   rejects: [],
 }) {}

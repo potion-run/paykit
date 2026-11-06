@@ -85,8 +85,12 @@ export type UsageCounts = typeof UsageCounts.Type;
 export const Remaining = Schema.Record(Schema.String, Schema.NullOr(Schema.Int));
 export type Remaining = typeof Remaining.Type;
 
-/** Where a hold is in its life. A closed hold stays only as an audit record. */
-export const HoldStatus = Schema.Literals(["open", "settled", "released"]);
+/**
+ * Where a hold is in its life. A closed hold stays only as an audit record.
+ * `expired` is a sweep or a clock past the deadline; `released` is a caller or
+ * a period close returning the units.
+ */
+export const HoldStatus = Schema.Literals(["open", "settled", "released", "expired"]);
 export type HoldStatus = typeof HoldStatus.Type;
 
 /**

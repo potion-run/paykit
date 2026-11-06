@@ -50,6 +50,16 @@ catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-t
 delivery port; paykit signs and keys, the app sends). Newer decisions are named beside the slice
 they shaped.
 
+The standing's phases are now a read contract beside the model:
+`Subscription/StandingPhase.ts` names `Unsubscribed | Trialing | Active | Grace | Expired | Canceled`
+with the deadline that moves each and an `overdue` flag for the window between the clock and the
+scheduled command. `STANDING_PHASE_TRANSITIONS` is a total table in the shape of Alchemy's
+`SQLITE_TRANSITIONS`; `STANDING_PHASE_EDGES` is its annotated view. [ADR
+0020](./adr/0020-a-terminal-standing-is-replaced-not-moved.md) makes the terminal edges refusals
+(`StandingEnded`) and [ADR 0021](./adr/0021-hold-expiry-is-a-state.md) gives a hold an `expired`
+status and a release reason, so a close no longer drops one silently. The table and
+`test/standing/Phase.test.ts` are the gate on both.
+
 ## The queue
 
 Ordered by value per unit of work. Each is small enough to finish in one pass and leave green.

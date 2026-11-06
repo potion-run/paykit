@@ -12,10 +12,12 @@ import {
   type PaymentsService,
   providerFor,
 } from "../Payments.ts";
+import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { AttachProviderRef } from "../Subscription/AttachProviderRef.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
 import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { subscribeInputOf } from "../TierCommand.ts";
 
@@ -105,6 +107,20 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     const ref = Subscription.ref(input.account);
     const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
     const standing = yield* subscription.state(ref);
+
+    // A pack is a purchase on any standing; a plan is not. Refuse before the
+    // provider is asked, so a second checkout cannot take money the model will
+    // then decline to activate.
+    if (
+      kind !== "one_off" &&
+      standing._tag === "Subscribed" &&
+      !isTerminalStatus(standing.status)
+    ) {
+      return yield* new AlreadySubscribed({
+        account: input.account,
+        status: standing.status,
+      });
+    }
 
     if (tier.price === undefined) {
       // A one-off tier is a pack of credits; without a price there is nothing

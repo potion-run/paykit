@@ -14,7 +14,14 @@ import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
-import { WebhookInvalid, handleWebhook, type WebhookEvent } from "../../src/Webhooks.ts";
+import {
+  WEBHOOK_PHASES,
+  WEBHOOK_TRANSITIONS,
+  WebhookInvalid,
+  WebhookKind,
+  handleWebhook,
+  type WebhookEvent,
+} from "../../src/Webhooks.ts";
 
 const proTier = tier({
   id: "pro",
@@ -67,6 +74,16 @@ const billingOf = (value: SubscriptionState) =>
         dunningAttempts: value.dunningAttempts,
       }
     : null;
+
+describe("WEBHOOK_TRANSITIONS", () => {
+  it("answers every event kind in every phase", () => {
+    for (const kind of WebhookKind.literals) {
+      for (const phase of WEBHOOK_PHASES) {
+        expect(WEBHOOK_TRANSITIONS[kind][phase]).toBeDefined();
+      }
+    }
+  });
+});
 
 describe("webhook edge", () => {
   it.effect("checkout_completed activates a standing from the catalog", () =>

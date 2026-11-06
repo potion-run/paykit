@@ -15,6 +15,7 @@ import {
   type JudgedFeature,
 } from "./Allowance.verdict.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
+import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
 import {
   ChangeTier,
@@ -48,6 +49,7 @@ import {
   defaultHoldExpiry,
 } from "./Hold.command.ts";
 import { HoldElapsed } from "./HoldElapsed.command.ts";
+import { nextHoldStatus } from "./HoldPhase.ts";
 import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { NotScheduled } from "./NotScheduled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
@@ -75,6 +77,7 @@ import {
   standingFrom,
   unitPriceCurrencyOf,
 } from "./Standing.ts";
+import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { StartTrial, TrialStarted } from "./StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -93,6 +96,7 @@ import {
   holdOf,
   includedRemainingOf,
   initialSubscriptionState,
+  isTerminalStatus,
   periodFrom,
   prepaidCreditsOf,
   protectedAfterSpending,
@@ -168,9 +172,13 @@ const subscribed = (state: SubscriptionState, account: string): SubscribedState 
 /**
  * The event that returns an open hold's units (or credits) to a standing. A
  * release and a sweep record the same event, because an expired hold is a
- * cleanup and not a charge.
+ * cleanup and not a charge; `reason` is what tells the two apart in the log.
  */
-const releaseEvent = (state: SubscribedState, hold: HoldRecord): UsageReleased => {
+const releaseEvent = (
+  state: SubscribedState,
+  hold: HoldRecord,
+  reason: "released" | "expired",
+): UsageReleased => {
   // A credit-priced hold returns what it took — `cost` credits, not `amount`
   // units — so the log's remaining stays in one unit of account.
   const returns = state.rates[hold.feature] === undefined ? hold.amount : hold.cost;
@@ -180,6 +188,7 @@ const releaseEvent = (state: SubscribedState, hold: HoldRecord): UsageReleased =
     amount: hold.amount,
     cost: hold.cost,
     remainingAfter: remainingAfterRelease(availableOf(state, hold.feature), returns),
+    reason,
   });
 };
 
@@ -248,8 +257,33 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // new tier's grant at the boundary, so this close expires nothing of its own:
   // the new grant's `creditsExpire` rule applies at the *next* close.
   const expiring = pending === undefined ? expiringCreditsOf(state) : 0;
+  // A boundary clears the holds of every feature that does not keep its
+  // counters. Record the return per hold, so the timeline says what left the
+  // allowance instead of only `UsageReset` dropping the entities.
+  const resetRunning = new Map<string, number | null>();
+  const resetReleases: Array<UsageReleased> = [];
+  for (const hold of Object.values(state.holds)) {
+    if (hold.status !== "open" || kept[hold.feature] === true) continue;
+    const returns = state.rates[hold.feature] === undefined ? hold.amount : hold.cost;
+    const current = resetRunning.has(hold.feature)
+      ? resetRunning.get(hold.feature)!
+      : availableOf(state, hold.feature);
+    const remainingAfter = remainingAfterRelease(current, returns);
+    resetRunning.set(hold.feature, remainingAfter);
+    resetReleases.push(
+      new UsageReleased({
+        holdId: hold.id,
+        feature: hold.feature,
+        amount: hold.amount,
+        cost: hold.cost,
+        remainingAfter,
+        reason: "reset",
+      }),
+    );
+  }
   return [
     ...moved,
+    ...resetReleases,
     new PeriodClosed({
       periodStart: state.period.start,
       periodEnd: state.period.end,
@@ -518,9 +552,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
-    Subscribe: (state, command, { now }) => {
+    Subscribe: (state, command, { id, now }) => {
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
+      }
+      // A second activation on an open standing would reset the period, the
+      // counters and the holds. Only a terminal standing may be replaced by a
+      // fresh purchase; an active change is `ChangeTier`, and a trial is
+      // `StartTrial`.
+      if (state._tag === "Subscribed" && !isTerminalStatus(state.status)) {
+        return new AlreadySubscribed({ account: id, status: state.status });
       }
       const currentCurrency = state._tag === "Subscribed" ? state.currency : undefined;
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
@@ -562,6 +603,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       const current = subscribed(state, id);
       if (Schema.is(NotSubscribed)(current)) return current;
+      // A terminal standing has no open period to move through. The tier is
+      // replaced by a new activation, not by a change that leaves it expired.
+      if (isTerminalStatus(current.status)) {
+        return new StandingEnded({ account: id, status: current.status });
+      }
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         // Only a blocking allowance can be oversubscribed: below its count,
         // every later request is refused and the read model reports a negative
@@ -866,9 +912,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // The work is already billed: a replay records nothing rather than
       // charging twice, and the id makes the command id derivable.
       if (hold.status === "settled") return [];
-      if (hold.status === "released") {
-        return new HoldSettled({ holdId: hold.id, feature: hold.feature });
-      }
+      // A released or swept hold was never billed. A settle after the fact is
+      // an idempotent no-op, not a refusal that makes a cleanup look like a
+      // failed charge.
+      if (hold.status === "released" || hold.status === "expired") return [];
       if (!allowsUsage(state.status)) {
         return new StandingBlocksUsage({
           standing: standingOf(state.status),
@@ -973,12 +1020,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (hold === null) return new HoldUnknown({ holdId: command.holdId });
       // A released hold is a replay; a settled one was billed, so the units
       // are not there to give back.
-      if (hold.status === "released") return [];
+      if (hold.status === "released" || hold.status === "expired") return [];
       if (hold.status === "settled") {
         return new HoldSettled({ holdId: hold.id, feature: hold.feature });
       }
       // A late release is a cleanup, not a charge: expiry does not refuse it.
-      return [releaseEvent(state, hold)];
+      return [releaseEvent(state, hold, "released")];
     },
     HoldElapsed: (state, command, { now }) => {
       // The deadline is scheduled, so none of these is an operator's mistake:
@@ -988,9 +1035,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const hold = holdOf(state, command.holdId);
       if (hold === null || hold.status !== "open") return [];
       if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(hold.expiresAt)) return [];
-      // Releasing here is the same cleanup `ReleaseHold` performs, so a late
-      // settle still refuses and a late release is a replay.
-      return [releaseEvent(state, hold)];
+      // Releasing here is the same cleanup `ReleaseHold` performs, but the
+      // reason is the deadline: the hold expired rather than being released.
+      return [releaseEvent(state, hold, "expired")];
     },
     RecordProrationInvoice: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
@@ -1076,6 +1123,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ConsumeCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      if (isTerminalStatus(state.status)) {
+        return new StandingEnded({ account: id, status: state.status });
+      }
       if (command.amount <= 0) return [];
       // Credits an open hold reserved are not spendable here: settle still has
       // to bill them, and a negative pool is a state no read can explain.
@@ -1096,6 +1146,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ScheduleTierChange: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      // A schedule only has a boundary to apply at if the standing still has
+      // one. Scheduling on a terminal standing records a change no close will
+      // ever read.
+      if (isTerminalStatus(state.status)) {
+        return new StandingEnded({ account: id, status: state.status });
+      }
       // The payload is the catalog's terms and the close applies it from the log
       // alone, so it is checked here exactly as `ChangeTier` checks it. An
       // empty allowance is what a one-off pack carries: scheduling one would
@@ -1298,7 +1354,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return {
         ...state,
         holds:
-          hold === null ? state.holds : { ...state.holds, [hold.id]: closingHold(hold, "settled") },
+          hold === null
+            ? state.holds
+            : {
+                ...state.holds,
+                [hold.id]: closingHold(hold, nextHoldStatus(hold.status, "settle")),
+              },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },
@@ -1310,7 +1371,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         holds:
           hold === null
             ? state.holds
-            : { ...state.holds, [hold.id]: closingHold(hold, "released") },
+            : {
+                ...state.holds,
+                [hold.id]: closingHold(
+                  hold,
+                  nextHoldStatus(hold.status, event.reason === "expired" ? "expire" : "release"),
+                ),
+              },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },

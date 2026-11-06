@@ -6,6 +6,7 @@ import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
+import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
@@ -53,6 +54,6 @@ export class Subscribe extends Domain.Command("Subscribe", {
     anchorTz: Schema.optionalKey(Schema.String),
   },
   events: [SubscriptionActivated],
-  rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
+  rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch, AlreadySubscribed],
   middleware: [Session, CatalogGuard],
 }) {}

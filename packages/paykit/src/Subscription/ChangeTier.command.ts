@@ -10,6 +10,7 @@ import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
+import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 
@@ -102,6 +103,7 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
   rejects: [
     TierNotInCatalog,
     NotSubscribed,
+    StandingEnded,
     CurrencyMismatch,
     DowngradeBelowUsage,
     DowngradeBelowSpend,

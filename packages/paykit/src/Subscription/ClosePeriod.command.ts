@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { TierChanged } from "./ChangeTier.command.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
+import { UsageReleased } from "./ReleaseHold.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { Standing, SubscriptionStatus, rollsPeriod } from "./Subscription.state.ts";
 
@@ -75,6 +76,6 @@ export class ClosePeriod extends Domain.Command("ClosePeriod", {
   input: { periodEnd: Schema.DateTimeUtc },
   // A scheduled tier change lands before the reset, so the new tier's
   // allowances are the ones the next period starts on.
-  events: [TierChanged, PeriodClosed, UsageReset, CreditsExpired],
+  events: [TierChanged, UsageReleased, PeriodClosed, UsageReset, CreditsExpired],
   rejects: [NotSubscribed, PeriodNotClosed],
 }) {}

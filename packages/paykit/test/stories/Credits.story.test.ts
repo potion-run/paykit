@@ -501,7 +501,8 @@ it.live("check prices a request from the pool, by dimension, on every read path"
     });
     expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(39_000);
     const released = yield* releaseBinding(account.id);
-    yield* released({ holdId: placed.holdId, dedupeKey: "credits-release" });
+    const releaseResult = yield* released({ holdId: placed.holdId, dedupeKey: "credits-release" });
+    expect(releaseResult).toEqual({ released: 1_000 });
     expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(49_000);
 
     // The row carries the card and the pool, so the edge prices it the same way.
