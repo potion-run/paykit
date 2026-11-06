@@ -184,3 +184,82 @@ test.provider.skipIf(!hasToken)(
       expect(meter?.metadata.paykit_feature).toBe("messages");
     }),
 );
+
+test.provider.skipIf(!hasToken)(
+  "creates a package price and a meter tier ladder, and keeps the replaced product",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const tiers = {
+        package: {
+          price: proPrice,
+          usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+        },
+        ladder: {
+          price: proPrice,
+          usage: {
+            messages: {
+              kind: "graduated",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          },
+        },
+      } as const;
+
+      const sold = yield* stack.deploy(PolarPrices("Prices", { tiers }));
+
+      const packageProduct = yield* readProduct(sold.products.package);
+      const packagePrice = packageProduct.prices.find((price) => "meter_id" in price) as
+        | { readonly unit_amount: string }
+        | undefined;
+      expect(packagePrice?.unit_amount).toBe("0.5");
+
+      const ladderProduct = yield* readProduct(sold.products.ladder);
+      const ladderPrice = ladderProduct.prices.find((price) => "meter_id" in price) as
+        | {
+            readonly amount_type: string;
+            readonly tiers: {
+              readonly type: string;
+              readonly tiers: ReadonlyArray<{
+                readonly bound?: number | null;
+                readonly unit_amount: string;
+              }>;
+            };
+          }
+        | undefined;
+      expect(ladderPrice?.amount_type).toBe("metered_tiers");
+      expect(ladderPrice?.tiers.type).toBe("graduated");
+      expect(ladderPrice?.tiers.tiers).toEqual([
+        { bound: 100, unit_amount: "1" },
+        { bound: null, unit_amount: "2" },
+      ]);
+
+      const changed = yield* stack.deploy(
+        PolarPrices("Prices", {
+          tiers: {
+            ...tiers,
+            ladder: {
+              ...tiers.ladder,
+              usage: {
+                messages: {
+                  ...tiers.ladder.usage.messages,
+                  bands: [
+                    { upTo: 100, amount: 1, currency: "usd" },
+                    { upTo: "inf", amount: 3, currency: "usd" },
+                  ],
+                },
+              },
+            },
+          },
+        }),
+      );
+      expect(changed.products.ladder).not.toBe(sold.products.ladder);
+      const previous = yield* readProduct(sold.products.ladder);
+      expect(previous.id).toBe(sold.products.ladder);
+    }),
+);

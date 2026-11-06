@@ -119,6 +119,10 @@ describe("product declarations", () => {
       currency: "usd",
       units: 1_000,
     });
+    expect(declaration?.usage[0]?.pricing).toEqual({
+      _tag: "unit",
+      unitPrice: { amount: 500, currency: "usd", units: 1_000 },
+    });
   });
 
   it("declares a ladder as its full pricing", () => {

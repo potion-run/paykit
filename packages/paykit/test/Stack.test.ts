@@ -264,6 +264,110 @@ describe("Stack", () => {
     }),
   );
 
+  it.effect("accepts a package through the full usage pricing without the shorthand", () =>
+    Effect.gen(function* () {
+      const packageTier = tier({
+        id: "package",
+        price: proPrice,
+        grants: [
+          allowance(messages, {
+            included: 0,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 500, currency: "usd", units: 1_000 },
+          }),
+        ],
+      });
+      const billing = yield* validateStack("Billing", {
+        catalog: { features: [messages], tiers: [packageTier] },
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { package: proPrice },
+            usagePrices: {
+              package: {
+                messages: {
+                  _tag: "unit",
+                  unitPrice: { amount: 500, currency: "usd", units: 1_000 },
+                },
+              },
+            },
+          },
+        ],
+      });
+      expect(billing.id).toBe("Billing");
+    }),
+  );
+
+  it.effect("refuses a provider ladder whose band disagrees with the catalog", () =>
+    Effect.gen(function* () {
+      const ladder = tier({
+        id: "ladder",
+        price: proPrice,
+        grants: [
+          allowance(messages, {
+            included: 100,
+            overage: "bill",
+            pricing: {
+              kind: "graduated",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          }),
+        ],
+      });
+      const error = yield* Effect.flip(
+        validateStack("Billing", {
+          catalog: { features: [messages], tiers: [ladder] },
+          providers: [
+            {
+              ...PaymentsMemory(),
+              prices: { ladder: proPrice },
+              usagePrices: {
+                ladder: {
+                  messages: {
+                    _tag: "graduated",
+                    currency: "usd",
+                    bands: [
+                      { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+                      { upTo: "inf", unitPrice: { amount: 3, currency: "usd" } },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      );
+      expect(error._tag).toBe("CatalogPriceMismatch");
+      if (error._tag === "CatalogPriceMismatch") {
+        expect(error.field).toBe("pricing.messages");
+        expect(error.expected).toContain("inf=usd:2");
+        expect(error.actual).toContain("inf=usd:3");
+      }
+    }),
+  );
+
+  it("a provider descriptor carries the full usage pricing", () => {
+    const ladder = {
+      _tag: "volume" as const,
+      currency: "usd",
+      bands: [
+        { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+        { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
+      ] as const,
+    };
+    const descriptor = providerDescriptor({
+      ...PaymentsMemory(),
+      prices: { postpaid: proPrice },
+      usagePrices: { postpaid: { messages: ladder } },
+    });
+    expect(descriptor.usagePrices).toEqual({ postpaid: { messages: ladder } });
+    expect(descriptor.unitPrices).toBe(undefined);
+  });
+
   it.effect("requires a seat price from a provider that owns the subscription quantity", () =>
     Effect.gen(function* () {
       const seats = feature({ id: "seats", kind: "non_consumable" });

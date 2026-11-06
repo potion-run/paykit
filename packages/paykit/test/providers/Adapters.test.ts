@@ -323,6 +323,64 @@ describe("the usage adapter", () => {
     }),
   );
 
+  it.effect("Stripe maps a ladder to the full usage pricing", () =>
+    Effect.gen(function* () {
+      const ladder = {
+        _tag: "graduated" as const,
+        currency: "usd",
+        bands: [
+          { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+          { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
+        ] as const,
+      };
+      const provider = PaymentsStripe({
+        bindings: stripeFixture,
+        tiers: {
+          pro: {
+            price,
+            priceId: "price_1",
+            usage: { messages: { pricing: ladder, priceId: "price_msg" } },
+          },
+        },
+      });
+
+      expect(provider.usagePrices).toEqual({ pro: { messages: ladder } });
+      // A ladder has no one rate, so there is nothing for the shorthand to say.
+      expect(provider.unitPrices).toBe(undefined);
+
+      const url = yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          const checkout = yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
+          return checkout.url;
+        }),
+      );
+      expect(url).toBe("https://stripe.test/checkout/price_1,price_msg");
+    }),
+  );
+
+  it.effect("Polar maps a package to both the full pricing and its one rate", () =>
+    Effect.gen(function* () {
+      const packagePricing = {
+        _tag: "unit" as const,
+        unitPrice: { amount: 500, currency: "usd", units: 1_000 },
+      };
+      const provider = PaymentsPolar({
+        bindings: polarBindings,
+        tiers: { pro: { price, productId: "prod_1", usage: { messages: packagePricing } } },
+      });
+
+      expect(provider.usagePrices).toEqual({ pro: { messages: packagePricing } });
+      expect(provider.unitPrices).toEqual({
+        pro: { messages: { amount: 500, currency: "usd", units: 1_000 } },
+      });
+    }),
+  );
+
   it.effect("a provider without a reporter refuses with a typed missing capability", () =>
     Effect.gen(function* () {
       const provider = PaymentsStripe({

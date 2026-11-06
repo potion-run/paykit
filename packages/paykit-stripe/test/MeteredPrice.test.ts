@@ -1,6 +1,14 @@
+import * as Stripe from "@alchemy.run/stripe";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import { pricing } from "@potion.run/paykit";
-import { stripeTiersOf, stripeTransformOf } from "../src/MeteredPrice.ts";
+import * as Effect from "effect/Effect";
+import {
+  MeteredPrice,
+  registerMeteredPriceProvider,
+  stripeTiersOf,
+  stripeTransformOf,
+} from "../src/MeteredPrice.ts";
 
 describe("a metered price that is not one rate", () => {
   it("turns a package into the quantity transform Stripe applies before billing", () => {
@@ -43,3 +51,13 @@ describe("a metered price that is not one rate", () => {
     ]);
   });
 });
+
+const { test } = Test.make({ providers: Stripe.providers() });
+
+test.provider("registers its provider with an existing Stripe provider collection", () =>
+  Effect.gen(function* () {
+    yield* registerMeteredPriceProvider;
+    const collection = yield* Stripe.Providers;
+    expect(collection.get(MeteredPrice.Type)).toBeDefined();
+  }),
+);
