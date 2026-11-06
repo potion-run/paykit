@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
+import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { DevGuards } from "../../src/Auth/FromHeaders.ts";
@@ -28,6 +29,20 @@ const provided = <A extends { readonly key: string }>(tag: A) =>
     const held = yield* Effect.serviceOption(tag as never);
     return Option.isSome(held);
   });
+
+type IsAny<T> = 0 extends 1 & T ? true : false;
+type Provides<L extends Layer.Any, S> = [Extract<Layer.Success<L>, S>] extends [never]
+  ? false
+  : true;
+
+type TenantWorld = ReturnType<typeof paykitWorld<never, never, "tenant">>;
+type BothWorld = ReturnType<typeof paykitWorld<never, never, "both">>;
+type TenantSuccess = Layer.Success<TenantWorld>;
+
+const _typed: IsAny<TenantSuccess> = false;
+const _tenantHasCheck: Provides<TenantWorld, Check> = true;
+const _tenantHasNoGrant: Provides<TenantWorld, GrantCredits> = false;
+const _bothHasGrant: Provides<BothWorld, GrantCredits> = true;
 
 describe("paykitWorld", () => {
   it.live("provides the tenant bindings, the catalog, the store and the guards", () =>

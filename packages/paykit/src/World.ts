@@ -1,7 +1,9 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Layer from "effect/Layer";
+import type { Admin, Session } from "./Auth/Guards.ts";
 import { BillingAdminInProcess } from "./Billing/BillingAdminInProcess.layer.ts";
 import { BillingInProcess } from "./Billing/BillingInProcess.layer.ts";
+import type { BillingReadStore } from "./BillingReadStore.ts";
 import { MemoryBillingReadStore } from "./BillingReadStore.ts";
 import type { Catalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
@@ -9,8 +11,13 @@ import { catalogLayer } from "./CatalogService.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { type MoneyProvider, paymentsRouter } from "./Payments.ts";
 
-/** A layer with its output erased and its requirements kept. */
-type AnyLayer<R = never> = Layer.Layer<any, never, R>;
+/** The binding surfaces a world can serve. */
+export type PaykitBindings = "tenant" | "admin" | "both" | "none";
+
+/** The services a binding surface adds to the world. */
+type BindingServices<B extends PaykitBindings> =
+  | (B extends "tenant" | "both" ? Layer.Success<typeof BillingInProcess> : never)
+  | (B extends "admin" | "both" ? Layer.Success<typeof BillingAdminInProcess> : never);
 
 /**
  * What a paykit deployment needs, in the order it is declared.
@@ -20,7 +27,11 @@ type AnyLayer<R = never> = Layer.Layer<any, never, R>;
  * guards that authenticate a caller, the providers that move money, and which
  * binding surface the process serves.
  */
-export interface PaykitWorldOptions<R = never> {
+export interface PaykitWorldOptions<
+  R = never,
+  P = never,
+  B extends PaykitBindings = PaykitBindings,
+> {
   /** The catalog the deploy validated; every binding reads it. */
   readonly catalog: Catalog;
   /**
@@ -29,31 +40,32 @@ export interface PaykitWorldOptions<R = never> {
    * `DomainCloudflare.layerDurableObjects()` and a SQL host provides
    * `Layer.succeed(Domain.Platform, platform)`.
    */
-  readonly platform?: AnyLayer<R>;
+  readonly platform?: Layer.Layer<any, never, R>;
   /**
    * The read store the model's projections write and `List` reads. Defaults to
    * `MemoryBillingReadStore`; an SQL host provides `SqlBillingReadStore`.
    */
-  readonly readStore?: AnyLayer<R>;
+  readonly readStore?: Layer.Layer<BillingReadStore, never, R>;
   /**
    * The auth guards, `Session` and `Admin`. Omitted when the host provides them
    * beside the world — a Worker that resolves its own session. There is no
    * development default: a deployment must choose, so the header guard cannot
    * reach production by accident.
    */
-  readonly guards?: AnyLayer<R>;
+  readonly guards?: Layer.Layer<Session | Admin, never, R>;
   /** The money providers, in preference order. None means a local-only world. */
   readonly providers?: ReadonlyArray<MoneyProvider>;
   /**
    * A pre-built money layer, `Payments` or `PaymentsProvider`, for a test fake
    * that is not a `MoneyProvider`. Merged beside the router, not instead of it.
+   * Its services are part of the world's output, so a caller keeps them typed.
    */
-  readonly payments?: AnyLayer<R>;
+  readonly payments?: Layer.Layer<P, never, R>;
   /**
    * Which bindings the world provides. Defaults to `"tenant"`; a process that
    * serves the operator surface as well asks for `"both"`.
    */
-  readonly bindings?: "tenant" | "admin" | "both" | "none";
+  readonly bindings?: B;
 }
 
 const providersOf = (input: PaykitWorldOptions["providers"]): ReadonlyArray<MoneyProvider> =>
@@ -88,7 +100,9 @@ const providersOf = (input: PaykitWorldOptions["providers"]): ReadonlyArray<Mone
  *
  * @primitive
  */
-export const paykitWorld = <R = never>(options: PaykitWorldOptions<R>): AnyLayer<R> => {
+export const paykitWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
+  options: PaykitWorldOptions<R, P, B>,
+) => {
   const catalog = catalogLayer(options.catalog);
   const reads = options.readStore ?? MemoryBillingReadStore;
   const platform = options.platform ?? Domain.InMemory;
@@ -126,14 +140,22 @@ export const paykitWorld = <R = never>(options: PaykitWorldOptions<R>): AnyLayer
       : [];
   const only = providers.length === 1 ? providers[0] : undefined;
 
-  return Layer.mergeAll(
+  // The common half — the model, the catalog, the router and the host's
+  // services — is what every surface sees. The cast is the one place the
+  // runtime `bindings` choice narrows the type: a `"tenant"` world does not
+  // build the operator layer, so the union the merge would infer is wider than
+  // what exists.
+  const base = Layer.mergeAll(
     model,
     catalog,
     router,
     ...guards,
     ...payments,
     ...(only === undefined ? [] : [only.payments]),
-    ...tenant,
-    ...admin,
-  ) as AnyLayer<R>;
+  );
+  return Layer.mergeAll(base, ...tenant, ...admin) as Layer.Layer<
+    Layer.Success<typeof base> | BindingServices<B>,
+    never,
+    R
+  >;
 };
