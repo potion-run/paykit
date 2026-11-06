@@ -14,6 +14,7 @@ import { UsageTimeline, initialTimeline } from "@potion.run/paykit/Timeline";
 import { VerifyMismatch } from "@potion.run/paykit/Verify";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { ActionDraft, AdminIntent } from "./actions.ts";
 import { DevToolsState } from "./DevTools.ts";
 import { AccountFilter, ConsoleRoute } from "./Route.ts";
 
@@ -38,55 +39,7 @@ export const EventRow = Schema.Struct({
 });
 export type EventRow = typeof EventRow.Type;
 
-/** What the operator asked for, after parsing and before sending a command. */
-export const AdminIntent = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("GrantCredits"), amount: Schema.Int }),
-  Schema.Struct({ kind: Schema.Literal("ExtendTrial"), trialEndsAt: Schema.DateTimeUtc }),
-  Schema.Struct({ kind: Schema.Literal("EnterGrace"), graceUntil: Schema.DateTimeUtc }),
-  Schema.Struct({
-    kind: Schema.Literal("RecordPayment"),
-    amount: Schema.Int,
-    currency: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("RecordPaymentFailure"),
-    reason: Schema.String,
-    graceUntil: Schema.DateTimeUtc,
-  }),
-  Schema.Struct({ kind: Schema.Literal("Recover") }),
-  Schema.Struct({ kind: Schema.Literal("Expire") }),
-  Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
-  Schema.Struct({ kind: Schema.Literal("Resume") }),
-  Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("ScheduleTierChange"), tier: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("WithdrawTierChange") }),
-]);
-export type AdminIntent = typeof AdminIntent.Type;
-
-/** The form strings for one open action. Parsed into an `AdminIntent` on submit. */
-export const ActionDraft = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("GrantCredits"), amount: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("ExtendTrial"), trialEndsAt: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("EnterGrace"), graceUntil: Schema.String }),
-  Schema.Struct({
-    kind: Schema.Literal("RecordPayment"),
-    amount: Schema.String,
-    currency: Schema.String,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("RecordPaymentFailure"),
-    reason: Schema.String,
-    graceUntil: Schema.String,
-  }),
-  Schema.Struct({ kind: Schema.Literal("Recover") }),
-  Schema.Struct({ kind: Schema.Literal("Expire") }),
-  Schema.Struct({ kind: Schema.Literal("ScheduleCancellation") }),
-  Schema.Struct({ kind: Schema.Literal("Resume") }),
-  Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("ScheduleTierChange"), tier: Schema.String }),
-  Schema.Struct({ kind: Schema.Literal("WithdrawTierChange") }),
-]);
-export type ActionDraft = typeof ActionDraft.Type;
+export { ActionDraft, AdminIntent };
 
 /** One tier-change flow: quoting, quoted, or applying a quoted amount. */
 export const ChangeTierQuoting = Schema.TaggedStruct("Quoting", {
