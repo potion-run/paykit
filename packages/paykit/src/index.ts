@@ -343,7 +343,7 @@ export type { VerifyOptions } from "./Verify.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel, PaykitModel as Model } from "./Paykit.model.ts";
-export { paykitWorld, world } from "./World.ts";
+export { world } from "./World.ts";
 export type { PaykitWorldOptions } from "./World.ts";
 export { BillingApi } from "./BillingApi.api.ts";
 export type { SubscribeInput, SubscribeResult } from "./Billing/Subscribe.operation.ts";
@@ -379,14 +379,14 @@ export type { ActorValue } from "./Auth/Actor.ts";
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
 export { Admin, Session } from "./Auth/Guards.ts";
-export { AdminFrom, GuardsFrom, SessionFrom } from "./Auth/FromResolver.ts";
+export { AdminFrom, GuardsFrom, SessionFrom, authenticate } from "./Auth/FromResolver.ts";
 export type { ActorResolver, FromResolverOptions, GuardRequest } from "./Auth/FromResolver.ts";
 export {
   ACTOR_HEADER,
-  AdminFromHeaders,
-  DevGuards,
+  InsecureAdminFromHeaders,
+  InsecureDevGuards,
+  InsecureSessionFromHeaders,
   KIND_HEADER,
-  SessionFromHeaders,
   actorFromHeaders,
 } from "./Auth/FromHeaders.ts";
 export { AccountId } from "./Subscription/Subscription.id.ts";
@@ -538,10 +538,7 @@ export {
   ProrationInvoiced,
   RecordProrationInvoice,
 } from "./Subscription/RecordProrationInvoice.command.ts";
-export {
-  AlreadyCanceled,
-  AlreadyCanceled as AlreadyCanceledRejection,
-} from "./Subscription/AlreadyCanceled.rejection.ts";
+export { AlreadyCanceled } from "./Subscription/AlreadyCanceled.rejection.ts";
 export { CurrencyMismatch } from "./Subscription/CurrencyMismatch.rejection.ts";
 export { NotInGrace } from "./Subscription/NotInGrace.rejection.ts";
 export { NotScheduled } from "./Subscription/NotScheduled.rejection.ts";

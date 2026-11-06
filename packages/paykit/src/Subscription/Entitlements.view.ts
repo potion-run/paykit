@@ -160,7 +160,12 @@ export class Entitlements extends Domain.View("Entitlements", {
   validate: Effect.fn(function* ({ key }) {
     const actor = yield* Actor;
     if (!mayActOn(actor, key.id)) {
-      return yield* new Forbidden({ account: key.id, actor: actor.id, kind: actor.kind });
+      return yield* new Forbidden({
+        account: key.id,
+        actor: actor.id,
+        kind: actor.kind,
+        scope: "account",
+      });
     }
   }),
   evolve: {

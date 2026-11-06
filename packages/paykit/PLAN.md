@@ -528,12 +528,17 @@ needs; the Api's composition of commands is the blast radius.
   `asSystem`. The deployment already authenticated the work.
 - `CatalogGuard` is a third guard, on the three commands that carry catalog-derived fields. It
   provides nothing; it refuses a command whose allowances or price disagree with the catalog.
-- `SessionFromHeaders` and `AdminFromHeaders` are development guards. They read
-  `x-paykit-actor` and `x-paykit-kind`. A production deployment replaces them with
-  `SessionFrom(resolve)` / `AdminFrom(resolve)` (or `GuardsFrom(resolve)`) over its own session;
-  the header never becomes an authentication scheme by accident. A resolver answers
-  `ActorValue | null` from the request's headers: `null` is anonymous, a failure is a defect, and
-  Better Auth, yielded/auth, a cookie and a bearer token all reduce to the same shape.
+- `InsecureSessionFromHeaders` and `InsecureAdminFromHeaders` are development guards, and the
+  name is the warning. They read `x-paykit-actor` and `x-paykit-kind`, so any caller can name
+  itself. A production deployment
+  replaces them with `SessionFrom(resolve)` / `AdminFrom(resolve)` (or `GuardsFrom(resolve)`) over
+  its own session; the header never becomes an authentication scheme by accident. A resolver
+  answers `ActorValue | null` from the request's headers: `null` is anonymous, a failure is a
+  defect, and Better Auth, yielded/auth, a cookie and a bearer token all reduce to the same shape.
+- `authenticate(resolve)` is the same resolver for a route that is not an Api — a checkout, a page,
+  a dashboard — so a deployment has one identity mapping. `Forbidden.scope` names the boundary a
+  refusal crossed: `account` for a target the caller may not act on, `admin` for the operator
+  surface.
 
 `decide` stays pure: it does not read `Actor`, so a model rule never depends on which surface
 sent a command. Authorization at the account boundary is middleware; a model rule about state

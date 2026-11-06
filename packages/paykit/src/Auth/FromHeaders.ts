@@ -29,36 +29,34 @@ export const actorFromHeaders = (headers: Headers.Input): ActorValue | null => {
 const fromHeaders: ActorResolver = ({ headers }) => Effect.sync(() => actorFromHeaders(headers));
 
 /**
- * The development `Session` guard: the caller is the `x-paykit-actor` header,
- * of the kind named by `x-paykit-kind` (default `account`). An `account`
- * caller may only target itself; an `admin` or `system` caller may target any
- * account.
+ * Insecure: it trusts the `x-paykit-actor` header, so any caller can name
+ * itself. It exists so `alchemy dev`, the console and the tests can exercise
+ * the guarded path without an identity provider.
  *
- * It is {@link SessionFrom} over a header resolver, so a production deployment
- * swaps the resolver and keeps the guard.
- *
- * Never expose this to the internet. It exists so `alchemy dev`, the console
- * and the tests can exercise the guarded path without an identity provider.
+ * Never expose this to the internet. A production deployment uses
+ * {@link SessionFrom} over its own session; the name is the warning.
  *
  * @layer
  */
-export const SessionFromHeaders = SessionFrom(fromHeaders, { source: "headers" });
+export const InsecureSessionFromHeaders = SessionFrom(fromHeaders, { source: "insecure headers" });
 
 /**
- * The development `Admin` guard: the caller must present the `admin` kind in
- * `x-paykit-kind`. Unlike `SessionFromHeaders` it does not need a target,
- * because an operator acting on any account is the point.
+ * Insecure: it trusts the `x-paykit-kind` header, so any caller can declare
+ * itself an operator. It exists for the development console and the tests.
+ *
+ * Never expose this to the internet. A production deployment uses
+ * {@link AdminFrom} over its own session.
+ *
+ * @layer
+ */
+export const InsecureAdminFromHeaders = AdminFrom(fromHeaders, { source: "insecure headers" });
+
+/**
+ * Both insecure development guards, for a Worker that serves the tenant and the
+ * admin surface from one process.
  *
  * Never expose this to the internet.
  *
  * @layer
  */
-export const AdminFromHeaders = AdminFrom(fromHeaders, { source: "headers" });
-
-/**
- * Both development guards, for a Worker that serves the tenant and the admin
- * surface from one process.
- *
- * @layer
- */
-export const DevGuards = GuardsFrom(fromHeaders, { source: "headers" });
+export const InsecureDevGuards = GuardsFrom(fromHeaders, { source: "insecure headers" });

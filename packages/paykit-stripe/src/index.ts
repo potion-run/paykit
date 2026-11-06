@@ -22,7 +22,7 @@ export {
   soldTiers,
   tierOfDeclaration,
 } from "./Prices.ts";
-export type { PriceDeclaration, SoldPrice, SoldPrices, UsagePriceDeclaration } from "./Prices.ts";
+export type { PriceDeclaration, SoldPrices, UsagePriceDeclaration } from "./Prices.ts";
 export type { StripeClientConfig } from "./StripeClient.ts";
 // The other half of a deployment: the webhook that activates a standing.
 export { stripeWebhook } from "./Webhooks.ts";

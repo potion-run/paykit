@@ -1,6 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import {
-  DevGuards,
+  InsecureDevGuards,
   d1Executor,
   type D1Like,
   Paykit,
@@ -25,7 +25,7 @@ const sqlWorld = (log: SqlEventLog, platform: Domain.Platform["Service"]) =>
     ...billing,
     platform: Layer.succeed(Domain.Platform, platform),
     readStore: SqlBillingReadStore(log),
-    guards: DevGuards,
+    guards: InsecureDevGuards,
   });
 
 /** Everything a SQL-hosted world provides, and nothing it does not. */

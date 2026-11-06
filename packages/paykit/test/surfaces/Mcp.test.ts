@@ -12,7 +12,7 @@ import {
   catalog,
   CatalogGuardLive,
   catalogLayer,
-  DevGuards,
+  InsecureDevGuards,
   MemoryBillingReadStore,
   messages,
   Model,
@@ -36,7 +36,7 @@ const account = Subscription.ref("acct_mcp");
 
 const World = Layer.orDie(
   Layer.mergeAll(
-    DevGuards,
+    InsecureDevGuards,
     CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(testCatalog))),
   ).pipe(
     Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),

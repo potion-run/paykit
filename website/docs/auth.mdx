@@ -90,9 +90,9 @@ const Guards = Paykit.GuardsFrom(({ headers }) =>
 );
 ```
 
-`examples/admin` uses exactly that with a cookie, and `SessionFromHeaders` is
-the development implementation over `x-paykit-actor` / `x-paykit-kind`. They
-differ only in how they answer "who is this?".
+`examples/admin` uses exactly that with a cookie, and `InsecureSessionFromHeaders`
+is the development implementation over `x-paykit-actor` / `x-paykit-kind` — the
+name is the warning. They differ only in how they answer "who is this?".
 
 ## Where the account comes from
 

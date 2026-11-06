@@ -62,7 +62,7 @@ Api serves, and the deployment owns the operations the model's process owns.
 | File | What it declares |
 | --- | --- |
 | `src/catalog.ts` | Two tiers. Plain data, shared by the Worker and the browser. |
-| `src/Billing.ts` | The model on `MemoryStore`, the `Manual` provider, and `DevGuards`. |
+| `src/Billing.ts` | The model on `MemoryStore`, the `Manual` provider, and `InsecureDevGuards`. |
 | `src/BillingWorker.ts` | `/api/*` for the tenant Api, `/bootstrap` for the free tier. |
 | `src/worker.ts` | The Website entry: proxy billing paths, hand the rest to TanStack. |
 | `src/billing.atoms.ts` | `PaykitAtom.make` over the Api client and the catalog. |

@@ -1455,7 +1455,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     validate: Effect.fn(function* ({ key }) {
       const actor = yield* Actor;
       if (!mayActOn(actor, key.id)) {
-        return yield* new Forbidden({ account: key.id, actor: actor.id, kind: actor.kind });
+        return yield* new Forbidden({
+          account: key.id,
+          actor: actor.id,
+          kind: actor.kind,
+          scope: "account",
+        });
       }
     }),
   },

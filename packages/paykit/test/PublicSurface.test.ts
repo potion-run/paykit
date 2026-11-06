@@ -7,7 +7,7 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.BillingStack).toBe("function");
   expect(typeof Paykit.validateStack).toBe("function");
   expect(typeof Paykit.world).toBe("function");
-  expect(typeof Paykit.paykitWorld).toBe("function");
+  expect("paykitWorld" in Paykit).toBe(false);
   expect(typeof Paykit.tier).toBe("function");
   expect(typeof Paykit.feature).toBe("function");
   expect(typeof Paykit.allowance).toBe("function");

@@ -57,7 +57,8 @@ const recorded = yield* Paykit.BillingStack("Billing", billing);
 
 // The runtime graph: the model, the catalog, the router and the bindings.
 // A Worker passes its platform; a test and `alchemy dev` take the default.
-const World = Paykit.world({ ...billing, guards: Paykit.DevGuards });
+// A development header guard; a production deployment provides its own session.
+const World = Paykit.world({ ...billing, guards: Paykit.InsecureDevGuards });
 
 yield* Effect.gen(function* () {
   const subscribe = yield* Paykit.Subscribe("acct_1");

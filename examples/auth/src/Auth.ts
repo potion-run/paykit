@@ -1,5 +1,11 @@
 import { BetterAuth, type BetterAuthApiError } from "@alchemy.run/better-auth";
-import { type Admin, type ActorValue, Paykit, type Session } from "@potion.run/paykit";
+import {
+  type Admin,
+  type ActorResolver,
+  type ActorValue,
+  Paykit,
+  type Session,
+} from "@potion.run/paykit";
 import { RuntimeContext } from "alchemy";
 import type { HttpEffect } from "alchemy/Http";
 import * as Config from "effect/Config";
@@ -85,24 +91,42 @@ const webHeaders = (input: Headers.Input): globalThis.Headers => {
 };
 
 /**
- * The resolver, and both guards, for one Better Auth instance. `admins` names
- * the user ids or emails allowed to reach the operator surface.
+ * The Better Auth resolver: the one identity mapping the guards and a
+ * non-Api route share.
  *
  * `getSession` returning `null` is an anonymous request; a failing session store
  * is a defect, so a transient database error cannot sign a valid user out.
  */
-export const authGuards = (
-  auth: AuthInstance,
-  admins: ReadonlySet<string>,
-): Layer.Layer<Session | Admin, never, never> => {
-  const resolve = ({ headers }: { readonly headers: Headers.Input }) =>
+export const authResolver =
+  (auth: AuthInstance, admins: ReadonlySet<string>): ActorResolver<BetterAuthApiError> =>
+  ({ headers }) =>
     auth.getSession(webHeaders(headers)).pipe(
       // The Worker (or the test) owns the request scope; this only satisfies
       // the type, exactly as Alchemy's own middleware does for HttpApi.
       Effect.provide(RuntimeContext.phantom),
       Effect.map((session) => actorOf(session, admins)),
     );
-  return Paykit.GuardsFrom(resolve);
+
+/**
+ * The resolver as a service, so a route that is not an Api — the checkout —
+ * resolves the same actor as the guards. Without it, `/checkout` would call
+ * `auth.getSession()` again and grow a second identity mapping.
+ */
+export class SessionResolver extends Context.Service<
+  SessionResolver,
+  ActorResolver<BetterAuthApiError>
+>()("example/SessionResolver") {}
+
+/**
+ * Both guards and the resolver, for one Better Auth instance. `admins` names
+ * the user ids or emails allowed to reach the operator surface.
+ */
+export const authGuards = (
+  auth: AuthInstance,
+  admins: ReadonlySet<string>,
+): Layer.Layer<Session | Admin | SessionResolver, never, never> => {
+  const resolve = authResolver(auth, admins);
+  return Layer.mergeAll(Paykit.GuardsFrom(resolve), Layer.succeed(SessionResolver, resolve));
 };
 
 const AdminIds = Config.String("PAYKIT_ADMIN_EMAILS").pipe(
@@ -122,10 +146,11 @@ const AdminIds = Config.String("PAYKIT_ADMIN_EMAILS").pipe(
  * Both guards over the deployed Better Auth instance. `PAYKIT_ADMIN_EMAILS` is
  * a comma-separated list of user ids or emails; everyone else is a tenant.
  */
-export const AuthGuards: Layer.Layer<Session | Admin, Config.ConfigError, Auth> = Layer.unwrap(
-  Effect.gen(function* () {
-    const auth = yield* Auth;
-    const admins = yield* AdminIds;
-    return authGuards(auth, admins);
-  }),
-);
+export const AuthGuards: Layer.Layer<Session | Admin | SessionResolver, Config.ConfigError, Auth> =
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const auth = yield* Auth;
+      const admins = yield* AdminIds;
+      return authGuards(auth, admins);
+    }),
+  );

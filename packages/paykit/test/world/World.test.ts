@@ -4,7 +4,7 @@ import * as Exit from "effect/Exit";
 import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
-import { DevGuards } from "../../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { Session } from "../../src/Auth/Guards.ts";
 import { GrantCredits } from "../../src/Billing/Admin.binding.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
@@ -16,7 +16,7 @@ import { Payments, PaymentsRouter } from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { tier } from "../../src/Tier.ts";
-import { paykitWorld } from "../../src/World.ts";
+import { world } from "../../src/World.ts";
 
 const testCatalog = Effect.runSync(
   catalog({
@@ -37,8 +37,8 @@ type Provides<L extends Layer.Any, S> = [Extract<Layer.Success<L>, S>] extends [
   ? false
   : true;
 
-type TenantWorld = ReturnType<typeof paykitWorld<never, never, "tenant">>;
-type BothWorld = ReturnType<typeof paykitWorld<never, never, "both">>;
+type TenantWorld = ReturnType<typeof world<never, never, "tenant">>;
+type BothWorld = ReturnType<typeof world<never, never, "both">>;
 type TenantSuccess = Layer.Success<TenantWorld>;
 
 const _typed: IsAny<TenantSuccess> = false;
@@ -46,7 +46,7 @@ const _tenantHasCheck: Provides<TenantWorld, Check> = true;
 const _tenantHasNoGrant: Provides<TenantWorld, GrantCredits> = false;
 const _bothHasGrant: Provides<BothWorld, GrantCredits> = true;
 
-describe("paykitWorld", () => {
+describe("world", () => {
   it.live("provides the tenant bindings, the catalog, the store and the guards", () =>
     Effect.gen(function* () {
       expect(yield* provided(Check)).toBe(true);
@@ -54,7 +54,7 @@ describe("paykitWorld", () => {
       expect(yield* provided(BillingReadStore)).toBe(true);
       expect(yield* provided(Session)).toBe(true);
       expect(yield* provided(GrantCredits)).toBe(false);
-    }).pipe(Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards }))),
+    }).pipe(Effect.provide(world({ catalog: testCatalog, guards: InsecureDevGuards }))),
   );
 
   it.live("adds the operator bindings when the process serves them", () =>
@@ -62,7 +62,7 @@ describe("paykitWorld", () => {
       expect(yield* provided(Check)).toBe(true);
       expect(yield* provided(GrantCredits)).toBe(true);
     }).pipe(
-      Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards, bindings: "both" })),
+      Effect.provide(world({ catalog: testCatalog, guards: InsecureDevGuards, bindings: "both" })),
     ),
   );
 
@@ -72,7 +72,7 @@ describe("paykitWorld", () => {
       expect(yield* provided(GrantCredits)).toBe(false);
       expect(yield* provided(CatalogService)).toBe(true);
     }).pipe(
-      Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards, bindings: "none" })),
+      Effect.provide(world({ catalog: testCatalog, guards: InsecureDevGuards, bindings: "none" })),
     ),
   );
 
@@ -82,12 +82,12 @@ describe("paykitWorld", () => {
       expect(yield* provided(CatalogService)).toBe(true);
     }).pipe(
       Effect.provide(
-        paykitWorld({
+        world({
           catalog: {
             features: [messages],
             tiers: [tier({ id: "free", grants: [allowance(messages, { included: 100 })] })],
           },
-          guards: DevGuards,
+          guards: InsecureDevGuards,
         }),
       ),
     ),
@@ -98,9 +98,9 @@ describe("paykitWorld", () => {
       const exit = yield* Effect.exit(
         Effect.serviceOption(CatalogService).pipe(
           Effect.provide(
-            paykitWorld({
+            world({
               catalog: { features: [messages, messages], tiers: [] },
-              guards: DevGuards,
+              guards: InsecureDevGuards,
             }),
           ),
         ),
@@ -116,7 +116,7 @@ describe("paykitWorld", () => {
       // The bindings do not need a guard; the Api's middleware does, and the
       // host provides it beside this world.
       expect(yield* provided(Check)).toBe(true);
-    }).pipe(Effect.provide(paykitWorld({ catalog: testCatalog }))),
+    }).pipe(Effect.provide(world({ catalog: testCatalog }))),
   );
 
   it.live("builds the router, and merges a single provider's payments", () =>
@@ -125,7 +125,7 @@ describe("paykitWorld", () => {
       expect(yield* provided(Check)).toBe(true);
     }).pipe(
       Effect.provide(
-        paykitWorld({ catalog: testCatalog, guards: DevGuards, providers: [PaymentsMemory()] }),
+        world({ catalog: testCatalog, guards: InsecureDevGuards, providers: [PaymentsMemory()] }),
       ),
     ),
   );
@@ -136,7 +136,7 @@ describe("paykitWorld", () => {
       expect(yield* provided(GrantCredits)).toBe(true);
       expect(yield* provided(CatalogService)).toBe(true);
     }).pipe(
-      Effect.provide(paykitWorld({ catalog: testCatalog, guards: DevGuards, bindings: "admin" })),
+      Effect.provide(world({ catalog: testCatalog, guards: InsecureDevGuards, bindings: "admin" })),
     ),
   );
 
@@ -149,9 +149,9 @@ describe("paykitWorld", () => {
       expect(yield* provided(Check)).toBe(true);
     }).pipe(
       Effect.provide(
-        paykitWorld({
+        world({
           catalog: testCatalog,
-          guards: DevGuards,
+          guards: InsecureDevGuards,
           providers: [PaymentsMemory(), PaymentsManual()],
         }),
       ),

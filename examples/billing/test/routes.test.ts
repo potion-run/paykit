@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { Check, DevGuards, Paykit, Subscription, type MoneyProvider } from "@potion.run/paykit";
+import {
+  Check,
+  InsecureDevGuards,
+  Paykit,
+  Subscription,
+  type MoneyProvider,
+} from "@potion.run/paykit";
 import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -34,7 +40,7 @@ const polar = (asked: Array<Record<string, unknown>> = []) =>
   });
 
 const world = (provider: MoneyProvider) =>
-  Paykit.world({ ...billing, providers: [provider], guards: DevGuards });
+  Paykit.world({ ...billing, providers: [provider], guards: InsecureDevGuards });
 
 /** An independent HMAC over Polar's signed string, as a delivery would carry. */
 const signed = (body: unknown): { headers: Record<string, string>; body: string } => {

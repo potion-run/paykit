@@ -16,7 +16,7 @@ import * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import * as Scope from "effect/Scope";
 import { allowance } from "../src/Allowance.ts";
 import * as PaykitAtom from "../src/Atom.ts";
-import { DevGuards } from "../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../src/Auth/FromHeaders.ts";
 import { BindingCall } from "../src/Billing/Bindings.ts";
 import { BillingApi } from "../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../src/BillingReadStore.ts";
@@ -51,7 +51,7 @@ const World = Layer.mergeAll(
   CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(testCatalog))),
   Provider.payments,
 ).pipe(
-  Layer.provideMerge(DevGuards),
+  Layer.provideMerge(InsecureDevGuards),
   Layer.provideMerge(Model.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))),
   Layer.provideMerge(MemoryBillingReadStore),
   Layer.provideMerge(catalogLayer(testCatalog)),

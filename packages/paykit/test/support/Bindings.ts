@@ -1,9 +1,9 @@
 import * as Layer from "effect/Layer";
-import { DevGuards } from "../../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import type { Catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
-import { paykitWorld } from "../../src/World.ts";
+import { world } from "../../src/World.ts";
 
 /** What a fixture may vary in the world it runs in. */
 export interface BindingsWorldOptions<R = never> {
@@ -11,10 +11,10 @@ export interface BindingsWorldOptions<R = never> {
   /**
    * A model the test built itself. Use it when the fixture needs its own
    * platform, store or guards and the options below do not say it. The tenant
-   * bindings are provided over it, exactly as `paykitWorld` would.
+   * bindings are provided over it, exactly as `world` would.
    */
   readonly base?: Layer.Layer<any, never, R>;
-  /** The auth guards; defaults to `DevGuards` when the world builds the model. */
+  /** The auth guards; defaults to `InsecureDevGuards` when the world builds the model. */
   readonly guards?: Layer.Layer<any, never, R>;
   /** A pre-built money layer, for a test fake that is not a `MoneyProvider`. */
   readonly payments?: Layer.Layer<any, never, R>;
@@ -49,9 +49,9 @@ export const bindingsWorld = <R = never>(
   options: BindingsWorldOptions<R>,
 ): Layer.Layer<any, never, R> => {
   if (options.base === undefined) {
-    return paykitWorld({
+    return world({
       catalog: options.catalog,
-      guards: options.guards ?? DevGuards,
+      guards: options.guards ?? InsecureDevGuards,
       ...(options.payments === undefined ? {} : { payments: options.payments }),
       ...(options.platform === undefined ? {} : { platform: options.platform }),
       ...(options.readStore === undefined ? {} : { readStore: options.readStore }),

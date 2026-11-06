@@ -13,6 +13,7 @@ import {
   type ActorResolver,
   GuardsFrom,
   SessionFrom,
+  authenticate,
 } from "../../src/Auth/FromResolver.ts";
 import { Admin, Session } from "../../src/Auth/Guards.ts";
 
@@ -140,5 +141,52 @@ describe("a resolver with a dependency", () => {
     // The resolver's typed failure is not part of the guard's error channel, so
     // a caller cannot mistake it for a refusal.
     expect(guarded(sessionGuard(SessionFrom(resolve)), {}, {})).toEqual({ error: "Defect" });
+  });
+});
+
+describe("the caller outside an Api", () => {
+  it("resolves the same actor and refuses an anonymous request", () => {
+    const actorOf = authenticate(answers(account), { source: "cookie" });
+    expect(Effect.runSync(actorOf({ headers: {}, payload: null }))).toEqual(account);
+
+    const anonymous = Effect.runSync(
+      Effect.exit(
+        authenticate(answers(null), { source: "cookie" })({ headers: {}, payload: null }),
+      ),
+    );
+    expect(Exit.isFailure(anonymous)).toBe(true);
+    if (Exit.isFailure(anonymous)) {
+      const error = Option.getOrNull(Cause.findErrorOption(anonymous.cause)) as {
+        readonly _tag: string;
+        readonly source?: string;
+      };
+      expect(error._tag).toBe("Unauthenticated");
+      expect(error.source).toBe("cookie");
+    }
+  });
+});
+
+describe("the boundary a refusal names", () => {
+  const failureOf = (effect: Effect.Effect<unknown, unknown, never>) => {
+    const exit = Effect.runSync(Effect.exit(effect));
+    if (Exit.isSuccess(exit)) return null;
+    return Option.getOrNull(Cause.findErrorOption(exit.cause)) as {
+      readonly _tag: string;
+      readonly scope?: string;
+    } | null;
+  };
+
+  it("marks a target the caller may not act on as an account boundary", () => {
+    const session = sessionGuard(SessionFrom(answers(account)));
+    const failure = failureOf(session(Actor, { headers: {}, payload: { target: "acct_2" } }));
+    expect(failure?._tag).toBe("Forbidden");
+    expect(failure?.scope).toBe("account");
+  });
+
+  it("marks a tenant reaching the operator surface as an admin boundary", () => {
+    const admin = adminGuard(AdminFrom(answers(account)));
+    const failure = failureOf(admin(Actor, { headers: {}, payload: {} }));
+    expect(failure?._tag).toBe("Forbidden");
+    expect(failure?.scope).toBe("admin");
   });
 });

@@ -4,7 +4,7 @@ import {
   type ActorValue,
   actorFromHeaders,
   BillingApi,
-  DevGuards,
+  InsecureDevGuards,
   Paykit,
   Subscription,
 } from "@potion.run/paykit";
@@ -72,7 +72,7 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
     Effect.provide(
       Paykit.world({
         ...billing,
-        guards: DevGuards,
+        guards: InsecureDevGuards,
         platform: DomainCloudflare.layerDurableObjects(),
       }),
     ),

@@ -1,5 +1,5 @@
 import {
-  DevGuards,
+  InsecureDevGuards,
   type MoneyProvider,
   Paykit,
   ProviderCapabilityMissing,
@@ -31,7 +31,7 @@ export const Provider = billing.providers[0]!;
  */
 export const BillingTestLive = Paykit.world({
   ...billing,
-  guards: DevGuards,
+  guards: InsecureDevGuards,
 });
 
 /**

@@ -13,5 +13,5 @@ export const Provider = billing.providers[0]!;
  */
 export const BillingTestLive = Paykit.world({
   ...billing,
-  guards: Paykit.DevGuards,
+  guards: Paykit.InsecureDevGuards,
 });

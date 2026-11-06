@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
-import { DevGuards } from "../../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
@@ -90,7 +90,7 @@ const Model = PaykitModel.layer(PaykitHandlers)
   .pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        DevGuards,
+        InsecureDevGuards,
         CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(testCatalog))),
       ),
     ),

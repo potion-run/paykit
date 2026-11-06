@@ -9,7 +9,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import { allowance } from "../../src/Allowance.ts";
-import { DevGuards } from "../../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
@@ -40,7 +40,7 @@ const base = Layer.mergeAll(
   PaykitModel.layer(PaykitHandlers).pipe(
     Layer.provideMerge(MemoryBillingReadStore),
     Layer.provide(Domain.InMemory),
-    Layer.provideMerge(DevGuards),
+    Layer.provideMerge(InsecureDevGuards),
     Layer.provideMerge(CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(testCatalog)))),
     Layer.provideMerge(catalogLayer(testCatalog)),
   ),

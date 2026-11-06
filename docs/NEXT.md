@@ -145,6 +145,14 @@ serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call
 (its product ids are `Output<string>`s, so the join needs a decision), the server-side tier join that
 would remove the browser's catalog copy, and `Paykit.handler`.
 
+### 4. Auth
+
+The actor model and the resolver seam are in `PLAN.md`; [the auth brief](./briefs/auth.md) records
+what landed — `Insecure*` dev guard names, `Forbidden.scope`, and `authenticate(resolve)` for a
+route that is not an Api — and the decisions still open: team accounts (`Actor.accounts`), whether
+paykit should own a signed session cookie at all, and CSRF/origin checks (which need
+`GuardRequest` to carry the method).
+
 ## The live cases
 
 Both provisioning packages carry a live test that is gated on a vendor key and reports **skipped** in

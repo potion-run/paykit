@@ -11,7 +11,7 @@ import { Unauthenticated } from "./Unauthenticated.rejection.ts";
  * `system` may target any account.
  *
  * Provide a Layer in production that reads your own session (a cookie, a
- * bearer token, a signed header). `SessionFromHeaders` is the development
+ * bearer token, a signed header). `InsecureSessionFromHeaders` is the development
  * implementation.
  *
  * ### Guarding a command

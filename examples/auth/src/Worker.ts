@@ -7,7 +7,7 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import { Auth, AuthGuards } from "./Auth.ts";
+import { Auth, AuthGuards, SessionResolver } from "./Auth.ts";
 import { AuthDatabase } from "./AuthDatabase.ts";
 import { billing } from "./billing.config.ts";
 import { Page } from "./Page.ts";
@@ -29,6 +29,7 @@ import { Page } from "./Page.ts";
  */
 export const serve = Effect.gen(function* () {
   const auth = yield* Auth;
+  const resolve = yield* SessionResolver;
   const tenant = yield* BillingApi;
   const admin = yield* BillingAdminApi;
   const subscribeOf = yield* Paykit.Subscribe;
@@ -52,15 +53,25 @@ export const serve = Effect.gen(function* () {
       // provider for a checkout URL or an invoice. The account comes from the
       // session, never from `?account=`.
       if (path === "/checkout") {
-        const session = yield* auth.getSession().pipe(Effect.orDie);
-        if (session === null) {
-          return HttpServerResponse.text("Sign in first", { status: 401 });
+        // The same resolver the guards use, so a checkout cannot grow a second
+        // identity mapping. `authenticate` answers the same typed refusal.
+        const resolved = yield* Effect.result(
+          Paykit.authenticate(resolve, { source: "session cookie" })({
+            headers: request.headers,
+            payload: null,
+          }),
+        );
+        if (Result.isFailure(resolved)) {
+          return HttpServerResponse.jsonUnsafe(
+            { error: resolved.failure._tag },
+            { status: Paykit.httpStatus(resolved.failure) },
+          );
         }
         const tier = url.searchParams.get("tier");
         if (tier === null) {
           return HttpServerResponse.text("?tier= is required", { status: 400 });
         }
-        const subscribe = yield* subscribeOf(session.user.id);
+        const subscribe = yield* subscribeOf(resolved.success.id);
         const purchase = yield* Effect.result(subscribe({ tier }));
         if (Result.isFailure(purchase)) {
           return HttpServerResponse.jsonUnsafe(

@@ -30,7 +30,9 @@ export type ActorValue = typeof ActorSchema.Type;
  *
  * validate: Effect.fn(function* ({ key }) {
  *   const actor = yield* Actor;
- *   if (actor.kind === "account" && actor.id !== key.id) return yield* new Forbidden({ account: key.id });
+ *   if (actor.kind === "account" && actor.id !== key.id) {
+ *     return yield* new Forbidden({ account: key.id, actor: actor.id, kind: actor.kind, scope: "account" });
+ *   }
  * }),
  * ```
  *

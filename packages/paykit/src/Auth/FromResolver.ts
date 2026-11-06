@@ -68,7 +68,7 @@ const targetOf = (payload: unknown): string | null => {
  * anonymous request, and pins an `account` actor to its own account while an
  * `admin` or the `system` may target any.
  *
- * This is the provider-neutral half of `SessionFromHeaders`: the billing model
+ * This is the provider-neutral half of `InsecureSessionFromHeaders`: the billing model
  * never learns which identity provider answered. Better Auth, yielded/auth,
  * Clerk or a deployment's own session service all reduce to one resolver.
  *
@@ -100,12 +100,47 @@ export const SessionFrom = <E, R>(
           if (actor === null) return yield* new Unauthenticated({ source });
           const target = targetOf(request.payload);
           if (target !== null && !mayActOn(actor, target)) {
-            return yield* new Forbidden({ account: target, actor: actor.id, kind: actor.kind });
+            return yield* new Forbidden({
+              account: target,
+              actor: actor.id,
+              kind: actor.kind,
+              scope: "account",
+            });
           }
           return yield* Effect.provideService(effect, Actor, actor);
         });
     }),
   );
+
+/**
+ * Resolve the caller for a route that is not an Api: a checkout, a page, a
+ * webhook dashboard. It is the same resolver the guards use and the same
+ * `Unauthenticated` refusal, so a deployment has one identity mapping.
+ *
+ * Unlike {@link SessionFrom} it does not pin the caller to a target; the route
+ * decides what the actor may do with {@link mayActOn}.
+ *
+ * ### Resolving the caller for a checkout
+ * **Example:** One resolver, two surfaces
+ * ```typescript
+ * const actor = yield* Paykit.authenticate(resolve)({ headers, payload: null });
+ * const subscribe = yield* Paykit.Subscribe(actor.id);
+ * ```
+ *
+ * @primitive
+ */
+export const authenticate = <E = never, R = never>(
+  resolve: ActorResolver<E, R>,
+  options: FromResolverOptions = {},
+): ((request: GuardRequest) => Effect.Effect<ActorValue, Unauthenticated, R>) => {
+  const source = options.source ?? "session";
+  return (request) =>
+    Effect.gen(function* () {
+      const actor = yield* resolve(request).pipe(Effect.orDie);
+      if (actor === null) return yield* new Unauthenticated({ source });
+      return actor;
+    });
+};
 
 /**
  * The operator guard over the same resolver. It requires an actor whose kind is
@@ -149,7 +184,12 @@ export const AdminFrom = <E, R>(
           const actor = yield* resolve(request).pipe(Effect.provideContext(context), Effect.orDie);
           if (actor === null) return yield* new Unauthenticated({ source });
           if (actor.kind !== "admin") {
-            return yield* new Forbidden({ account: actor.id, actor: actor.id, kind: actor.kind });
+            return yield* new Forbidden({
+              account: actor.id,
+              actor: actor.id,
+              kind: actor.kind,
+              scope: "admin",
+            });
           }
           return yield* Effect.provideService(effect, Actor, actor);
         });

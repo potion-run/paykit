@@ -285,7 +285,7 @@ guards, and connects with a WebSocket.
 
 ```ts
 // Server: resolve the actor from the session cookie your host already sets,
-// then provide it as `Session` and `Admin` exactly as DevGuards does with
+// then provide it as `Session` and `Admin` exactly as InsecureDevGuards does with
 // headers. The cookies are HttpOnly, SameSite=Lax, scoped to the admin origin,
 // and written as one Set-Cookie header per cookie.
 const Connection = BillingAdminApi.layerClient.pipe(

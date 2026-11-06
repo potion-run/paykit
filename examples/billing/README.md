@@ -28,13 +28,13 @@ pnpm --filter @potion.run/example-billing dev    # alchemy dev
 | `src/SqlBilling.ts` | The same model on SQL: `billingOnSql(d1)` is what the Worker and the SQL test both call. |
 | `src/Database.ts` | The D1 database, with the generated migration file. |
 | `src/Worker.ts` | `/api` for an account, `/admin` for an operator, `/mcp` for an agent — from one model. |
-| `alchemy.run.ts` | `Paykit.Stack` validates the catalog and records it; the Worker is released beside it. |
+| `alchemy.run.ts` | `Paykit.BillingStack` validates the catalog and records it; the Worker is released beside it. |
 | `test/example.test.ts` | Every claim below, run in `Domain.InMemory`. |
 | `test/sql.test.ts` | The same flow on a real database, through the generated migration file. |
 
 ## The catalog is deploy-time
 
-`Paykit.Stack` validates three things before anything is deployed: the catalog's own references
+`Paykit.BillingStack` validates three things before anything is deployed: the catalog's own references
 (no duplicate tier, no grant of an undeclared feature, no empty tier), that every provider price
 mapping agrees with the catalog, and that every priced tier has a provider that can actually sell
 it. A catalog that fails is a defect, so the stack dies rather than half-deploying.
@@ -111,7 +111,7 @@ authorization, not in model:
 - `Admin` requires an operator. `GrantCredits`, `ExtendTrial`, `Expire` and the payment commands
   declare it, so a tenant session cannot reach them at all.
 
-The guards here are `SessionFromHeaders` and `AdminFromHeaders`, which read `x-paykit-actor` and
+The guards here are `InsecureSessionFromHeaders` and `InsecureAdminFromHeaders`, which read `x-paykit-actor` and
 `x-paykit-kind`. They are development guards: a real deployment provides a `Session` Layer over its
 own session and keeps `Admin` stricter still.
 
@@ -156,6 +156,6 @@ same database after a subscribe.
 
 ## Destroying this stack
 
-`Paykit.Stack` records its state with `RemovalPolicy.RETAIN`, and nothing in a delete path cancels,
+`Paykit.BillingStack` records its state with `RemovalPolicy.RETAIN`, and nothing in a delete path cancels,
 refunds or deletes provider state. The event log is application data, not stack state: a `destroy`
 that cancelled a live subscription would be a support incident, so it cannot happen.

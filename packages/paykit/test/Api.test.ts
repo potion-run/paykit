@@ -3,7 +3,7 @@ import { expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../src/Allowance.ts";
-import { DevGuards } from "../src/Auth/FromHeaders.ts";
+import { InsecureDevGuards } from "../src/Auth/FromHeaders.ts";
 import { BillingAdminApi } from "../src/BillingAdminApi.api.ts";
 import { BillingApi } from "../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../src/BillingReadStore.ts";
@@ -30,7 +30,7 @@ const World = PaykitModel.layer(PaykitHandlers)
   .pipe(
     Layer.provideMerge(
       Layer.mergeAll(
-        DevGuards,
+        InsecureDevGuards,
         CatalogGuardLive.pipe(Layer.provideMerge(catalogLayer(testCatalog))),
       ),
     ),

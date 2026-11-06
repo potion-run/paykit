@@ -17,7 +17,7 @@ four places, declares the billing stack twice, and hand-builds a layer merge tha
 build itself. The repetition is not incidental: it is where a catalog drifts from the deploy, where
 a provider descriptor leaks, and where a `CatalogError` becomes a module-load crash.
 
-### What the TanStack example writes today
+### What the TanStack example wrote before this change
 
 `examples/tanstack/src/Billing.ts`:
 
@@ -206,9 +206,9 @@ Effect.Effect<
 >
 ```
 
-so `Effect.orDie` at the stack is a choice, not a workaround. `Paykit.Stack` stays as an alias for
-one release; `BillingStackResource` stays exported for a caller that already has descriptors, but
-neither appears in an example or a quickstart.
+so `Effect.orDie` at the stack is a choice, not a workaround. `Paykit.Stack` is removed;
+`BillingStackResource` stays exported for a caller that already has descriptors, but neither appears
+in an example or a quickstart.
 
 ### 2. `Paykit.world` takes the catalog, not a pre-validated one
 
@@ -219,7 +219,7 @@ same `CatalogInput` the deploy does and validates it inside the layer, in the la
 export const World = Paykit.world({
   catalog: billingCatalog,
   providers: [Provider],
-  guards: DevGuards,
+  guards: InsecureDevGuards,
   bindings: "tenant",
 });
 ```
@@ -238,7 +238,7 @@ export const world = <R = never, B extends PaykitBindings = "tenant">(
   gets a typed failure instead of an import-time throw.
 - `R` is inferred from `platform`, `guards`, `readStore` and `payments`. The call site never writes
   `<R>` and never spreads an optional platform.
-- `paykitWorld` stays as an alias.
+- `paykitWorld` is removed; `world` is the only name.
 
 The deploy and the runtime now take the same three props (`catalog`, `providers`, `store`) from the
 same module. A `billing.config.ts` can export them once:
@@ -257,7 +257,7 @@ export const billing = {
 const recorded = yield* Paykit.BillingStack("Billing", billing);
 
 // src/BillingWorker.ts
-const World = Paykit.world({ ...billing, guards: DevGuards, platform: DomainCloudflare.layerDurableObjects() });
+const World = Paykit.world({ ...billing, guards: InsecureDevGuards, platform: DomainCloudflare.layerDurableObjects() });
 
 // src/billing.atoms.ts
 const atoms = PaykitAtom.make({ ...billing, url: "/api/billing" });
@@ -511,7 +511,7 @@ const Example = Alchemy.Stack(
 ```ts
 const World = Paykit.world({
   ...billing,
-  guards: DevGuards,
+  guards: InsecureDevGuards,
   platform: DomainCloudflare.layerDurableObjects(),
 });
 
@@ -540,8 +540,8 @@ docs already advertise.
 
 Each step leaves the gates green.
 
-1. **Add `Paykit.BillingStack` and `Paykit.world` beside the existing names.** `Stack` and
-   `paykitWorld` become aliases. Rename the old `BillingStack` value type to `BillingDeployment` so
+1. **Add `Paykit.BillingStack` and `Paykit.world` as the only names.** `Stack` and `paykitWorld`
+   are removed. Rename the old `BillingStack` value type to `BillingDeployment` so
    the name `BillingStack` is the call, as `Stripe.Price` is both the call and the type. Add tests:
    one deploy-shaped test asserting the recorded attrs, one world test asserting `CatalogError` is
    in the layer's error channel, one test that `providerDescriptor` is not required by the new

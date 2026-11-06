@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import { allowance, catalog, messages, tier } from "@potion.run/paykit";
-import { Actor, system, DevGuards, PaykitHandlers, PaykitModel } from "@potion.run/paykit";
+import { Actor, system, InsecureDevGuards, PaykitHandlers, PaykitModel } from "@potion.run/paykit";
 import {
   AdminChangeTier,
   AdminChangeTierClient,
@@ -31,7 +31,7 @@ const World = Layer.mergeAll(
     .pipe(Layer.provideMerge(MemoryBillingReadStore)),
   catalogLayer(testCatalog),
   Layer.succeed(Actor, system("test")),
-  DevGuards,
+  InsecureDevGuards,
 );
 
 const admin = {
@@ -54,7 +54,7 @@ const serverLayer = (handlers: {
     }).pipe(
       Layer.provide(AdminConsoleRpcs.toLayer({ ...handlers.reads, ...handlers.changes })),
       Layer.provide(RpcSerialization.layerNdjson),
-      Layer.provide(DevGuards),
+      Layer.provide(InsecureDevGuards),
     ),
   );
 

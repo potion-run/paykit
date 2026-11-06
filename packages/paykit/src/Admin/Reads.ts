@@ -463,7 +463,7 @@ export const AdminReadsRpcs = RpcGroup.make(
  *     Layer.mergeAll(
  *       AdminReadsRpcs.toLayer(handlers),
  *       RpcSerialization.layerNdjson,
- *       AdminFromHeaders,
+ *       InsecureAdminFromHeaders,
  *     ),
  *   ),
  * );

@@ -291,14 +291,17 @@ weakest guard it needs; the Api's composition of commands is the blast radius.
 - In-process senders — `Webhooks`, `Track`, `Hold`, `Subscribe` — provide the actor with
   `asSystem`. The deployment already authenticated the work; a send without a guard is for
   `PeriodEnded`, `GraceElapsed`, `ClosePeriod` and `AttachProviderRef` only.
-- `SessionFromHeaders` and `AdminFromHeaders` read `x-paykit-actor` and `x-paykit-kind`. They are
-  development guards over `SessionFrom(resolve)` / `AdminFrom(resolve)`, the provider-neutral
-  entry point: a resolver answers `ActorValue | null` from a request's headers and `GuardsFrom`
-  builds both guards over it. `null` is anonymous; a resolver failure is a defect, never a
-  refusal, because a broken session store must not sign a valid caller out. Production provides a
-  resolver over its own session — Better Auth, yielded/auth, a cookie, a bearer token — as
-  `examples/auth` and `examples/admin` do, and the header never becomes an authentication scheme
-  by accident.
+- `InsecureSessionFromHeaders` and `InsecureAdminFromHeaders` read `x-paykit-actor` and
+  `x-paykit-kind`. The name is the warning: any caller can name itself. They are development guards
+  over `SessionFrom(resolve)` / `AdminFrom(resolve)`, the provider-neutral entry point: a resolver
+  answers `ActorValue | null` from a request's headers and `GuardsFrom` builds both guards over it.
+  `null` is anonymous; a resolver failure is a defect, never a refusal, because a broken session
+  store must not sign a valid caller out. Production provides a resolver over its own session —
+  Better Auth, yielded/auth, a cookie, a bearer token — as `examples/auth` and `examples/admin`
+  do, and the header never becomes an authentication scheme by accident.
+- `authenticate(resolve)` resolves the same actor for a route that is not an Api, so a checkout or
+  a page does not grow a second identity mapping. `Forbidden.scope` names the boundary a refusal
+  crossed: `account` for a target the caller may not act on, `admin` for the operator surface.
 - A new command without a guard is a review failure unless it is a system fact. Say why in the
   command's JSDoc.
 - `CatalogGuard` sits on the three commands that carry catalog-derived fields (`Subscribe`,

@@ -218,9 +218,6 @@ export interface SoldPrices {
   readonly meters: Readonly<Record<string, string>>;
 }
 
-/** The old single-price handle, kept as a name for a caller that reads the map. */
-export type SoldPrice = string;
-
 /**
  * The `Stripe({ tiers })` map for a set of catalog prices and the keys
  * `StripePrices` created for them.

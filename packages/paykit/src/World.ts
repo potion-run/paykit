@@ -173,6 +173,3 @@ export const world = <R = never, P = never, B extends PaykitBindings = "tenant">
   Layer.unwrap(
     Effect.map(validateCatalog(options.catalog), (parsed) => buildWorld(parsed, options)),
   );
-
-/** The previous name for {@link world}; kept so an existing import keeps working. */
-export const paykitWorld = world;
