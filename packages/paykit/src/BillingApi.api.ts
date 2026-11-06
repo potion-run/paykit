@@ -13,6 +13,7 @@ export class BillingApi extends Domain.Api("BillingApi", {
     "Subscribe",
     "TrackUsage",
     "Hold",
+    "SetQuantity",
     "SettleHold",
     "ReleaseHold",
     "ConsumeCredits",

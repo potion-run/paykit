@@ -60,7 +60,7 @@ const CreditScript = Schema.Struct({
 });
 
 const rateFor = (state: SubscribedState, dimension: "default" | "gpt-large"): number =>
-  creditRateOf(state.rates["ai"]!, dimension);
+  creditRateOf(state.rates["ai"]!, { dimension });
 
 describe("credits", () => {
   it.effect("the pool is a fold, never goes negative, and a change does not re-grant", () =>
@@ -259,7 +259,7 @@ describe("credits", () => {
         if (state.credits !== seed || prepaidCreditsOf(state) !== seed) return false;
 
         for (const [index, step] of steps.entries()) {
-          const cost = step.amount * creditRateOf(rates["ai"]!, step.dimension);
+          const cost = step.amount * creditRateOf(rates["ai"]!, { dimension: step.dimension });
           const decision = decideAt(
             state,
             new TrackUsage({

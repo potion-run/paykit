@@ -67,9 +67,9 @@ const grantOf = (tierId: string, terms: TierTerms): TierGrantInput => ({
 export const subscribeInputOf = (
   catalog: Catalog,
   tierId: string,
-  options: { readonly anchorTz?: string } = {},
+  options: { readonly anchorTz?: string; readonly currency?: string } = {},
 ): (TierGrantInput & { readonly anchorTz?: string }) | null => {
-  const terms = tierTermsOf(catalog, tierId);
+  const terms = tierTermsOf(catalog, tierId, options.currency);
   if (terms === null || terms.kind === "one_off") return null;
   return {
     ...grantOf(tierId, terms),

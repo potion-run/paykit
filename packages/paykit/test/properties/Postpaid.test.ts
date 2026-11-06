@@ -91,7 +91,7 @@ const viewOf = (state: SubscribedState) => ({
       remaining: remainingOf(state, "messages"),
       resetsAt: null,
       carried: 0,
-      unitPrice,
+      pricing: { _tag: "unit" as const, unitPrice },
       moneyCap,
       billed: billedOf(state, "messages"),
       used: usedOf(state, "messages"),
@@ -175,7 +175,12 @@ describe("postpaid money", () => {
         if (used + amount <= included && total !== 0) return false;
         if (used >= included && total !== amount) return false;
         if (
-          chargeOf({ amount: price, currency: "usd" }, included, used, amount) !==
+          chargeOf(
+            { _tag: "unit", unitPrice: { amount: price, currency: "usd" } },
+            included,
+            used,
+            amount,
+          ) !==
           total * price
         ) {
           return false;

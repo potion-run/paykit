@@ -1,5 +1,5 @@
-import type { Included, Overage, UnitPrice } from "../Allowance.ts";
-import type { CreditRates } from "../Feature.ts";
+import type { Included, Overage, Pricing } from "../Allowance.ts";
+import type { RateCard } from "../Feature.ts";
 import { chargeOf, creditRateOf, spendCeilingOf, type Standing } from "./Subscription.state.ts";
 
 /**
@@ -45,8 +45,8 @@ export interface JudgedFeature {
   readonly carried?: number;
   /** The money ceiling for this period, when the allowance is postpaid. */
   readonly moneyCap?: number;
-  /** What one billed unit costs, when the allowance is postpaid. */
-  readonly unitPrice?: UnitPrice;
+  /** How a billed unit is priced, when the allowance is postpaid. */
+  readonly pricing?: Pricing;
   /** Money already billed for this feature this period, in minor units. */
   readonly billed: number;
   /** The period's units so far. */
@@ -62,7 +62,12 @@ export interface JudgedFeature {
    */
   readonly remaining: number | null;
   /** The rate card, when the feature is priced in credits. */
-  readonly creditRates?: CreditRates;
+  readonly creditRates?: RateCard;
+  /**
+   * The quantity a non-consumable feature holds. A seat is set, not spent, so
+   * it is judged against `cap`, not against a spendable `remaining`.
+   */
+  readonly quantity?: number;
 }
 
 /** What a caller asks to record. */
@@ -71,6 +76,8 @@ export interface Ask {
   readonly amount: number;
   /** Which rate prices it, for a credit-priced feature. Omitted means `"default"`. */
   readonly dimension?: string;
+  /** The event's properties, which a rate card's rules and multipliers match. */
+  readonly properties?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -144,7 +151,7 @@ export interface MoneyOverflow {
 export const moneyOverflowOf = (feature: JudgedFeature, amount: number): MoneyOverflow | null => {
   if (feature.moneyCap === undefined) return null;
   const promised = chargeOf(
-    feature.unitPrice,
+    feature.pricing,
     feature.included,
     feature.used,
     amount + feature.reserved,
@@ -196,11 +203,20 @@ export const capacityOf = (input: {
   const { standing, feature, ask } = input;
   if (standing === "blocked") return { _tag: "Standing", standing };
   const amount = ask.amount;
+  // A quantity is bought, not spent: its ceiling is the cap, and the free grant
+  // is a price boundary rather than a count that runs out.
+  if (feature.quantity !== undefined) {
+    if (feature.cap === undefined) return { _tag: "Allowed" };
+    const headroom = feature.cap - feature.quantity;
+    return amount > headroom
+      ? { _tag: "Ceiling", cap: feature.cap, headroom, requested: amount }
+      : { _tag: "Allowed" };
+  }
   // A credit-priced feature spends the shared pool: its `remaining` is the pool
   // less every open hold, and one unit costs its card's rate. Its `included` is
   // `null`, so the counted rules below do not apply.
   if (feature.creditRates !== undefined) {
-    const cost = amount * creditRateOf(feature.creditRates, ask.dimension);
+    const cost = amount * creditRateOf(feature.creditRates, ask);
     const available = feature.remaining ?? 0;
     return cost > available ? { _tag: "Credits", cost, available } : { _tag: "Allowed" };
   }

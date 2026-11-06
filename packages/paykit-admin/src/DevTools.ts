@@ -216,6 +216,34 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({ remaining: { messages: 2_000 }, carried: { messages: 0 } }),
   },
   {
+    tag: "QuantityChanged",
+    body: body({
+      feature: "seats",
+      quantityBefore: 5,
+      quantityAfter: 8,
+      proration: { currency: "usd", credit: 0, charge: 3_000, due: 3_000 },
+      prorationId: "seats:add",
+    }),
+  },
+  {
+    tag: "QuantityProrationInvoiced",
+    body: body({
+      prorationId: "seats:add",
+      invoiceId: "in_1",
+      amount: 3_000,
+      currency: "usd",
+    }),
+  },
+  {
+    tag: "AllowanceReset",
+    body: body({
+      feature: "messages",
+      remaining: 100,
+      carried: 0,
+      resetAt: "2030-01-02T00:00:00Z",
+    }),
+  },
+  {
     tag: "ProrationInvoiced",
     body: body({ invoiceId: "in_dev_1", amount: 950, currency: "usd" }),
   },

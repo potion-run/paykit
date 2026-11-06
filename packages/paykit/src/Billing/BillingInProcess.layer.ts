@@ -15,6 +15,7 @@ import { ReleaseHold as ReleaseHoldCommand } from "../Subscription/ReleaseHold.c
 import { Resume as ResumeCommand } from "../Subscription/Resume.command.ts";
 import { ScheduleCancellation as ScheduleCancellationCommand } from "../Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange as ScheduleTierChangeCommand } from "../Subscription/ScheduleTierChange.command.ts";
+import { SetQuantity as SetQuantityCommand } from "../Subscription/SetQuantity.command.ts";
 import { SettleHold as SettleHoldCommand } from "../Subscription/SettleHold.command.ts";
 import { StartTrial as StartTrialCommand } from "../Subscription/StartTrial.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
@@ -27,6 +28,11 @@ import { mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
 import { chargeProrationOperation } from "./ChargeProration.operation.ts";
+import {
+  ChargeQuantityProration,
+  chargeQuantityProrationOperation,
+  toChargeQuantityProrationError,
+} from "./ChargeQuantityProration.binding.ts";
 import { Check, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
@@ -48,6 +54,7 @@ import {
   toWithdrawTierChangeError,
   WithdrawTierChange,
 } from "./ScheduleTierChange.binding.ts";
+import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { Subscribe, toSubscribeError } from "./Subscribe.binding.ts";
@@ -106,6 +113,8 @@ export const BillingInProcess = Layer.mergeAll(
                   feature: request.feature,
                   amount: request.amount,
                   ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                  ...(request.properties === undefined ? {} : { properties: request.properties }),
+                  ...(request.properties === undefined ? {} : { properties: request.properties }),
                   dedupeKey: request.dedupeKey,
                 }),
                 { commandId: request.dedupeKey },
@@ -116,6 +125,49 @@ export const BillingInProcess = Layer.mergeAll(
             entitlements.query(ref, { atLeast: receipt }),
           );
           return usageOutcome(Option.getOrNull(view), request);
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    ChargeQuantityProration,
+    Effect.gen(function* () {
+      const charge = yield* chargeQuantityProrationOperation();
+      return Effect.fn("Paykit.ChargeQuantityProration")(function* (account) {
+        return Effect.fn("Paykit.ChargeQuantityProration.account")(function* (request) {
+          return yield* bound(toChargeQuantityProrationError)(charge(account, request));
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    SetQuantity,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const entitlements = yield* Entitlements;
+      return Effect.fn("Paykit.SetQuantity")(function* (account) {
+        const ref = Subscription.ref(account);
+        return Effect.fn("Paykit.SetQuantity.set")(function* (request) {
+          const receipt = yield* bound(toSetQuantityError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new SetQuantityCommand({
+                  feature: request.feature,
+                  quantity: request.quantity,
+                  dedupeKey: request.dedupeKey,
+                }),
+                { commandId: request.dedupeKey },
+              ),
+            ),
+          );
+          yield* bound(toSetQuantityError)(entitlements.query(ref, { atLeast: receipt }));
+          return {
+            quantity: receipt.reply.quantityAfter,
+            ...(receipt.reply.proration === undefined
+              ? {}
+              : { proration: receipt.reply.proration }),
+          };
         });
       });
     }),
@@ -151,6 +203,8 @@ export const BillingInProcess = Layer.mergeAll(
                   feature: request.feature,
                   amount: request.amount,
                   ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                  ...(request.properties === undefined ? {} : { properties: request.properties }),
+                  ...(request.properties === undefined ? {} : { properties: request.properties }),
                   ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
                   dedupeKey: request.dedupeKey,
                 }),
@@ -370,11 +424,10 @@ export const BillingInProcess = Layer.mergeAll(
       return Effect.fn("Paykit.StartTrial")(function* (account) {
         const ref = Subscription.ref(account);
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
-          const grant = subscribeInputOf(
-            catalog,
-            request.tier,
-            request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz },
-          );
+          const grant = subscribeInputOf(catalog, request.tier, {
+            ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
+            ...(request.currency === undefined ? {} : { currency: request.currency }),
+          });
           if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
@@ -414,6 +467,7 @@ export const BillingInProcess = Layer.mergeAll(
               account,
               tier: request.tier,
               ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
+              ...(request.currency === undefined ? {} : { currency: request.currency }),
             }),
           );
         });

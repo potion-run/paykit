@@ -2,11 +2,20 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { isFlagGrant, type Included, type Overage, type Resets } from "../Allowance.ts";
+import {
+  isFlagGrant,
+  isQuantityGrant,
+  pricingOf,
+  type AllowanceKind,
+  type Included,
+  type Overage,
+  type Resets,
+} from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { prorate, sameProration } from "../Proration.ts";
+import { soleUnitPriceOf } from "../Pricing.ts";
+import { prorate, prorateQuantity, sameProration } from "../Proration.ts";
 import {
   capacityOf,
   downgradeOf,
@@ -37,6 +46,7 @@ import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AlreadyInGrace, EnterGrace, GraceEntered } from "./EnterGrace.command.ts";
 import { Expire, SubscriptionExpired } from "./Expire.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
+import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { GraceElapsed } from "./GraceElapsed.command.ts";
 import { CreditsGranted, GrantCredits } from "./GrantCredits.command.ts";
 import {
@@ -56,6 +66,11 @@ import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PeriodEnded } from "./PeriodEnded.command.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts";
+import {
+  NoQuantityProrationDue,
+  QuantityProrationInvoiced,
+  RecordQuantityProrationInvoice,
+} from "./QuantityProration.command.ts";
 import { PaymentRecorded, RecordPayment } from "./RecordPayment.command.ts";
 import { PaymentFailed, RecordPaymentFailure } from "./RecordPaymentFailure.command.ts";
 import {
@@ -66,13 +81,22 @@ import {
 import { Recover, Recovered } from "./Recover.command.ts";
 import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.ts";
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
+import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
+import {
+  QuantityCapExceeded,
+  QuantityChanged,
+  QuantityExceeded,
+  QuantityInvalid,
+  SetQuantity,
+} from "./SetQuantity.command.ts";
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
 import {
   activationOf,
   carriedPrepaidOf,
+  resetWindowsOf,
   startingRemaining,
   standingFrom,
   unitPriceCurrencyOf,
@@ -96,12 +120,16 @@ import {
   holdOf,
   includedRemainingOf,
   initialSubscriptionState,
+  quantityAfterTierChange,
+  quantityOf,
   isTerminalStatus,
   periodFrom,
   prepaidCreditsOf,
+  pricedOf,
   protectedAfterSpending,
   remainingAfterRelease,
   remainingAfterSpending,
+  nextResetAt,
   remainingOf,
   refundedOf,
   refundedWith,
@@ -110,6 +138,7 @@ import {
   reservedCreditsOf,
   reservedOf,
   resetOf,
+  resetOfFeature,
   standingOf,
   statusOf,
   SubscriptionState,
@@ -141,9 +170,11 @@ import {
 
 /** The part of an allowance `decide` reads when it derives a count. */
 type CountableAllowance = {
+  readonly kind?: AllowanceKind;
   readonly included: Included;
   readonly overage: Overage;
   readonly resets: Resets;
+  readonly cap?: number;
 };
 
 const remainingAfterChange = (
@@ -152,6 +183,14 @@ const remainingAfterChange = (
 ): Record<string, number | null> =>
   Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
+      if (isQuantityGrant(allowance)) {
+        const included = typeof allowance.included === "number" ? allowance.included : 0;
+        const quantity = quantityAfterTierChange(state.quantities?.[feature] ?? included, included);
+        return [
+          feature,
+          allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
+        ];
+      }
       // Usage and open reservations both still owe the old period's units. An
       // allowance with no count — unlimited, or a flag's grant — has none to
       // owe them against.
@@ -177,7 +216,7 @@ const subscribed = (state: SubscriptionState, account: string): SubscribedState 
 const releaseEvent = (
   state: SubscribedState,
   hold: HoldRecord,
-  reason: "released" | "expired",
+  reason: "released" | "expired" | "reset",
 ): UsageReleased => {
   // A credit-priced hold returns what it took — `cost` credits, not `amount`
   // units — so the log's remaining stays in one unit of account.
@@ -203,6 +242,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const prepaid = prepaidCreditsOf(state);
   const credits = pending === undefined ? state.credits : pending.credits + prepaid;
   const creditsExpire = pending?.creditsExpire ?? state.creditsExpire;
+  const nextPeriodStart = periodEnd;
   const moved =
     pending === undefined
       ? []
@@ -219,10 +259,13 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
             ...(pending.currency === undefined ? {} : { currency: pending.currency }),
             ...(pending.interval === undefined ? {} : { interval: pending.interval }),
             ...(pending.price === undefined ? {} : { priceAfter: pending.price }),
+            ...(() => {
+              const resetAt = resetWindowsOf(pending.allowances, nextPeriodStart);
+              return Object.keys(resetAt).length === 0 ? {} : { resetAt };
+            })(),
           }),
         ];
   const allowances = pending?.allowances ?? state.allowances;
-  const nextPeriodStart = periodEnd;
   const nextPeriodEnd = addInterval(nextPeriodStart, state.interval);
   const statusAfter: SubscriptionStatus = state.cancelAtPeriodEnd
     ? "canceled"
@@ -334,7 +377,7 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
     ...(allowance?.cap === undefined ? {} : { cap: allowance.cap }),
     carried,
     ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
-    ...(allowance?.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+    ...(pricingOf(allowance ?? {}) === null ? {} : { pricing: pricingOf(allowance ?? {})! }),
     billed: billedOf(state, feature),
     used,
     reserved,
@@ -359,7 +402,7 @@ const moneyCapRefusalOf = (
   const used = usedOf(state, feature);
   const reserved = reservedOf(state, feature);
   const reservedCharge = chargeOf(
-    allowance?.unitPrice,
+    pricingOf(allowance ?? {}),
     allowance?.included ?? null,
     used,
     reserved,
@@ -369,7 +412,12 @@ const moneyCapRefusalOf = (
     cap: verdict.cap,
     billed: verdict.billed,
     ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
-    charge: chargeOf(allowance?.unitPrice, allowance?.included ?? null, used + reserved, amount),
+    charge: chargeOf(
+      pricingOf(allowance ?? {}),
+      allowance?.included ?? null,
+      used + reserved,
+      amount,
+    ),
   });
 };
 
@@ -505,6 +553,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     AttachProviderRef,
     PeriodEnded,
     GraceElapsed,
+    ResetAllowance,
+    SetQuantity,
+    RecordQuantityProrationInvoice,
   ],
   decide: {
     StartTrial: (state, command, { id, now }) => {
@@ -696,6 +747,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(current.price === undefined ? {} : { priceBefore: current.price }),
           ...(command.price === undefined ? {} : { priceAfter: command.price }),
           ...(command.proration === undefined ? {} : { proration: command.proration }),
+          ...(() => {
+            const resetAt = resetWindowsOf(command.allowances, now);
+            return Object.keys(resetAt).length === 0 ? {} : { resetAt };
+          })(),
         }),
       ];
     },
@@ -712,7 +767,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         if (command.dedupeKey !== undefined && state.dedupeKeys?.[command.dedupeKey] === true) {
           return [];
         }
-        const cost = command.amount * creditRateOf(rates, command.dimension);
+        const cost =
+          command.amount *
+          creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
         const balance = state.credits ?? 0;
         if (cost > balance) {
           return new CreditExceeded({ feature: command.feature, cost, balance });
@@ -736,6 +793,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ask: {
           amount: command.amount,
           ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+          ...(command.properties === undefined ? {} : { properties: command.properties }),
         },
       });
       if (verdict._tag === "Standing") {
@@ -745,6 +803,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // against, so a Track on one is refused however small the amount is.
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
+      }
+      if (allowance !== undefined && isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
       }
       if (command.amount <= 0) return [];
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
@@ -756,7 +817,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // the cost and the balance after it, so the pool is a fold of the log.
       const rates = state.rates[command.feature];
       if (rates !== undefined) {
-        const cost = command.amount * creditRateOf(rates, command.dimension);
+        const cost =
+          command.amount *
+          creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
         return [
           new UsageRecorded({
             feature: command.feature,
@@ -773,12 +836,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
-      const charge = chargeOf(
-        allowance?.unitPrice,
-        allowance?.included ?? null,
-        used,
-        command.amount,
-      );
+      const pricing = pricingOf(allowance ?? {});
+      const charge = chargeOf(pricing, allowance?.included ?? null, used, command.amount);
       const billed = billedOf(state, command.feature);
       return [
         new UsageRecorded({
@@ -789,19 +848,110 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           creditsAfter: state.credits,
           usedAfter: used + command.amount,
           remainingAfter: remainingAfterSpending(remaining, command.amount),
-          ...(allowance?.unitPrice === undefined
+          ...(pricing === null
             ? {}
             : {
                 charge,
                 billedAfter: billed + charge,
-                // The price this unit was recorded at, and the part of it past
+                // The lines this event was priced at, and the part of it past
                 // the free grant. Captured here because `used` is the only
                 // place the running total lives: the close never has to work
                 // out which units the grant covered.
-                unitPrice: allowance.unitPrice,
-                billable: billableUnitsOf(allowance.included, used, command.amount),
+                ...(soleUnitPriceOf(pricing) === null
+                  ? {
+                      priced: pricedOf(pricing, allowance?.included ?? null, used, command.amount),
+                    }
+                  : { unitPrice: soleUnitPriceOf(pricing)! }),
+                billable: billableUnitsOf(allowance?.included ?? null, used, command.amount),
               }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+        }),
+      ];
+    },
+    SetQuantity: (state, command, { id, now }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      const allowance = state.allowances[command.feature];
+      if (allowance === undefined || !isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
+      }
+      if (command.quantity < 0) {
+        return new QuantityInvalid({ feature: command.feature, quantity: command.quantity });
+      }
+      const included = typeof allowance.included === "number" ? allowance.included : 0;
+      if (allowance.cap !== undefined && command.quantity > allowance.cap) {
+        return new QuantityCapExceeded({
+          feature: command.feature,
+          cap: allowance.cap,
+          quantity: command.quantity,
+        });
+      }
+      if (allowance.overage === "block" && command.quantity > included) {
+        return new QuantityExceeded({
+          feature: command.feature,
+          included,
+          quantity: command.quantity,
+        });
+      }
+      const before = quantityOf(state, command.feature, allowance);
+      if (before === command.quantity) return [];
+      // A blocked standing may give seats back; it may not take more.
+      if (!allowsUsage(state.status) && command.quantity > before) {
+        return new StandingBlocksUsage({
+          standing: standingOf(state.status),
+          status: state.status,
+        });
+      }
+      const pricing = pricingOf(allowance);
+      const unitPrice = pricing === null ? null : soleUnitPriceOf(pricing);
+      const proration =
+        allowance.prorate === "period_end" || unitPrice === null
+          ? null
+          : prorateQuantity({
+              from: before,
+              to: command.quantity,
+              included,
+              unitPrice,
+              period: state.period,
+              at: now,
+            });
+      return [
+        new QuantityChanged({
+          feature: command.feature,
+          quantityBefore: before,
+          quantityAfter: command.quantity,
+          ...(proration === null ? {} : { proration, prorationId: command.dedupeKey }),
+        }),
+      ];
+    },
+    RecordQuantityProrationInvoice: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "none",
+        });
+      }
+      const entry = state.quantityProrations?.[command.prorationId];
+      if (entry === undefined) {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "none",
+        });
+      }
+      if (entry.invoiceId !== undefined) {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "billed",
+        });
+      }
+      return [
+        new QuantityProrationInvoiced({
+          prorationId: command.prorationId,
+          invoiceId: command.invoiceId,
+          amount: command.amount,
+          currency: command.currency,
         }),
       ];
     },
@@ -865,6 +1015,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ask: {
           amount: command.amount,
           ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+          ...(command.properties === undefined ? {} : { properties: command.properties }),
         },
       });
       if (verdict._tag === "Standing") {
@@ -872,6 +1023,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
+      }
+      if (allowance !== undefined && isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
       }
       // A hold with the id this standing already has is a replay: the retry
       // holds once, and the caller gets the same id back.
@@ -884,7 +1038,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (refusal !== null) return refusal;
       // The rate is captured here, so the bill at settle is the price the work
       // was priced at, not whatever the catalog says when it finishes.
-      const rate = rates === undefined ? 0 : creditRateOf(rates, command.dimension);
+      const rate =
+        rates === undefined
+          ? 0
+          : creditRateOf(rates, {
+              dimension: command.dimension,
+              properties: command.properties,
+            });
       const cost = command.amount * rate;
       const remaining = availableOf(state, command.feature);
       // A credit-priced hold takes credits out of the pool; a counted one takes
@@ -947,13 +1107,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const cost = billed * hold.rate;
       const allowance = state.allowances[hold.feature];
       const used = usedOf(state, hold.feature);
-      const charge = chargeOf(allowance?.unitPrice, allowance?.included ?? null, used, billed);
+      const pricing = pricingOf(allowance ?? {});
+      const charge = chargeOf(pricing, allowance?.included ?? null, used, billed);
       const billedMoney = billedOf(state, hold.feature);
       // The other open holds are promises to bill too; this one is being
       // billed now, so it is in `charge`, not in `reservedCharge`.
       const otherReserved = Math.max(0, reservedOf(state, hold.feature) - hold.amount);
       const reservedCharge = chargeOf(
-        allowance?.unitPrice,
+        pricing,
         allowance?.included ?? null,
         used + billed,
         otherReserved,
@@ -994,13 +1155,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           // The units left `remaining` when they were held; the released ones
           // come back here.
           remainingAfter: remaining,
-          ...(allowance?.unitPrice === undefined
+          ...(pricing === null
             ? {}
             : {
                 charge,
                 billedAfter: billedMoney + charge,
-                unitPrice: allowance.unitPrice,
-                billable: billableUnitsOf(allowance.included, used, billed),
+                ...(soleUnitPriceOf(pricing) === null
+                  ? { priced: pricedOf(pricing, allowance?.included ?? null, used, billed) }
+                  : { unitPrice: soleUnitPriceOf(pricing)! }),
+                billable: billableUnitsOf(allowance?.included ?? null, used, billed),
               }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
@@ -1214,6 +1377,30 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (!canClosePeriod(state, command.periodEnd, now)) return [];
       return closePeriodEvents(state, command.periodEnd);
     },
+    ResetAllowance: (state, command, { now }) => {
+      if (state._tag !== "Subscribed") return [];
+      const allowance = state.allowances[command.feature];
+      if (allowance === undefined) return [];
+      const boundary = state.resetAt?.[command.feature];
+      if (boundary === undefined) return [];
+      // A boundary a later tier change replaced is stale: the new chain owns
+      // the feature, and this command must not close the new window early.
+      if (DateTime.toEpochMillis(boundary) !== DateTime.toEpochMillis(command.at)) return [];
+      if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(boundary)) return [];
+      const reset = resetOfFeature(state, command.feature, allowance);
+      const releases = Object.values(state.holds)
+        .filter((hold) => hold.status === "open" && hold.feature === command.feature)
+        .map((hold) => releaseEvent(state, hold, "reset"));
+      return [
+        ...releases,
+        new AllowanceReset({
+          feature: command.feature,
+          remaining: reset.remaining,
+          carried: reset.carried,
+          resetAt: nextResetAt(now, allowance),
+        }),
+      ];
+    },
     GraceElapsed: (state, _command, { now }) => {
       if (state._tag !== "Subscribed" || state.status !== "grace") return [];
       if (
@@ -1287,6 +1474,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ? {}
           : { currency: (event.currency ?? state.currency)! }),
         interval: event.interval ?? state.interval,
+        resetAt: event.resetAt ?? {},
+        quantities: Object.fromEntries(
+          Object.entries(event.allowances).flatMap(([feature, allowance]) => {
+            if (!isQuantityGrant(allowance)) return [];
+            const included = typeof allowance.included === "number" ? allowance.included : 0;
+            return [
+              [feature, quantityAfterTierChange(state.quantities?.[feature] ?? included, included)],
+            ];
+          }),
+        ),
         ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
         // A new tier change replaces what the old one owed; it does not add to
         // it, and an invoice for the old amount no longer applies.
@@ -1514,6 +1711,59 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             lastClosedPeriodStart: event.periodStart,
           }
         : state,
+    AllowanceReset: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const resetAt = Object.fromEntries(
+        Object.entries(state.resetAt ?? {}).filter(([feature]) => feature !== event.feature),
+      );
+      return {
+        ...state,
+        usage: { ...state.usage, [event.feature]: 0 },
+        billed: { ...state.billed, [event.feature]: 0 },
+        remaining: { ...state.remaining, [event.feature]: event.remaining },
+        ...(event.resetAt === null
+          ? {}
+          : { resetAt: { ...resetAt, [event.feature]: event.resetAt } }),
+        holds: Object.fromEntries(
+          Object.entries(state.holds).filter(
+            ([, hold]) => hold.feature !== event.feature || hold.status !== "open",
+          ),
+        ),
+      };
+    },
+    QuantityChanged: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const allowance = state.allowances[event.feature];
+      const remaining =
+        allowance?.cap === undefined
+          ? null
+          : Math.max(0, (allowance.cap ?? 0) - event.quantityAfter);
+      return {
+        ...state,
+        quantities: { ...state.quantities, [event.feature]: event.quantityAfter },
+        remaining: { ...state.remaining, [event.feature]: remaining },
+        ...(event.proration === undefined || event.prorationId === undefined
+          ? {}
+          : {
+              quantityProrations: {
+                ...state.quantityProrations,
+                [event.prorationId]: { feature: event.feature, proration: event.proration },
+              },
+            }),
+      };
+    },
+    QuantityProrationInvoiced: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const entry = state.quantityProrations?.[event.prorationId];
+      if (entry === undefined) return state;
+      return {
+        ...state,
+        quantityProrations: {
+          ...state.quantityProrations,
+          [event.prorationId]: { ...entry, invoiceId: event.invoiceId },
+        },
+      };
+    },
     UsageReset: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const kept = event.kept ?? {};
@@ -1566,6 +1816,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     }),
   },
   reply: {
+    SetQuantity: (_state, events) => {
+      const changed = events.find((event) => event._tag === "QuantityChanged");
+      return changed?._tag === "QuantityChanged"
+        ? {
+            quantityAfter: changed.quantityAfter,
+            ...(changed.proration === undefined ? {} : { proration: changed.proration }),
+          }
+        : { quantityAfter: 0 };
+    },
     SettleHold: (_state, events) => {
       const settled = events.find((event) => event._tag === "UsageSettled");
       return settled?._tag === "UsageSettled"

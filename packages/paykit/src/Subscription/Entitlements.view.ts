@@ -2,11 +2,21 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AllowanceKind, Included, Overage, Resets, UnitPrice, unitPriceKey } from "../Allowance.ts";
+import {
+  AllowanceKind,
+  Included,
+  Overage,
+  Resets,
+  UnitPrice,
+  isQuantityGrant,
+  pricingOf,
+  unitPriceKey,
+} from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { CreditRates } from "../Feature.ts";
+import { RateCard } from "../Feature.ts";
+import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { capacityOf, type JudgedFeature } from "./Allowance.verdict.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
@@ -41,7 +51,7 @@ export const FeatureEntitlement = Schema.Struct({
    * Present exactly when the feature is priced in credits, in which case
    * `remaining` is the account's shared pool and there is no `included`.
    */
-  creditRates: Schema.optionalKey(CreditRates),
+  creditRates: Schema.optionalKey(RateCard),
   /**
    * What the tier includes: a count, or `"unlimited"`. `null` for a
    * credit-priced feature, which includes no units of its own.
@@ -74,12 +84,19 @@ export const FeatureEntitlement = Schema.Struct({
   cap: Schema.optionalKey(Schema.Int),
   resets: Resets,
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
-  /** What one billed unit costs, when the allowance is postpaid. */
+  /** What one billed unit costs, when the allowance is postpaid and has one rate. */
   unitPrice: Schema.optionalKey(UnitPrice),
+  /** How a billed unit is priced, when the allowance is postpaid. */
+  pricing: Schema.optionalKey(Pricing),
   /** The most this feature may bill in money this period, in minor units. */
   moneyCap: Schema.optionalKey(Schema.Int),
   /** Money billed for this feature this period, in the standing's currency. */
   billed: Schema.optionalKey(Schema.Int),
+  /**
+   * The quantity a non-consumable feature holds. A seat is set, not spent, so
+   * this is the number the account bought (including the free grant).
+   */
+  quantity: Schema.optionalKey(Schema.Int),
   /**
    * The units this period recorded, keyed by the price they were recorded at.
    * Absent for a feature with no unit price, and on a view written before the
@@ -105,6 +122,12 @@ export const EntitlementsState = Schema.Struct({
   proration: Schema.optionalKey(Proration),
   prorationInvoice: Schema.optionalKey(Schema.String),
   currency: Schema.optionalKey(Schema.String),
+  /**
+   * The next boundary of every allowance that runs on its own schedule. Absent
+   * for a feature that follows the standing's period, whose boundary is
+   * `periodEnd`.
+   */
+  resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
 export type EntitlementsState = typeof EntitlementsState.Type;
@@ -112,15 +135,36 @@ export type EntitlementsState = typeof EntitlementsState.Type;
 /** One event's billable units added to the price it was recorded at. */
 const pricedAfter = (
   current: Readonly<Record<string, PricedUnits>> | undefined,
-  unitPrice: UnitPrice,
-  units: number,
-): Record<string, PricedUnits> => {
-  const key = unitPriceKey(unitPrice);
-  return {
-    ...current,
-    [key]: { unitPrice, quantity: (current?.[key]?.quantity ?? 0) + units },
-  };
-};
+  line: { readonly key: string; readonly unitPrice: UnitPrice; readonly quantity: number },
+): Record<string, PricedUnits> => ({
+  ...current,
+  [line.key]: {
+    unitPrice: line.unitPrice,
+    quantity: (current?.[line.key]?.quantity ?? 0) + line.quantity,
+  },
+});
+
+/** The lines an event recorded, falling back to its one-rate fields. */
+const linesOfEvent = (event: {
+  readonly priced?: ReadonlyArray<PricedLine>;
+  readonly unitPrice?: UnitPrice;
+  readonly billable?: number;
+}): ReadonlyArray<{ key: string; unitPrice: UnitPrice; quantity: number }> =>
+  event.priced !== undefined
+    ? event.priced.map((line) => ({
+        key: line.key,
+        unitPrice: line.unitPrice,
+        quantity: line.quantity,
+      }))
+    : event.unitPrice === undefined || event.billable === undefined
+      ? []
+      : [
+          {
+            key: unitPriceKey(event.unitPrice),
+            unitPrice: event.unitPrice,
+            quantity: event.billable,
+          },
+        ];
 
 const epoch = DateTime.makeUnsafe(0);
 
@@ -181,6 +225,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           cancelAtPeriodEnd: false,
           dunningAttempts: 0,
           credits: event.credits,
+          ...(event.resetAt === undefined ? {} : { resetAt: event.resetAt }),
           features: featuresOf(
             event.allowances,
             event.rates,
@@ -191,6 +236,8 @@ export class Entitlements extends Domain.View("Entitlements", {
             event.remaining,
             event.periodEnd,
             "good",
+            false,
+            event.resetAt,
           ),
         },
         context,
@@ -232,6 +279,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           tier: event.tier,
           credits: event.credits,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
+          resetAt: event.resetAt ?? {},
           features: featuresOf(
             event.allowances,
             event.rates,
@@ -247,6 +295,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             view.periodEnd,
             view.standing,
             true,
+            event.resetAt,
           ),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
         },
@@ -285,10 +334,13 @@ export class Entitlements extends Domain.View("Entitlements", {
                 used: event.usedAfter,
                 remaining: event.remainingAfter,
                 ...(event.billedAfter === undefined ? {} : { billed: event.billedAfter }),
-                ...(event.unitPrice === undefined || event.billable === undefined
+                ...(linesOfEvent(event).length === 0
                   ? {}
                   : {
-                      priced: pricedAfter(feature.priced, event.unitPrice, event.billable),
+                      priced: linesOfEvent(event).reduce(
+                        (fold, line) => pricedAfter(fold, line),
+                        feature.priced,
+                      ),
                     }),
                 allowed: allowsOne(
                   view.standing,
@@ -429,7 +481,13 @@ export class Entitlements extends Domain.View("Entitlements", {
             features: Object.fromEntries(
               Object.entries(view.features).map(([feature, value]) => [
                 feature,
-                { ...value, resetsAt: value.resets === "never" ? null : event.nextPeriodEnd },
+                {
+                  ...value,
+                  resetsAt:
+                    value.resets === "never"
+                      ? null
+                      : (view.resetAt?.[feature] ?? event.nextPeriodEnd),
+                },
               ]),
             ),
           },
@@ -438,6 +496,73 @@ export class Entitlements extends Domain.View("Entitlements", {
         ),
         context,
       ),
+    QuantityChanged: (view, event, context): EntitlementsState => {
+      const feature = view.features[event.feature];
+      if (feature === undefined || feature.kind !== "non_consumable") {
+        return withAccount(view, context);
+      }
+      const remaining =
+        feature.cap === undefined ? null : Math.max(0, feature.cap - event.quantityAfter);
+      return withAccount(
+        {
+          ...view,
+          features: {
+            ...view.features,
+            [event.feature]: {
+              ...feature,
+              quantity: event.quantityAfter,
+              used: event.quantityAfter,
+              remaining,
+              allowed: allowsOne(
+                view.standing,
+                judgedQuantityOf(feature, event.quantityAfter, remaining),
+              ),
+            },
+          },
+        },
+        context,
+      );
+    },
+    QuantityProrationInvoiced: (view, _event, context): EntitlementsState =>
+      withAccount(view, context),
+    AllowanceReset: (view, event, context): EntitlementsState => {
+      const feature = view.features[event.feature];
+      if (feature === undefined || feature.kind === "non_consumable") {
+        return withAccount(view, context);
+      }
+      const { priced: _priced, billed: _billed, ...carried } = feature;
+      const { [event.feature]: _previous, ...resetAt } = view.resetAt ?? {};
+      return withAccount(
+        {
+          ...view,
+          ...(event.resetAt === null
+            ? {}
+            : { resetAt: { ...resetAt, [event.feature]: event.resetAt } }),
+          features: {
+            ...view.features,
+            [event.feature]: {
+              ...carried,
+              used: 0,
+              reserved: 0,
+              remaining: event.remaining,
+              carried: event.carried,
+              resetsAt: event.resetAt,
+              allowed: allowsOne(
+                view.standing,
+                judgedOf(feature, {
+                  used: 0,
+                  reserved: 0,
+                  remaining: event.remaining,
+                  billed: 0,
+                  carried: event.carried,
+                }),
+              ),
+            },
+          },
+        },
+        context,
+      );
+    },
     UsageReset: (view, event, context): EntitlementsState =>
       withAccount(
         {
@@ -603,12 +728,33 @@ const judgedOf = (
   ...(value.cap === undefined ? {} : { cap: value.cap }),
   carried: over.carried ?? value.carried,
   ...(value.moneyCap === undefined ? {} : { moneyCap: value.moneyCap }),
-  ...(value.unitPrice === undefined ? {} : { unitPrice: value.unitPrice }),
+  ...(value.pricing === undefined ? {} : { pricing: value.pricing }),
   billed: over.billed ?? value.billed ?? 0,
   used: over.used ?? value.used,
   reserved: over.reserved ?? value.reserved,
   remaining: over.remaining === undefined ? value.remaining : over.remaining,
   ...(value.creditRates === undefined ? {} : { creditRates: value.creditRates }),
+});
+
+/** The judgement facts for a quantity: a cap, not a spendable count. */
+const judgedQuantityOf = (
+  feature: {
+    readonly overage: Overage;
+    readonly included: Included | null;
+    readonly cap?: number;
+  },
+  quantity: number,
+  remaining: number | null,
+): JudgedFeature => ({
+  overage: feature.overage,
+  included: feature.included,
+  ...(feature.cap === undefined ? {} : { cap: feature.cap }),
+  carried: 0,
+  billed: 0,
+  used: quantity,
+  reserved: 0,
+  remaining,
+  quantity,
 });
 
 /** The same facts for an allowance the view is building, before a row exists. */
@@ -617,7 +763,7 @@ const judgedAllowanceOf = (
     readonly overage: Overage;
     readonly included: Included;
     readonly cap?: number;
-    readonly unitPrice?: UnitPrice;
+    readonly pricing?: Pricing;
     readonly moneyCap?: number;
   },
   over: {
@@ -632,7 +778,7 @@ const judgedAllowanceOf = (
   ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
   carried: 0,
   ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
-  ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+  ...(allowance.pricing === undefined ? {} : { pricing: allowance.pricing }),
   billed: over.billed,
   used: over.used,
   reserved: over.reserved,
@@ -683,7 +829,7 @@ const heldOf = (features: Readonly<Record<string, FeatureEntitlement>>): number 
  * what open holds keep out of it, and the holds themselves.
  */
 const creditFeatureOf = (
-  rates: CreditRates,
+  rates: RateCard,
   credits: number,
   held: number,
   previous: FeatureEntitlement | undefined,
@@ -768,12 +914,13 @@ const featuresOf = (
         overage: Overage;
         resets: Resets;
         cap?: number;
+        pricing?: Pricing;
         unitPrice?: UnitPrice;
         moneyCap?: number;
       }
     >
   >,
-  rates: Readonly<Record<string, CreditRates>>,
+  rates: Readonly<Record<string, RateCard>>,
   credits: number,
   held: number,
   previous: Readonly<Record<string, FeatureEntitlement>>,
@@ -781,6 +928,7 @@ const featuresOf = (
   periodEnd: DateTime.Utc,
   standing: Standing,
   keepUsage = false,
+  resetAt?: Readonly<Record<string, DateTime.Utc>>,
 ): Record<string, FeatureEntitlement> => ({
   ...Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
@@ -788,6 +936,33 @@ const featuresOf = (
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
       const billed = keepUsage ? (previous[feature]?.billed ?? 0) : 0;
       const priced = keepUsage ? previous[feature]?.priced : undefined;
+      if (isQuantityGrant(allowance)) {
+        const free = typeof allowance.included === "number" ? allowance.included : 0;
+        const quantity = keepUsage ? Math.max(previous[feature]?.quantity ?? free, free) : free;
+        const quantityRemaining =
+          allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity);
+        return [
+          feature,
+          {
+            kind: "non_consumable",
+            included: allowance.included,
+            used: quantity,
+            reserved: 0,
+            remaining: quantityRemaining,
+            carried: 0,
+            allowed: allowsOne(standing, judgedQuantityOf(allowance, quantity, quantityRemaining)),
+            overage: allowance.overage,
+            ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
+            ...(pricingOf(allowance) === null ? {} : { pricing: pricingOf(allowance)! }),
+            ...(pricingOf(allowance) === null || soleUnitPriceOf(pricingOf(allowance)!) === null
+              ? {}
+              : { unitPrice: soleUnitPriceOf(pricingOf(allowance)!)! }),
+            quantity,
+            resets: "never",
+            resetsAt: null,
+          },
+        ];
+      }
       const spendable = spendableOf(remaining, feature, allowance);
       return [
         feature,
@@ -805,12 +980,15 @@ const featuresOf = (
           ),
           overage: allowance.overage,
           ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
-          ...(allowance.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+          ...(pricingOf(allowance) === null ? {} : { pricing: pricingOf(allowance)! }),
+          ...(pricingOf(allowance) === null || soleUnitPriceOf(pricingOf(allowance)!) === null
+            ? {}
+            : { unitPrice: soleUnitPriceOf(pricingOf(allowance)!)! }),
           ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
           ...(billed === 0 ? {} : { billed }),
           ...(priced === undefined ? {} : { priced }),
           resets: allowance.resets,
-          resetsAt: allowance.resets === "never" ? null : periodEnd,
+          resetsAt: allowance.resets === "never" ? null : (resetAt?.[feature] ?? periodEnd),
         },
       ];
     }),

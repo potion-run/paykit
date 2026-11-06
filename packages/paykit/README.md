@@ -146,6 +146,127 @@ Paykit.catalog({
 });
 ```
 
+### Pricing a feature
+
+A billed allowance states one price, and the price is a function of the billable
+count rather than a rate on one unit:
+
+```ts
+// $5 for each 1,000 calls. 1,500 calls is two packages.
+Paykit.allowance(Paykit.messages, {
+  included: 0,
+  overage: "bill",
+  pricing: { kind: "unit", amount: 500, currency: "usd", units: 1_000 },
+});
+
+// The first 10,000 calls at $0.01, then $0.005.
+Paykit.allowance(Paykit.messages, {
+  included: 0,
+  overage: "bill",
+  pricing: {
+    kind: "graduated",
+    currency: "usd",
+    bands: [
+      { upTo: 10_000, amount: 1, currency: "usd" },
+      { upTo: "inf", amount: 5, currency: "usd", units: 1_000 },
+    ],
+  },
+});
+```
+
+`volume` states the same bands but charges every unit at the band the total
+lands in. One event's charge is the price after it minus the price before it, so
+the order two events arrive in cannot change the period's bill, and the event
+carries one `PricedLine` per price it crossed.
+
+### A rate card, not a rate
+
+A credit-priced feature can price on the event's properties instead of a name the
+caller translates:
+
+```ts
+const compute = Paykit.feature({
+  id: "compute_minutes",
+  name: "Compute minutes",
+  rateCard: {
+    default: 1,
+    rules: [{ match: { size: "large" }, credits: 16 }],
+    multipliers: [{ match: { lifecycle: "spot" }, factor: 0.3 }],
+  },
+});
+
+// A large spot machine: 16 credits × 0.3 = 5 credits a unit.
+yield* track({ feature: "compute_minutes", amount: 10, properties: { size: "large", lifecycle: "spot" } });
+```
+
+A named dimension wins first, then a matching rule, then `default`; every
+matching multiplier applies and the rate never goes below zero. `Tier.rateCard`
+replaces one feature's card for that tier.
+
+### Seats
+
+A seat is a quantity, not a counter. Declare a non-consumable feature, grant a
+free quantity and price the additional ones:
+
+```ts
+const seats = Paykit.feature({ id: "seats", name: "Seats", kind: "non_consumable" });
+
+const team = Paykit.tier({
+  id: "team",
+  price: { amount: 4_900, currency: "usd", interval: "month" },
+  grants: [
+    Paykit.allowance(seats, {
+      included: 5, // free seats
+      overage: "bill",
+      pricing: { kind: "unit", amount: 1_000, currency: "usd" }, // $10 a seat
+      cap: 20, // the most the account may hold
+    }),
+  ],
+});
+
+const setQuantity = yield* Paykit.SetQuantity(account);
+const { quantity, proration } = yield* setQuantity({
+  feature: "seats",
+  quantity: 8,
+  dedupeKey: "seats:2026-11-06",
+});
+
+// A positive proration is collected by the provider.
+if (proration !== undefined && proration.due > 0) {
+  yield* (yield* Paykit.ChargeQuantityProration(account))({
+    prorationId: "seats:2026-11-06",
+  });
+}
+```
+
+`SetQuantity` sets the total, including the free grant; the billable difference
+is prorated for the rest of the period, and `prorate: "period_end"` defers the
+charge to the boundary. `TrackUsage` and `Hold` refuse a seat with
+`FeatureNotConsumable`. `check()` answers from the cap, not from a spendable
+count, and the row carries `quantity`, `included`, `cap` and `remaining`.
+
+### Resets, variants and currencies
+
+`resets` runs from `hour` to `annual`, and `resetEvery` counts intervals, so a
+monthly plan can grant a daily allowance (`{ resets: "day" }`) or a four-hour one
+(`{ resets: "hour", resetEvery: 4 }`). A monthly or annual allowance resets with
+the period; every other schedule has its own boundary and its own
+`ResetAllowance` command. `carryCap` bounds what one window may carry.
+
+A tier can be a named alternative of another, stating only what it changes:
+
+```ts
+const annual = Paykit.tier({
+  id: "pro_annual",
+  variantOf: "pro",
+  customize: { price: { amount: 19_000, currency: "usd", interval: "annual" } },
+});
+```
+
+A price can also be sold in more than one currency with
+`additionalCurrencies`, and `priceFor(price, "eur")` resolves the amount. A tier
+with postpaid prices sells in one currency: a metered unit price is stated once.
+
 A feature is declared once and quoted by identity, so a tier cannot grant a feature the catalog
 never declared. `catalog()` refuses duplicate feature ids, duplicate tier ids, a tier that grants
 the same feature twice, a tier with no grants, an unlimited allowance that also names a `block` or
@@ -154,10 +275,18 @@ the same feature twice, a tier with no grants, an unlimited allowance that also 
 `resets: "never"` (`CatalogCarryOverNeverResets`), a rate card with no `"default"`
 (`CatalogCreditRateMissing`), a rate that is not a positive integer (`CatalogCreditRateInvalid`), an
 allowance for a credit-priced feature (`CatalogCreditFeatureHasAllowance`), a rate card on a flag
-(`CatalogCreditAllowanceOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), a `cap`
-where nothing is billed (`CatalogCapWithoutBilling`), a unit price where nothing is billed
-(`CatalogUnitPriceWithoutBilling`), a money cap with no unit price
-(`CatalogMoneyCapWithoutUnitPrice`), mixed unit-price currencies (`CatalogUnitPriceCurrency`), a
+(`CatalogCreditRatesOnFlag`), an impossible credit grant (`CatalogCreditGrantInvalid`), a `cap`
+where nothing is billed (`CatalogCapWithoutBilling`), a price where nothing is billed (`CatalogPricingWithoutBilling` or
+`CatalogUnitPriceWithoutBilling`), a money cap with no price
+(`CatalogMoneyCapWithoutUnitPrice`), mixed pricing currencies
+(`CatalogUnitPriceCurrency`, `CatalogPricingCurrency`), bands that are out of
+order or do not end at `"inf"` (`CatalogPricingBand`), a volume ladder whose rate
+rises (`CatalogVolumeRateRises`), two prices on one allowance
+(`CatalogPricingConflict`), a rate card and a rate map on one feature
+(`CatalogRateCardConflict`), a card override for a feature the catalog does not
+price in credits (`CatalogRateCardOverride`), a variant whose base is missing or
+cyclic (`CatalogUnknownVariant`, `CatalogVariantCycle`), a repeated currency
+(`CatalogAdditionalCurrency`), a
 top-up line on a one-off pack (`CatalogTopUpOnPack`), and a price that is not positive whole minor
 units.
 

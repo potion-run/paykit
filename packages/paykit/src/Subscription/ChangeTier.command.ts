@@ -76,6 +76,8 @@ export class TierChanged extends Domain.Event("TierChanged", {
   topUp: Schema.optionalKey(TopUpThreshold),
   /** The new tier's rate cards, so `check` prices from the standing. */
   rates: CreditRateCards,
+  /** The next boundary of every allowance that runs on its own schedule. */
+  resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Schema.Literals(["month", "annual"])),
   /** What the account was paying before the change. Absent from a free tier. */

@@ -1283,10 +1283,15 @@ const entitlementTerms = (
   const terms = [`overage ${feature.overage}`];
   if (feature.carried > 0) terms.push(`${feature.carried} carried`);
   if (feature.creditRates !== undefined) {
+    const card = feature.creditRates;
     terms.push(
-      `credits ${Object.entries(feature.creditRates)
-        .map(([dimension, credits]) => `${dimension}: ${credits}`)
-        .join(" · ")}`,
+      `credits ${[
+        `default: ${card.default}`,
+        ...Object.entries(card.dimensions ?? {}).map(
+          ([dimension, credits]) => `${dimension}: ${credits}`,
+        ),
+        ...(card.rules ?? []).map((rule) => `${JSON.stringify(rule.match)}: ${rule.credits}`),
+      ].join(" · ")}`,
     );
   }
   if (feature.cap !== undefined) terms.push(`${feature.cap} unit cap`);

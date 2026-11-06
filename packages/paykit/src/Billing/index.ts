@@ -166,3 +166,26 @@ export { CheckOverTransport } from "./CheckOverTransport.layer.ts";
 export { BillingApiLayer } from "./BillingApi.layer.ts";
 export { BillingAdminInProcess } from "./BillingAdminInProcess.layer.ts";
 export { BillingAdminApiLayer } from "./BillingAdminApi.layer.ts";
+
+export {
+  SetQuantity,
+  isSetQuantityRefusal,
+  toSetQuantityError,
+  type SetQuantityError,
+  type SetQuantityRefusal,
+  type SetQuantityRequest,
+  type SetQuantityResult,
+  type SetQuantityVerb,
+} from "./SetQuantity.binding.ts";
+
+export {
+  ChargeQuantityProration,
+  chargeQuantityProrationOperation,
+  isChargeQuantityProrationRefusal,
+  toChargeQuantityProrationError,
+  type ChargeQuantityProrationError,
+  type ChargeQuantityProrationRefusal,
+  type ChargeQuantityProrationRequest,
+  type ChargeQuantityProrationResult,
+  type ChargeQuantityProrationVerb,
+} from "./ChargeQuantityProration.binding.ts";

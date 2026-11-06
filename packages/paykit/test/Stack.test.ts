@@ -171,6 +171,95 @@ describe("Stack", () => {
     }),
   );
 
+  it.effect("refuses a ladder or a package a usage provider cannot meter", () =>
+    Effect.gen(function* () {
+      const ladder = tier({
+        id: "ladder",
+        price: proPrice,
+        grants: [
+          allowance(messages, {
+            included: 100,
+            overage: "bill",
+            pricing: {
+              kind: "graduated",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          }),
+        ],
+      });
+      const ladderError = yield* Effect.flip(
+        validateStack("Billing", {
+          catalog: { features: [messages], tiers: [ladder] },
+          providers: [{ ...PaymentsMemory(), prices: { ladder: proPrice } }],
+        }),
+      );
+      expect(ladderError._tag).toBe("CatalogPriceMismatch");
+      if (ladderError._tag === "CatalogPriceMismatch") {
+        expect(ladderError.field).toBe("pricing.messages");
+      }
+
+      const packagePrice = tier({
+        id: "package",
+        price: proPrice,
+        grants: [
+          allowance(messages, {
+            included: 0,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 500, currency: "usd", units: 1_000 },
+          }),
+        ],
+      });
+      const packageError = yield* Effect.flip(
+        validateStack("Billing", {
+          catalog: { features: [messages], tiers: [packagePrice] },
+          providers: [
+            {
+              ...PaymentsMemory(),
+              prices: { package: proPrice },
+              unitPrices: { package: { messages: { amount: 500, currency: "usd", units: 1_000 } } },
+            },
+          ],
+        }),
+      );
+      expect(packageError._tag).toBe("CatalogPriceMismatch");
+      if (packageError._tag === "CatalogPriceMismatch") {
+        expect(packageError.expected).toBe("one unit per price");
+      }
+    }),
+  );
+
+  it.effect("accepts a one-rate pricing the provider maps", () =>
+    Effect.gen(function* () {
+      const oneRate = tier({
+        id: "one",
+        price: proPrice,
+        grants: [
+          allowance(messages, {
+            included: 100,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 2, currency: "usd" },
+          }),
+        ],
+      });
+      const billing = yield* validateStack("Billing", {
+        catalog: { features: [messages], tiers: [oneRate] },
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { one: proPrice },
+            unitPrices: { one: { messages: { amount: 2, currency: "usd" } } },
+          },
+        ],
+        store: MemoryStore(),
+      });
+      expect(billing.id).toBe("Billing");
+    }),
+  );
+
   it.effect("refuses a priced tier with no purchase path", () =>
     Effect.gen(function* () {
       const manual = { ...PaymentsManual(), capabilities: new Set(["refund"] as const) };

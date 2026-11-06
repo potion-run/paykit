@@ -1,7 +1,6 @@
 import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Schema from "effect/Schema";
-import type { Included } from "../../src/Allowance.ts";
 import {
   capacityOf,
   downgradeOf,
@@ -9,7 +8,11 @@ import {
   type JudgedFeature,
 } from "../../src/Subscription/Allowance.verdict.ts";
 import { allowsOne } from "../../src/Subscription/Entitlements.view.ts";
-import { creditRateOf, spendCeilingOf } from "../../src/Subscription/Subscription.state.ts";
+import {
+  chargeOf,
+  creditRateOf,
+  spendCeilingOf,
+} from "../../src/Subscription/Subscription.state.ts";
 import { assertProperty } from "../support/Property.ts";
 
 const IncludedSpec = Schema.Union([
@@ -19,7 +22,9 @@ const IncludedSpec = Schema.Union([
 
 const CreditRatesSpec = Schema.Struct({
   default: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 }))),
-  "gpt-large": Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 }))),
+  dimensions: Schema.Struct({
+    "gpt-large": Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 }))),
+  }),
 });
 
 const UnitPriceSpec = Schema.Struct({
@@ -59,7 +64,9 @@ const featureOf = (spec: FeatureSpec): JudgedFeature => ({
   ...(spec.cap === undefined ? {} : { cap: spec.cap }),
   carried: spec.carried,
   ...(spec.moneyCap === undefined ? {} : { moneyCap: spec.moneyCap }),
-  ...(spec.unitPrice === undefined ? {} : { unitPrice: spec.unitPrice }),
+  ...(spec.unitPrice === undefined
+    ? {}
+    : { pricing: { _tag: "unit" as const, unitPrice: spec.unitPrice } }),
   billed: spec.billed,
   used: spec.used,
   reserved: spec.reserved,
@@ -77,17 +84,10 @@ const headroomOf = (feature: JudgedFeature): number | null =>
     ? null
     : feature.remaining + feature.cap - (feature.carried ?? 0);
 
-/** The billable part of one request, written independently of `chargeOf`. */
-const billable = (included: Included | null, used: number, amount: number): number => {
-  if (typeof included !== "number") return 0;
-  return Math.max(0, used + amount - included) - Math.max(0, used - included);
-};
-
 const promisedOf = (feature: JudgedFeature, amount: number): number =>
-  feature.unitPrice === undefined
+  feature.pricing === undefined
     ? 0
-    : billable(feature.included, feature.used, amount + feature.reserved) *
-      feature.unitPrice.amount;
+    : chargeOf(feature.pricing, feature.included, feature.used, amount + feature.reserved);
 
 describe("capacity verdicts", () => {
   /**
@@ -108,7 +108,7 @@ describe("capacity verdicts", () => {
         const creditCost =
           feature.creditRates === undefined
             ? undefined
-            : spec.amount * creditRateOf(feature.creditRates, spec.dimension);
+            : spec.amount * creditRateOf(feature.creditRates, { dimension: spec.dimension });
         const creditAvailable = feature.remaining ?? 0;
 
         // The rules in the order the write paths apply them: the first refusal

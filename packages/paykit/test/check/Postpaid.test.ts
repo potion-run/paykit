@@ -22,7 +22,7 @@ describe("a postpaid read", () => {
         overage: "bill" as const,
         resets: "month" as const,
         resetsAt: null,
-        unitPrice,
+        pricing: { _tag: "unit" as const, unitPrice },
         moneyCap: 500,
         billed: 400,
       },

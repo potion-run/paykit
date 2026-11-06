@@ -1,11 +1,15 @@
 import type * as DateTime from "effect/DateTime";
-import type { Allowances } from "../Allowance.ts";
+import { isQuantityGrant, pricingOf, type Allowances } from "../Allowance.ts";
 import type { CreditRateCards } from "../Feature.ts";
+import { currencyOfPricing } from "../Pricing.ts";
 import type { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
 import {
   includedRemainingOf,
+  nextResetAt,
+  periodTiedReset,
   prepaidCreditsOf,
   type Period,
+  type QuantityCounts,
   type SubscribedState,
   type SubscriptionState,
   type SubscriptionStatus,
@@ -34,7 +38,8 @@ import {
  */
 export const unitPriceCurrencyOf = (allowances: Allowances): string | undefined => {
   for (const allowance of Object.values(allowances)) {
-    if (allowance.unitPrice !== undefined) return allowance.unitPrice.currency;
+    const pricing = pricingOf(allowance);
+    if (pricing !== null) return currencyOfPricing(pricing);
   }
   return undefined;
 };
@@ -44,12 +49,29 @@ export const unitPriceCurrencyOf = (allowances: Allowances): string | undefined 
  * `included`; an allowance with no count — unlimited, or a flag — starts at
  * `null`, which is the absence of a count rather than zero.
  */
+/** The quantity every non-consumable allowance starts with: its free grant. */
+export const startingQuantities = (allowances: Allowances): QuantityCounts =>
+  Object.fromEntries(
+    Object.entries(allowances).flatMap(([feature, allowance]) =>
+      isQuantityGrant(allowance) && typeof allowance.included === "number"
+        ? [[feature, allowance.included]]
+        : [],
+    ),
+  );
+
+/** The spendable count every allowance starts a period with. */
 export const startingRemaining = (allowances: Allowances): Record<string, number | null> =>
   Object.fromEntries(
-    Object.entries(allowances).map(([feature, allowance]) => [
-      feature,
-      includedRemainingOf(allowance),
-    ]),
+    Object.entries(allowances).map(([feature, allowance]) => {
+      if (isQuantityGrant(allowance)) {
+        const included = typeof allowance.included === "number" ? allowance.included : 0;
+        return [
+          feature,
+          allowance.cap === undefined ? null : Math.max(0, allowance.cap - included),
+        ];
+      }
+      return [feature, includedRemainingOf(allowance)];
+    }),
   );
 
 /**
@@ -86,6 +108,23 @@ export interface ActivationInput<S extends SubscriptionStatus = SubscriptionStat
   readonly statusAfter: S;
 }
 
+/**
+ * The first boundary of every allowance that runs on its own schedule, keyed by
+ * feature. A monthly or annual allowance is the standing's period and gets no
+ * entry; a daily or quarterly one starts a window at `from`.
+ */
+export const resetWindowsOf = (
+  allowances: Allowances,
+  from: DateTime.Utc,
+): Record<string, DateTime.Utc> =>
+  Object.fromEntries(
+    Object.entries(allowances).flatMap(([feature, allowance]) => {
+      if (allowance.resets === "never" || periodTiedReset(allowance)) return [];
+      const at = nextResetAt(from, allowance);
+      return at === null ? [] : [[feature, at]];
+    }),
+  );
+
 /** The fields an activation event records, in the shape both events share. */
 export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStatus> {
   readonly tier: string;
@@ -101,6 +140,8 @@ export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStat
   readonly anchorTz: string;
   readonly currency?: string;
   readonly price?: Price;
+  /** The first boundary of every allowance that runs on its own schedule. */
+  readonly resetAt?: Record<string, DateTime.Utc>;
   readonly statusAfter: S;
 }
 
@@ -136,6 +177,7 @@ export const activationOf = <S extends SubscriptionStatus>(
   const prepaid = Math.min(input.prepaidCredits ?? 0, input.credits);
   const currency =
     input.price?.currency ?? unitPriceCurrencyOf(input.allowances) ?? input.previousCurrency;
+  const resetAt = resetWindowsOf(input.allowances, input.period.start);
   return {
     tier: input.tier,
     allowances: input.allowances,
@@ -150,6 +192,7 @@ export const activationOf = <S extends SubscriptionStatus>(
     anchorTz: input.period.anchorTz,
     ...(currency === undefined ? {} : { currency }),
     ...(input.price === undefined ? {} : { price: input.price }),
+    ...(Object.keys(resetAt).length === 0 ? {} : { resetAt }),
     statusAfter: input.statusAfter,
   } satisfies ActivationGrant<S>;
 };
@@ -175,6 +218,8 @@ export interface StandingGrant {
   readonly interval?: Interval;
   readonly currency?: string;
   readonly price?: Price;
+  /** The next boundary of every allowance that runs on its own schedule. */
+  readonly resetAt?: Record<string, DateTime.Utc>;
   readonly statusAfter: SubscriptionStatus;
   /** The trial's deadline; absent on an activation. */
   readonly trialEndsAt?: DateTime.Utc;
@@ -241,11 +286,13 @@ export const standingFrom = (
         : {}
       : { currency: grant.currency }),
     ...(grant.price === undefined ? {} : { price: grant.price }),
+    ...(grant.resetAt === undefined ? {} : { resetAt: grant.resetAt }),
     ...(grant.trialEndsAt === undefined ? {} : { trialEndsAt: grant.trialEndsAt }),
     usage: {},
     remaining: grant.remaining,
     holds: {},
     allowances: grant.allowances,
+    quantities: startingQuantities(grant.allowances),
     refs: previous.refs,
     trialUsed: options.trialUsed,
     dedupeKeys: {},

@@ -14,20 +14,61 @@ export {
   AllowanceKind,
   Included,
   Overage,
+  ResetEvery,
   Resets,
   UnitPrice,
   allowance,
+  carryCapOf,
   isFlagGrant,
+  pricingOf,
+  resetEveryOf,
   unitPriceKey,
 } from "./Allowance.ts";
-export type { AllowanceInput } from "./Allowance.ts";
+export type { AllowanceInput, PriceBand, Pricing, PricingInput } from "./Allowance.ts";
 export { Catalog, catalog } from "./Catalog.ts";
 export type { CatalogInput } from "./Catalog.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
-export { CreditRateCards, CreditRates, Feature, FeatureId, feature } from "./Feature.ts";
-export type { FeatureInput } from "./Feature.ts";
+export {
+  CreditRateCards,
+  CreditRates,
+  Feature,
+  FeatureId,
+  RateCard,
+  RateMatch,
+  RateMultiplier,
+  RateRule,
+  creditRateOf,
+  feature,
+  rateCard,
+} from "./Feature.ts";
+export type { FeatureInput, RateCardInput } from "./Feature.ts";
+export {
+  BillingUnits,
+  PricedLine,
+  currencyOfPricing,
+  priceKey,
+  priceOf,
+  priceOfUnits,
+  pricedLines,
+  pricesOf,
+  pricing,
+  pricingKey,
+  soleUnitPriceOf,
+  unitsOf,
+} from "./Pricing.ts";
 export { Proration } from "./Proration.ts";
-export { CreditsExpire, Interval, Price, Tier, TierId, TopUpThreshold, tier } from "./Tier.ts";
+export {
+  AdditionalCurrency,
+  CreditsExpire,
+  Interval,
+  Price,
+  Tier,
+  TierCustomize,
+  TierId,
+  TopUpThreshold,
+  priceFor,
+  tier,
+} from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
 export {
   BillingReadPage,
@@ -100,3 +141,5 @@ export {
   initialTimeline,
 } from "./Timeline.ts";
 export { VerifyMismatch } from "./Verify.ts";
+
+export { AllowanceReset } from "./Subscription/ResetAllowance.command.ts";

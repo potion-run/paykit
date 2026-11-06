@@ -25,6 +25,8 @@ export interface TrackUsageRequest {
   readonly amount: number;
   /** Which rate prices it, for a credit-priced feature. Omitted means `"default"`. */
   readonly dimension?: string;
+  /** The event's properties, which a rate card's rules and multipliers match. */
+  readonly properties?: Readonly<Record<string, string>>;
   /**
    * The retry key. It is also the command id, so a transport that redelivers the
    * call records one usage fact rather than two.
@@ -68,7 +70,12 @@ export const usageOutcome = (
 ): TrackUsageResult => {
   const feature = state?.features[request.feature];
   const rate =
-    feature?.creditRates === undefined ? 0 : creditRateOf(feature.creditRates, request.dimension);
+    feature?.creditRates === undefined
+      ? 0
+      : creditRateOf(feature.creditRates, {
+          dimension: request.dimension,
+          properties: request.properties,
+        });
   return {
     remaining: feature?.remaining ?? null,
     used: feature?.used ?? 0,

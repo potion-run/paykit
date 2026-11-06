@@ -12,10 +12,17 @@ disagree, the ADR wins and this file is wrong.
 key), `build`, `exports:check`, `validate:publish-packages`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
-grants, `carryOver`, credits with a per-dimension rate card (`creditRates`), a spend cap (`cap`), a
-postpaid `unitPrice` with a `moneyCap`, a per-tier auto top-up line (`topUp`), and a `kind: "one_off"`
-credit pack. What the runtime can do, as
-command-named bindings: `Check` from local state, `TrackUsage`, `Hold`/`SettleHold`/`ReleaseHold` as
+grants, `carryOver` with a `carryCap`, credits with a rate card (a `creditRates` shorthand, or a
+`rateCard` with property `rules` and `multipliers`, overridable per tier), a spend cap (`cap`), a
+postpaid price with a `moneyCap` — one rate, a package (`units`), or a `graduated` / `volume` band
+ladder — every reset interval from `hour` to `annual` with a `resetEvery` multiplier, a per-tier auto
+top-up line (`topUp`), a `kind: "one_off"` credit pack, additional currencies on a tier price, and a
+`variantOf` / `customize` tier variant, and a `kind: "non_consumable"` quantity (seats) with a
+free grant, a cap, a per-seat price and `SetQuantity` / `ChargeQuantityProration`. A reset the
+period does not own is its own command (`ResetAllowance`), and a banded price records one
+`PricedLine` per price an event crossed. What the runtime can do, as
+command-named bindings: `Check` from local state, `TrackUsage`, `SetQuantity` for a seat change
+(with `ChargeQuantityProration` collecting its proration), `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
 proration, dunning, trials, credits, bought packs whose credits survive a period close and are
 spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges

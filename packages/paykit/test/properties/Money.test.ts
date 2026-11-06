@@ -488,7 +488,8 @@ describe("holds and money", () => {
         const afterTrack = evolveAt(base, tracked, start, "track") as SubscribedState;
         const afterSettle = evolveAt(settledState, billed, start, "settle") as SubscribedState;
         if (billedOf(afterTrack, "messages") !== billedOf(afterSettle, "messages")) return false;
-        const settledBill = billedBefore + chargeOf(unitPrice, included, 0, settled);
+        const settledBill =
+          billedBefore + chargeOf({ _tag: "unit", unitPrice }, included, 0, settled);
         if (billedOf(afterSettle, "messages") !== settledBill) return false;
         // The hold took its units out when it was placed, so the settle leaves
         // the same count a track would: what it billed left once, and what it

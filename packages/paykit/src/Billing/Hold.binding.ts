@@ -22,6 +22,8 @@ export interface HoldRequest {
   readonly amount: number;
   /** Which rate prices them, for a credit-priced feature. */
   readonly dimension?: string;
+  /** The event's properties, which a rate card's rules and multipliers match. */
+  readonly properties?: Readonly<Record<string, string>>;
   /** How long the hold lives. Defaults on the model's clock to fifteen minutes. */
   readonly expiresAt?: DateTime.Utc;
   /**

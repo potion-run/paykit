@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import type { Allowance } from "./Allowance.ts";
-import { allowancesOf, creditRatesOf, tierOf } from "./Catalog.ts";
+import { pricingOf, type Allowance } from "./Allowance.ts";
+import { allowancesOf, ratesOf, tierOf } from "./Catalog.ts";
 import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
+import type { CreditRateCards } from "./Feature.ts";
+import { pricingKey } from "./Pricing.ts";
+import { priceFor } from "./Tier.ts";
 import type { Price } from "./Tier.ts";
 
 /** The catalog-derived fields a command may carry on the wire. */
@@ -15,7 +18,7 @@ interface CatalogCarried {
   readonly credits?: number;
   readonly creditsExpire?: string;
   readonly topUp?: number;
-  readonly rates?: Readonly<Record<string, Readonly<Record<string, number>>>>;
+  readonly rates?: CreditRateCards;
 }
 
 /**
@@ -33,11 +36,12 @@ const allowanceKey = (allowance: Allowance): string =>
     allowance.included,
     allowance.overage,
     allowance.resets,
+    allowance.resetEvery ?? 1,
     allowance.carryOver === true,
+    allowance.carryCap ?? null,
     allowance.cap ?? null,
-    allowance.unitPrice === undefined
-      ? null
-      : [allowance.unitPrice.amount, allowance.unitPrice.currency],
+    allowance.prorate ?? null,
+    pricingOf(allowance) === null ? null : pricingKey(pricingOf(allowance)!),
     allowance.moneyCap ?? null,
   ]);
 
@@ -51,17 +55,27 @@ const allowancesKey = (allowances: Readonly<Record<string, Allowance>>): string 
 const priceKey = (price: Price | undefined): string =>
   price === undefined ? "free" : JSON.stringify([price.amount, price.currency, price.interval]);
 
-/** Every rate, dimension by dimension, in a stable order. */
-const ratesKey = (rates: Readonly<Record<string, Readonly<Record<string, number>>>>): string =>
+/** Every card, rule and multiplier, in a stable order. */
+const cardKey = (card: CreditRateCards[string]): string =>
+  JSON.stringify([
+    card.default,
+    Object.entries(card.dimensions ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+    (card.rules ?? []).map((rule) => [
+      Object.entries(rule.match).sort(([left], [right]) => left.localeCompare(right)),
+      rule.credits,
+    ]),
+    (card.multipliers ?? []).map((multiplier) => [
+      Object.entries(multiplier.match).sort(([left], [right]) => left.localeCompare(right)),
+      multiplier.factor ?? null,
+      multiplier.add ?? null,
+    ]),
+  ]);
+
+const ratesKey = (rates: CreditRateCards): string =>
   JSON.stringify(
     Object.keys(rates)
       .sort()
-      .map((feature) => [
-        feature,
-        Object.keys(rates[feature]!)
-          .sort()
-          .map((dimension) => [dimension, rates[feature]![dimension]]),
-      ]),
+      .map((feature) => [feature, cardKey(rates[feature]!)]),
   );
 
 /**
@@ -90,7 +104,11 @@ export const catalogMismatchOf = (
       return new CatalogMismatch({ tier: tier.id, field: "allowances", expected, actual });
     }
   }
-  const expectedPrice = priceKey(tier.price);
+  const expectedPrice = priceKey(
+    tier.price === undefined
+      ? undefined
+      : (priceFor(tier.price, input.price?.currency ?? tier.price.currency) ?? undefined),
+  );
   const actualPrice = priceKey(input.price);
   if (expectedPrice !== actualPrice) {
     return new CatalogMismatch({
@@ -134,7 +152,7 @@ export const catalogMismatchOf = (
       actual: actualTopUp,
     });
   }
-  const expectedRates = ratesKey(creditRatesOf(catalog));
+  const expectedRates = ratesKey(ratesOf(catalog, tier.id) ?? {});
   const actualRates = ratesKey(input.rates ?? {});
   if (expectedRates !== actualRates) {
     return new CatalogMismatch({

@@ -521,7 +521,7 @@ describe("a hold's captured rate", () => {
         );
         if (!isAccepted(changed)) return false;
         state = evolveAt(state, changed, start, "reprice") as SubscribedState;
-        if (creditRateOf(state.rates["ai"]!, "default") !== 10) return false;
+        if (creditRateOf(state.rates["ai"]!, { dimension: "default" }) !== 10) return false;
 
         if (settled > held) return true;
         const creditsBefore = state.credits;

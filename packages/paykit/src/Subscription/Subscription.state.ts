@@ -2,15 +2,22 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
   Allowances,
+  carryCapOf,
   isFlagGrant,
+  isQuantityGrant,
   type Allowance,
+  type AllowanceKind,
   type Included,
   type Overage,
-  type UnitPrice,
+  type Pricing,
+  type Resets,
 } from "../Allowance.ts";
-import { CreditRateCards, type CreditRates } from "../Feature.ts";
+import { CreditRateCards } from "../Feature.ts";
+import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
+
+export { creditRateOf } from "../Feature.ts";
 
 /**
  * Money recorded per currency, in minor units. `charged` folds what paykit
@@ -78,12 +85,37 @@ export const UsageCounts = Schema.Record(Schema.String, Schema.Int);
 export type UsageCounts = typeof UsageCounts.Type;
 
 /**
+ * The current quantity of every non-consumable feature. A seat is set, not
+ * spent, so this is the quantity the account holds — not a counter a period
+ * close resets.
+ */
+export const QuantityCounts = Schema.Record(Schema.String, Schema.Int);
+export type QuantityCounts = typeof QuantityCounts.Type;
+
+/** A quantity change's money, keyed by the command that recorded it. */
+export const QuantityProration = Schema.Struct({
+  feature: Schema.String,
+  proration: Proration,
+  /** The provider invoice that collected a positive `due`. */
+  invoiceId: Schema.optionalKey(Schema.String),
+});
+export type QuantityProration = typeof QuantityProration.Type;
+
+/**
  * Per-feature remaining allowance, copied from the event that changed it.
  * `null` means there is no count: an unlimited allowance, or a flag's grant. A
  * flag reports the absence of a number rather than one it never spends.
  */
 export const Remaining = Schema.Record(Schema.String, Schema.NullOr(Schema.Int));
 export type Remaining = typeof Remaining.Type;
+
+/**
+ * The next boundary of every allowance that runs on its own schedule, keyed by
+ * feature. A monthly or annual allowance is the standing's period and needs no
+ * entry; a daily or quarterly one has a boundary the period does not own.
+ */
+export const ResetWindows = Schema.Record(Schema.String, Schema.DateTimeUtc);
+export type ResetWindows = typeof ResetWindows.Type;
 
 /**
  * Where a hold is in its life. A closed hold stays only as an audit record.
@@ -236,8 +268,24 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    */
   billed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
   remaining: Remaining,
+  /**
+   * The next boundary of every allowance that does not follow the standing's
+   * period. Absent means the feature resets at `period.end` (or never).
+   */
+  resetAt: Schema.optionalKey(ResetWindows),
   /** Every hold, open or closed. `reserved` and `reservedCredits` fold this. */
   holds: Holds,
+  /**
+   * The current quantity of every non-consumable feature. A period close does
+   * not reset one: a seat is held until the account sets a different quantity.
+   */
+  quantities: Schema.optionalKey(QuantityCounts),
+  /**
+   * The unbilled money a quantity change moved, keyed by the command that
+   * recorded it. A positive `due` is collected by `ChargeQuantityProration`;
+   * a credit stays here for the next period to apply.
+   */
+  quantityProrations: Schema.optionalKey(Schema.Record(Schema.String, QuantityProration)),
   allowances: Allowances,
   /**
    * The tier the standing moves to when this period closes, if one was
@@ -294,9 +342,54 @@ export const rollsPeriod = (status: SubscriptionStatus): boolean => !isTerminalS
 export const canEnterGrace = (status: SubscriptionStatus): boolean =>
   status === "trialing" || status === "active";
 
-/** When an allowance next resets, or `null` for one that never does. */
-export const resetsAt = (period: Period, allowance: Allowance): DateTime.Utc | null =>
-  allowance.resets === "never" ? null : period.end;
+/**
+ * Whether an allowance's boundary is the standing's period. Only a monthly or
+ * annual allowance with no multiplier is: every other schedule owns a window
+ * the period close must not reset.
+ */
+export const periodTiedReset = (allowance: {
+  readonly resets: Resets;
+  readonly resetEvery?: number;
+}): boolean =>
+  (allowance.resets === "month" || allowance.resets === "annual") &&
+  (allowance.resetEvery ?? 1) === 1;
+
+/** The boundary after `from` for an allowance's schedule, or `null` for never. */
+export const nextResetAt = (
+  from: DateTime.Utc,
+  allowance: { readonly resets: Resets; readonly resetEvery?: number },
+): DateTime.Utc | null => {
+  const every = allowance.resetEvery ?? 1;
+  switch (allowance.resets) {
+    case "never":
+      return null;
+    case "hour":
+      return DateTime.add(from, { hours: every });
+    case "day":
+      return DateTime.add(from, { days: every });
+    case "week":
+      return DateTime.add(from, { weeks: every });
+    case "month":
+      return DateTime.add(from, { months: every });
+    case "quarter":
+      return DateTime.add(from, { months: 3 * every });
+    case "semi_annual":
+      return DateTime.add(from, { months: 6 * every });
+    case "annual":
+      return DateTime.add(from, { years: every });
+  }
+};
+
+/**
+ * The boundary an allowance is waiting for, from the standing's own record.
+ * A feature with no entry is period-tied, so the period's end is its boundary.
+ */
+export const resetAtOf = (
+  state: SubscribedState,
+  feature: string,
+  allowance: Allowance,
+): DateTime.Utc | null =>
+  allowance.resets === "never" ? null : (state.resetAt?.[feature] ?? state.period.end);
 
 /** Add one calendar month or year, keeping the account's anchor. */
 export const addInterval = (at: DateTime.Utc, interval: Interval): DateTime.Utc =>
@@ -382,14 +475,36 @@ export const billableUnitsOf = (
   return after - before;
 };
 
-/** The money one usage event bills: billable units × the unit price. */
+/**
+ * The money one usage event bills: the cumulative price of the billable count
+ * after it minus the price before it. Written this way, a package price, a
+ * graduated ladder and a volume ladder all bill the same event the same way,
+ * and the order two events arrive in cannot change the period's total.
+ */
 export const chargeOf = (
-  unitPrice: UnitPrice | undefined,
+  pricing: Pricing | null | undefined,
   included: number | "unlimited" | null,
   used: number,
   amount: number,
-): number =>
-  unitPrice === undefined ? 0 : billableUnitsOf(included, used, amount) * unitPrice.amount;
+): number => {
+  if (pricing === null || pricing === undefined) return 0;
+  const before = typeof included === "number" ? Math.max(0, used - included) : 0;
+  const after = typeof included === "number" ? Math.max(0, used + amount - included) : 0;
+  return chargeOfPricing(pricing, before, after);
+};
+
+/** The priced lines one usage event records, for the report and the read model. */
+export const pricedOf = (
+  pricing: Pricing | null | undefined,
+  included: number | "unlimited" | null,
+  used: number,
+  amount: number,
+): ReadonlyArray<PricedLine> => {
+  if (pricing === null || pricing === undefined) return [];
+  const before = typeof included === "number" ? Math.max(0, used - included) : 0;
+  const after = typeof included === "number" ? Math.max(0, used + amount - included) : 0;
+  return pricedLines(pricing, before, after);
+};
 
 /**
  * A per-feature count as it was recorded: `undefined` when the record does not
@@ -405,7 +520,7 @@ export const recordedCount = (
  * `null` when there is no count — an unlimited allowance, or a flag's grant.
  */
 export const includedRemainingOf = (allowance: {
-  readonly kind?: "metered" | "flag";
+  readonly kind?: AllowanceKind;
   readonly included: Included | null;
 }): number | null =>
   allowance.included === null || allowance.included === "unlimited" || isFlagGrant(allowance)
@@ -439,6 +554,40 @@ export const remainingOf = (state: SubscribedState, feature: string): number | n
 };
 
 /**
+ * What one allowance starts a window with when its own boundary fires. The
+ * same carry rule as a period close, but for a schedule the period does not
+ * own.
+ */
+export const resetOfFeature = (
+  state: SubscribedState,
+  feature: string,
+  allowance: Allowance,
+): { readonly remaining: number | null; readonly carried: number } => {
+  const start = includedRemainingOf(allowance);
+  if (start === null) return { remaining: null, carried: 0 };
+  if (allowance.carryOver !== true) return { remaining: start, carried: 0 };
+  const cap = carryCapOf(allowance) ?? start;
+  const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), cap);
+  return { remaining: start + carried, carried };
+};
+
+/** The quantity an account holds of a non-consumable feature. */
+export const quantityOf = (state: SubscribedState, feature: string, allowance: Allowance): number =>
+  state.quantities?.[feature] ?? (typeof allowance.included === "number" ? allowance.included : 0);
+
+/** The billable part of a quantity: what is held past the free grant. */
+export const billableQuantityOf = (quantity: number, included: number): number =>
+  Math.max(0, quantity - included);
+
+/**
+ * The quantity a tier change leaves in place: the account keeps what it holds,
+ * and a tier that includes more raises it to the new grant. A tier that
+ * includes fewer does not take seats away; the next period bills them.
+ */
+export const quantityAfterTierChange = (held: number, included: number): number =>
+  Math.max(held, included);
+
+/**
  * What an allowance's next period starts with, and how much of that carried.
  * A period starts at `included` plus what the closing one did not spend,
  * clamped to `[0, included]` so a period never holds more than two periods'
@@ -458,22 +607,14 @@ export const resetOf = (
 ): { readonly remaining: number | null; readonly carried: number; readonly kept: boolean } => {
   const start = includedRemainingOf(allowance);
   if (start === null) return { remaining: null, carried: 0, kept: false };
-  if (allowance.resets === "never") {
+  if (isQuantityGrant(allowance) || allowance.resets === "never" || !periodTiedReset(allowance)) {
     return { remaining: remainingOf(state, feature), carried: 0, kept: true };
   }
   if (allowance.carryOver !== true) return { remaining: start, carried: 0, kept: false };
-  const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), start);
+  const cap = carryCapOf(allowance);
+  const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), cap ?? start);
   return { remaining: start + carried, carried, kept: false };
 };
-
-/**
- * The credits one unit of a credit-priced feature costs at `dimension`, or at
- * `"default"` when the caller names none. A dimension the card does not price
- * falls back to `"default"`: the catalog requires it, so every unit has a
- * price.
- */
-export const creditRateOf = (rates: CreditRates, dimension: string | undefined): number =>
-  rates[dimension ?? "default"] ?? rates["default"] ?? 0;
 
 /**
  * The most units a period may bill for a feature: `included + cap`, or `null`
@@ -595,4 +736,7 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "CreditsExpired",
   "SubscriptionExpired",
   "ProviderRefAttached",
+  "AllowanceReset",
+  "QuantityChanged",
+  "QuantityProrationInvoiced",
 ] as const;

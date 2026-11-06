@@ -19,6 +19,7 @@ import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { priceFor } from "../Tier.ts";
 import { subscribeInputOf } from "../TierCommand.ts";
 
 /** What `Subscribe` asks for. */
@@ -27,6 +28,8 @@ export interface SubscribeInput {
   readonly tier: string;
   /** The account's period anchor. Defaults to UTC. */
   readonly anchorTz?: string;
+  /** The currency to sell in. Omitted means the tier's base currency. */
+  readonly currency?: string;
 }
 
 /** What `Subscribe` gives back: a purchase path, or a free-tier activation. */
@@ -104,8 +107,20 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
     const kind = tier.kind ?? "subscription";
+    const resolvedPrice =
+      tier.price === undefined
+        ? undefined
+        : input.currency === undefined
+          ? tier.price
+          : priceFor(tier.price, input.currency);
+    if (tier.price !== undefined && resolvedPrice === null) {
+      return yield* new TierNotInCatalog({ tier: input.tier });
+    }
     const ref = Subscription.ref(input.account);
-    const anchored = input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz };
+    const anchored = {
+      ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
+      ...(input.currency === undefined ? {} : { currency: input.currency }),
+    };
     const standing = yield* subscription.state(ref);
 
     // A pack is a purchase on any standing; a plan is not. Refuse before the
@@ -122,7 +137,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       });
     }
 
-    if (tier.price === undefined) {
+    if (resolvedPrice === undefined) {
       // A one-off tier is a pack of credits; without a price there is nothing
       // to buy. The catalog refuses this shape, so a runtime that sees it has
       // a stale catalog rather than a caller mistake.
@@ -142,7 +157,10 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     // standing it has (or has none yet), and the payment path is the only thing
     // that runs. Buying one never creates a second standing.
     // Bound here: narrowing a property does not survive into the generator.
-    const price = tier.price;
+    if (resolvedPrice === null) {
+      return yield* new TierNotInCatalog({ tier: input.tier });
+    }
+    const price = resolvedPrice;
     // The standing says which provider this account already belongs to; a new
     // account starts on the router's fallback. One provider's layer is provided
     // for this call, because two providers are two services.

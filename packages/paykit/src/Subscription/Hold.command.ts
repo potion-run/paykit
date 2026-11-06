@@ -2,6 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
+import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import {
   FeatureNotMetered,
@@ -88,6 +89,8 @@ export class Hold extends Domain.Command("Hold", {
     amount: Schema.Int,
     /** Which rate prices the units, for a credit-priced feature. */
     dimension: Schema.optionalKey(Schema.String),
+    /** The event's properties, which a rate card's rules and multipliers match. */
+    properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
     /** Defaults to `HOLD_TTL_MINUTES` after the command's clock. */
     expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
     dedupeKey: Schema.optionalKey(Schema.String),
@@ -97,6 +100,7 @@ export class Hold extends Domain.Command("Hold", {
     HoldExceeded,
     StandingBlocksUsage,
     FeatureNotMetered,
+    FeatureNotConsumable,
     SpendCapExceeded,
     MoneyCapExceeded,
   ],

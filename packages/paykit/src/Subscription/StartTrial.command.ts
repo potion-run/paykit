@@ -34,6 +34,8 @@ export class TrialStarted extends Domain.Event("TrialStarted", {
   price: Schema.optionalKey(Price),
   /** The money the tier's postpaid units are billed in, when it has any. */
   currency: Schema.optionalKey(Schema.String),
+  /** The next boundary of every allowance that runs on its own schedule. */
+  resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
   statusAfter: Schema.Literal("trialing"),
 }) {}
 

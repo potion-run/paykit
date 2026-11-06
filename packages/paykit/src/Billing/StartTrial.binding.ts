@@ -22,6 +22,8 @@ export interface StartTrialRequest {
   readonly trialEndsAt: DateTime.Utc;
   /** The account's period anchor. Defaults to UTC. */
   readonly anchorTz?: string;
+  /** The currency to sell in. Omitted means the tier's base currency. */
+  readonly currency?: string;
   /** The retry key, which is also the command id. */
   readonly dedupeKey: string;
 }

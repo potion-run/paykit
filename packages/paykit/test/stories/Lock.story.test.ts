@@ -460,7 +460,7 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
  * pool, which is why this bug is invisible to `check()` and only shows up in the
  * event the log keeps.
  */
-const creditRates = { ai: { default: 1, "gpt-large": 10 } };
+const creditRates = { ai: { default: 1, dimensions: { "gpt-large": 10 } } };
 const creditSubscribed = [
   Story.provide(Actor, system("test")),
   Story.clock(start),

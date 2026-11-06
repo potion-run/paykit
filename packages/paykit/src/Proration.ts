@@ -19,6 +19,31 @@ export const Proration = Schema.Struct({
 });
 export type Proration = typeof Proration.Type;
 
+/**
+ * What changing a quantity costs for the rest of a period. Only the billable
+ * part of the quantity is prorated — the included seats are free — and a
+ * reduction is a credit rather than a negative charge. Returns `null` when the
+ * billable quantity did not move, or the fraction rounds to nothing.
+ */
+export const prorateQuantity = (input: {
+  readonly from: number;
+  readonly to: number;
+  readonly included: number;
+  readonly unitPrice: { readonly amount: number; readonly currency: string };
+  readonly period: ProrationPeriod;
+  readonly at: DateTime.Utc;
+}): Proration | null => {
+  const billable = (quantity: number): number => Math.max(0, quantity - input.included);
+  const delta = billable(input.to) - billable(input.from);
+  if (delta === 0) return null;
+  const fraction = unusedFraction(input.period, input.at);
+  const amount = Math.round(Math.abs(delta) * input.unitPrice.amount * fraction);
+  if (amount === 0) return null;
+  return delta > 0
+    ? { currency: input.unitPrice.currency, credit: 0, charge: amount, due: amount }
+    : { currency: input.unitPrice.currency, credit: amount, charge: 0, due: -amount };
+};
+
 /** The unused part of a period, as a fraction in `[0, 1]`. */
 export const unusedFraction = (period: ProrationPeriod, at: DateTime.Utc): number => {
   const start = DateTime.toEpochMillis(period.start);

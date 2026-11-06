@@ -181,18 +181,20 @@ describe("credit rates", () => {
         }),
       ),
       ({ defaultRate, named, dimension }) => {
-        const rates = { default: defaultRate, "gpt-large": named };
-        if (creditRateOf(rates, undefined) !== defaultRate) return false;
-        if (creditRateOf(rates, "default") !== defaultRate) return false;
-        if (creditRateOf(rates, "gpt-large") !== named) return false;
-        return creditRateOf(rates, dimension) === (dimension === "gpt-large" ? named : defaultRate);
+        const rates = { default: defaultRate, dimensions: { "gpt-large": named } };
+        if (creditRateOf(rates) !== defaultRate) return false;
+        if (creditRateOf(rates, { dimension: "default" }) !== defaultRate) return false;
+        if (creditRateOf(rates, { dimension: "gpt-large" }) !== named) return false;
+        return (
+          creditRateOf(rates, { dimension }) === (dimension === "gpt-large" ? named : defaultRate)
+        );
       },
       { runs: 80, size: 20 },
     ),
   );
 
   it("an empty card prices nothing", () => {
-    expect(creditRateOf({}, "default")).toBe(0);
+    expect(creditRateOf({ default: 0 }, { dimension: "default" })).toBe(0);
     expect(includedRemainingOf({ included: 1 })).toBe(1);
   });
 });

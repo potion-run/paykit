@@ -18,6 +18,7 @@ import {
   toWithdrawTierChangeError,
   WithdrawTierChange,
 } from "./ScheduleTierChange.binding.ts";
+import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { toTrackUsageError, TrackUsage, usageOutcome } from "./TrackUsage.binding.ts";
@@ -65,6 +66,7 @@ export const BillingApiLayer = Layer.mergeAll(
                 feature: request.feature,
                 amount: request.amount,
                 ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                ...(request.properties === undefined ? {} : { properties: request.properties }),
                 dedupeKey: request.dedupeKey,
               },
               options(request.dedupeKey),
@@ -74,6 +76,38 @@ export const BillingApiLayer = Layer.mergeAll(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
           return usageOutcome(view, request);
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    SetQuantity,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+      return Effect.fn("Paykit.SetQuantity")(function* (account) {
+        const id = Subscription.ref(account).id;
+        return Effect.fn("Paykit.SetQuantity.set")(function* (request) {
+          const receipt = yield* bound(toSetQuantityError)(
+            client.SetQuantity(
+              id,
+              {
+                feature: request.feature,
+                quantity: request.quantity,
+                dedupeKey: request.dedupeKey,
+              },
+              options(request.dedupeKey),
+            ),
+          );
+          yield* bound(toSetQuantityError)(
+            client.Entitlements.get(id, { atLeast: receipt, ...options() }),
+          );
+          return {
+            quantity: receipt.reply.quantityAfter,
+            ...(receipt.reply.proration === undefined
+              ? {}
+              : { proration: receipt.reply.proration }),
+          };
         });
       });
     }),
@@ -113,6 +147,7 @@ export const BillingApiLayer = Layer.mergeAll(
                 feature: request.feature,
                 amount: request.amount,
                 ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                ...(request.properties === undefined ? {} : { properties: request.properties }),
                 ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
                 dedupeKey: request.dedupeKey,
               },
@@ -308,11 +343,10 @@ export const BillingApiLayer = Layer.mergeAll(
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
-          const grant = subscribeInputOf(
-            catalog,
-            request.tier,
-            request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz },
-          );
+          const grant = subscribeInputOf(catalog, request.tier, {
+            ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
+            ...(request.currency === undefined ? {} : { currency: request.currency }),
+          });
           if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),

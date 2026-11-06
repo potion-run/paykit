@@ -2,9 +2,10 @@ import type * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { UnitPrice } from "./Allowance.ts";
+import { UnitPrice, isQuantityGrant, pricingOf } from "./Allowance.ts";
 import { catalog, type Catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
 import { PaymentCapability, type MoneyProvider } from "./Payments.ts";
+import { pricingKey, soleUnitPriceOf } from "./Pricing.ts";
 import { Price, type Tier } from "./Tier.ts";
 
 /** A provider's price for a tier disagrees with the catalog. */
@@ -119,7 +120,8 @@ export interface ValidatedBillingStack {
   readonly store: Store;
 }
 
-const priceField = (price: Price, field: keyof Price): string => String(price[field]);
+const priceField = (price: Price, field: keyof Price): string =>
+  typeof price[field] === "object" ? JSON.stringify(price[field]) : String(price[field]);
 
 /** Validate a catalog against serializable provider descriptors. */
 export const validateProviderMappings = (
@@ -163,7 +165,9 @@ export const validateProviderMappings = (
       }
       for (const [featureId, unitPrice] of Object.entries(mapped)) {
         const grant = tier.grants.find((candidate) => candidate.feature === featureId);
-        const mismatch = checkUnitPrice(tier.id, featureId, grant?.unitPrice, unitPrice);
+        const pricing = grant === undefined ? null : pricingOf(grant);
+        const expected = pricing === null ? undefined : (soleUnitPriceOf(pricing) ?? undefined);
+        const mismatch = checkUnitPrice(tier.id, featureId, expected, unitPrice);
         if (mismatch !== null) return mismatch;
       }
     }
@@ -176,12 +180,38 @@ export const validateProviderMappings = (
         const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
         if (tier === undefined) continue;
         for (const grant of tier.grants) {
-          if (grant.unitPrice === undefined) continue;
+          // A seat is billed by the subscription's quantity, not a usage meter.
+          if (isQuantityGrant(grant)) continue;
+          const pricing = pricingOf(grant);
+          if (pricing === null) continue;
+          const unitPrice = soleUnitPriceOf(pricing);
+          if (unitPrice === null) {
+            // A ladder is a local price until a provider can hold a tiered
+            // price; refusing here is what stops a deploy from metering the
+            // quantity at the first band's rate.
+            return new CatalogPriceMismatch({
+              tier: tierId,
+              field: `pricing.${grant.feature}`,
+              expected: "a single unit price the provider can meter",
+              actual: pricingKey(pricing),
+            });
+          }
+          if ((unitPrice.units ?? 1) !== 1) {
+            // A package price is a local ledger price until a provider can
+            // divide the meter's quantity; a vendor without that would charge
+            // the package amount for every unit.
+            return new CatalogPriceMismatch({
+              tier: tierId,
+              field: `unitPrice.${grant.feature}`,
+              expected: "one unit per price",
+              actual: `${unitPrice.units} units per price`,
+            });
+          }
           if (provider.unitPrices?.[tierId]?.[grant.feature] !== undefined) continue;
           return new CatalogPriceMismatch({
             tier: tierId,
             field: `unitPrice.${grant.feature}`,
-            expected: `${grant.unitPrice.amount} ${grant.unitPrice.currency}`,
+            expected: `${unitPrice.amount} ${unitPrice.currency}`,
             actual: "missing",
           });
         }

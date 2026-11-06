@@ -8,32 +8,59 @@ export {
   Feature,
   FeatureId,
   FeatureKind,
+  RateCard,
+  RateMatch,
+  RateMultiplier,
+  RateRule,
+  creditRateOf,
   feature,
   messages,
+  rateCard,
   seats,
   storage_gb,
 } from "./Feature.ts";
-export type { FeatureInput } from "./Feature.ts";
+export type { FeatureInput, RateCardInput } from "./Feature.ts";
 export {
   Allowance,
   Allowances,
   Included,
   Overage,
+  ResetEvery,
   Resets,
   UnitPrice,
   allowance,
+  carryCapOf,
   grant,
+  pricingOf,
+  resetEveryOf,
   unitPriceKey,
 } from "./Allowance.ts";
-export type { AllowanceInput } from "./Allowance.ts";
+export type { AllowanceInput, PriceBand, Pricing, PricingInput } from "./Allowance.ts";
 export {
+  BillingUnits,
+  PricedLine,
+  currencyOfPricing,
+  priceKey,
+  priceOf,
+  priceOfUnits,
+  pricedLines,
+  pricesOf,
+  pricing,
+  pricingKey,
+  soleUnitPriceOf,
+  unitsOf,
+} from "./Pricing.ts";
+export {
+  AdditionalCurrency,
   CreditsExpire,
   Interval,
   Price,
   Tier,
+  TierCustomize,
   TierId,
   TierKind,
   TopUpThreshold,
+  priceFor,
   tier,
 } from "./Tier.ts";
 export type { TierInput } from "./Tier.ts";
@@ -42,8 +69,33 @@ export {
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
+  CatalogAdditionalCurrency,
   CatalogCapWithoutBilling,
+  CatalogProrateOnMetered,
+  CatalogQuantityCap,
+  CatalogQuantityField,
+  CatalogQuantityIncluded,
+  CatalogQuantityKind,
+  CatalogQuantityPricing,
+  CatalogQuantityResets,
+  CatalogQuantityWithoutPrice,
+  CatalogRateCardOnQuantity,
   CatalogCarryOverNeverResets,
+  CatalogCarryWithoutCarry,
+  CatalogCustomizeWithoutVariant,
+  CatalogPricingBand,
+  CatalogPricingConflict,
+  CatalogPricingCurrency,
+  CatalogPricingWithoutBilling,
+  CatalogRateCardConflict,
+  CatalogRateCardOnFlag,
+  CatalogRateCardOverride,
+  CatalogRateInvalid,
+  CatalogResetEveryNever,
+  CatalogUnknownVariant,
+  CatalogVariantCycle,
+  CatalogVariantOnPack,
+  CatalogVolumeRateRises,
   CatalogCarryOverOnFlag,
   CatalogCreditRatesOnFlag,
   CatalogCreditFeatureHasAllowance,
@@ -70,6 +122,7 @@ export {
   creditRatesOf,
   creditTermsOf,
   defineCatalog,
+  ratesOf,
   featureOf,
   tierOf,
   tierTermsOf,
@@ -588,6 +641,20 @@ export { NotSubscribed } from "./Subscription/NotSubscribed.rejection.ts";
 export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
 export { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
+export { AllowanceReset, ResetAllowance } from "./Subscription/ResetAllowance.command.ts";
+export { FeatureNotConsumable } from "./Subscription/FeatureNotConsumable.rejection.ts";
+export {
+  QuantityCapExceeded,
+  QuantityChanged,
+  QuantityExceeded,
+  QuantityInvalid,
+  SetQuantity,
+} from "./Subscription/SetQuantity.command.ts";
+export {
+  NoQuantityProrationDue,
+  QuantityProrationInvoiced,
+  RecordQuantityProrationInvoice,
+} from "./Subscription/QuantityProration.command.ts";
 export { TrialDeadlineNotLater } from "./Subscription/TrialDeadlineNotLater.rejection.ts";
 
 // ── 4. providers ────────────────────────────────────────────────────────────

@@ -2,6 +2,8 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { UnitPrice } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
+import { PricedLine } from "../Pricing.ts";
+import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { Standing } from "./Subscription.state.ts";
 
@@ -104,6 +106,13 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
    * recorded, so summing this per price is the period's billable split.
    */
   billable: Schema.optionalKey(Schema.Int),
+  /**
+   * The priced lines this event recorded: one per price the billable units
+   * crossed. A unit price records one line; a graduated ladder records one per
+   * band it moved through; a volume price records the delta at the band it
+   * landed in. `charge` is their sum.
+   */
+  priced: Schema.optionalKey(Schema.Array(PricedLine)),
   dedupeKey: Schema.optionalKey(Schema.String),
 }) {}
 
@@ -118,6 +127,8 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     amount: Schema.Int,
     /** Which rate prices this usage. Omitted means the card's `"default"`. */
     dimension: Schema.optionalKey(Schema.String),
+    /** The event's properties, which a rate card's rules and multipliers match. */
+    properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
     dedupeKey: Schema.optionalKey(Schema.String),
   },
   events: [UsageRecorded],
@@ -125,6 +136,7 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     AllowanceExceeded,
     StandingBlocksUsage,
     FeatureNotMetered,
+    FeatureNotConsumable,
     CreditExceeded,
     SpendCapExceeded,
     MoneyCapExceeded,

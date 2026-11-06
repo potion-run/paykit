@@ -56,7 +56,7 @@ const creditFeature = (over: {
   readonly used?: number;
   readonly allowed?: boolean;
 }) => ({
-  creditRates: { default: 1, "gpt-large": 10 },
+  creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
   included: null,
   used: over.used ?? 0,
   reserved: 0,

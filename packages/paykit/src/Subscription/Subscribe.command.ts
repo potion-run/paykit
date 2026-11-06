@@ -36,6 +36,8 @@ export class SubscriptionActivated extends Domain.Event("SubscriptionActivated",
   currency: Schema.optionalKey(Schema.String),
   /** What this account was sold at. The log answers the invoice, not the catalog. */
   price: Schema.optionalKey(Price),
+  /** The next boundary of every allowance that runs on its own schedule. */
+  resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
   statusAfter: Schema.Literal("active"),
 }) {}
 

@@ -6,6 +6,10 @@ import {
   AccountEventsLive,
   AccountEventsProjection,
 } from "./Subscription/AccountEventsProjection.ts";
+import {
+  AllowanceRollover,
+  AllowanceRolloverLive,
+} from "./Subscription/AllowanceRollover.policy.ts";
 import { AutoTopUp, AutoTopUpLive } from "./Subscription/AutoTopUp.policy.ts";
 import { BillingRead, BillingReadLive } from "./Subscription/BillingRead.projection.ts";
 import { BillingState } from "./Subscription/BillingState.view.ts";
@@ -27,7 +31,15 @@ export class PaykitModel extends Domain.Model("Paykit", {
   views: [Entitlements, BillingState],
   streams: [AccountEvents],
   projections: [AccountEventsProjection, BillingRead],
-  policies: [PeriodRollover, Dunning, HoldSweep, PeriodCloseUsage, AutoTopUp, OutboundEvents],
+  policies: [
+    PeriodRollover,
+    AllowanceRollover,
+    Dunning,
+    HoldSweep,
+    PeriodCloseUsage,
+    AutoTopUp,
+    OutboundEvents,
+  ],
 }) {}
 
 /**
@@ -41,6 +53,7 @@ export const PaykitHandlers = Layer.mergeAll(
   AccountEventsLive,
   BillingReadLive,
   PeriodRolloverLive,
+  AllowanceRolloverLive,
   DunningLive,
   HoldSweepLive,
   AutoTopUpLive,

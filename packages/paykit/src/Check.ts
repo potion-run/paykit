@@ -2,8 +2,9 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import type { Overage } from "./Allowance.ts";
+import type { Overage, Pricing } from "./Allowance.ts";
 import type { BillingReadRow } from "./BillingReadStore.ts";
+import type { RateCard } from "./Feature.ts";
 import { capacityOf } from "./Subscription/Allowance.verdict.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
@@ -16,6 +17,8 @@ export const CheckInput = Schema.Struct({
   amount: Schema.optionalKey(Schema.Int),
   /** Which rate prices it, for a credit-priced feature. */
   dimension: Schema.optionalKey(Schema.String),
+  /** The event's properties, which a rate card's rules and multipliers match. */
+  properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
 export type CheckInput = typeof CheckInput.Type;
 
@@ -61,13 +64,13 @@ export const evaluateCheck = (
           readonly remaining: number | null;
           readonly resetsAt: DateTime.Utc | null;
           /** Present on a credit-priced feature, whose `remaining` is the pool. */
-          readonly creditRates?: Readonly<Record<string, number>>;
+          readonly creditRates?: RateCard;
           /** Units this period may bill past `included`, when the tier caps it. */
           readonly cap?: number;
           /** How much of `remaining` a rollover added, which a cap does not. */
           readonly carried?: number;
-          /** What one billed unit costs, when the allowance is postpaid. */
-          readonly unitPrice?: { readonly amount: number; readonly currency: string };
+          /** How a billed unit is priced, when the allowance is postpaid. */
+          readonly pricing?: Pricing;
           /** The money ceiling for this feature this period, in minor units. */
           readonly moneyCap?: number;
           /** Money already billed for this feature this period. */
@@ -78,6 +81,8 @@ export const evaluateCheck = (
           readonly used?: number;
           /** What the tier included, which bounds the billable part. */
           readonly included?: number | "unlimited" | null;
+          /** The quantity a non-consumable feature holds. */
+          readonly quantity?: number;
         }
       >
     >;
@@ -100,16 +105,18 @@ export const evaluateCheck = (
       ...(feature.cap === undefined ? {} : { cap: feature.cap }),
       carried: feature.carried ?? 0,
       ...(feature.moneyCap === undefined ? {} : { moneyCap: feature.moneyCap }),
-      ...(feature.unitPrice === undefined ? {} : { unitPrice: feature.unitPrice }),
+      ...(feature.pricing === undefined ? {} : { pricing: feature.pricing }),
       billed: feature.billed ?? 0,
       used: feature.used ?? 0,
       reserved: feature.reserved ?? 0,
       remaining: feature.remaining,
       ...(feature.creditRates === undefined ? {} : { creditRates: feature.creditRates }),
+      ...(feature.quantity === undefined ? {} : { quantity: feature.quantity }),
     },
     ask: {
       amount,
       ...(input.dimension === undefined ? {} : { dimension: input.dimension }),
+      ...(input.properties === undefined ? {} : { properties: input.properties }),
     },
   });
   return {

@@ -79,7 +79,7 @@ const creditFeature = (over: {
   readonly used?: number;
   readonly allowed?: boolean;
 }) => ({
-  creditRates: { default: 1, "gpt-large": 10 },
+  creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
   included: null,
   used: over.used ?? 0,
   reserved: 0,
@@ -293,7 +293,7 @@ it.effect("a rate change after the hold does not change the bill", () =>
         price,
         credits: 0,
         creditsExpire: "period",
-        rates: { ai: { default: 5, "gpt-large": 99 } },
+        rates: { ai: { default: 5, dimensions: { "gpt-large": 99 } } },
         proration: { currency: "usd", credit: 9_900, charge: 9_900, due: 0 },
       }),
     ),
@@ -305,7 +305,7 @@ it.effect("a rate change after the hold does not change the bill", () =>
         remaining: { messages: 100 },
         credits: 50_000,
         creditsExpire: "period",
-        rates: { ai: { default: 5, "gpt-large": 99 } },
+        rates: { ai: { default: 5, dimensions: { "gpt-large": 99 } } },
         currency: "usd",
         interval: "month",
         priceBefore: price,
@@ -521,7 +521,10 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       Option.getOrNull(yield* entitlements.query(ref)),
     );
     expect(row?.credits).toBe(49_000);
-    expect(row?.features.ai?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
+    expect(row?.features.ai?.creditRates).toEqual({
+      default: 1,
+      dimensions: { "gpt-large": 10 },
+    });
     expect(row?.features.ai?.remaining).toBe(49_000);
     expect(row?.features.ai?.used).toBe(1_000);
     // The pool is one number, not a per-feature balance.

@@ -115,7 +115,7 @@ const aiFeature = (over: {
   readonly reserved?: number;
   readonly remaining: number;
 }) => ({
-  creditRates: { default: 1, "gpt-large": 10 },
+  creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
   included: null,
   used: over.used ?? 0,
   reserved: over.reserved ?? 0,

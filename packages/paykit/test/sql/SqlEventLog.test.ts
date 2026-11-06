@@ -325,7 +325,7 @@ describe("SqlEventLog", () => {
         credits: 49_000,
         features: {
           ai: {
-            creditRates: { default: 1, "gpt-large": 10 },
+            creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
             included: null,
             used: 1_000,
             reserved: 0,
@@ -344,7 +344,10 @@ describe("SqlEventLog", () => {
       // reports all survive the JSON column, so the edge prices a request
       // without reading the catalog.
       expect(read?.credits).toBe(49_000);
-      expect(read?.features.ai?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
+      expect(read?.features.ai?.creditRates).toEqual({
+        default: 1,
+        dimensions: { "gpt-large": 10 },
+      });
       expect(read?.features.ai?.remaining).toBe(49_000);
       expect(read?.features.ai?.used).toBe(1_000);
       expect(read?.features.ai?.included).toBeNull();

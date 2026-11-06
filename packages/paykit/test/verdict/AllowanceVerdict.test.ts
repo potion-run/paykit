@@ -25,7 +25,7 @@ const ask = (amount: number, dimension?: string) => ({
   ...(dimension === undefined ? {} : { dimension }),
 });
 
-const usd = { amount: 2, currency: "usd" };
+const usd = { _tag: "unit" as const, unitPrice: { amount: 2, currency: "usd" } };
 
 describe("capacity", () => {
   it("allows an amount that fits a blocking count", () => {
@@ -72,7 +72,7 @@ describe("capacity", () => {
       included: null,
       overage: "block",
       remaining: 100,
-      creditRates: { default: 1, "gpt-large": 10 },
+      creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
     });
     expect(capacityOf({ standing: "good", feature: credit, ask: ask(100) })).toEqual({
       _tag: "Allowed",
@@ -119,7 +119,7 @@ describe("capacity", () => {
       included: 100,
       used: 100,
       remaining: 0,
-      unitPrice: usd,
+      pricing: usd,
       moneyCap: 1_000,
     });
     expect(capacityOf({ standing: "good", feature: money, ask: ask(500) })).toEqual({
@@ -134,7 +134,7 @@ describe("capacity", () => {
     expect(
       capacityOf({
         standing: "blocked",
-        feature: judged({ cap: 0, remaining: 0, moneyCap: 0, unitPrice: usd }),
+        feature: judged({ cap: 0, remaining: 0, moneyCap: 0, pricing: usd }),
         ask: ask(1),
       }),
     ).toEqual({ _tag: "Standing", standing: "blocked" });
@@ -144,7 +144,7 @@ describe("capacity", () => {
     expect(
       capacityOf({
         standing: "good",
-        feature: judged({ cap: 0, remaining: 0, moneyCap: 0, unitPrice: usd }),
+        feature: judged({ cap: 0, remaining: 0, moneyCap: 0, pricing: usd }),
         ask: ask(1),
       }),
     ).toEqual({ _tag: "Ceiling", cap: 0, headroom: 0, requested: 1 });
@@ -154,7 +154,7 @@ describe("capacity", () => {
     expect(
       capacityOf({
         standing: "good",
-        feature: judged({ included: 100, used: 100, remaining: -1, moneyCap: 0, unitPrice: usd }),
+        feature: judged({ included: 100, used: 100, remaining: -1, moneyCap: 0, pricing: usd }),
         ask: ask(1),
       })._tag,
     ).toBe("Money");
@@ -169,7 +169,7 @@ describe("moneyOverflowOf", () => {
   it("names the total the request puts at risk", () => {
     expect(
       moneyOverflowOf(
-        judged({ included: 100, used: 100, remaining: 0, unitPrice: usd, moneyCap: 100 }),
+        judged({ included: 100, used: 100, remaining: 0, pricing: usd, moneyCap: 100 }),
         51,
       ),
     ).toEqual({ cap: 100, billed: 0, promised: 102 });
@@ -184,7 +184,7 @@ describe("moneyOverflowOf", () => {
           used: 100,
           reserved: 10,
           remaining: -10,
-          unitPrice: usd,
+          pricing: usd,
           moneyCap: 119,
         }),
         50,
@@ -257,7 +257,7 @@ describe("downgrade", () => {
       included: 100,
       overage: "bill",
       cap: 20,
-      unitPrice: usd,
+      pricing: { kind: "unit", amount: 2, currency: "usd" },
       moneyCap: 5_000,
     });
     expect(downgradeOf(pro, { used: 130, reserved: 0, billed: 0 })._tag).toBe("Ceiling");

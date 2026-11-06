@@ -19,6 +19,8 @@ export interface SubscribeRequest {
   readonly tier: string;
   /** The account's period anchor. Defaults to UTC. */
   readonly anchorTz?: string;
+  /** The currency to sell in. Omitted means the tier's base currency. */
+  readonly currency?: string;
 }
 
 const refusals = [

@@ -49,8 +49,8 @@ const GrantSpec = Schema.Struct({
 type GrantSpec = typeof GrantSpec.Type;
 
 const CreditRatesSpec = Schema.Struct({
-  default: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 }))),
-  "gpt-large": Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 }))),
+  default: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
+  "gpt-large": Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 20 }))),
 });
 
 const PriceSpec = Schema.Struct({
@@ -192,7 +192,15 @@ describe("activationOf", () => {
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
           ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
-          rates: input.rates === undefined ? {} : { ai: input.rates },
+          rates:
+            input.rates === undefined
+              ? {}
+              : {
+                  ai: {
+                    default: input.rates.default,
+                    dimensions: { "gpt-large": input.rates["gpt-large"] },
+                  },
+                },
           ...(input.price === undefined ? {} : { price: input.price }),
           period,
           ...(input.previousCurrency === undefined
@@ -260,7 +268,15 @@ describe("standingFrom", () => {
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
           ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
-          rates: input.rates === undefined ? {} : { ai: input.rates },
+          rates:
+            input.rates === undefined
+              ? {}
+              : {
+                  ai: {
+                    default: input.rates.default,
+                    dimensions: { "gpt-large": input.rates["gpt-large"] },
+                  },
+                },
           ...(input.price === undefined ? {} : { price: input.price }),
           period,
           ...(input.previousCurrency === undefined
@@ -341,7 +357,15 @@ describe("standingFrom", () => {
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
           ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
-          rates: input.rates === undefined ? {} : { ai: input.rates },
+          rates:
+            input.rates === undefined
+              ? {}
+              : {
+                  ai: {
+                    default: input.rates.default,
+                    dimensions: { "gpt-large": input.rates["gpt-large"] },
+                  },
+                },
           ...(input.price === undefined ? {} : { price: input.price }),
           period,
           ...(input.previousCurrency === undefined
