@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
+import { OperatorActions } from "./actions.ts";
 import { devToolsEvents, devToolsTabs, nextEventSeq } from "./DevTools.ts";
 import { formatDateTime, formatMoney, formatOptionalDateTime } from "./format.ts";
 import { Message } from "./Message.ts";
@@ -1926,14 +1927,14 @@ const draftView = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const updated = (field: string) => (value: string) => Message.UpdatedDraftField({ field, value });
+  const fields = OperatorActions[draft.kind].fields;
+  const tier = draft.values.tier ?? "";
   const changeQuote =
     draft.kind === "ChangeTier"
       ? Option.match(account.change, {
           onNone: () => Option.none(),
           onSome: (value) =>
-            value.tier === draft.tier && value._tag !== "Quoting"
-              ? Option.some(value)
-              : Option.none(),
+            value.tier === tier && value._tag !== "Quoting" ? Option.some(value) : Option.none(),
         })
       : Option.none();
   const isQuoted = Option.match(changeQuote, {
@@ -1945,96 +1946,50 @@ const draftView = (
     onSome: (value) => value._tag === "Applying",
   });
 
+  const tierOptions = (): ReadonlyArray<SelectOption> => {
+    const currentTier = Option.match(account.billing, {
+      onNone: () => undefined,
+      onSome: (billing) => billing.tier,
+    });
+    return Option.match(model.catalog, {
+      onNone: () => [],
+      onSome: (catalog) =>
+        catalog.tiers
+          .filter((entry) => entry.id !== currentTier)
+          .map((entry) => ({
+            value: entry.id,
+            label: entry.name === undefined ? entry.id : `${entry.name} (${entry.id})`,
+          })),
+    });
+  };
+
+  // One control per field the action declared; the table is the form.
   const controls = (): ReadonlyArray<Html> => {
-    switch (draft.kind) {
-      case "GrantCredits":
-        return [
-          textField(
-            "draft-amount",
-            "Amount (minor units)",
-            draft.amount,
-            updated("amount"),
-            h,
-            "number",
-          ),
-        ];
-      case "ExtendTrial":
-        return [
-          textField(
-            "draft-trial-ends",
-            "Trial ends",
-            draft.trialEndsAt,
-            updated("trialEndsAt"),
-            h,
-            "datetime-local",
-          ),
-        ];
-      case "EnterGrace":
-        return [
-          textField(
-            "draft-grace-until",
-            "Grace deadline",
-            draft.graceUntil,
-            updated("graceUntil"),
-            h,
-            "datetime-local",
-          ),
-        ];
-      case "RecordPayment":
-        return [
-          textField(
-            "draft-amount",
-            "Amount (minor units)",
-            draft.amount,
-            updated("amount"),
-            h,
-            "number",
-          ),
-          textField("draft-currency", "Currency", draft.currency, updated("currency"), h),
-        ];
-      case "RecordPaymentFailure":
-        return [
-          textField("draft-reason", "Reason", draft.reason, updated("reason"), h),
-          textField(
-            "draft-grace-until",
-            "Grace deadline",
-            draft.graceUntil,
-            updated("graceUntil"),
-            h,
-            "datetime-local",
-          ),
-        ];
-      case "Recover":
-      case "Expire":
-      case "ScheduleCancellation":
-      case "Resume":
-      case "WithdrawTierChange":
-        return [h.p([h.Class("pk-muted")], [`Send ${draft.kind} for this account?`])];
-      case "ChangeTier":
-      case "ScheduleTierChange": {
-        const currentTier = Option.match(account.billing, {
-          onNone: () => undefined,
-          onSome: (billing) => billing.tier,
-        });
-        const options = Option.match(model.catalog, {
-          onNone: () => [],
-          onSome: (catalog) =>
-            catalog.tiers
-              .filter((tier) => tier.id !== currentTier)
-              .map((tier) => ({
-                value: tier.id,
-                label: tier.name === undefined ? tier.id : `${tier.name} (${tier.id})`,
-              })),
-        });
-        return [
-          selectField("draft-tier", "New tier", draft.tier, options, updated("tier"), h),
-          ...Option.match(changeQuote, {
-            onNone: () => [],
-            onSome: (quote) => [prorationPanel(quote.proration, h)],
-          }),
-        ];
-      }
+    if (fields.length === 0) {
+      return [h.p([h.Class("pk-muted")], [`Send ${draft.kind} for this account?`])];
     }
+    const rendered = fields.map((field): Html => {
+      const value = draft.values[field.name] ?? "";
+      const id = `draft-${field.name}`;
+      switch (field.control) {
+        case "tier":
+          return selectField(id, field.label, value, tierOptions(), updated(field.name), h);
+        case "number":
+          return textField(id, field.label, value, updated(field.name), h, "number");
+        case "datetime":
+          return textField(id, field.label, value, updated(field.name), h, "datetime-local");
+        case "text":
+          return textField(id, field.label, value, updated(field.name), h);
+      }
+    });
+    const quote =
+      draft.kind === "ChangeTier"
+        ? Option.match(changeQuote, {
+            onNone: (): ReadonlyArray<Html> => [],
+            onSome: (value) => [prorationPanel(value.proration, h)],
+          })
+        : [];
+    return [...rendered, ...quote];
   };
 
   return card(
