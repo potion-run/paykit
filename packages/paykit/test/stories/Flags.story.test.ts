@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { Story } from "@alchemy.run/domain/Story";
 import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
@@ -156,13 +155,11 @@ it.effect("closes the period with nothing to reset for the flag", () =>
   ),
 );
 
-const Model = PaykitModel.layer(PaykitHandlers)
-  .pipe(Layer.provideMerge(MemoryBillingReadStore))
-  .pipe(Layer.provide(Domain.InMemory))
-  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
-
 /** The model, its store and every tenant binding. */
-const World = bindingsWorld(Model, { catalog: testCatalog });
+const World = bindingsWorld({
+  catalog: testCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
 
 it.live("check() allows a granted flag, refuses an ungranted one, and the read model agrees", () =>
   Effect.gen(function* () {

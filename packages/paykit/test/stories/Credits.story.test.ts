@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { Story } from "@alchemy.run/domain/Story";
 import { expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
@@ -437,13 +436,11 @@ it.effect("a tier change carries the balance over instead of re-granting", () =>
   ),
 );
 
-const Model = PaykitModel.layer(PaykitHandlers)
-  .pipe(Layer.provideMerge(MemoryBillingReadStore))
-  .pipe(Layer.provide(Domain.InMemory))
-  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
-
 /** The model, its store and every tenant binding. */
-const World = bindingsWorld(Model, { catalog: testCatalog });
+const World = bindingsWorld({
+  catalog: testCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
 
 it.live("check prices a request from the pool, by dimension, on every read path", () =>
   Effect.gen(function* () {

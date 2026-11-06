@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
@@ -9,10 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Preview } from "../../src/Billing/Preview.binding.ts";
 import type { PreviewCommand } from "../../src/Billing/Preview.operation.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { tierTermsOf } from "../../src/Catalog.ts";
-import { catalogLayer } from "../../src/CatalogService.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -29,17 +25,10 @@ import {
   TierName,
 } from "./Arbitraries.ts";
 
-const World = bindingsWorld(
-  PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
-    Layer.provide(Domain.InMemory),
-    Layer.provideMerge(
-      Layer.mergeAll(Layer.succeed(Actor, system("test")), catalogLayer(testCatalog)),
-    ),
-    // The tenant bundle carries `List`, which reads the projection store.
-    Layer.provideMerge(MemoryBillingReadStore),
-  ),
-  { catalog: testCatalog },
-);
+const World = bindingsWorld({
+  catalog: testCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
 
 const Case = Schema.Struct({
   kind: Schema.Literals(["subscribe", "changeTier", "cancel"]),

@@ -1,18 +1,14 @@
-import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { List } from "../../src/Billing/List.binding.ts";
 import {
   BillingReadStore,
   DEFAULT_PAGE,
   MAX_PAGE,
-  MemoryBillingReadStore,
   type BillingReadRow,
   queryRows,
 } from "../../src/BillingReadStore.ts";
 import { catalog } from "../../src/Catalog.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { standingOf } from "../../src/Subscription/Subscription.state.ts";
 import { bindingsWorld } from "../support/Bindings.ts";
 
@@ -133,12 +129,7 @@ describe("the List binding", () => {
       Effect.provide(
         // The binding is built from the model, so the world is the model and its
         // store — the same world every other binding test provides.
-        bindingsWorld(
-          PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
-            .pipe(Layer.provide(Domain.InMemory))
-            .pipe(Layer.provideMerge(MemoryBillingReadStore)),
-          { catalog: testCatalog },
-        ),
+        bindingsWorld({ catalog: testCatalog }),
       ),
     ),
   );

@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
@@ -10,11 +9,9 @@ import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { ChargeProration } from "../../src/Billing/Portal.binding.ts";
-import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
-import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
   PaymentDeclined,
   Payments,
@@ -100,20 +97,11 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
 const world = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
   // `provideMerge` so the projection's store is the one the test reads: a
   // `provide` would give the handlers a private copy.
-  bindingsWorld(
-    PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore))).pipe(
-      Layer.provide(Domain.InMemory),
-      Layer.provideMerge(MemoryBillingReadStore),
-      Layer.provideMerge(
-        Layer.mergeAll(
-          Layer.succeed(Actor, system("test")),
-          catalogLayer(testCatalog),
-          invoicing(asked, failWith),
-        ),
-      ),
-    ),
-    { catalog: testCatalog, providers: invoicing(asked, failWith) },
-  );
+  bindingsWorld({
+    catalog: testCatalog,
+    guards: Layer.succeed(Actor, system("test")),
+    payments: invoicing(asked, failWith),
+  });
 
 /** Pro, then up to scale: the state now owes `upgrade.due`. */
 const upgraded = Effect.gen(function* () {

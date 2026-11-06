@@ -1,13 +1,9 @@
-import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Subscribe } from "../../src/Billing/Subscribe.binding.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -36,29 +32,20 @@ const testCatalog = Effect.runSync(
 );
 const account = "acct_checkout";
 
-const ModelWorld = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
-  .pipe(Layer.provide(Domain.InMemory))
-  // The tenant bundle carries `List`, which reads the projection store.
-  .pipe(Layer.provideMerge(MemoryBillingReadStore));
-
 const withMemory = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
   Effect.provide(
     effect,
-    bindingsWorld(ModelWorld, { catalog: testCatalog, providers: PaymentsMemory().payments }),
+    bindingsWorld({ catalog: testCatalog, payments: PaymentsMemory().payments }),
   ) as Effect.Effect<A, E, never>;
 
 const withManual = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
   Effect.provide(
     effect,
-    bindingsWorld(ModelWorld, { catalog: testCatalog, providers: PaymentsManual().payments }),
+    bindingsWorld({ catalog: testCatalog, payments: PaymentsManual().payments }),
   ) as Effect.Effect<A, E, never>;
 
 const withNoProvider = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
-  Effect.provide(effect, bindingsWorld(ModelWorld, { catalog: testCatalog })) as Effect.Effect<
-    A,
-    E,
-    never
-  >;
+  Effect.provide(effect, bindingsWorld({ catalog: testCatalog })) as Effect.Effect<A, E, never>;
 
 const state = Effect.gen(function* () {
   const subscription = yield* Subscription;

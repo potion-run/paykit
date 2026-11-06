@@ -1,42 +1,69 @@
 import * as Layer from "effect/Layer";
+import { DevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import type { Catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
+import { paykitWorld } from "../../src/World.ts";
+
+/** What a fixture may vary in the world it runs in. */
+export interface BindingsWorldOptions<R = never> {
+  readonly catalog: Catalog;
+  /**
+   * A model the test built itself. Use it when the fixture needs its own
+   * platform, store or guards and the options below do not say it. The tenant
+   * bindings are provided over it, exactly as `paykitWorld` would.
+   */
+  readonly base?: Layer.Layer<any, never, R>;
+  /** The auth guards; defaults to `DevGuards` when the world builds the model. */
+  readonly guards?: Layer.Layer<any, never, R>;
+  /** A pre-built money layer, for a test fake that is not a `MoneyProvider`. */
+  readonly payments?: Layer.Layer<any, never, R>;
+  /** The platform; defaults to `Domain.InMemory`. */
+  readonly platform?: Layer.Layer<any, never, R>;
+  /** The read store; defaults to `MemoryBillingReadStore`. */
+  readonly readStore?: Layer.Layer<any, never, R>;
+}
 
 /**
  * A test world with the tenant bindings in it.
  *
+ * The common case is the world a deployment builds, with the in-memory platform
+ * and the development guards: `bindingsWorld({ catalog })`. A fixture that
+ * needs a different platform, store, guard or money fake states it here instead
+ * of assembling the graph again, and one that needs a model of its own passes
+ * `base` and keeps the bindings provided over it.
+ *
  * The bindings resolve the model, the catalog and the provider router when the
  * layer is built, so they are *provided* by the world rather than merged beside
- * it: a sibling does not see another sibling's services. Every suite that calls
- * a binding goes through here, so there is one answer to "how does a test get a
- * `TrackUsage`", and the answer is the same one a deployment uses.
+ * it: a sibling does not see another sibling's services.
  *
  * ### A world with bindings
  * **Example:** The model, its store and every tenant verb
  * ```typescript
- * const base = PaykitModel.layer(PaykitHandlers).pipe(
- *   Layer.provideMerge(MemoryBillingReadStore),
- *   Layer.provide(Domain.InMemory),
- * );
- * const World = bindingsWorld(base, { catalog: testCatalog });
+ * const World = bindingsWorld({ catalog: testCatalog });
  * ```
  *
  * @internal
  */
-export const bindingsWorld = (
-  base: Layer.Layer<any, never, never>,
-  options: {
-    readonly catalog: Catalog;
-    /** The provider layer a purchase, portal or proration call reaches. */
-    readonly providers?: Layer.Layer<any, never, never>;
-  },
-): Layer.Layer<any, never, never> => {
+export const bindingsWorld = <R = never>(
+  options: BindingsWorldOptions<R>,
+): Layer.Layer<any, never, R> => {
+  if (options.base === undefined) {
+    return paykitWorld({
+      catalog: options.catalog,
+      guards: options.guards ?? DevGuards,
+      ...(options.payments === undefined ? {} : { payments: options.payments }),
+      ...(options.platform === undefined ? {} : { platform: options.platform }),
+      ...(options.readStore === undefined ? {} : { readStore: options.readStore }),
+      bindings: "tenant",
+    }) as Layer.Layer<any, never, R>;
+  }
   const catalog = catalogLayer(options.catalog);
-  const services = options.providers === undefined ? base : Layer.mergeAll(base, options.providers);
+  const services =
+    options.payments === undefined ? options.base : Layer.mergeAll(options.base, options.payments);
   return Layer.mergeAll(
     services,
     catalog,
     BillingInProcess.pipe(Layer.provide(services), Layer.provide(catalog)),
-  ) as Layer.Layer<any, never, never>;
+  ) as Layer.Layer<any, never, R>;
 };

@@ -336,6 +336,8 @@ export type { VerifyOptions } from "./Verify.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel as Model } from "./Paykit.model.ts";
+export { paykitWorld } from "./World.ts";
+export type { PaykitWorldOptions } from "./World.ts";
 export { BillingApi } from "./BillingApi.api.ts";
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";

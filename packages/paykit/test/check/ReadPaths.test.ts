@@ -1,4 +1,3 @@
-import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,11 +8,10 @@ import { Check } from "../../src/Billing/Check.binding.ts";
 import { CheckOverTransport } from "../../src/Billing/CheckOverTransport.layer.ts";
 import { CheckReadModel } from "../../src/Billing/CheckReadModel.layer.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
-import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { BillingReadStore } from "../../src/BillingReadStore.ts";
 import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { CheckTransport, type CheckResult } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
-import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -36,17 +34,15 @@ const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const account = "acct_paths";
 
-const Model = PaykitModel.layer(PaykitHandlers)
-  .pipe(Layer.provideMerge(MemoryBillingReadStore))
-  .pipe(Layer.provide(Domain.InMemory))
-  .pipe(Layer.provideMerge(Layer.succeed(Actor, system("test"))));
-
 /**
  * The tenant bundle, plus the two read paths a `Check` can take instead of the
  * model: one row from the projection, or a transport. They are layers of the
  * same tag, so a test swaps one for another and the call site does not move.
  */
-const World = bindingsWorld(Model, { catalog: testCatalog });
+const World = bindingsWorld({
+  catalog: testCatalog,
+  guards: Layer.succeed(Actor, system("test")),
+});
 
 const run = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(World));
 
