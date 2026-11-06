@@ -8,7 +8,6 @@
  * entry. A write comes through `@potion.run/paykit` (the root), `./Billing` or
  * `./Admin`, so a reader cannot reach a mutation by reading.
  *
- * @entry
  */
 export {
   Allowance,
