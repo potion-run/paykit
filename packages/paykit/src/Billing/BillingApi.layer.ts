@@ -99,11 +99,14 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
-          yield* bound(toSetQuantityError)(
+          const view = yield* bound(toSetQuantityError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+          // A no-op decision records no event, so the reply cannot carry the
+          // quantity; the view just caught up to the change and is the same
+          // number a caller reads next.
           return {
-            quantity: receipt.reply.quantityAfter,
+            quantity: view?.features[request.feature]?.quantity ?? receipt.reply.quantityAfter,
             ...(receipt.reply.proration === undefined
               ? {}
               : { proration: receipt.reply.proration }),

@@ -97,6 +97,21 @@ describe("a vendor that owns the subscription quantity", () => {
       expect(yield* charge({ prorationId: "seats:add" })).toEqual({ outcome: "nothing" });
     }).pipe(Effect.provide(worldOf([memory])));
   });
+
+  it.live("answers the quantity it left in place when the change writes nothing", () => {
+    const memory = PaymentsMemory();
+    return Effect.gen(function* () {
+      yield* subscribed("memory");
+      const set = yield* SetQuantity(account);
+      // The account starts with the 5 free seats. Setting them again is a no-op
+      // decision, and the reply still answers what the account holds.
+      const same = yield* set({ feature: "seats", quantity: 5, dedupeKey: "seats:same" });
+      expect(same).toEqual({ quantity: 5 });
+      // The vendor is still told the total, under the caller's key.
+      expect(memory.quantities).toHaveLength(1);
+      expect(memory.quantities[0]?.commandId).toBe("seats:same");
+    }).pipe(Effect.provide(worldOf([memory])));
+  });
 });
 
 describe("a vendor without the quantity capability", () => {
