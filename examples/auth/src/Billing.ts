@@ -8,7 +8,7 @@ import {
   type MoneyProvider,
   Paykit,
   PaykitHandlers,
-  tierTermsOf,
+  subscribeInputOf,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -53,12 +53,12 @@ export const BillingLayers = Layer.mergeAll(
 export const BillingTestLive = Layer.provide(BillingLayers, Domain.InMemory);
 
 /**
- * The fields a `Subscribe` command carries for a tier. `decide` is pure and
- * cannot look a price up, so the caller joins the catalog's terms; the
- * `CatalogGuard` refuses anything that disagrees with the deploy.
+ * The input a `Subscribe` carries for a tier. `decide` is pure and cannot look
+ * a price up; `subscribeInputOf` is the package's join, and `CatalogGuard`
+ * still refuses anything that disagrees with the deploy.
  */
 export const tierCommand = (tierId: string) => {
-  const terms = tierTermsOf(Catalog, tierId);
-  if (terms === null) throw new Error(`no tier ${tierId} in the catalog`);
-  return { tier: tierId, ...terms };
+  const input = subscribeInputOf(Catalog, tierId);
+  if (input === null) throw new Error(`no tier ${tierId} in the catalog`);
+  return input;
 };

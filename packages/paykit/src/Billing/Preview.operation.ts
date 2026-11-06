@@ -5,11 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 import { Actor, system } from "../Auth/Actor.ts";
-import { type Catalog, tierOf, tierTermsOf } from "../Catalog.ts";
+import type { Catalog } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import type { Proration } from "../Proration.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
-import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
 import { ScheduleCancellation } from "../Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange } from "../Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../Subscription/Subscribe.command.ts";
@@ -17,6 +16,7 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
+import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 
 /** What a caller wants decided before anything is recorded. */
 export type PreviewCommand =
@@ -74,38 +74,16 @@ const commandOf = (
 ): Previewable | null => {
   if (input.kind === "cancel") return new ScheduleCancellation();
   if (input.kind === "withdrawTierChange") return new WithdrawTierChange();
-  const tier = tierOf(catalog, input.tier);
-  const terms = tierTermsOf(catalog, input.tier);
-  if (terms === null || tier === null) return null;
-  // The catalog-derived fields travel together: a command that carried the
-  // allowances but not the credit terms would be refused by `CatalogGuard`.
-  const { allowances, credits, creditsExpire, topUp, rates } = terms;
-  const price = tier.price === undefined ? {} : { price: tier.price };
-  const topUpField = topUp === undefined ? {} : { topUp };
   if (input.kind === "subscribe") {
-    return new Subscribe({
-      tier: input.tier,
-      allowances,
-      credits,
-      creditsExpire,
-      ...topUpField,
-      rates,
-      ...price,
-    });
+    const subscribed = subscribeInputOf(catalog, input.tier);
+    return subscribed === null ? null : new Subscribe(subscribed);
   }
   if (input.kind === "scheduleTierChange") {
-    return new ScheduleTierChange({
-      tier: input.tier,
-      allowances,
-      credits,
-      creditsExpire,
-      ...topUpField,
-      rates,
-      ...price,
-    });
+    const scheduled = scheduleTierChangeInputOf(catalog, input.tier);
+    return scheduled === null ? null : new ScheduleTierChange(scheduled);
   }
   const plan = planChangeTier(catalog, input.tier, state, now);
-  return plan === null ? null : plan.command;
+  return plan === null ? null : new ChangeTier(plan.input);
 };
 
 const prorationOf = (events: ReadonlyArray<PreviewEvent>): Proration | undefined =>

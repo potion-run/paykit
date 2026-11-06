@@ -1,11 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { BillingApi } from "../BillingApi.api.ts";
-import { tierTermsOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { Check, toCheckError } from "./Check.binding.ts";
@@ -259,27 +259,14 @@ export const BillingApiLayer = Layer.mergeAll(
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
-          const terms = tierTermsOf(catalog, request.tier);
-          if (terms === null) {
+          const scheduled = scheduleTierChangeInputOf(catalog, request.tier);
+          if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toScheduleTierChangeError)(
-            client.ScheduleTierChange(
-              id,
-              {
-                tier: request.tier,
-                allowances,
-                credits,
-                creditsExpire,
-                ...(topUp === undefined ? {} : { topUp }),
-                rates,
-                ...(price === undefined ? {} : { price }),
-              },
-              options(request.dedupeKey),
-            ),
+            client.ScheduleTierChange(id, scheduled, options(request.dedupeKey)),
           );
           const view = yield* bound(toScheduleTierChangeError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
@@ -321,27 +308,20 @@ export const BillingApiLayer = Layer.mergeAll(
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
-          const terms = tierTermsOf(catalog, request.tier);
-          if (terms === null) {
+          const grant = subscribeInputOf(
+            catalog,
+            request.tier,
+            request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz },
+          );
+          if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toStartTrialError)(
             client.StartTrial(
               id,
-              {
-                tier: request.tier,
-                allowances,
-                credits,
-                creditsExpire,
-                ...(topUp === undefined ? {} : { topUp }),
-                rates,
-                trialEndsAt: request.trialEndsAt,
-                ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
-                ...(price === undefined ? {} : { price }),
-              },
+              { ...grant, trialEndsAt: request.trialEndsAt },
               options(request.dedupeKey),
             ),
           );

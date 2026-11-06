@@ -4,11 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
-import { tierTermsOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
-import { planChangeTier } from "../Subscription/ChangeTier.plan.ts";
+import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
 import { Hold as HoldCommand } from "../Subscription/Hold.command.ts";
@@ -22,6 +21,7 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
+import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 import { webhookOperation } from "../Webhooks.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
@@ -297,7 +297,11 @@ export const BillingInProcess = Layer.mergeAll(
             );
           }
           yield* bound(toChangeTierError)(
-            asSystem(subscription.send(ref, plan.command, { commandId: request.dedupeKey })),
+            asSystem(
+              subscription.send(ref, new ChangeTierCommand(plan.input), {
+                commandId: request.dedupeKey,
+              }),
+            ),
           );
           return { tier: request.tier, proration: plan.proration };
         });
@@ -313,28 +317,17 @@ export const BillingInProcess = Layer.mergeAll(
       return Effect.fn("Paykit.ScheduleTierChange")(function* (account) {
         const ref = Subscription.ref(account);
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
-          const terms = tierTermsOf(catalog, request.tier);
-          if (terms === null) {
+          const scheduled = scheduleTierChangeInputOf(catalog, request.tier);
+          if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toScheduleTierChangeError)(
             asSystem(
-              subscription.send(
-                ref,
-                new ScheduleTierChangeCommand({
-                  tier: request.tier,
-                  allowances,
-                  credits,
-                  creditsExpire,
-                  ...(topUp === undefined ? {} : { topUp }),
-                  rates,
-                  ...(price === undefined ? {} : { price }),
-                }),
-                { commandId: request.dedupeKey },
-              ),
+              subscription.send(ref, new ScheduleTierChangeCommand(scheduled), {
+                commandId: request.dedupeKey,
+              }),
             ),
           );
           const view = yield* bound(toScheduleTierChangeError)(
@@ -377,28 +370,21 @@ export const BillingInProcess = Layer.mergeAll(
       return Effect.fn("Paykit.StartTrial")(function* (account) {
         const ref = Subscription.ref(account);
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
-          const terms = tierTermsOf(catalog, request.tier);
-          if (terms === null) {
+          const grant = subscribeInputOf(
+            catalog,
+            request.tier,
+            request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz },
+          );
+          if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
-          const { allowances, credits, creditsExpire, topUp, rates, price } = terms;
           const receipt = yield* bound(toStartTrialError)(
             asSystem(
               subscription.send(
                 ref,
-                new StartTrialCommand({
-                  tier: request.tier,
-                  allowances,
-                  credits,
-                  creditsExpire,
-                  ...(topUp === undefined ? {} : { topUp }),
-                  rates,
-                  trialEndsAt: request.trialEndsAt,
-                  ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
-                  ...(price === undefined ? {} : { price }),
-                }),
+                new StartTrialCommand({ ...grant, trialEndsAt: request.trialEndsAt }),
                 { commandId: request.dedupeKey },
               ),
             ),

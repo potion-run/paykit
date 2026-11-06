@@ -3,7 +3,7 @@ import {
   allowancesOf,
   catalog,
   catalogLayer,
-  tierTermsOf,
+  subscribeInputOf,
   DevGuards,
   Manual,
   MemoryBillingReadStore,
@@ -23,15 +23,15 @@ import { billingCatalog } from "./catalog.ts";
 export const Catalog = Effect.runSync(catalog(billingCatalog));
 
 /**
- * The input a `Subscribe` or `ChangeTier` carries for a tier. A command has to
- * carry its own allowances and price because `decide` is pure — so this is the
- * one place the example turns a tier id into a command, and `CatalogGuard`
- * refuses anything that disagrees with the catalog.
+ * The input a `Subscribe` carries for a tier. `decide` is pure, so a command
+ * carries its own allowances and price; `subscribeInputOf` is the package's
+ * join, and `CatalogGuard` still refuses anything that disagrees with the
+ * catalog.
  */
 export const tierCommand = (tierId: string) => {
-  const terms = tierTermsOf(Catalog, tierId);
-  if (terms === null) throw new Error(`no tier ${tierId} in the catalog`);
-  return { tier: tierId, ...terms };
+  const input = subscribeInputOf(Catalog, tierId);
+  if (input === null) throw new Error(`no tier ${tierId} in the catalog`);
+  return input;
 };
 
 /** What a tier grants, for an assertion or a fixture. */
