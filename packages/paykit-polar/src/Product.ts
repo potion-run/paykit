@@ -50,6 +50,18 @@ export interface ProductProps {
    * the product and a metered price is create-only.
    */
   readonly usage?: ReadonlyArray<ProductUsage>;
+  /**
+   * One seat-based price per non-consumable feature. Polar's seat count is
+   * subscription-wide, so a tier should map at most one billable seat; the
+   * deploy's `Stack` validation refuses more than one.
+   */
+  readonly seats?: ReadonlyArray<ProductSeat>;
+}
+
+/** One seat-based price embedded in a product. */
+export interface ProductSeat {
+  /** What one seat costs per period, in minor units. */
+  readonly unitPrice: UnitPrice;
 }
 
 /** One metered price embedded in a product. */
@@ -78,6 +90,8 @@ export type Product = Resource<
     price: Price;
     /** The metered prices the product currently carries, by meter. */
     usage: ReadonlyArray<ProductUsage>;
+    /** The seat-based prices the product currently carries. */
+    seats: ReadonlyArray<ProductSeat>;
     /** Whether Polar has archived the product. */
     archived: boolean;
     /** Polar's creation timestamp, used to pick the newest generation. */
@@ -155,6 +169,16 @@ type MeteredPrice = {
 const isMeteredPrice = (price: VendorPrice): price is VendorPrice & MeteredPrice =>
   "meter_id" in price && "unit_amount" in price;
 
+type SeatPrice = {
+  readonly id: string;
+  readonly price_currency: string;
+  readonly tiers: { readonly tiers: ReadonlyArray<{ readonly unit_amount: number | string }> };
+  readonly is_archived: boolean;
+};
+
+const isSeatPrice = (price: VendorPrice): price is VendorPrice & SeatPrice =>
+  "tiers" in price && !("meter_id" in price);
+
 const intervalOf = (interval: Price["interval"]): Polar.RecurringInterval =>
   interval === "annual" ? "year" : "month";
 
@@ -197,6 +221,15 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
           currency: candidate.price_currency,
         },
       })),
+    seats: product.prices
+      .filter(isSeatPrice)
+      .filter((candidate) => !candidate.is_archived)
+      .map((candidate) => ({
+        unitPrice: {
+          amount: Number(candidate.tiers.tiers[0]?.unit_amount ?? 0),
+          currency: candidate.price_currency,
+        },
+      })),
     archived: product.is_archived,
     createdAt: product.created_at,
   };
@@ -205,6 +238,19 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
 /** The meters a product should embed; a one-time product cannot carry one. */
 const desiredUsage = (news: ProductProps): ReadonlyArray<ProductUsage> =>
   news.kind === "one_off" ? [] : (news.usage ?? []);
+
+const desiredSeats = (news: ProductProps): ReadonlyArray<ProductSeat> =>
+  news.kind === "one_off" ? [] : (news.seats ?? []);
+
+const sameSeats = (left: ReadonlyArray<ProductSeat>, right: ReadonlyArray<ProductSeat>): boolean =>
+  left.length === right.length &&
+  left.every((candidate) =>
+    right.some(
+      (other) =>
+        other.unitPrice.amount === candidate.unitPrice.amount &&
+        other.unitPrice.currency === candidate.unitPrice.currency,
+    ),
+  );
 
 const sameUsage = (
   left: ReadonlyArray<ProductUsage>,
@@ -234,6 +280,7 @@ const shouldReplace = (news: ProductProps, output: Product["Attributes"] | undef
   if (news.tier !== output.tier) return true;
   if ((news.kind ?? "subscription") !== output.kind) return true;
   if (!sameUsage(desiredUsage(news), output.usage ?? [])) return true;
+  if (!sameSeats(desiredSeats(news), output.seats ?? [])) return true;
   return !samePrice(news.price, output.price, output.kind);
 };
 
@@ -278,7 +325,8 @@ const findByTierAndPrice = Effect.fn(function* (stage: string, tier: string, new
     const attrs = attrsOf(product);
     return (
       samePrice(attrs.price, news.price, kindOf(product)) &&
-      sameUsage(desiredUsage(news), attrs.usage)
+      sameUsage(desiredUsage(news), attrs.usage) &&
+      sameSeats(desiredSeats(news), attrs.seats)
     );
   });
 });
@@ -370,6 +418,14 @@ export const ProductProvider = () =>
                 meter_id: usage.meterId,
                 unit_amount: usage.unitPrice.amount,
                 price_currency: usage.unitPrice.currency,
+              })),
+              ...desiredSeats(news).map((seat) => ({
+                amount_type: "seat_based",
+                price_currency: seat.unitPrice.currency,
+                tiers: {
+                  type: "volume" as const,
+                  tiers: [{ bound: null, unit_amount: seat.unitPrice.amount }],
+                },
               })),
             ],
             ...(desiredDescription.length > 0 ? { description: desiredDescription } : {}),

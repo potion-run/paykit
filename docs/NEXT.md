@@ -35,8 +35,8 @@ billing fact, plus a per-period, per-feature rollup), postpaid usage priced per 
 cap, an outbound edge
 that signs and retries every committed event, and a provider-port edge with webhook decoders for
 Stripe and Polar, which archiving sweeps keep a retired price or product from being sold
-(`RetiredPrices` in Stripe, `RetiredProducts` in Polar), and the Stripe seat prices that let the
-subscription item own a seat count. What the deploy does: validates the catalog
+(`RetiredPrices` in Stripe, `RetiredProducts` in Polar), and the Stripe seat prices and Polar seat count that let
+the subscription own a seat quantity. What the deploy does: validates the catalog
 into `BillingStack`, and `StripePrices` / `PolarPrices` create the base prices and products its tiers
 are sold under, plus a meter and a metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.

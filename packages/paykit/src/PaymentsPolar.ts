@@ -46,6 +46,16 @@ export interface PolarBindings {
     readonly commandId?: string;
   }) => Effect.Effect<{ readonly refundId: string }, PaymentError>;
   /**
+   * Optional: set the subscription's seat count. Polar's count is one number on
+   * the subscription, so the provider declares `seatScope: "subscription"`.
+   */
+  readonly setQuantity?: (args: {
+    readonly subscription: string;
+    readonly seats: number;
+    readonly proration: "immediate" | "none";
+    readonly commandId: string;
+  }) => Effect.Effect<{ readonly invoiceId?: string }, PaymentError>;
+  /**
    * Optional: report a closed period's billable units to the vendor's meters.
    * A merchant of record that can ingest usage declares it; one that cannot
    * leaves the close with `ProviderCapabilityMissing`.
@@ -68,6 +78,11 @@ export interface PolarTier {
    * checks each unit price against the catalog before anything is billed.
    */
   readonly usage?: Readonly<Record<string, UnitPrice>>;
+  /**
+   * The per-seat price of the product's seat-based price. Polar's seat count is
+   * subscription-wide, so a tier may map only one billable seat feature.
+   */
+  readonly seats?: Readonly<Record<string, UnitPrice>>;
 }
 
 export interface PolarProps {
@@ -92,6 +107,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
     "portal",
     ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
+    ...(props.bindings.setQuantity === undefined ? [] : (["quantity"] as const)),
   ]);
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "polar", op }));
@@ -163,9 +179,28 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
       charge: () => missing("charge"),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
-      // Polar's seat count is subscription-wide and its update surface is not
-      // wired yet; a seat change stays a local proration.
-      setQuantity: () => missing("setQuantity"),
+      setQuantity: ({
+        subscription,
+        quantity,
+        proration,
+        commandId,
+      }: {
+        account: string;
+        subscription: string;
+        tier: string;
+        feature: string;
+        quantity: number;
+        proration: "immediate" | "none";
+        commandId: string;
+      }) =>
+        props.bindings.setQuantity === undefined
+          ? missing("setQuantity")
+          : props.bindings.setQuantity({
+              subscription,
+              seats: quantity,
+              proration,
+              commandId,
+            }),
       reportUsage: (args: {
         account: string;
         periodStart: DateTime.Utc;
@@ -191,6 +226,11 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
       mapped.usage === undefined ? [] : [[tier, { ...mapped.usage }] as const],
     ),
   );
+  const seatPrices = Object.fromEntries(
+    Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
+      mapped.seats === undefined ? [] : [[tier, { ...mapped.seats }] as const],
+    ),
+  );
 
   return {
     name: "polar",
@@ -199,6 +239,8 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
     ...(Object.keys(unitPrices).length === 0 ? {} : { unitPrices }),
+    ...(Object.keys(seatPrices).length === 0 ? {} : { seatPrices }),
+    ...(props.bindings.setQuantity === undefined ? {} : { seatScope: "subscription" as const }),
     ...(props.webhook === undefined ? {} : { webhook: props.webhook }),
   };
 };

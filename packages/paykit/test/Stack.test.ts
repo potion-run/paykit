@@ -276,6 +276,73 @@ describe("Stack", () => {
     }),
   );
 
+  it.effect("refuses a subscription-wide seat count with two billable seat features", () =>
+    Effect.gen(function* () {
+      const seats = feature({ id: "seats", kind: "non_consumable" });
+      const workspaces = feature({ id: "workspaces", kind: "non_consumable" });
+      const seatTier = tier({
+        id: "team",
+        price: proPrice,
+        grants: [
+          allowance(seats, {
+            included: 5,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 1_000, currency: "usd" },
+            cap: 20,
+          }),
+          allowance(workspaces, {
+            included: 1,
+            overage: "bill",
+            pricing: { kind: "unit", amount: 2_000, currency: "usd" },
+            cap: 10,
+          }),
+        ],
+      });
+      const seatCatalog = { features: [seats, workspaces], tiers: [seatTier] };
+      const seatPrices = {
+        team: {
+          seats: { amount: 1_000, currency: "usd" },
+          workspaces: { amount: 2_000, currency: "usd" },
+        },
+      };
+      const error = yield* Effect.flip(
+        validateStack("Billing", {
+          catalog: seatCatalog,
+          providers: [
+            {
+              ...PaymentsMemory(),
+              prices: { team: proPrice },
+              seatPrices,
+              seatScope: "subscription",
+            },
+          ],
+          store: MemoryStore(),
+        }),
+      );
+      expect(error._tag).toBe("CatalogPriceMismatch");
+      if (error._tag === "CatalogPriceMismatch") {
+        expect(error.field).toBe("seatPrices");
+        expect(error.actual).toBe("2");
+      }
+
+      // Stripe's subscription items are per feature, so the same catalog is
+      // valid for a per-feature scope.
+      const billing = yield* validateStack("Billing", {
+        catalog: seatCatalog,
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { team: proPrice },
+            seatPrices,
+            seatScope: "feature",
+          },
+        ],
+        store: MemoryStore(),
+      });
+      expect(billing.id).toBe("Billing");
+    }),
+  );
+
   it.effect("accepts a one-rate pricing the provider maps", () =>
     Effect.gen(function* () {
       const oneRate = tier({

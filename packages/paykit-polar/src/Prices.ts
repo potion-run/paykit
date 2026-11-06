@@ -43,6 +43,8 @@ export interface ProductDeclaration {
   readonly price: Price;
   /** One metered price per billable feature, ordered by feature id. */
   readonly usage: ReadonlyArray<ProductUsageDeclaration>;
+  /** One seat-based price per non-consumable feature, ordered by feature id. */
+  readonly seats: ReadonlyArray<{ readonly feature: string; readonly unitPrice: UnitPrice }>;
 }
 
 /** A tier's price, optionally with the kind that says how it is sold and its meters. */
@@ -56,6 +58,8 @@ export type TierPrice =
        * the product, so a change to any unit price is a new product.
        */
       readonly usage?: Readonly<Record<string, UnitPrice>>;
+      /** One per-seat price per non-consumable feature. */
+      readonly seats?: Readonly<Record<string, UnitPrice>>;
     };
 
 const normalize = (
@@ -64,14 +68,16 @@ const normalize = (
   readonly price: Price;
   readonly kind: TierKind;
   readonly usage: Readonly<Record<string, UnitPrice>>;
+  readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>
   "price" in value
     ? {
         price: value.price,
         kind: value.kind ?? "subscription",
         usage: value.usage ?? {},
+        seats: value.seats ?? {},
       }
-    : { price: value, kind: "subscription", usage: {} };
+    : { price: value, kind: "subscription", usage: {}, seats: {} };
 
 /**
  * Turn the catalog's prices into the declarations `PolarPrices` reconciles.
@@ -85,7 +91,7 @@ export const priceDeclarations = (
   Object.entries(tiers)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([tier, value]) => {
-      const { price, kind, usage } = normalize(value);
+      const { price, kind, usage, seats } = normalize(value);
       return {
         tier,
         kind,
@@ -108,6 +114,12 @@ export const priceDeclarations = (
                   meterResource: `Meter_${feature}`,
                   eventName: meterEventNameOf(stage, feature),
                 })),
+        seats:
+          kind === "one_off"
+            ? []
+            : Object.entries(seats)
+                .sort(([left], [right]) => left.localeCompare(right))
+                .map(([feature, unitPrice]) => ({ feature, unitPrice })),
       };
     });
 
@@ -176,6 +188,8 @@ export interface SoldPrices {
   readonly products: Readonly<Record<string, SoldProduct>>;
   /** feature → the meter event name usage is ingested under. */
   readonly meters: Readonly<Record<string, string>>;
+  /** tier → feature → the per-seat price the product carries. */
+  readonly seats: Readonly<Record<string, Readonly<Record<string, UnitPrice>>>>;
 }
 
 /**
@@ -236,6 +250,7 @@ export const PolarPrices = Effect.fn("Polar.Prices")(function* (
   const declarations = priceDeclarations(props.tiers, stack.stage);
   const products: Record<string, SoldProduct> = {};
   const meters: Record<string, string> = {};
+  const seats: Record<string, Record<string, UnitPrice>> = {};
 
   // One meter per feature, not per tier: a feature is one thing the customer
   // does, however many tiers price it differently.
@@ -261,9 +276,13 @@ export const PolarPrices = Effect.fn("Polar.Prices")(function* (
         meterId: createdMeters.get(usage.feature)!.id,
         unitPrice: usage.unitPrice,
       })),
+      seats: declaration.seats.map((seat) => ({ unitPrice: seat.unitPrice })),
     }).pipe(RemovalPolicy.retain());
     products[declaration.tier] = product.id;
+    seats[declaration.tier] = Object.fromEntries(
+      declaration.seats.map((seat) => [seat.feature, seat.unitPrice]),
+    );
   }
 
-  return { products, meters } as SoldPrices;
+  return { products, meters, seats } as SoldPrices;
 });

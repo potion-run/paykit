@@ -65,6 +65,16 @@ export interface PolarClient {
     readonly commandId?: string;
   }) => Effect.Effect<{ readonly refundId: string }, PaymentDeclined>;
   /**
+   * Set the subscription's seat count. Polar's count is one number on the
+   * subscription, and the update is `next_period`: the local collector bills
+   * an immediate proration as its own order.
+   */
+  readonly setSubscriptionSeats?: (request: {
+    readonly subscription: string;
+    readonly seats: number;
+    readonly commandId: string;
+  }) => Effect.Effect<{}, PaymentDeclined>;
+  /**
    * Ingest one metered-usage event. `externalId` is the idempotency key; Polar
    * dedupes by it, so a retried close is the same event.
    */
@@ -202,6 +212,24 @@ export const polarBindings = (
           Effect.mapError((cause) => declined("createRefund", cause)),
           Effect.map((refund) => ({ refundId: refund.refundId })),
         ),
+    ...(client.setSubscriptionSeats === undefined
+      ? {}
+      : {
+          setQuantity: ({
+            subscription,
+            seats,
+            commandId,
+          }: {
+            subscription: string;
+            seats: number;
+            proration: "immediate" | "none";
+            commandId: string;
+          }) =>
+            client.setSubscriptionSeats!({ subscription, seats, commandId }).pipe(
+              Effect.mapError((cause) => declined("setSubscriptionSeats", cause)),
+              Effect.map(() => ({})),
+            ),
+        }),
     ...(client.reportUsage === undefined || where.meters === undefined
       ? {}
       : {

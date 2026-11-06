@@ -53,6 +53,8 @@ export const ProviderDescriptor = Schema.Struct({
   seatPrices: Schema.optional(
     Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
   ),
+  /** Whether the vendor's seat count is per feature or per subscription. */
+  seatScope: Schema.optional(Schema.Literals(["feature", "subscription"])),
 });
 export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
@@ -65,6 +67,7 @@ export const providerDescriptor = (provider: MoneyProvider): ProviderDescriptor 
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
   ...(provider.unitPrices === undefined ? {} : { unitPrices: provider.unitPrices }),
   ...(provider.seatPrices === undefined ? {} : { seatPrices: provider.seatPrices }),
+  ...(provider.seatScope === undefined ? {} : { seatScope: provider.seatScope }),
 });
 
 /** The store a Stack writes its event log to. */
@@ -184,8 +187,10 @@ export const validateProviderMappings = (
       for (const [tierId] of Object.entries(provider.prices ?? {})) {
         const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
         if (tier === undefined) continue;
+        let billableSeats = 0;
         for (const grant of tier.grants) {
           if (!isQuantityGrant(grant) || grant.overage !== "bill") continue;
+          billableSeats += 1;
           const pricing = pricingOf(grant);
           const unitPrice = pricing === null ? null : soleUnitPriceOf(pricing);
           if (unitPrice === null) continue;
@@ -206,6 +211,17 @@ export const validateProviderMappings = (
               actual: `${mapped.amount} ${mapped.currency}`,
             });
           }
+        }
+        // Polar's seat count is one number on the subscription. A tier with
+        // two billable seat features would make `setQuantity` ambiguous, so the
+        // deploy refuses it rather than choosing one.
+        if (provider.seatScope === "subscription" && billableSeats > 1) {
+          return new CatalogPriceMismatch({
+            tier: tierId,
+            field: "seatPrices",
+            expected: "one billable seat feature",
+            actual: `${billableSeats}`,
+          });
         }
       }
     }

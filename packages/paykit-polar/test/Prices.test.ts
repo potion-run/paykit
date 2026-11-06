@@ -46,6 +46,7 @@ describe("product declarations", () => {
         name: "paykit:prod:pro",
         price: { amount: 1900, currency: "usd", interval: "month" },
         usage: [],
+        seats: [],
       },
       {
         tier: "scale",
@@ -54,7 +55,23 @@ describe("product declarations", () => {
         name: "paykit:prod:scale",
         price: { amount: 19_800, currency: "usd", interval: "annual" },
         usage: [],
+        seats: [],
       },
+    ]);
+  });
+
+  it("declares one seat price per non-consumable feature", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          seats: { seats: { amount: 1_000, currency: "usd" } },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.seats).toEqual([
+      { feature: "seats", unitPrice: { amount: 1_000, currency: "usd" } },
     ]);
   });
 

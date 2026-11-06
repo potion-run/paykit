@@ -275,6 +275,12 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
    */
   readonly seatPrices?: UnitPriceMap;
   /**
+   * Whether the vendor's seat count is per feature or per subscription. A
+   * subscription-wide count can only own one seat feature per tier; Stripe's
+   * subscription items are per feature, Polar's `seats` is one number.
+   */
+  readonly seatScope?: "feature" | "subscription";
+  /**
    * How this provider reports a payment, when it can. A provider that sells a
    * priced tier but cannot say it was paid leaves the account waiting for a
    * webhook that never comes; carrying the decoder here keeps the secret and

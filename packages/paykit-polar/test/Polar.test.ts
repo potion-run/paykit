@@ -71,6 +71,50 @@ describe("Polar as a paykit provider", () => {
     }),
   );
 
+  it.effect("sets the subscription's seat count and leaves the proration to the collector", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+      const seatPrice = { amount: 1_000, currency: "usd" } as const;
+      const provider = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        tiers: {
+          pro: { price: proPrice, productId: "prod_123", seats: { seats: seatPrice } },
+        },
+        client: {
+          ...recording(asked),
+          setSubscriptionSeats: (request) =>
+            Effect.sync(() => {
+              asked.push(request as never);
+              return {};
+            }),
+        },
+      });
+
+      expect(provider.capabilities.has("quantity")).toBe(true);
+      expect(provider.seatScope).toBe("subscription");
+      expect(provider.seatPrices).toEqual({ pro: { seats: seatPrice } });
+      const result = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).setQuantity({
+            account: "acct_1",
+            subscription: "sub_1",
+            tier: "pro",
+            feature: "seats",
+            quantity: 8,
+            proration: "immediate",
+            commandId: "seats:add",
+          });
+        }),
+      );
+      // No invoice id: the local collector opens the order for an immediate
+      // change, and Polar's next renewal bills the new count.
+      expect(result).toEqual({});
+      expect(asked[0]).toMatchObject({ subscription: "sub_1", seats: 8, commandId: "seats:add" });
+    }),
+  );
+
   it.effect("reports a closing period's units to the feature's meter", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];

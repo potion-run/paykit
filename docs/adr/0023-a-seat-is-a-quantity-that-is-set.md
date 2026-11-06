@@ -86,17 +86,28 @@ branch, and the `SetQuantity` command on the tenant Api.
 
 ### 3 — the vendor subscription-item quantity
 
-Landed for Stripe. The `Payments` port gains `setQuantity` under a `quantity`
-capability: the binding tells the account's provider the new total, the tier and
-feature, and whether the difference is `immediate` or `none`. `StripePrices`
-declares and creates one recurring seat price per non-consumable feature, and
-`Stripe` resolves that price to the subscription item, updates its `quantity`
-with `proration_behavior: "always_invoice"` or `"none"`, and returns the invoice
-Stripe opened. The `SetQuantity` binding records that invoice on the pending
-proration, so `ChargeQuantityProration` finds it billed and does nothing. A
-provider without `quantity` (the manual provider, Polar today) keeps the local
-proration and the collector opens the invoice. `Stack` refuses a `quantity`
-provider that has no seat price for a billable seat.
+Landed for Stripe and Polar. The `Payments` port gains `setQuantity` under a
+`quantity` capability: the binding tells the account's provider the new total,
+the tier and feature, and whether the difference is `immediate` or `none`.
+`StripePrices` declares and creates one recurring seat price per non-consumable
+feature, and `Stripe` resolves that price to the subscription item, updates its
+`quantity` with `proration_behavior: "always_invoice"` or `"none"`, and returns
+the invoice Stripe opened. The `SetQuantity` binding records that invoice on the
+pending proration, so `ChargeQuantityProration` finds it billed and does nothing.
+
+Polar's seat count is one number on the subscription, not a price per feature.
+`PolarPrices` embeds a `seat_based` price in the product, and `Polar` updates the
+subscription's `seats` with `proration_behavior: "next_period"`: the next renewal
+bills the new count, while an immediate change is still collected by the local
+`ChargeQuantityProration` order. That is why Polar's `setQuantity` returns no
+invoice id — the local collector owns the immediate money. `MoneyProvider`
+carries `seatScope: "feature" | "subscription"`, and `Stack` refuses a
+subscription-wide provider whose tier has more than one billable seat feature,
+because one seat number cannot price two features.
+
+A provider without `quantity` (the manual provider) keeps the local proration and
+the collector opens the invoice. `Stack` refuses a `quantity` provider that has
+no seat price for a billable seat.
 
 ## Consequences
 
@@ -114,6 +125,9 @@ provider that has no seat price for a billable seat.
 - **A provider without `quantity` keeps the local path.** The seat change is a
   local proration, and `ChargeQuantityProration` opens the invoice. Nothing is
   silently skipped; the capability decides which path ran.
+- **A subscription-wide seat count owns one seat feature.** Polar's `seats` is
+  one number, so a tier with two billable seat features is a deploy refusal
+  (`CatalogPriceMismatch` on `seatPrices`), not a provider that picks one.
 
 ## Alternatives considered
 
@@ -133,7 +147,6 @@ provider that has no seat price for a billable seat.
 **Licenses and entities.** A pool of seats bought by a parent and assigned to
 entities is a different shape: the pool is a quantity, the assignment is an
 entity, and an unassigned seat is normal. That needs an entity aggregate, not
-another allowance field. **Polar's seat update** is the next vendor
-slice: Polar's seat count is subscription-wide rather than per feature, so its
-mapping needs a decision about a tier with more than one seat feature before it
-can declare `quantity`.
+another allowance field. **A tier with more than one billable seat feature on a
+subscription-wide provider** would need a second seat number or a per-feature
+mapping, which Polar does not offer.

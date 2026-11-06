@@ -362,6 +362,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
     ...(Object.keys(unitPrices).length === 0 ? {} : { unitPrices }),
     ...(Object.keys(seatPrices).length === 0 ? {} : { seatPrices }),
+    ...(props.bindings.setQuantity === undefined ? {} : { seatScope: "feature" as const }),
     ...(props.webhook === undefined ? {} : { webhook: props.webhook }),
   };
 };
