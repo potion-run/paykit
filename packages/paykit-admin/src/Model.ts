@@ -1,17 +1,24 @@
-import type { AdminAction } from "@potion.run/paykit/Admin";
-import { BillingOverview, PreviewAnswer, PreviewCommandSchema } from "@potion.run/paykit/Admin";
-import { Forbidden } from "@potion.run/paykit/Auth/Forbidden.rejection";
-import { Unauthenticated } from "@potion.run/paykit/Auth/Unauthenticated.rejection";
-import { BillingAdminApi } from "@potion.run/paykit/BillingAdminApi.api";
-import { BillingReadRow } from "@potion.run/paykit/BillingReadStore";
-import { Catalog } from "@potion.run/paykit/Catalog";
+import { Forbidden, Unauthenticated, BillingAdminApi } from "@potion.run/paykit";
+import {
+  type AdminAction,
+  BillingOverview,
+  PreviewAnswer,
+  PreviewCommandSchema,
+} from "@potion.run/paykit/Admin";
 import { CommandIds } from "@potion.run/paykit/Foldkit";
-import { Proration } from "@potion.run/paykit/Proration";
-import { BillingStateView } from "@potion.run/paykit/Subscription/BillingState.view";
-import { EntitlementsState } from "@potion.run/paykit/Subscription/Entitlements.view";
-import { AccountId, HoldRecord, Refs } from "@potion.run/paykit/Subscription/Subscription.state";
-import { UsageTimeline, initialTimeline } from "@potion.run/paykit/Timeline";
-import { VerifyMismatch } from "@potion.run/paykit/Verify";
+import {
+  BillingReadRow,
+  Catalog,
+  Proration,
+  BillingStateView,
+  EntitlementsState,
+  AccountId,
+  HoldRecord,
+  Refs,
+  UsageTimeline,
+  initialTimeline,
+  VerifyMismatch,
+} from "@potion.run/paykit/Read";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ActionDraft, AdminIntent } from "./actions.ts";
@@ -166,7 +173,7 @@ export const AccountState = Schema.Struct({
   events: Schema.Array(EventRow),
   /**
    * The billing facts the event feed has carried, folded as they arrive. A
-   * pure fold (`@potion.run/paykit/Timeline`), never a stored read model: the
+   * pure fold (`@potion.run/paykit/Read`), never a stored read model: the
    * account stream is the log, and this is the slice a bill is read from.
    */
   timeline: UsageTimeline,

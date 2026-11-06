@@ -1,7 +1,6 @@
+import { BillingApi } from "@potion.run/paykit";
 import * as PaykitAtom from "@potion.run/paykit/Atom";
-import { BillingApi } from "@potion.run/paykit/BillingApi.api";
-import { catalog } from "@potion.run/paykit/Catalog";
-import { catalogLayer } from "@potion.run/paykit/CatalogService";
+import { catalog, catalogLayer } from "@potion.run/paykit/Read";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";

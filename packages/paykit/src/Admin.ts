@@ -51,3 +51,7 @@ export type { AdminChangeTierShape } from "./Admin/ChangeTier.ts";
 export { AdminConsoleServer } from "./Admin/Server.ts";
 export { AdminAction, actionsFor } from "./AdminActions.ts";
 export type { AdminActionDescriptor } from "./AdminActions.ts";
+export { BillingAdminApi } from "./BillingAdminApi.api.ts";
+export { Forbidden } from "./Auth/Forbidden.rejection.ts";
+export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
+export { scheduleTierChangeInputOf } from "./TierCommand.ts";

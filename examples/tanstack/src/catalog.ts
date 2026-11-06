@@ -1,6 +1,4 @@
-import { allowance } from "@potion.run/paykit/Allowance";
-import { feature } from "@potion.run/paykit/Feature";
-import { tier } from "@potion.run/paykit/Tier";
+import { allowance, feature, tier } from "@potion.run/paykit/Read";
 
 /**
  * The catalog. Plain data, no provider ids, so the same tiers sell through

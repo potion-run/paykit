@@ -14,7 +14,7 @@ import AuthWorker from "./src/Worker.ts";
  * `/admin` routes are guarded by the Better Auth session; the catalog and the
  * model do not know what Better Auth is.
  */
-export default Alchemy.Stack(
+const Example: Alchemy.ConfiguredStack<any, any> = Alchemy.Stack(
   "PaykitAuthExample",
   {
     providers: Layer.mergeAll(Cloudflare.providers(), Paykit.providers()),
@@ -43,3 +43,4 @@ export default Alchemy.Stack(
     };
   }),
 );
+export default Example;
