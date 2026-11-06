@@ -1,6 +1,5 @@
-import { catalog, Manual, paykitWorld } from "@potion.run/paykit";
+import { catalog, Manual, type PaykitWorldOptions, paykitWorld } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { adminCatalog } from "./catalog.ts";
 import { CookieGuards } from "./Session.ts";
 
@@ -20,7 +19,7 @@ export const Provider = Manual();
  * passes `DomainCloudflare.layerDurableObjects()`, the test takes the default
  * `Domain.InMemory`.
  */
-export const billingLayers = <R = never>(platform?: Layer.Layer<any, never, R>) =>
+export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
   paykitWorld({
     catalog: Catalog,
     guards: CookieGuards,

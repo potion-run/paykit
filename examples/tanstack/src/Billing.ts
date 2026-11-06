@@ -1,6 +1,12 @@
-import { catalog, DevGuards, Manual, type MoneyProvider, paykitWorld } from "@potion.run/paykit";
+import {
+  catalog,
+  DevGuards,
+  Manual,
+  type MoneyProvider,
+  type PaykitWorldOptions,
+  paykitWorld,
+} from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { tanstackCatalog } from "./catalog.ts";
 
 /** The catalog the deploy validates. */
@@ -21,7 +27,7 @@ export const Provider: MoneyProvider = Manual();
  * replaces `DevGuards` with `Paykit.GuardsFrom` over its session service, and
  * neither this file nor the Website changes.
  */
-export const billingLayers = <R = never>(platform?: Layer.Layer<any, never, R>) =>
+export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
   paykitWorld({
     catalog: Catalog,
     guards: DevGuards,

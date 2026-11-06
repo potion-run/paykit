@@ -18,7 +18,7 @@ import { tanstackCatalog } from "./src/catalog.ts";
  * `Paykit.Stack` validates the catalog at deploy; `BillingStackResource`
  * records the same declarations in stack state.
  */
-const Example: Alchemy.ConfiguredStack<any, any> = Alchemy.Stack(
+const Example = Alchemy.Stack(
   "PaykitTanstackExample",
   {
     providers: Layer.mergeAll(Cloudflare.providers(), Paykit.providers()),

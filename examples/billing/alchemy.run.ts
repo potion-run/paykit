@@ -23,7 +23,7 @@ import BillingWorker from "./src/Worker.ts";
  * `Paykit.Postgres({ url: Config.Redacted("DATABASE_URL") })` and nothing in
  * the model changes.
  */
-const BillingExample: Alchemy.ConfiguredStack<any, any> = Alchemy.Stack(
+const BillingExample = Alchemy.Stack(
   "BillingExample",
   {
     providers: Layer.mergeAll(Cloudflare.providers(), Paykit.providers()),

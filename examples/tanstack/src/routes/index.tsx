@@ -1,16 +1,23 @@
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { createFileRoute } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
 import { billing } from "../billing.atoms.ts";
 
 export const Route = createFileRoute("/")({ component: Home });
 
-interface BootstrapBody {
-  readonly account?: string;
-  readonly error?: string;
-}
+/**
+ * What `/bootstrap` answers: the account the cookie now names, or why it could
+ * not be minted. Decoded rather than asserted, so a body that is not this shape
+ * is a visible failure instead of an `undefined` three frames later.
+ */
+const BootstrapBody = Schema.Struct({
+  account: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.String),
+});
 
 /**
  * The page. `/bootstrap` is the demo's one server operation: it gives the
@@ -25,9 +32,11 @@ function Home() {
     let live = true;
     fetch("/bootstrap", { method: "POST" })
       .then(async (response) => {
-        const body = (await response.json()) as BootstrapBody;
-        if (!response.ok || body.account === undefined) {
-          throw new Error(body.error ?? `bootstrap failed: ${response.status}`);
+        const body = Option.getOrUndefined(
+          Schema.decodeUnknownOption(BootstrapBody)(await response.json()),
+        );
+        if (!response.ok || body?.account === undefined) {
+          throw new Error(body?.error ?? `bootstrap failed: ${response.status}`);
         }
         if (live) setAccount(body.account);
       })

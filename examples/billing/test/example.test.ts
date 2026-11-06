@@ -8,6 +8,7 @@ import {
 } from "@potion.run/paykit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { BillingTestLive, Catalog, tierCommand } from "../src/Billing.ts";
@@ -19,11 +20,18 @@ const account = Subscription.ref("acct_example");
 const asAccount = { headers: { "x-paykit-actor": account.id } };
 const asAdmin = { headers: { "x-paykit-actor": "ops_1", "x-paykit-kind": "admin" } };
 
-const free = tierCommand("free");
-const pro = tierCommand("pro");
+/** The tier a test sells; the catalog is validated at load, so this cannot refuse. */
+const free = Effect.runSync(tierCommand("free"));
+const pro = Effect.runSync(tierCommand("pro"));
 
-const run = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provide(BillingTestLive)) as Effect.Effect<A, E, never>;
+/**
+ * Run a test against the example's world. The effect may require exactly what
+ * the world provides and nothing else, so the result needs no cast to be
+ * runnable: a test that reaches for a service the world does not serve is a
+ * compile error, not a runtime one.
+ */
+const run = <A, E, R>(effect: Effect.Effect<A, E, Layer.Success<typeof BillingTestLive> | R>) =>
+  effect.pipe(Effect.provide(BillingTestLive));
 
 /**
  * A command over the Api commits its events and returns; the read models catch
@@ -129,7 +137,8 @@ describe("the example billing app", () => {
   it.live("an unlimited allowance never runs out, so check reports no count", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
-      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      const scale = yield* tierCommand("scale");
+      const receipt = yield* tenant.Subscribe(account.id, scale, asAccount);
       yield* caughtUp(receipt);
 
       const track = yield* Paykit.TrackUsage(account.id);
@@ -149,7 +158,8 @@ describe("the example billing app", () => {
   it.live("a granted flag is allowed but has nothing to track", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
-      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      const scale = yield* tierCommand("scale");
+      const receipt = yield* tenant.Subscribe(account.id, scale, asAccount);
       yield* caughtUp(receipt);
 
       const check = yield* Paykit.Check(account.id);
@@ -210,7 +220,8 @@ describe("the example billing app", () => {
   it.live("prices a request in credits, by dimension, from one shared pool", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
-      const receipt = yield* tenant.Subscribe(account.id, tierCommand("scale"), asAccount);
+      const scale = yield* tierCommand("scale");
+      const receipt = yield* tenant.Subscribe(account.id, scale, asAccount);
       yield* caughtUp(receipt);
 
       const track = yield* Paykit.TrackUsage(account.id);
@@ -242,7 +253,7 @@ describe("the example billing app", () => {
   it.live("bills up to the cap, then refuses while the standing stays good", () =>
     Effect.gen(function* () {
       const tenant = yield* BillingApi.clientInProcess;
-      const receipt = yield* tenant.Subscribe(account.id, tierCommand("pro"), asAccount);
+      const receipt = yield* tenant.Subscribe(account.id, pro, asAccount);
       yield* caughtUp(receipt);
 
       const track = yield* Paykit.TrackUsage(account.id);

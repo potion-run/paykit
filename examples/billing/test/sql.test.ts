@@ -8,7 +8,9 @@ import {
   Entitlements,
   List,
   type D1Like,
+  type D1Prepared,
   Subscription,
+  type SqlValue,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,33 +21,46 @@ import { billingOnSql } from "../src/SqlBilling.ts";
 
 const account = Subscription.ref("acct_sql_example");
 const asAccount = { headers: { "x-paykit-actor": account.id } };
-const free = tierCommand("free");
+const free = Effect.runSync(tierCommand("free"));
+
+/**
+ * A prepared statement over `bun:sqlite`, carrying the SQL and the binds it
+ * holds. `D1Prepared` declares the optional `sql`; the binds are the fake's own,
+ * which is what `batch` replays.
+ */
+interface FakeStatement extends D1Prepared {
+  readonly sql: string;
+  readonly params: ReadonlyArray<SqlValue>;
+  bind(...values: ReadonlyArray<SqlValue>): FakeStatement;
+}
+
+/** Whether a statement is this fake's, so `batch` can read back its binds. */
+const isFake = (statement: D1Prepared): statement is FakeStatement => "params" in statement;
+
+const statementOver = (
+  database: Database,
+  sql: string,
+  params: ReadonlyArray<SqlValue>,
+): FakeStatement => ({
+  sql,
+  params,
+  all: <T = Record<string, unknown>>() =>
+    Promise.resolve({ results: database.query<T, SqlValue[]>(sql).all(...params) }),
+  bind: (...values) => statementOver(database, sql, values),
+});
 
 /**
  * A `D1Like` over a real SQLite database: the same shape a Worker's binding
  * has, so the wiring the Worker uses is what this test exercises.
  */
 const d1Over = (database: Database): D1Like => ({
-  prepare: (sql: string) => {
-    const make = (params: ReadonlyArray<never>) => ({
-      sql,
-      params,
-      all: async () => ({ results: database.query(sql).all(...params) }),
-    });
-    return {
-      ...make([]),
-      bind: (...params: ReadonlyArray<never>) => make(params),
-    } as ReturnType<D1Like["prepare"]>;
-  },
+  prepare: (sql: string) => statementOver(database, sql, []),
   batch: async (statements) => {
     database.exec("BEGIN IMMEDIATE");
     try {
       for (const statement of statements) {
-        const { sql, params } = statement as unknown as {
-          readonly sql: string;
-          readonly params: ReadonlyArray<never>;
-        };
-        database.query(sql).run(...params);
+        if (!isFake(statement)) throw new Error("a statement this fake did not prepare");
+        database.query(statement.sql).run(...statement.params);
       }
       database.exec("COMMIT");
     } catch (error) {
@@ -157,11 +172,12 @@ describe("the example on a SQL database", () => {
   it.live("the migration file creates every table paykit expects", () =>
     Effect.gen(function* () {
       const database = migrated();
-      const names = (
-        database
-          .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'billing_%'")
-          .all() as ReadonlyArray<{ name: string }>
-      ).map((row) => row.name);
+      const names = database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'billing_%'",
+        )
+        .all()
+        .map((row) => row.name);
       expect(names).toContain("billing_event");
       expect(names).toContain("billing_receipt");
       expect(names).toContain("billing_rm_view_state");

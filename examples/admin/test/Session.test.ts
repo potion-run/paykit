@@ -13,20 +13,44 @@ import {
   sessionCookies,
 } from "../src/Session.ts";
 
+/** The part of an RPC envelope a paykit guard reads, and all the test supplies. */
+interface GuardRequest {
+  readonly headers: Record<string, string>;
+  readonly payload: unknown;
+}
+
+/**
+ * A guard as the test drives it: the effect a guarded command runs, and the
+ * request it arrived on.
+ */
 type Guard = (
   effect: Effect.Effect<unknown, never, Actor>,
-  options: { readonly headers: Record<string, string>; readonly payload: unknown },
+  request: GuardRequest,
 ) => Effect.Effect<unknown, unknown, never>;
 
-const session = Effect.runSync(
-  Effect.scoped(
-    Effect.map(Layer.build(SessionFromCookie), (context) => Context.get(context, Session)),
-  ),
-) as unknown as Guard;
+/**
+ * The guard a layer provides, read out of the context it builds.
+ *
+ * `Session` and `Admin` are `RpcMiddleware` services: their runtime shape is
+ * `(effect, envelope) => Effect`, and `SessionFrom` / `AdminFrom` read only
+ * `envelope.headers` and `envelope.payload` — never `client`, `requestId` or
+ * `rpc`. So the test hands them a `GuardRequest` and lets the runtime own the
+ * rest of the envelope. This is the one narrowing in the file, and it is where
+ * a change to a guard's shape surfaces.
+ */
+const guardOf = <S, A>(layer: Layer.Layer<S, never, never>, tag: Context.Service<S, A>): Guard =>
+  Effect.runSync(
+    Effect.scoped(Effect.map(Layer.build(layer), (context) => Context.get(context, tag))),
+  ) as Guard;
 
-const admin = Effect.runSync(
-  Effect.scoped(Effect.map(Layer.build(AdminFromCookie), (context) => Context.get(context, Admin))),
-) as unknown as Guard;
+const session = guardOf(SessionFromCookie, Session);
+const admin = guardOf(AdminFromCookie, Admin);
+
+/** The `_tag` of a tagged failure, or `"Defect"` for anything else. */
+const tagOf = (error: unknown): string =>
+  typeof error === "object" && error !== null && "_tag" in error && typeof error._tag === "string"
+    ? error._tag
+    : "Defect";
 
 /** Run one guarded effect and report the actor it saw, or the failure tag. */
 const guarded = (
@@ -40,10 +64,7 @@ const guarded = (
       // the middleware provided.
       const outcome = yield* Effect.exit(guard(Actor, { headers, payload }));
       if (Exit.isSuccess(outcome)) return { actor: outcome.value };
-      const failure = Option.getOrNull(Cause.findErrorOption(outcome.cause)) as {
-        readonly _tag: string;
-      } | null;
-      return { error: failure?._tag ?? "Defect" };
+      return { error: tagOf(Option.getOrNull(Cause.findErrorOption(outcome.cause))) };
     }),
   );
 

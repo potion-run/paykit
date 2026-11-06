@@ -46,7 +46,7 @@ const signUp = (auth: AuthInstance, email: string) =>
     };
     const cookie = web.headers
       .getSetCookie()
-      .map((entry) => entry.split(";", 1)[0]!)
+      .map((entry) => entry.split(";", 1)[0])
       .join("; ");
     expect(cookie.length).toBeGreaterThan(0);
     return { id: body.user.id, email: body.user.email, cookie };
@@ -104,7 +104,8 @@ describe("the auth-gated billing app", () => {
 
         // The account id is the Better Auth user id. It is not a parameter the
         // caller may choose: a session for this user can only act for itself.
-        yield* tenant.Subscribe(account, tierCommand("free"), asUser);
+        const free = yield* tierCommand("free");
+        yield* tenant.Subscribe(account, free, asUser);
         const receipt = yield* tenant.TrackUsage(
           account,
           { feature: "messages", amount: 5, dedupeKey: "first" },
@@ -145,9 +146,8 @@ describe("the auth-gated billing app", () => {
         const tenant = yield* BillingApi.clientInProcess;
         const admin = yield* BillingAdminApi.clientInProcess;
 
-        yield* tenant.Subscribe(account, tierCommand("free"), {
-          headers: { cookie: user.cookie },
-        });
+        const free = yield* tierCommand("free");
+        yield* tenant.Subscribe(account, free, { headers: { cookie: user.cookie } });
 
         const refused = yield* Effect.exit(
           admin.GrantCredits(account, { amount: 500 }, { headers: { cookie: user.cookie } }),

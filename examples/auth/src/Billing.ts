@@ -2,11 +2,12 @@ import {
   catalog,
   Manual,
   type MoneyProvider,
+  type PaykitWorldOptions,
   paykitWorld,
   subscribeInputOf,
+  TierNotInCatalog,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { authCatalog } from "./catalog.ts";
 
 /** The catalog the deploy validates. */
@@ -26,7 +27,7 @@ export const Provider: MoneyProvider = Manual();
  * here: the Worker provides them from its session, so the same model serves any
  * identity provider.
  */
-export const billingLayers = <R = never>(platform?: Layer.Layer<any, never, R>) =>
+export const billingLayers = <R = never>(platform?: PaykitWorldOptions<R>["platform"]) =>
   paykitWorld({
     catalog: Catalog,
     providers: [Provider],
@@ -41,9 +42,13 @@ export const BillingTestLive = billingLayers();
  * The input a `Subscribe` carries for a tier. `decide` is pure and cannot look
  * a price up; `subscribeInputOf` is the package's join, and `CatalogGuard`
  * still refuses anything that disagrees with the deploy.
+ *
+ * A tier the catalog does not sell is `TierNotInCatalog`, the same tagged
+ * refusal the model gives — a value the caller matches, never a `throw`.
  */
-export const tierCommand = (tierId: string) => {
-  const input = subscribeInputOf(Catalog, tierId);
-  if (input === null) throw new Error(`no tier ${tierId} in the catalog`);
-  return input;
-};
+export const tierCommand = (tierId: string) =>
+  Effect.gen(function* () {
+    const input = subscribeInputOf(Catalog, tierId);
+    if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
+    return input;
+  });

@@ -7,11 +7,12 @@ import {
   ProviderCapabilityMissing,
   Paykit,
   paykitWorld,
+  TierNotInCatalog,
   type MoneyProvider,
+  type PaykitWorldOptions,
   type WebhookRequest,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { billingCatalog } from "./catalog.ts";
 
@@ -24,14 +25,17 @@ export const Catalog = Effect.runSync(catalog(billingCatalog));
  * join, and `CatalogGuard` still refuses anything that disagrees with the
  * catalog.
  */
-export const tierCommand = (tierId: string) => {
-  const input = subscribeInputOf(Catalog, tierId);
-  if (input === null) throw new Error(`no tier ${tierId} in the catalog`);
-  return input;
-};
+export const tierCommand = (tierId: string) =>
+  Effect.gen(function* () {
+    const input = subscribeInputOf(Catalog, tierId);
+    // The catalog is validated at load, so a tier it does not sell is the same
+    // refusal the model gives: a tagged error the caller can match, not a throw.
+    if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
+    return input;
+  });
 
-/** What a tier grants, for an assertion or a fixture. */
-export const allowancesOfTier = (tier: string) => allowancesOf(Catalog, tier)!;
+/** What a tier grants, for an assertion or a fixture; `None` when it is not sold. */
+export const allowancesOfTier = (tier: string) => Option.fromNullishOr(allowancesOf(Catalog, tier));
 
 /**
  * The provider the example runs by default: `Manual` sells through an invoice,
@@ -53,7 +57,7 @@ export const Provider: MoneyProvider = Manual();
  */
 export const billingLayers = <R = never>(
   provider: MoneyProvider,
-  platform?: Layer.Layer<any, never, R>,
+  platform?: PaykitWorldOptions<R>["platform"],
 ) =>
   paykitWorld({
     catalog: Catalog,
@@ -109,13 +113,28 @@ export const moneyRoutes = (provider: MoneyProvider) =>
     };
   });
 
-/** Write one usage fact for an account, as the app does after serving a request. */
-export const track = Effect.fn("Example.track")(function* (account: string, feature: string) {
+/**
+ * Write one usage fact for an account, as the app does after serving a request.
+ *
+ * The `dedupeKey` is the request's own id, supplied by the caller: a key built
+ * from the clock would make a retried delivery a second charge, which is the
+ * one thing a dedupe key exists to prevent.
+ */
+export const track = Effect.fn("Example.track")(function* (
+  account: string,
+  usage: {
+    readonly feature: string;
+    readonly dedupeKey: string;
+    readonly amount?: number;
+    readonly dimension?: string;
+  },
+) {
   const trackUsage = yield* Paykit.TrackUsage(account);
   return yield* trackUsage({
-    feature,
-    amount: 1,
-    dedupeKey: `${account}:${feature}:${Date.now()}`,
+    feature: usage.feature,
+    amount: usage.amount ?? 1,
+    dedupeKey: usage.dedupeKey,
+    ...(usage.dimension === undefined ? {} : { dimension: usage.dimension }),
   });
 });
 
