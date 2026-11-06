@@ -85,7 +85,7 @@ export const subscribeInputOf = (
  * ### Scheduling a move from the catalog
  * **Example:** The payload a console sends for the boundary
  * ```typescript
- * const input = scheduleTierChangeInputOf(catalog, "pro");
+ * const input = scheduleTierChangeInputOf(catalog, "pro", standing.currency);
  * if (input !== null) yield* new ScheduleTierChange(input);
  * ```
  *
@@ -94,8 +94,9 @@ export const subscribeInputOf = (
 export const scheduleTierChangeInputOf = (
   catalog: Catalog,
   tierId: string,
+  currency?: string,
 ): TierGrantInput | null => {
-  const terms = tierTermsOf(catalog, tierId);
+  const terms = tierTermsOf(catalog, tierId, currency);
   if (terms === null || terms.kind === "one_off") return null;
   return grantOf(tierId, terms);
 };
@@ -170,7 +171,14 @@ export const planChangeTier = (
   state: SubscriptionState,
   at: DateTime.Utc,
 ): ChangeTierPlan | null => {
-  const terms = tierTermsOf(catalog, tierId);
+  // The standing's currency is what the account was sold in. A move that
+  // resolved the tier's base price instead would quote (and later guard) a
+  // different currency than the one the standing carries.
+  const terms = tierTermsOf(
+    catalog,
+    tierId,
+    state._tag === "Subscribed" ? state.currency : undefined,
+  );
   if (terms === null || terms.kind === "one_off") return null;
   const proration =
     state._tag === "Subscribed"

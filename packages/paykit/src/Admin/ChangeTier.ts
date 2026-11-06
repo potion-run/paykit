@@ -131,7 +131,13 @@ export const makeAdminChangeTier = Effect.gen(function* () {
   return {
     change: (input) =>
       Effect.gen(function* () {
-        const terms = tierTermsOf(catalog, input.tier);
+        const ref = Subscription.ref(input.account);
+        const state = yield* subscription.state(ref);
+        const terms = tierTermsOf(
+          catalog,
+          input.tier,
+          state._tag === "Subscribed" ? state.currency : undefined,
+        );
         if (terms === null || terms.kind === "one_off") {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -139,8 +145,6 @@ export const makeAdminChangeTier = Effect.gen(function* () {
           });
         }
 
-        const ref = Subscription.ref(input.account);
-        const state = yield* subscription.state(ref);
         if (state._tag !== "Subscribed") {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

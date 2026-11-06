@@ -104,6 +104,46 @@ describe("product declarations", () => {
     ]);
   });
 
+  it("declares a package price with its units", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.usage[0]?.unitPrice).toEqual({
+      amount: 500,
+      currency: "usd",
+      units: 1_000,
+    });
+  });
+
+  it("declares a ladder as its full pricing", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          usage: {
+            messages: {
+              kind: "volume",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.usage[0]?.unitPrice).toBe(undefined);
+    expect(declaration?.usage[0]?.pricing?._tag).toBe("volume");
+  });
+
   it("marks a one-off pack as one-time, so the product is not recurring", () => {
     const [declaration] = priceDeclarations({ credits: { price: pro, kind: "one_off" } }, stage);
     expect(declaration?.kind).toBe("one_off");

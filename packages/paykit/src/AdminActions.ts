@@ -4,7 +4,7 @@ import { downgradeOf } from "./Subscription/Allowance.verdict.ts";
 import type { BillingStateView } from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { standingPhaseTagOfStatus } from "./Subscription/StandingPhase.ts";
-import type { Tier } from "./Tier.ts";
+import { priceFor, type Tier } from "./Tier.ts";
 
 /**
  * The commands a console may offer for one account. This is a UI aid, not an
@@ -73,7 +73,7 @@ const changeTiers = (
       (tier) =>
         state.currency === undefined ||
         tier.price === undefined ||
-        tier.price.currency === state.currency,
+        priceFor(tier.price, state.currency) !== null,
     )
     .filter((tier) => {
       if (entitlements === undefined) return true;
@@ -123,7 +123,7 @@ const scheduleTiers = (
       (tier) =>
         state.currency === undefined ||
         tier.price === undefined ||
-        tier.price.currency === state.currency,
+        priceFor(tier.price, state.currency) !== null,
     )
     .map((tier) => tier.id);
 };

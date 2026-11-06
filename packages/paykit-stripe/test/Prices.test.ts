@@ -122,6 +122,53 @@ describe("price declarations", () => {
     ]);
   });
 
+  it("declares a package price with its units, so the deploy can transform the meter", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.usage[0]?.unitPrice).toEqual({
+      amount: 500,
+      currency: "usd",
+      units: 1_000,
+    });
+  });
+
+  it("declares a ladder as its full pricing, because no single rate names it", () => {
+    const [declaration] = priceDeclarations(
+      {
+        pro: {
+          price: pro,
+          usage: {
+            messages: {
+              kind: "graduated",
+              currency: "usd",
+              bands: [
+                { upTo: 100, amount: 1, currency: "usd" },
+                { upTo: "inf", amount: 2, currency: "usd" },
+              ],
+            },
+          },
+        },
+      },
+      stage,
+    );
+    expect(declaration?.usage[0]?.unitPrice).toBe(undefined);
+    expect(declaration?.usage[0]?.pricing).toEqual({
+      _tag: "graduated",
+      currency: "usd",
+      bands: [
+        { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+        { upTo: "inf", unitPrice: { amount: 2, currency: "usd" } },
+      ],
+    });
+  });
+
   it("keeps a feature's meter name stable across tiers, and its metered key per tier", () => {
     const usage = { amount: 2, currency: "usd" } as const;
     const declarations = priceDeclarations(
@@ -250,6 +297,28 @@ describe("sold tiers", () => {
           seats: { unitPrice, lookupKey: "paykit:prod:pro:seat:seats" },
         },
       },
+    });
+  });
+
+  it("joins a banded price's pricing back onto the catalog prices", () => {
+    const sold = {
+      prices: { pro: "paykit:prod:pro" },
+      usage: { pro: { messages: "paykit:prod:pro:usage:messages" } },
+      seats: {},
+      meters: { messages: "paykit_prod_messages" },
+    };
+    const pricing = {
+      _tag: "volume" as const,
+      currency: "usd",
+      bands: [
+        { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+        { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
+      ] as const,
+    };
+    const joined = soldTiers({ pro: { price: pro, usage: { messages: pricing } } }, sold);
+    expect(joined.pro?.usage?.messages).toEqual({
+      pricing,
+      lookupKey: "paykit:prod:pro:usage:messages",
     });
   });
 

@@ -38,7 +38,8 @@ Stripe and Polar, which archiving sweeps keep a retired price or product from be
 (`RetiredPrices` in Stripe, `RetiredProducts` in Polar), and the Stripe seat prices and Polar seat count that let
 the subscription own a seat quantity. What the deploy does: validates the catalog
 into `BillingStack`, and `StripePrices` / `PolarPrices` create the base prices and products its tiers
-are sold under, plus a meter and a metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
+are sold under, plus a meter and a metered price for every postpaid feature — a package as the
+vendor's quantity transform, a ladder as its tiered price. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.
 
 The client surface has a first-class Effect Atom module (`@potion.run/paykit/Atom`): `make` builds
@@ -107,6 +108,10 @@ standing no command could leave until the period reset.
   currency, and the `Paykit.Refund` binding takes the money through `Payments.refund` before the
   command. What is left is the screen: a `AdminConsoleRpcs` op that runs the in-process binding on
   the Worker that holds the provider, since the Api layer deliberately cannot move money.
+- **Banded and package prices** are no longer local-only: [ADR
+  0024](./adr/0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md) makes
+  `usagePrices` the provider contract and maps a package to Stripe's
+  `transform_quantity` and both vendors' metered tiers.
 - **Archived prices** ([ADR 0010](./adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)):
   a retired Stripe price is retained but stays `active: true`, and a retired Polar product stays
   purchasable. Both halves landed: `retiredPrices` decides and `RetiredPrices` lists and deactivates

@@ -44,12 +44,15 @@ export {
   priceOf,
   priceOfUnits,
   pricedLines,
+  asPricing,
   pricesOf,
   pricing,
   pricingKey,
   soleUnitPriceOf,
+  unitAmountDecimalOf,
   unitsOf,
 } from "./Pricing.ts";
+export type { PricingValue } from "./Pricing.ts";
 export {
   AdditionalCurrency,
   CreditsExpire,

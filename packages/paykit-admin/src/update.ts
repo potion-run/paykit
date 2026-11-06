@@ -386,33 +386,45 @@ type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" }>;
  * one-line call because the row owns the command and its input; the switch is
  * only what narrows `intent` to the row's member.
  */
-const send = (model: Model, target: AccountId, intent: BillingAdminIntent, commandId: string) => {
+const send = (
+  model: Model,
+  target: AccountId,
+  intent: BillingAdminIntent,
+  commandId: string,
+  currency?: string,
+) => {
   const catalog = Option.getOrNull(model.catalog);
+  const args = { target, commandId, catalog, ...(currency === undefined ? {} : { currency }) };
   switch (intent.kind) {
     case "GrantCredits":
-      return OperatorActions.GrantCredits.send({ target, intent, commandId, catalog });
+      return OperatorActions.GrantCredits.send({ ...args, intent });
     case "ExtendTrial":
-      return OperatorActions.ExtendTrial.send({ target, intent, commandId, catalog });
+      return OperatorActions.ExtendTrial.send({ ...args, intent });
     case "EnterGrace":
-      return OperatorActions.EnterGrace.send({ target, intent, commandId, catalog });
+      return OperatorActions.EnterGrace.send({ ...args, intent });
     case "RecordPayment":
-      return OperatorActions.RecordPayment.send({ target, intent, commandId, catalog });
+      return OperatorActions.RecordPayment.send({ ...args, intent });
     case "RecordPaymentFailure":
-      return OperatorActions.RecordPaymentFailure.send({ target, intent, commandId, catalog });
+      return OperatorActions.RecordPaymentFailure.send({ ...args, intent });
     case "Recover":
-      return OperatorActions.Recover.send({ target, intent, commandId, catalog });
+      return OperatorActions.Recover.send({ ...args, intent });
     case "Expire":
-      return OperatorActions.Expire.send({ target, intent, commandId, catalog });
+      return OperatorActions.Expire.send({ ...args, intent });
     case "ScheduleCancellation":
-      return OperatorActions.ScheduleCancellation.send({ target, intent, commandId, catalog });
+      return OperatorActions.ScheduleCancellation.send({ ...args, intent });
     case "Resume":
-      return OperatorActions.Resume.send({ target, intent, commandId, catalog });
+      return OperatorActions.Resume.send({ ...args, intent });
     case "WithdrawTierChange":
-      return OperatorActions.WithdrawTierChange.send({ target, intent, commandId, catalog });
+      return OperatorActions.WithdrawTierChange.send({ ...args, intent });
     case "ScheduleTierChange":
-      return OperatorActions.ScheduleTierChange.send({ target, intent, commandId, catalog });
+      return OperatorActions.ScheduleTierChange.send({ ...args, intent });
   }
 };
+
+const currencyOf = (account: AccountState): string | undefined =>
+  Option.getOrUndefined(
+    Option.flatMap(account.billing, (billing) => Option.fromNullishOr(billing.currency)),
+  );
 
 type QuotedChange = Extract<ChangeTierQuote, { readonly _tag: "Quoted" }>;
 
@@ -523,7 +535,7 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
           }),
         ),
     }),
-    commands: [send(model, account.id, parsed.success, allocation.commandId)],
+    commands: [send(model, account.id, parsed.success, allocation.commandId, currencyOf(account))],
   };
 };
 
@@ -1500,7 +1512,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
       return {
         model: retried,
-        commands: [send(model, account.id, pending.value.intent, commandId)],
+        commands: [send(model, account.id, pending.value.intent, commandId, currencyOf(account))],
       };
     },
 

@@ -32,6 +32,13 @@ interface FakeCreateBody {
     readonly price_currency?: string;
     readonly meter_id?: string;
     readonly unit_amount?: number | string;
+    readonly tiers?: {
+      readonly type: "graduated" | "volume";
+      readonly tiers: Array<{
+        readonly bound?: number | null;
+        readonly unit_amount: number | string;
+      }>;
+    };
   }>;
 }
 
@@ -55,6 +62,13 @@ const vendorProduct = (input: {
     readonly meterId: string;
     readonly amount: number;
     readonly currency: string;
+    readonly tiers?: {
+      readonly type: "graduated" | "volume";
+      readonly tiers: Array<{
+        readonly bound?: number | null;
+        readonly unit_amount: number | string;
+      }>;
+    };
   }>;
 }): DistilledPolar.Product => ({
   id: input.id,
@@ -87,27 +101,41 @@ const vendorProduct = (input: {
       product_id: input.id,
       price_amount: input.amount,
     },
-    ...(input.metered ?? []).map((metered, index) => ({
-      id: `${input.id}_metered_${index}`,
-      created_at: input.createdAt,
-      modified_at: null,
-      source: "catalog" as const,
-      amount_type: "metered_unit",
-      price_currency: metered.currency,
-      tax_behavior: null,
-      is_archived: false,
-      product_id: input.id,
-      cap_amount: null,
-      meter_id: metered.meterId,
-      meter: {
+    ...(input.metered ?? []).map((metered, index) => {
+      const meter = {
         id: metered.meterId,
         name: metered.meterId,
         unit: "scalar" as const,
         custom_label: null,
         custom_multiplier: null,
-      },
-      unit_amount: String(metered.amount),
-    })),
+      };
+      const base = {
+        id: `${input.id}_metered_${index}`,
+        created_at: input.createdAt,
+        modified_at: null,
+        source: "catalog" as const,
+        price_currency: metered.currency,
+        tax_behavior: null,
+        is_archived: false,
+        product_id: input.id,
+        cap_amount: null,
+        meter_id: metered.meterId,
+        meter,
+      };
+      return metered.tiers === undefined
+        ? { ...base, amount_type: "metered_unit", unit_amount: String(metered.amount) }
+        : {
+            ...base,
+            amount_type: "metered_tiers",
+            tiers: {
+              ...metered.tiers,
+              tiers: metered.tiers.tiers.map((tier) => ({
+                ...(tier.bound === undefined ? {} : { bound: tier.bound }),
+                unit_amount: String(tier.unit_amount),
+              })),
+            },
+          };
+    }),
   ],
   benefits: [],
   medias: [],
@@ -218,11 +246,16 @@ const fakePolar = () => {
           const body = bodyOf(request) as FakeCreateBody;
           const price = body.prices?.find((candidate) => candidate.amount_type === "fixed");
           const metered = (body.prices ?? [])
-            .filter((candidate) => candidate.amount_type === "metered_unit")
+            .filter(
+              (candidate) =>
+                candidate.amount_type === "metered_unit" ||
+                candidate.amount_type === "metered_tiers",
+            )
             .map((candidate) => ({
               meterId: candidate.meter_id ?? "",
               amount: Number(candidate.unit_amount ?? 0),
               currency: candidate.price_currency ?? "usd",
+              ...(candidate.tiers === undefined ? {} : { tiers: candidate.tiers }),
             }));
           const productId = `prod_${++created}`;
           const product = vendorProduct({
@@ -447,5 +480,105 @@ test.provider("a tier that leaves the catalog is retained, so a later deploy ado
     const again = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
     expect(again.products.pro).toBe(first.products.pro);
     expect(polar.products.size).toBe(1);
+  }),
+);
+
+test.provider("creates a package metered price from the catalog's units", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const sold = yield* stack.deploy(
+      PolarPrices("Prices", {
+        tiers: {
+          pro: {
+            price: proPrice,
+            usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+          },
+        },
+      }),
+    );
+
+    const product = polar.products.get(sold.products.pro);
+    const metered = product?.prices.find((price) => "meter_id" in price) as
+      | { readonly unit_amount: string }
+      | undefined;
+    expect(metered?.unit_amount).toBe("0.5");
+
+    const again = yield* stack.deploy(
+      PolarPrices("Prices", {
+        tiers: {
+          pro: {
+            price: proPrice,
+            usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+          },
+        },
+      }),
+    );
+    expect(again.products.pro).toBe(sold.products.pro);
+  }),
+);
+
+test.provider("creates a tiered metered price from the catalog's ladder", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const sold = yield* stack.deploy(
+      PolarPrices("Prices", {
+        tiers: {
+          pro: {
+            price: proPrice,
+            usage: {
+              messages: {
+                kind: "graduated",
+                currency: "usd",
+                bands: [
+                  { upTo: 100, amount: 1, currency: "usd" },
+                  { upTo: "inf", amount: 2, currency: "usd" },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    const product = polar.products.get(sold.products.pro);
+    const metered = product?.prices.find((price) => "meter_id" in price) as
+      | {
+          readonly amount_type: string;
+          readonly tiers: {
+            readonly type: string;
+            readonly tiers: ReadonlyArray<{
+              readonly bound?: number | null;
+              readonly unit_amount: string;
+            }>;
+          };
+        }
+      | undefined;
+    expect(metered?.amount_type).toBe("metered_tiers");
+    expect(metered?.tiers.type).toBe("graduated");
+    expect(metered?.tiers.tiers).toEqual([
+      { bound: 100, unit_amount: "1" },
+      { bound: null, unit_amount: "2" },
+    ]);
+
+    const again = yield* stack.deploy(
+      PolarPrices("Prices", {
+        tiers: {
+          pro: {
+            price: proPrice,
+            usage: {
+              messages: {
+                kind: "graduated",
+                currency: "usd",
+                bands: [
+                  { upTo: 100, amount: 1, currency: "usd" },
+                  { upTo: "inf", amount: 2, currency: "usd" },
+                ],
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(again.products.pro).toBe(sold.products.pro);
   }),
 );

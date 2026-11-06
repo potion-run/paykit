@@ -111,12 +111,10 @@ Landed. `variantOf` / `customize` resolution in `defineCatalog`,
 - **The event is the bill's unit.** A replay recomputes `charge` from the event's
   own lines; a catalog change cannot reprice history. A report that can name one
   price still does; a ladder names every line.
-- **A banded price is a local bill until the vendor learns it.** `StripePrices`
-  and `PolarPrices` still provision a one-rate metered price. A tiered price
-  needs a tiered vendor price and a meter that sends quantity, not money; until
-  that lands, `validateProviderMappings` refuses a banded pricing and a package
-  price on a provider with `usage`, so a deploy cannot meter a quantity at the
-  wrong rate.
+- **A banded price is a local bill until the vendor learns it.** Superseded by [ADR
+  0024](./0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md): `StripePrices`
+  and `PolarPrices` now provision the package transform and the metered tiers, and
+  `usagePrices` is the provider contract.
 - **An independent reset is a command, not a timer.** `decide` still reads the
   clock from its context; a reset that is not due records nothing, and a replay
   of the schedule is the same chain.

@@ -59,6 +59,7 @@ const stripe = Stripe({
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
 | `StripePrices(id, { tiers })` | creates the products, base prices, meters and metered prices the catalog states, and returns `{ prices, usage, meters }` |
+| `MeteredPrice` | the package/ladder metered price Alchemy's `Price` cannot state; `StripePrices` reconciles it and keeps the lookup key as its identity |
 | `priceDeclarations(tiers)` | the pure mapping: resource ids, lookup keys, amounts, intervals |
 | `lookupKeyOf(stage, tier)` | `paykit:<stage>:<tier>`, the only identity that survives a restore |
 
@@ -81,7 +82,9 @@ a redelivery replays instead of charging twice.
 
 `StripePrices` yields one `@alchemy.run/stripe` `Product` and base `Price` per priced tier — the
 vendor package's own resources, not a second implementation — plus a `BillingMeter` and a metered
-`Price` for every `usage` feature. It returns `SoldPrices`: the base lookup key per tier, the metered
+price for every `usage` feature. A one-rate price is a `Stripe.Price`; a package is a
+`transform_quantity` (`divide_by`, `round: "up"`) and a ladder is a `billing_scheme: "tiered"` price,
+which `MeteredPrice` reconciles because Alchemy's `Price` states a single unit amount. It returns `SoldPrices`: the base lookup key per tier, the metered
 lookup key per tier and feature, and the meter event name per feature. `Stripe({ meters })` carries
 the meter map to the runtime so the close can report usage. Three rules come with it, from
 [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):

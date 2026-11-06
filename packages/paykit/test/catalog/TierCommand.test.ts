@@ -12,7 +12,12 @@ import {
   scheduleTierChangeInputOf,
   subscribeInputOf,
 } from "../../src/TierCommand.ts";
-import { start, subscribedAt, testCatalog as generatedCatalog } from "../properties/Arbitraries.ts";
+import {
+  start,
+  subscribedAt,
+  subscribedIn,
+  testCatalog as generatedCatalog,
+} from "../properties/Arbitraries.ts";
 
 const messages = feature({ id: "messages", name: "Messages" });
 
@@ -134,5 +139,41 @@ describe("planChangeTier", () => {
   it("refuses a pack and a tier the catalog does not sell", () => {
     expect(planChangeTier(testCatalog, "pack", initialSubscriptionState, start)).toBe(null);
     expect(planChangeTier(testCatalog, "missing", initialSubscriptionState, start)).toBe(null);
+  });
+
+  it("quotes a standing in the currency it was sold in, not the tier's base currency", () => {
+    const priced = (amount: number) => ({
+      amount,
+      currency: "usd",
+      interval: "month" as const,
+      additionalCurrencies: [{ currency: "eur", amount }],
+    });
+    const multiCurrency = Effect.runSync(
+      catalog({
+        features: [messages],
+        tiers: [
+          tier({
+            id: "pro",
+            price: priced(1_900),
+            grants: [allowance(messages, { included: 2_000 })],
+          }),
+          tier({
+            id: "scale",
+            price: priced(9_900),
+            grants: [allowance(messages, { included: 5_000 })],
+          }),
+        ],
+      }),
+    );
+    const state = subscribedIn(multiCurrency, "pro");
+    const eur = {
+      ...state,
+      currency: "eur",
+      price: { amount: 1_900, currency: "eur", interval: "month" as const },
+    };
+
+    const plan = planChangeTier(multiCurrency, "scale", eur, start);
+    expect(plan?.input.price).toEqual({ amount: 9_900, currency: "eur", interval: "month" });
+    expect(plan?.proration?.currency).toBe("eur");
   });
 });

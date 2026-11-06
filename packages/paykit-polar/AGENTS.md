@@ -85,7 +85,9 @@ then returns `SoldPrices`: the product id per tier and the meter event name per 
 `polarProviders({ accessToken, server })` beside the other providers so the stack can reconcile
 them. Each product id is an Alchemy `Output<string>`: hand it to the Worker's environment and build
 `Polar({ tiers })` there with the resolved id, plus `meters` for the close. A product carries its
-fixed price and every metered price; a changed metered price is a new product generation. Three
+fixed price and every metered price; a package is a `metered_unit` price with its per-unit
+decimal, a ladder is a `metered_tiers` price, and a changed metered price is a new product
+generation. Three
 rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
 
 - **A product is never deleted.** A tier that leaves the catalog is retained: `RemovalPolicy.retain`

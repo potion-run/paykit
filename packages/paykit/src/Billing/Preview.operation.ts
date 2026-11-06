@@ -79,7 +79,11 @@ const commandOf = (
     return subscribed === null ? null : new Subscribe(subscribed);
   }
   if (input.kind === "scheduleTierChange") {
-    const scheduled = scheduleTierChangeInputOf(catalog, input.tier);
+    const scheduled = scheduleTierChangeInputOf(
+      catalog,
+      input.tier,
+      state._tag === "Subscribed" ? state.currency : undefined,
+    );
     return scheduled === null ? null : new ScheduleTierChange(scheduled);
   }
   const plan = planChangeTier(catalog, input.tier, state, now);

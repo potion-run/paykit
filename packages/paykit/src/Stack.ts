@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { UnitPrice, isQuantityGrant, pricingOf } from "./Allowance.ts";
 import { catalog, type Catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
 import { PaymentCapability, type MoneyProvider } from "./Payments.ts";
-import { pricingKey, soleUnitPriceOf } from "./Pricing.ts";
+import { Pricing, pricingKey, soleUnitPriceOf, unitsOf } from "./Pricing.ts";
 import { Price, type Tier } from "./Tier.ts";
 
 /** A provider's price for a tier disagrees with the catalog. */
@@ -49,6 +49,8 @@ export const ProviderDescriptor = Schema.Struct({
   unitPrices: Schema.optional(
     Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
   ),
+  /** The full pricing a provider holds per billable feature. */
+  usagePrices: Schema.optional(Schema.Record(Schema.String, Schema.Record(Schema.String, Pricing))),
   /** What the provider charges per seat, per tier and feature. */
   seatPrices: Schema.optional(
     Schema.Record(Schema.String, Schema.Record(Schema.String, UnitPrice)),
@@ -66,6 +68,7 @@ export const providerDescriptor = (provider: MoneyProvider): ProviderDescriptor 
   capabilities: [...provider.capabilities],
   ...(provider.prices === undefined ? {} : { prices: provider.prices }),
   ...(provider.unitPrices === undefined ? {} : { unitPrices: provider.unitPrices }),
+  ...(provider.usagePrices === undefined ? {} : { usagePrices: provider.usagePrices }),
   ...(provider.seatPrices === undefined ? {} : { seatPrices: provider.seatPrices }),
   ...(provider.seatScope === undefined ? {} : { seatScope: provider.seatScope }),
 });
@@ -158,9 +161,42 @@ export const validateProviderMappings = (
       const mismatch = checkPrice(tier, mapped);
       if (mismatch !== null) return mismatch;
     }
-    // A unit price the provider states and the catalog does not is as much a
-    // disagreement as a different amount: the vendor would bill a feature the
+    // A pricing the provider states and the catalog does not is as much a
+    // disagreement as a different rate: the vendor would bill a feature the
     // entitlement plane never priced.
+    for (const [tierId, mapped] of Object.entries(provider.usagePrices ?? {})) {
+      const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+      if (tier === undefined) {
+        return new CatalogPriceMismatch({
+          tier: tierId,
+          field: "usagePrices",
+          expected: "in catalog",
+          actual: "missing",
+        });
+      }
+      for (const [featureId, actual] of Object.entries(mapped)) {
+        const grant = tier.grants.find((candidate) => candidate.feature === featureId);
+        const expected = grant === undefined ? null : pricingOf(grant);
+        if (expected === null) {
+          return new CatalogPriceMismatch({
+            tier: tier.id,
+            field: `pricing.${featureId}`,
+            expected: "none",
+            actual: pricingKey(actual),
+          });
+        }
+        if (pricingKey(expected) !== pricingKey(actual)) {
+          return new CatalogPriceMismatch({
+            tier: tier.id,
+            field: `pricing.${featureId}`,
+            expected: pricingKey(expected),
+            actual: pricingKey(actual),
+          });
+        }
+      }
+    }
+    // A unit price the provider states through the one-rate shorthand is
+    // checked the same way, unless the full pricing already covered it.
     for (const [tierId, mapped] of Object.entries(provider.unitPrices ?? {})) {
       const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
       if (tier === undefined) {
@@ -172,6 +208,7 @@ export const validateProviderMappings = (
         });
       }
       for (const [featureId, unitPrice] of Object.entries(mapped)) {
+        if (provider.usagePrices?.[tierId]?.[featureId] !== undefined) continue;
         const grant = tier.grants.find((candidate) => candidate.feature === featureId);
         const pricing = grant === undefined ? null : pricingOf(grant);
         const expected = pricing === null ? undefined : (soleUnitPriceOf(pricing) ?? undefined);
@@ -238,36 +275,50 @@ export const validateProviderMappings = (
           if (isQuantityGrant(grant)) continue;
           const pricing = pricingOf(grant);
           if (pricing === null) continue;
+          const mappedPricing = provider.usagePrices?.[tierId]?.[grant.feature];
+          if (mappedPricing !== undefined) {
+            if (pricingKey(pricing) !== pricingKey(mappedPricing)) {
+              return new CatalogPriceMismatch({
+                tier: tierId,
+                field: `pricing.${grant.feature}`,
+                expected: pricingKey(pricing),
+                actual: pricingKey(mappedPricing),
+              });
+            }
+            continue;
+          }
           const unitPrice = soleUnitPriceOf(pricing);
           if (unitPrice === null) {
-            // A ladder is a local price until a provider can hold a tiered
-            // price; refusing here is what stops a deploy from metering the
-            // quantity at the first band's rate.
+            // A ladder has no single rate to hand the one-rate shorthand; the
+            // provider has to state the full pricing through `usagePrices`.
             return new CatalogPriceMismatch({
               tier: tierId,
               field: `pricing.${grant.feature}`,
-              expected: "a single unit price the provider can meter",
+              expected: "a pricing the provider can meter",
               actual: pricingKey(pricing),
             });
           }
-          if ((unitPrice.units ?? 1) !== 1) {
-            // A package price is a local ledger price until a provider can
-            // divide the meter's quantity; a vendor without that would charge
-            // the package amount for every unit.
+          const mappedUnitPrice = provider.unitPrices?.[tierId]?.[grant.feature];
+          if (mappedUnitPrice === undefined) {
             return new CatalogPriceMismatch({
               tier: tierId,
               field: `unitPrice.${grant.feature}`,
-              expected: "one unit per price",
-              actual: `${unitPrice.units} units per price`,
+              expected: unitPriceText(unitPrice),
+              actual: "missing",
             });
           }
-          if (provider.unitPrices?.[tierId]?.[grant.feature] !== undefined) continue;
-          return new CatalogPriceMismatch({
-            tier: tierId,
-            field: `unitPrice.${grant.feature}`,
-            expected: `${unitPrice.amount} ${unitPrice.currency}`,
-            actual: "missing",
-          });
+          if (
+            mappedUnitPrice.amount !== unitPrice.amount ||
+            mappedUnitPrice.currency !== unitPrice.currency ||
+            unitsOf(mappedUnitPrice) !== unitsOf(unitPrice)
+          ) {
+            return new CatalogPriceMismatch({
+              tier: tierId,
+              field: `unitPrice.${grant.feature}`,
+              expected: unitPriceText(unitPrice),
+              actual: unitPriceText(mappedUnitPrice),
+            });
+          }
         }
       }
     }
@@ -283,6 +334,12 @@ export const validateProviderMappings = (
   return null;
 };
 
+/** A unit price as an operator reads it, including its package size. */
+const unitPriceText = (price: UnitPrice): string =>
+  unitsOf(price) === 1
+    ? `${price.amount} ${price.currency}`
+    : `${price.amount} ${price.currency} per ${unitsOf(price)} units`;
+
 /** Compare one provider unit price with the catalog's, or with the absence of one. */
 const checkUnitPrice = (
   tier: string,
@@ -296,15 +353,19 @@ const checkUnitPrice = (
       tier,
       field,
       expected: "none",
-      actual: `${actual.amount} ${actual.currency}`,
+      actual: unitPriceText(actual),
     });
   }
-  if (expected.amount !== actual.amount || expected.currency !== actual.currency) {
+  if (
+    expected.amount !== actual.amount ||
+    expected.currency !== actual.currency ||
+    unitsOf(expected) !== unitsOf(actual)
+  ) {
     return new CatalogPriceMismatch({
       tier,
       field,
-      expected: `${expected.amount} ${expected.currency}`,
-      actual: `${actual.amount} ${actual.currency}`,
+      expected: unitPriceText(expected),
+      actual: unitPriceText(actual),
     });
   }
   return null;

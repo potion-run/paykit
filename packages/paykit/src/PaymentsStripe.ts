@@ -12,6 +12,7 @@ import {
   type MoneyProvider,
   type UsageLine,
 } from "./Payments.ts";
+import { asPricing, soleUnitPriceOf, type Pricing, type PricingValue } from "./Pricing.ts";
 import type { Price, TierKind } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
 
@@ -98,12 +99,39 @@ export interface StripeBindings {
  * the provider resolves it to whichever price currently answers for that tier,
  * so a catalog price change needs no config change.
  */
-export interface StripeUsagePrice {
-  /** What one billable unit costs, and what the deploy checks the catalog against. */
-  readonly unitPrice: UnitPrice;
-  readonly priceId?: string;
-  readonly lookupKey?: string;
-}
+export type StripeUsagePrice =
+  | UnitPrice
+  | Pricing
+  | {
+      /** What one billable unit costs, for a one-rate price. */
+      readonly unitPrice?: UnitPrice;
+      /** The full pricing, for a package or a band ladder. */
+      readonly pricing?: Pricing;
+      readonly priceId?: string;
+      readonly lookupKey?: string;
+    };
+
+/** Read a usage mapping in any of the forms the provider config accepts. */
+const pricingOfUsage = (usage: StripeUsagePrice): Pricing => {
+  if ("pricing" in usage && usage.pricing !== undefined) return usage.pricing;
+  if ("unitPrice" in usage && usage.unitPrice !== undefined) {
+    return { _tag: "unit", unitPrice: usage.unitPrice };
+  }
+  return asPricing(usage as PricingValue);
+};
+
+/** The handle a checkout needs, when the usage mapping states one. */
+const handleOf = (
+  usage: StripeUsagePrice,
+): { readonly priceId?: string; readonly lookupKey?: string } =>
+  "priceId" in usage || "lookupKey" in usage
+    ? {
+        ...("priceId" in usage && usage.priceId !== undefined ? { priceId: usage.priceId } : {}),
+        ...("lookupKey" in usage && usage.lookupKey !== undefined
+          ? { lookupKey: usage.lookupKey }
+          : {}),
+      }
+    : {};
 
 export interface StripeTier {
   readonly price: Price;
@@ -176,7 +204,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
         // to charge and the vendor invoice would omit the usage.
         const handles: ReadonlyArray<{ readonly priceId?: string; readonly lookupKey?: string }> = [
           mapped,
-          ...Object.values(mapped.usage ?? {}),
+          ...Object.values(mapped.usage ?? {}).map(handleOf),
         ];
         return Effect.forEach(
           handles,
@@ -286,11 +314,12 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
           );
         }
+        const handle = handleOf(seat);
         const price =
-          seat.priceId !== undefined
-            ? Effect.succeed(seat.priceId)
-            : seat.lookupKey !== undefined && props.bindings.resolvePrice !== undefined
-              ? props.bindings.resolvePrice(seat.lookupKey)
+          handle.priceId !== undefined
+            ? Effect.succeed(handle.priceId)
+            : handle.lookupKey !== undefined && props.bindings.resolvePrice !== undefined
+              ? props.bindings.resolvePrice(handle.lookupKey)
               : Effect.fail(
                   new PaymentDeclined({
                     provider: "stripe",
@@ -324,35 +353,26 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
   const prices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [tier, mapped.price]),
   );
-  const unitPrices = Object.fromEntries(
-    Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
-      mapped.usage === undefined
-        ? []
-        : [
-            [
-              tier,
-              Object.fromEntries(
-                Object.entries(mapped.usage).map(([feature, usage]) => [feature, usage.unitPrice]),
-              ),
-            ] as const,
-          ],
-    ),
-  );
+  const usagePrices: Record<string, Record<string, Pricing>> = {};
+  const unitPrices: Record<string, Record<string, UnitPrice>> = {};
+  for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
+    if (mapped.usage === undefined) continue;
+    for (const [feature, usage] of Object.entries(mapped.usage)) {
+      const pricing = pricingOfUsage(usage);
+      (usagePrices[tier] ??= {})[feature] = pricing;
+      const sole = soleUnitPriceOf(pricing);
+      if (sole !== null) (unitPrices[tier] ??= {})[feature] = sole;
+    }
+  }
 
-  const seatPrices = Object.fromEntries(
-    Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
-      mapped.seats === undefined
-        ? []
-        : [
-            [
-              tier,
-              Object.fromEntries(
-                Object.entries(mapped.seats).map(([feature, seat]) => [feature, seat.unitPrice]),
-              ),
-            ] as const,
-          ],
-    ),
-  );
+  const seatPrices: Record<string, Record<string, UnitPrice>> = {};
+  for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
+    if (mapped.seats === undefined) continue;
+    for (const [feature, seat] of Object.entries(mapped.seats)) {
+      const unitPrice = soleUnitPriceOf(pricingOfUsage(seat));
+      if (unitPrice !== null) (seatPrices[tier] ??= {})[feature] = unitPrice;
+    }
+  }
 
   return {
     name: "stripe",
@@ -361,6 +381,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
     ...(Object.keys(unitPrices).length === 0 ? {} : { unitPrices }),
+    ...(Object.keys(usagePrices).length === 0 ? {} : { usagePrices }),
     ...(Object.keys(seatPrices).length === 0 ? {} : { seatPrices }),
     ...(props.bindings.setQuantity === undefined ? {} : { seatScope: "feature" as const }),
     ...(props.webhook === undefined ? {} : { webhook: props.webhook }),

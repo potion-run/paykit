@@ -1,7 +1,12 @@
 import * as Stripe from "@alchemy.run/stripe";
 import {
+  asPricing,
   encodeVendorPart,
+  soleUnitPriceOf,
+  unitsOf,
   type Price,
+  type Pricing,
+  type PricingValue,
   type StripeTier,
   type TierId,
   type TierKind,
@@ -10,6 +15,7 @@ import {
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
 import * as Effect from "effect/Effect";
+import { MeteredPrice, registerMeteredPriceProvider } from "./MeteredPrice.ts";
 
 /**
  * One metered price the catalog states: the billable unit price, the Stripe
@@ -19,8 +25,10 @@ import * as Effect from "effect/Effect";
 export interface UsagePriceDeclaration {
   /** The catalog feature the meter counts. */
   readonly feature: string;
-  /** What one billable unit costs, in minor units. */
-  readonly unitPrice: UnitPrice;
+  /** What one billable unit costs, in minor units, when the pricing has one rate. */
+  readonly unitPrice?: UnitPrice;
+  /** The full pricing when it is a band ladder and has no single rate. */
+  readonly pricing?: Pricing;
   /** Logical id of the `BillingMeter` resource. */
   readonly meterResource: string;
   /** Logical id of the metered `Price` resource. */
@@ -80,7 +88,7 @@ export type TierPrice =
        * a metered price for each; a one-off pack has none, because Stripe does
        * not attach metered prices to a one-time price.
        */
-      readonly usage?: Readonly<Record<string, UnitPrice>>;
+      readonly usage?: Readonly<Record<string, PricingValue>>;
       /** One recurring per-seat price per non-consumable feature. */
       readonly seats?: Readonly<Record<string, UnitPrice>>;
     };
@@ -90,7 +98,7 @@ const normalize = (
 ): {
   readonly price: Price;
   readonly kind: TierKind;
-  readonly usage: Readonly<Record<string, UnitPrice>>;
+  readonly usage: Readonly<Record<string, PricingValue>>;
   readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>
   "price" in value
@@ -215,14 +223,20 @@ export const priceDeclarations = (
             ? []
             : Object.entries(usage)
                 .sort(([left], [right]) => left.localeCompare(right))
-                .map(([feature, unitPrice]) => ({
-                  feature,
-                  unitPrice,
-                  meterResource: `Meter_${feature}`,
-                  priceResource: `Price_${tier}_Usage_${feature}`,
-                  eventName: meterEventNameOf(stage, feature),
-                  lookupKey: meteredLookupKeyOf(stage, tier, feature),
-                })),
+                .map(([feature, value]) => {
+                  const pricing = asPricing(value);
+                  const unitPrice = soleUnitPriceOf(pricing);
+                  const keepsPricing = unitPrice === null || unitsOf(unitPrice) > 1;
+                  return {
+                    feature,
+                    ...(unitPrice === null ? {} : { unitPrice }),
+                    ...(keepsPricing ? { pricing } : {}),
+                    meterResource: `Meter_${feature}`,
+                    priceResource: `Price_${tier}_Usage_${feature}`,
+                    eventName: meterEventNameOf(stage, feature),
+                    lookupKey: meteredLookupKeyOf(stage, tier, feature),
+                  };
+                }),
         seats:
           kind === "one_off"
             ? []
@@ -269,13 +283,17 @@ export const soldTiers = (
     Object.entries(tiers).map(([tier, value]) => {
       const { price, usage, seats } = normalize(value);
       const usagePrices = Object.fromEntries(
-        Object.entries(usage).map(([feature, unitPrice]) => [
-          feature,
-          {
-            unitPrice,
-            lookupKey: sold.usage[tier]?.[feature],
-          },
-        ]),
+        Object.entries(usage).map(([feature, value]) => {
+          const pricing = asPricing(value);
+          const unitPrice = soleUnitPriceOf(pricing);
+          return [
+            feature,
+            {
+              ...(unitPrice === null ? { pricing } : { unitPrice }),
+              lookupKey: sold.usage[tier]?.[feature],
+            },
+          ];
+        }),
       );
       const seatPrices = Object.fromEntries(
         Object.entries(seats).map(([feature, unitPrice]) => [
@@ -359,6 +377,17 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
 ) {
   const stack = yield* Stack;
   const declarations = priceDeclarations(props.tiers, stack.stage);
+  if (
+    declarations.some((declaration) =>
+      declaration.usage.some(
+        (usage) =>
+          usage.pricing !== undefined ||
+          (usage.unitPrice !== undefined && unitsOf(usage.unitPrice) > 1),
+      ),
+    )
+  ) {
+    yield* registerMeteredPriceProvider;
+  }
   const prices: Record<string, string> = {};
   const usage: Record<string, Record<string, string>> = {};
   const seats: Record<string, Record<string, string>> = {};
@@ -406,17 +435,33 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
     const metered: Record<string, string> = {};
     for (const price of declaration.usage) {
       const meter = createdMeters.get(price.feature)!;
-      yield* Stripe.Price(`${id}${price.priceResource}`, {
-        product,
-        currency: price.unitPrice.currency,
-        unitAmount: price.unitPrice.amount,
-        recurring: {
+      const pricing =
+        price.pricing ??
+        (price.unitPrice === undefined
+          ? null
+          : { _tag: "unit" as const, unitPrice: price.unitPrice });
+      if (pricing === null) continue;
+      if (pricing._tag === "unit" && unitsOf(pricing.unitPrice) === 1) {
+        yield* Stripe.Price(`${id}${price.priceResource}`, {
+          product,
+          currency: pricing.unitPrice.currency,
+          unitAmount: pricing.unitPrice.amount,
+          recurring: {
+            interval: declaration.interval,
+            usageType: "metered",
+            meter: meter.id,
+          },
+          lookupKey: price.lookupKey,
+        }).pipe(RemovalPolicy.retain());
+      } else {
+        yield* MeteredPrice(`${id}${price.priceResource}`, {
+          product: product.id,
           interval: declaration.interval,
-          usageType: "metered",
           meter: meter.id,
-        },
-        lookupKey: price.lookupKey,
-      }).pipe(RemovalPolicy.retain());
+          lookupKey: price.lookupKey,
+          pricing,
+        }).pipe(RemovalPolicy.retain());
+      }
       metered[price.feature] = price.lookupKey;
     }
     usage[declaration.tier] = metered;

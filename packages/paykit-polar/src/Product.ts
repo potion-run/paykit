@@ -1,5 +1,12 @@
 import * as Polar from "@distilled.cloud/polar";
-import { encodeVendorPart, type Price, type TierKind, type UnitPrice } from "@potion.run/paykit";
+import {
+  encodeVendorPart,
+  unitAmountDecimalOf,
+  type Price,
+  type Pricing,
+  type TierKind,
+  type UnitPrice,
+} from "@potion.run/paykit";
 import { Unowned } from "alchemy/AdoptPolicy";
 import { isResolved } from "alchemy/Diff";
 import * as Provider from "alchemy/Provider";
@@ -68,8 +75,10 @@ export interface ProductSeat {
 export interface ProductUsage {
   /** The Polar meter id (`mtr_…`) the price counts. */
   readonly meterId: string;
-  /** What one billable unit costs, in minor units. */
-  readonly unitPrice: UnitPrice;
+  /** What one billable unit costs, in minor units, for a one-rate price. */
+  readonly unitPrice?: UnitPrice;
+  /** The full pricing, for a package or a band ladder. */
+  readonly pricing?: Pricing;
 }
 
 export type Product = Resource<
@@ -169,6 +178,23 @@ type MeteredPrice = {
 const isMeteredPrice = (price: VendorPrice): price is VendorPrice & MeteredPrice =>
   "meter_id" in price && "unit_amount" in price;
 
+type MeteredTiersPrice = {
+  readonly id: string;
+  readonly meter_id: string;
+  readonly price_currency: string;
+  readonly is_archived: boolean;
+  readonly tiers: {
+    readonly type: "graduated" | "volume" | (string & {});
+    readonly tiers: ReadonlyArray<{
+      readonly bound?: number | null;
+      readonly unit_amount: number | string;
+    }>;
+  };
+};
+
+const isMeteredTiersPrice = (price: VendorPrice): price is VendorPrice & MeteredTiersPrice =>
+  "meter_id" in price && "tiers" in price;
+
 type SeatPrice = {
   readonly id: string;
   readonly price_currency: string;
@@ -211,16 +237,51 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
       currency: price?.price_currency ?? "",
       interval: catalogIntervalOf(product),
     },
-    usage: product.prices
-      .filter(isMeteredPrice)
-      .filter((candidate) => !candidate.is_archived)
-      .map((candidate) => ({
-        meterId: candidate.meter_id,
-        unitPrice: {
-          amount: Number(candidate.unit_amount),
-          currency: candidate.price_currency,
-        },
-      })),
+    usage: [
+      ...product.prices
+        .filter(isMeteredPrice)
+        .filter((candidate) => !candidate.is_archived)
+        .map((candidate) => ({
+          meterId: candidate.meter_id,
+          unitPrice: {
+            amount: Number(candidate.unit_amount),
+            currency: candidate.price_currency,
+          },
+        })),
+      ...product.prices
+        .filter(isMeteredTiersPrice)
+        .filter((candidate) => !candidate.is_archived)
+        .map((candidate) => {
+          const bands = candidate.tiers.tiers.map((tier) => ({
+            upTo: tier.bound == null ? ("inf" as const) : tier.bound,
+            unitPrice: {
+              amount: Number(tier.unit_amount),
+              currency: candidate.price_currency,
+            },
+          }));
+          const pricing: Pricing =
+            candidate.tiers.type === "volume"
+              ? {
+                  _tag: "volume",
+                  currency: candidate.price_currency,
+                  bands: bands as unknown as Pricing & { _tag: "volume" } extends {
+                    bands: infer B;
+                  }
+                    ? B
+                    : never,
+                }
+              : {
+                  _tag: "graduated",
+                  currency: candidate.price_currency,
+                  bands: bands as unknown as Pricing & { _tag: "graduated" } extends {
+                    bands: infer B;
+                  }
+                    ? B
+                    : never,
+                };
+          return { meterId: candidate.meter_id, pricing };
+        }),
+    ],
     seats: product.prices
       .filter(isSeatPrice)
       .filter((candidate) => !candidate.is_archived)
@@ -252,18 +313,34 @@ const sameSeats = (left: ReadonlyArray<ProductSeat>, right: ReadonlyArray<Produc
     ),
   );
 
+const pricingOfUsage = (usage: ProductUsage): Pricing =>
+  usage.pricing ??
+  (usage.unitPrice === undefined
+    ? { _tag: "unit", unitPrice: { amount: 1, currency: "usd" } }
+    : { _tag: "unit", unitPrice: usage.unitPrice });
+
+/**
+ * The vendor-equivalent identity of a pricing. Polar states a package as a
+ * fractional per-unit amount, so the comparison is the per-unit decimal, not
+ * the catalog's integer amount plus package size.
+ */
+const usageSignature = (usage: ProductUsage): string => {
+  const pricing = pricingOfUsage(usage);
+  const rate = (price: UnitPrice) => `${price.currency}:${unitAmountDecimalOf(price)}`;
+  return pricing._tag === "unit"
+    ? `${usage.meterId}:unit:${rate(pricing.unitPrice)}`
+    : `${usage.meterId}:${pricing._tag}:${pricing.currency}:${pricing.bands
+        .map((band) => `${band.upTo === "inf" ? "inf" : band.upTo}=${rate(band.unitPrice)}`)
+        .join(",")}`;
+};
+
 const sameUsage = (
   left: ReadonlyArray<ProductUsage>,
   right: ReadonlyArray<ProductUsage>,
 ): boolean =>
   left.length === right.length &&
   left.every((candidate) =>
-    right.some(
-      (other) =>
-        other.meterId === candidate.meterId &&
-        other.unitPrice.amount === candidate.unitPrice.amount &&
-        other.unitPrice.currency === candidate.unitPrice.currency,
-    ),
+    right.some((other) => usageSignature(other) === usageSignature(candidate)),
   );
 
 const samePrice = (left: Price, right: Price, kind: TierKind = "subscription"): boolean =>
@@ -413,12 +490,29 @@ export const ProductProvider = () =>
                 price_amount: news.price.amount,
                 price_currency: news.price.currency,
               },
-              ...desiredUsage(news).map((usage) => ({
-                amount_type: "metered_unit",
-                meter_id: usage.meterId,
-                unit_amount: usage.unitPrice.amount,
-                price_currency: usage.unitPrice.currency,
-              })),
+              ...desiredUsage(news).map((usage) => {
+                const pricing = pricingOfUsage(usage);
+                if (pricing._tag === "unit") {
+                  return {
+                    amount_type: "metered_unit",
+                    meter_id: usage.meterId,
+                    unit_amount: unitAmountDecimalOf(pricing.unitPrice),
+                    price_currency: pricing.unitPrice.currency,
+                  };
+                }
+                return {
+                  amount_type: "metered_tiers",
+                  meter_id: usage.meterId,
+                  price_currency: pricing.currency,
+                  tiers: {
+                    type: pricing._tag,
+                    tiers: pricing.bands.map((band) => ({
+                      bound: band.upTo === "inf" ? null : band.upTo,
+                      unit_amount: unitAmountDecimalOf(band.unitPrice),
+                    })),
+                  },
+                };
+              }),
               ...desiredSeats(news).map((seat) => ({
                 amount_type: "seat_based",
                 price_currency: seat.unitPrice.currency,

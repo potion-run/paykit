@@ -48,6 +48,8 @@ interface SendArgs<K extends AdminAction> {
   readonly intent: Extract<AdminIntent, { readonly kind: K }>;
   readonly commandId: string;
   readonly catalog: Catalog | null;
+  /** The standing's currency, so a tier is joined at the price it is sold at. */
+  readonly currency?: string;
 }
 
 /** One action: the fields it asks for, how they parse, and the command it sends. */
@@ -249,10 +251,11 @@ export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
     fields: [{ name: "tier", label: "New tier", control: "tier" }],
     parse: (values) =>
       Result.map(selectTier(values.tier ?? ""), (tier) => ({ kind: "ScheduleTierChange", tier })),
-    send: ({ target, intent, commandId, catalog }) => {
+    send: ({ target, intent, commandId, catalog, currency }) => {
       // No catalog, or no such tier: send an empty grant so the model answers
       // `TierNotInCatalog` instead of the console guessing.
-      const input = catalog === null ? null : scheduleTierChangeInputOf(catalog, intent.tier);
+      const input =
+        catalog === null ? null : scheduleTierChangeInputOf(catalog, intent.tier, currency);
       return Command.mapMessage(
         BillingAdmin.ScheduleTierChange({
           target,

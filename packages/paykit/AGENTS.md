@@ -67,11 +67,12 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 - A subscription tier may state `topUp`, the credit line at or below which a spend buys the
   deployment's auto top-up pack. It is carried on the standing, and a pack cannot state one
   (`CatalogTopUpOnPack`) because a pack has no spend to observe.
-- A postpaid allowance states `unitPrice: { amount, currency }` and optionally `moneyCap`; both
-  need `overage: "bill"`, and a tier's unit prices share one currency (the tier price's, when it has
-  one). The catalog refuses a price with nothing to bill (`CatalogUnitPriceWithoutBilling`), a money
-  cap with no price, and mixed currencies. `check()` prices the requested amount; `Track` records
-  `charge` and `billedAfter` on the event and refuses past the money cap.
+- A postpaid allowance states `unitPrice: { amount, currency }` or the full `pricing` (`unit`,
+  `graduated`, `volume`, with an optional `units` package size) and optionally `moneyCap`; both need
+  `overage: "bill"`, and a tier's prices share one currency (the tier price's, when it has one). The
+  catalog refuses a price with nothing to bill (`CatalogUnitPriceWithoutBilling`), a money cap with
+  no price, and mixed currencies. `check()` prices the requested amount; `Track` records `charge`,
+  `billable` and the `priced` lines on the event and refuses past the money cap.
 - `catalog()` / `defineCatalog()` validate the graph and refuse with `CatalogError`, a
   `Schema.Union` with one tag per refusal. A new semantic rule gets a new tag carrying its
   evidence and a test; `CatalogInvalid` is only for a schema failure.
@@ -444,7 +445,9 @@ still uses the adapters directly: `PaymentsStripe({ bindings, tiers })` and
 
 A vendor package also owns the deploy half: `StripePrices` and `PolarPrices` create the prices, or
 the products with their embedded prices, that the catalog states — and for each postpaid feature, a
-meter and a metered price from the same `unitPrice`. They return the meter event names and the
+meter and a metered price from the same `pricing`: one rate, a package transform, or a graduated /
+volume ladder. A provider that can hold the full shape declares it as `usagePrices`; the one-rate
+`unitPrices` map remains the shorthand. They return the meter event names and the
 metered handles the runtime provider needs, so `PeriodCloseUsage` can push the closing period's
 billable units. Both declare every resource with `RemovalPolicy.retain`, so a tier that leaves the
 catalog leaves a financial record rather than a deleted one. They are deploy-time helpers, not

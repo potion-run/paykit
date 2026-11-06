@@ -171,7 +171,7 @@ describe("Stack", () => {
     }),
   );
 
-  it.effect("refuses a ladder or a package a usage provider cannot meter", () =>
+  it.effect("accepts a ladder and a package when the provider states the pricing", () =>
     Effect.gen(function* () {
       const ladder = tier({
         id: "ladder",
@@ -191,16 +191,36 @@ describe("Stack", () => {
           }),
         ],
       });
-      const ladderError = yield* Effect.flip(
+      const ladderPricing = {
+        _tag: "graduated" as const,
+        currency: "usd",
+        bands: [
+          { upTo: 100, unitPrice: { amount: 1, currency: "usd" } },
+          { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
+        ] as const,
+      };
+      const ladderMissing = yield* Effect.flip(
         validateStack("Billing", {
           catalog: { features: [messages], tiers: [ladder] },
           providers: [{ ...PaymentsMemory(), prices: { ladder: proPrice } }],
         }),
       );
-      expect(ladderError._tag).toBe("CatalogPriceMismatch");
-      if (ladderError._tag === "CatalogPriceMismatch") {
-        expect(ladderError.field).toBe("pricing.messages");
+      expect(ladderMissing._tag).toBe("CatalogPriceMismatch");
+      if (ladderMissing._tag === "CatalogPriceMismatch") {
+        expect(ladderMissing.field).toBe("pricing.messages");
       }
+
+      const ladderBilling = yield* validateStack("Billing", {
+        catalog: { features: [messages], tiers: [ladder] },
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { ladder: proPrice },
+            usagePrices: { ladder: { messages: ladderPricing } },
+          },
+        ],
+      });
+      expect(ladderBilling.id).toBe("Billing");
 
       const packagePrice = tier({
         id: "package",
@@ -213,6 +233,18 @@ describe("Stack", () => {
           }),
         ],
       });
+      const packageBilling = yield* validateStack("Billing", {
+        catalog: { features: [messages], tiers: [packagePrice] },
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { package: proPrice },
+            unitPrices: { package: { messages: { amount: 500, currency: "usd", units: 1_000 } } },
+          },
+        ],
+      });
+      expect(packageBilling.id).toBe("Billing");
+
       const packageError = yield* Effect.flip(
         validateStack("Billing", {
           catalog: { features: [messages], tiers: [packagePrice] },
@@ -220,14 +252,14 @@ describe("Stack", () => {
             {
               ...PaymentsMemory(),
               prices: { package: proPrice },
-              unitPrices: { package: { messages: { amount: 500, currency: "usd", units: 1_000 } } },
+              unitPrices: { package: { messages: { amount: 500, currency: "usd" } } },
             },
           ],
         }),
       );
       expect(packageError._tag).toBe("CatalogPriceMismatch");
       if (packageError._tag === "CatalogPriceMismatch") {
-        expect(packageError.expected).toBe("one unit per price");
+        expect(packageError.expected).toBe("500 usd per 1000 units");
       }
     }),
   );

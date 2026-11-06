@@ -1,4 +1,13 @@
-import type { Price, TierKind, UnitPrice } from "@potion.run/paykit";
+import {
+  asPricing,
+  soleUnitPriceOf,
+  unitsOf,
+  type Price,
+  type Pricing,
+  type PricingValue,
+  type TierKind,
+  type UnitPrice,
+} from "@potion.run/paykit";
 import type { Output } from "alchemy/Output";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import { Stack } from "alchemy/Stack";
@@ -18,8 +27,10 @@ export { productNamePrefixOf };
 export interface ProductUsageDeclaration {
   /** The catalog feature the meter counts. */
   readonly feature: string;
-  /** What one billable unit costs, in minor units. */
-  readonly unitPrice: UnitPrice;
+  /** What one billable unit costs, in minor units, when the pricing has one rate. */
+  readonly unitPrice?: UnitPrice;
+  /** The full pricing when it is a band ladder and has no single rate. */
+  readonly pricing?: Pricing;
   /** Logical id of the `Meter` resource. */
   readonly meterResource: string;
   /** The meter event name, `paykit_<encoded stage>_<encoded feature>`. */
@@ -57,7 +68,7 @@ export type TierPrice =
        * One unit price per billable feature. Polar embeds a metered price in
        * the product, so a change to any unit price is a new product.
        */
-      readonly usage?: Readonly<Record<string, UnitPrice>>;
+      readonly usage?: Readonly<Record<string, PricingValue>>;
       /** One per-seat price per non-consumable feature. */
       readonly seats?: Readonly<Record<string, UnitPrice>>;
     };
@@ -67,7 +78,7 @@ const normalize = (
 ): {
   readonly price: Price;
   readonly kind: TierKind;
-  readonly usage: Readonly<Record<string, UnitPrice>>;
+  readonly usage: Readonly<Record<string, PricingValue>>;
   readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>
   "price" in value
@@ -108,12 +119,18 @@ export const priceDeclarations = (
             ? []
             : Object.entries(usage)
                 .sort(([left], [right]) => left.localeCompare(right))
-                .map(([feature, unitPrice]) => ({
-                  feature,
-                  unitPrice,
-                  meterResource: `Meter_${feature}`,
-                  eventName: meterEventNameOf(stage, feature),
-                })),
+                .map(([feature, value]) => {
+                  const pricing = asPricing(value);
+                  const unitPrice = soleUnitPriceOf(pricing);
+                  const keepsPricing = unitPrice === null || unitsOf(unitPrice) > 1;
+                  return {
+                    feature,
+                    ...(unitPrice === null ? {} : { unitPrice }),
+                    ...(keepsPricing ? { pricing } : {}),
+                    meterResource: `Meter_${feature}`,
+                    eventName: meterEventNameOf(stage, feature),
+                  };
+                }),
         seats:
           kind === "one_off"
             ? []
@@ -274,7 +291,8 @@ export const PolarPrices = Effect.fn("Polar.Prices")(function* (
       price: declaration.price,
       usage: declaration.usage.map((usage) => ({
         meterId: createdMeters.get(usage.feature)!.id,
-        unitPrice: usage.unitPrice,
+        ...(usage.unitPrice === undefined ? {} : { unitPrice: usage.unitPrice }),
+        ...(usage.pricing === undefined ? {} : { pricing: usage.pricing }),
       })),
       seats: declaration.seats.map((seat) => ({ unitPrice: seat.unitPrice })),
     }).pipe(RemovalPolicy.retain());

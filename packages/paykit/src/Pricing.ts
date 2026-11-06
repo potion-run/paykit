@@ -150,6 +150,44 @@ export const pricing = (input: PricingInput): Pricing => {
 export const unitPriceOf = (pricing: Pricing): UnitPrice | null =>
   pricing._tag === "unit" ? pricing.unitPrice : null;
 
+/** A pricing as a provider config or a declaration may state it. */
+export type PricingValue = Pricing | UnitPrice | PricingInput;
+
+/**
+ * Read a pricing written in any of the three forms the catalog and the vendor
+ * configs accept: a normalized `Pricing`, the one-rate `UnitPrice` shorthand,
+ * or the authoring `PricingInput`. Pure, so a deploy maps a price the same way
+ * every time.
+ */
+export const asPricing = (value: PricingValue): Pricing => {
+  if ("_tag" in value) return value;
+  if ("kind" in value) return pricing(value);
+  return { _tag: "unit", unitPrice: value };
+};
+
+const DECIMAL_PLACES = 12n;
+const DECIMAL_SCALE = 10n ** DECIMAL_PLACES;
+
+/**
+ * The amount one feature unit costs, as a decimal string in minor units. A
+ * package price (`$5 per 1,000`) becomes `"0.5"` cents per unit, which is how a
+ * vendor that prices one unit at a time can state the same package. Rounded to
+ * twelve places, the most the vendor APIs accept.
+ */
+export const unitAmountDecimalOf = (price: UnitPrice): string => {
+  // A price read back from a vendor may already be the per-unit decimal (a
+  // package's fractional rate), not the catalog's integer amount.
+  if (!Number.isSafeInteger(price.amount)) return String(price.amount);
+  const units = BigInt(unitsOf(price));
+  if (units === 1n) return String(price.amount);
+  const numerator = BigInt(price.amount) * DECIMAL_SCALE;
+  const rounded = (numerator + units / 2n) / units;
+  const whole = rounded / DECIMAL_SCALE;
+  const fraction = (rounded % DECIMAL_SCALE).toString().padStart(Number(DECIMAL_PLACES), "0");
+  const trimmed = fraction.replace(/0+$/, "");
+  return trimmed.length === 0 ? String(whole) : `${whole}.${trimmed}`;
+};
+
 /** The currency a pricing bills in. */
 export const currencyOfPricing = (pricing: Pricing): string =>
   pricing._tag === "unit" ? pricing.unitPrice.currency : pricing.currency;

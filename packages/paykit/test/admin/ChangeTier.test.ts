@@ -8,7 +8,7 @@ import { AdminChangeTier, AdminChangeTierLive } from "../../src/Admin/ChangeTier
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { allowancesOf, catalog, tierTermsOf } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
@@ -184,4 +184,68 @@ it.effect("a quoted tier change is never refused for disagreeing with itself", (
     },
     { runs: 120, size: 40 },
   ),
+);
+
+const eurPriced = (amount: number) => ({
+  amount,
+  currency: "usd",
+  interval: "month" as const,
+  additionalCurrencies: [{ currency: "eur", amount }],
+});
+
+const eurCatalog = Effect.runSync(
+  catalog({
+    features: [messages],
+    tiers: [
+      tier({
+        id: "pro",
+        price: eurPriced(1_900),
+        grants: [allowance(messages, { included: 2_000 })],
+      }),
+      tier({
+        id: "scale",
+        price: eurPriced(9_900),
+        grants: [allowance(messages, { included: 5_000 })],
+      }),
+    ],
+  }),
+);
+
+const EurWorld = AdminChangeTierLive.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
+        .pipe(Layer.provide(Domain.InMemory))
+        .pipe(Layer.provideMerge(MemoryBillingReadStore)),
+      catalogLayer(eurCatalog),
+      Layer.succeed(Actor, system("test")),
+    ),
+  ),
+);
+
+const runEur = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.provide(EurWorld));
+
+it.live("quotes in the currency the standing was sold in", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    const terms = tierTermsOf(eurCatalog, "pro", "eur")!;
+    yield* subscription.send(
+      Subscription.ref("acct_eur_change"),
+      new Subscribe({
+        tier: "pro",
+        allowances: terms.allowances,
+        credits: terms.credits,
+        creditsExpire: terms.creditsExpire,
+        rates: terms.rates,
+        price: terms.price,
+      }),
+    );
+
+    const change = yield* AdminChangeTier;
+    const quote = yield* change.change({ account: "acct_eur_change", tier: "scale" });
+    expect(quote._tag).toBe("quoted");
+    if (quote._tag !== "quoted") return;
+    expect(quote.proration?.currency).toBe("eur");
+    expect(quote.proration?.due).toBe(8_000);
+  }).pipe(runEur),
 );

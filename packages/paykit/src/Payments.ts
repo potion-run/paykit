@@ -5,6 +5,7 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { UnitPrice } from "./Allowance.ts";
+import type { Pricing } from "./Pricing.ts";
 import { TierKind, type Price } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
 
@@ -263,11 +264,17 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
   /** The provider's price handle per tier. The catalog stays provider-free. */
   readonly prices?: Readonly<Record<string, Price>>;
   /**
-   * What the provider charges per billable unit, per tier and feature. The
-   * deploy compares it with the catalog's `Allowance.unitPrice`; a disagreement
-   * is a refusal, never a runtime conversion.
+   * What the provider charges per billable unit, per tier and feature. Kept for
+   * a one-rate price and for state recorded before `usagePrices` existed; a
+   * provider that can hold a ladder states the whole pricing there instead.
    */
   readonly unitPrices?: UnitPriceMap;
+  /**
+   * The full pricing a provider holds per billable feature: one rate, a package
+   * or a band ladder. The deploy compares it with the catalog's `pricingOf`; a
+   * disagreement is a refusal, never a runtime conversion.
+   */
+  readonly usagePrices?: UsagePricingMap;
   /**
    * What the provider charges per seat, per tier and feature. A provider that
    * declares `quantity` must map every billable seat; a disagreement is a
@@ -291,6 +298,9 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
 
 /** A provider's unit prices, keyed by tier and then by feature. */
 export type UnitPriceMap = Readonly<Record<string, Readonly<Record<string, UnitPrice>>>>;
+
+/** A provider's full usage pricings, keyed by tier and then by feature. */
+export type UsagePricingMap = Readonly<Record<string, Readonly<Record<string, Pricing>>>>;
 
 /** The providers a deployment runs, and the one that serves a new account. */
 export interface ProviderSet {

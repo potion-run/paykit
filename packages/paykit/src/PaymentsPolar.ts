@@ -12,6 +12,7 @@ import {
   type MoneyProvider,
   type UsageLine,
 } from "./Payments.ts";
+import { asPricing, soleUnitPriceOf, type Pricing, type PricingValue } from "./Pricing.ts";
 import type { Price, TierKind } from "./Tier.ts";
 import type { PaymentsWebhook } from "./Webhooks.ts";
 
@@ -77,7 +78,7 @@ export interface PolarTier {
    * One metered price per billable feature, embedded in the product. The deploy
    * checks each unit price against the catalog before anything is billed.
    */
-  readonly usage?: Readonly<Record<string, UnitPrice>>;
+  readonly usage?: Readonly<Record<string, PricingValue>>;
   /**
    * The per-seat price of the product's seat-based price. Polar's seat count is
    * subscription-wide, so a tier may map only one billable seat feature.
@@ -221,11 +222,17 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
   const prices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [tier, mapped.price]),
   );
-  const unitPrices = Object.fromEntries(
-    Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
-      mapped.usage === undefined ? [] : [[tier, { ...mapped.usage }] as const],
-    ),
-  );
+  const usagePrices: Record<string, Record<string, Pricing>> = {};
+  const unitPrices: Record<string, Record<string, UnitPrice>> = {};
+  for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
+    if (mapped.usage === undefined) continue;
+    for (const [feature, usage] of Object.entries(mapped.usage)) {
+      const pricing = asPricing(usage);
+      (usagePrices[tier] ??= {})[feature] = pricing;
+      const sole = soleUnitPriceOf(pricing);
+      if (sole !== null) (unitPrices[tier] ??= {})[feature] = sole;
+    }
+  }
   const seatPrices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
       mapped.seats === undefined ? [] : [[tier, { ...mapped.seats }] as const],
@@ -239,6 +246,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
     payments,
     ...(Object.keys(prices).length === 0 ? {} : { prices }),
     ...(Object.keys(unitPrices).length === 0 ? {} : { unitPrices }),
+    ...(Object.keys(usagePrices).length === 0 ? {} : { usagePrices }),
     ...(Object.keys(seatPrices).length === 0 ? {} : { seatPrices }),
     ...(props.bindings.setQuantity === undefined ? {} : { seatScope: "subscription" as const }),
     ...(props.webhook === undefined ? {} : { webhook: props.webhook }),

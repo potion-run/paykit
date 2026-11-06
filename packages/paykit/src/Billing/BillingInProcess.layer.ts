@@ -427,7 +427,12 @@ export const BillingInProcess = Layer.mergeAll(
       return Effect.fn("Paykit.ScheduleTierChange")(function* (account) {
         const ref = Subscription.ref(account);
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
-          const scheduled = scheduleTierChangeInputOf(catalog, request.tier);
+          const state = yield* subscription.state(ref);
+          const scheduled = scheduleTierChangeInputOf(
+            catalog,
+            request.tier,
+            state._tag === "Subscribed" ? state.currency : undefined,
+          );
           if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
