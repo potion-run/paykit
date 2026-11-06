@@ -66,6 +66,12 @@ pnpm --filter @potion.run/example-billing dev
 yielded/auth, a cookie or a deployment's own session service without touching
 the catalog or the model.
 
+[`examples/tanstack`](./examples/tanstack) is a TanStack Start app on Cloudflare whose billing UI is
+the first-class Effect Atom client. `PaykitAtom.make({ layer })` builds one runtime over the tenant
+Api: `entitlements(account)` and `billing(account)` are queries, every tenant verb is a command, and
+a successful command invalidates the account's reactivity key — so the view refreshes without a
+manual call.
+
 ## The shape of it
 
 - **Entitlement is ours, money is the provider's.** `check()` never calls a provider: it reads a row

@@ -1,0 +1,43 @@
+{
+  "name": "@potion.run/example-tanstack",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/tanstack"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:",
+    "@alchemy.run/domain": "catalog:",
+    "@effect/atom-react": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "@tanstack/react-router": "catalog:",
+    "@tanstack/react-start": "catalog:",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "scheduler": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

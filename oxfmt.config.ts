@@ -24,5 +24,8 @@ export default defineConfig({
     "**/.agent-sources/**",
     "**/*.md",
     "**/*.mdx",
+    // TanStack Router owns this file: it is emitted with single quotes and no
+    // semicolons, and reformatting it only makes the next generation a diff.
+    "**/routeTree.gen.*",
   ],
 } satisfies OxfmtConfig);

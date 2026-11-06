@@ -251,6 +251,25 @@ is the record; these are the rules a new one follows.
 - Every test body runs against both layers, once — `test/bindings` proves the transport is an
   implementation detail, not a second API.
 
+### Atom client
+
+`src/Atom.ts`, entry `@potion.run/paykit/Atom`, is the first-class Effect Atom integration. It wraps
+`BillingApiLayer`; it never re-implements a verb.
+
+- `make({ layer })` builds one `Atom.runtime` over `BillingApi.Client` and `CatalogService`.
+  `provideMerge` keeps both on the runtime, so an application query can reach the client without
+  rebuilding the transport.
+- `entitlements(account)` and `billing(account)` are queries, memoized per account and wrapped in
+  `Atom.withServerValueInitial`. Every command atom is memoized per account and invalidates
+  `paykit/account/<id>` on success, so a view refreshes without the caller wiring a subscription.
+- It exposes the tenant bindings only. `Subscribe`, `ChangeTier`, `Preview`, `Portal` and
+  `ChargeProration` are operation bindings: a browser has no provider or standing, so a purchase
+  stays a deployment operation (the TanStack example's `/bootstrap`).
+- Reads brand the account id once through `Subscription.ref`; `BindingCall` supplies headers when
+  the deployment needs them, and a same-origin client relies on its cookie.
+- `check` is a command atom because the amount is part of the question; the `entitlements` view
+  already carries `allowed` per feature when no amount is involved.
+
 ## Auth
 
 `Session` and `Admin` are the two `RpcMiddleware` services in `src/Auth/`. A command declares the

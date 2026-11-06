@@ -35,6 +35,9 @@ it("exports the four groups from the package root", () => {
   expect(Billing.BillingAdminInProcess).toBeDefined();
   expect(Billing.BillingAdminApiLayer).toBeDefined();
   expect(Paykit.Paykit.Billing).toBe(Billing);
+  // the Effect Atom client is a first-class runtime surface too
+  expect(typeof Paykit.Atom.make).toBe("function");
+  expect(typeof Paykit.Atom.accountReactivityKey).toBe("function");
   // runtime — the retiring names, still flat until the migration slice
   // one binding per command, named for the command — no aliases
   expect(Paykit.Check.key).toBe("Paykit.Check");

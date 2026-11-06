@@ -27,6 +27,13 @@ Stripe and Polar. What the deploy does: validates the catalog into `BillingStack
 metered price for every postpaid feature. What the close does: `PeriodCloseUsage` sends the closing
 period's billable units to the account's provider once, with the period as the idempotency key.
 
+The client surface has a first-class Effect Atom module (`@potion.run/paykit/Atom`): `make` builds
+one runtime over the tenant Api, `entitlements(account)` and `billing(account)` are queries memoized
+per account, every tenant verb is a command atom, and a successful command invalidates
+`paykit/account/<id>` so the queries refresh without a manual call. `examples/tanstack` deploys it in
+a TanStack Start app on Alchemy, with the purchase operation left in the Worker that owns the
+provider.
+
 The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
 (credits are a unit of account, one pool per account), [0003](./adr/0003-the-deploy-provisions-the-vendor.md)

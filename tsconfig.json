@@ -46,6 +46,12 @@
     },
     {
       "path": "./examples/auth/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/tanstack"
+    },
+    {
+      "path": "./examples/tanstack/tsconfig.test.json"
     }
   ]
 }

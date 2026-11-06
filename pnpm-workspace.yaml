@@ -30,6 +30,7 @@ catalog:
   "@distilled.cloud/core": "1.0.0-rc.18"
   "@distilled.cloud/polar": "1.0.0-rc.18"
   "@distilled.cloud/stripe": "1.0.0-rc.18"
+  "@effect/atom-react": "4.1.2"
   "@effect/platform-node": "^4.1.2"
   # The Effect LSP's Oxlint integration. Pinned exactly: `effect-tsgo patch`
   # rewrites the installed `oxlint` and `oxlint-tsgolint` binaries, and a release
@@ -40,8 +41,13 @@ catalog:
   "@foldkit/devtools": "^0.170.0"
   "@foldkit/ui": "^0.170.0"
   "@foldkit/vite-plugin": "^0.29.0"
+  "@tanstack/react-router": "^1.170.46"
+  "@tanstack/react-start": "^1.169.4"
   "@types/bun": "1.4.4"
   "@types/node": "26.6.6"
+  "@types/react": "^19.3.0"
+  "@types/react-dom": "^19.3.0"
+  "@vitejs/plugin-react": "^6.1.2"
   alchemy: "2.0.0-beta.85"
   blume: "^2.2.6"
   better-auth: "^1.7.5"
@@ -51,6 +57,9 @@ catalog:
   oxfmt: "^0.76.0"
   oxlint: "^1.91.0"
   oxlint-tsgolint: "7.0.2005"
+  react: "^19.3.1"
+  react-dom: "^19.3.1"
+  scheduler: "^0.28.0"
   # The TLA+ model checker behind `pnpm spec`. TLC without the JVM, so the gate
   # needs no toolchain beyond `pnpm install`.
   tla-ts: "0.0.8"

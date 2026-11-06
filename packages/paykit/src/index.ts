@@ -145,6 +145,11 @@ export type {
 
 // ── 2. runtime ──────────────────────────────────────────────────────────────
 /**
+ * The Effect Atom client: one runtime over a tenant layer, the two account
+ * views as queries, and every tenant verb as a command that refreshes them.
+ */
+export * as Atom from "./Atom.ts";
+/**
  * The binding surface as one namespace: `Paykit.Billing.TrackUsage(account)`.
  * This is the SDK a request handler uses. Every tag here is a
  * `Binding.Service`; the layers are below.
