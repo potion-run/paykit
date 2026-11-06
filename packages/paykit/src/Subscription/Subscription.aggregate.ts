@@ -2,17 +2,18 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import {
-  isFlagGrant,
-  type Allowances,
-  type Included,
-  type Overage,
-  type Resets,
-} from "../Allowance.ts";
+import { isFlagGrant, type Included, type Overage, type Resets } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { prorate, sameProration } from "../Proration.ts";
+import {
+  capacityOf,
+  downgradeOf,
+  moneyOverflowOf,
+  type Capacity,
+  type JudgedFeature,
+} from "./Allowance.verdict.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
 import {
@@ -66,6 +67,13 @@ import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
+import {
+  activationOf,
+  carriedPrepaidOf,
+  startingRemaining,
+  standingFrom,
+  unitPriceCurrencyOf,
+} from "./Standing.ts";
 import { StartTrial, TrialStarted } from "./StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -89,7 +97,6 @@ import {
   remainingAfterRelease,
   remainingAfterSpending,
   remainingOf,
-  spendCeilingOf,
   closingHold,
   reservedCreditsOf,
   reservedOf,
@@ -122,30 +129,12 @@ import {
   WithdrawTierChange,
 } from "./WithdrawTierChange.command.ts";
 
-/** The currency a tier's postpaid prices are stated in, if it has any. */
-const unitPriceCurrencyOf = (allowances: Allowances): string | undefined => {
-  for (const allowance of Object.values(allowances)) {
-    if (allowance.unitPrice !== undefined) return allowance.unitPrice.currency;
-  }
-  return undefined;
-};
-
 /** The part of an allowance `decide` reads when it derives a count. */
 type CountableAllowance = {
   readonly included: Included;
   readonly overage: Overage;
   readonly resets: Resets;
 };
-
-const startingRemaining = (
-  allowances: Readonly<Record<string, CountableAllowance>>,
-): Record<string, number | null> =>
-  Object.fromEntries(
-    Object.entries(allowances).map(([feature, allowance]) => [
-      feature,
-      includedRemainingOf(allowance),
-    ]),
-  );
 
 const remainingAfterChange = (
   state: SubscribedState,
@@ -169,15 +158,6 @@ const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
-
-/**
- * The one-off portion an activation or change carries over, omitted when there
- * is none so an event for an ordinary plan does not grow a zero field.
- */
-const carriedPrepaid = (state: SubscriptionState, credits: number) => {
-  const prepaid = Math.min(prepaidCreditsOf(state), credits);
-  return prepaid === 0 ? {} : { prepaidCredits: prepaid };
-};
 
 /**
  * The event that returns an open hold's units (or credits) to a standing. A
@@ -215,12 +195,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
           new TierChanged({
             tier: pending.tier,
             allowances: pending.allowances,
-            remaining: Object.fromEntries(
-              Object.entries(pending.allowances).map(([feature, allowance]) => [
-                feature,
-                includedRemainingOf(allowance),
-              ]),
-            ),
+            remaining: startingRemaining(pending.allowances),
             credits,
             ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
             creditsExpire,
@@ -297,6 +272,161 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   ];
 };
 
+/** The per-feature facts a judgement reads, from the standing itself. */
+const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
+  const allowance = state.allowances[feature];
+  const rates = state.rates[feature];
+  const included = allowance?.included ?? null;
+  const remaining = availableOf(state, feature);
+  const used = usedOf(state, feature);
+  // A credit-priced feature shares one pool: its `reserved` is the credits
+  // every open hold kept out, not the units held on this feature.
+  const reserved = rates === undefined ? reservedOf(state, feature) : reservedCreditsOf(state);
+  // The write path knows `included`, a read model knows `carried`; the ceiling
+  // is written from `remaining`, so the rollover part is derived here.
+  const carried =
+    typeof included === "number" && remaining !== null
+      ? Math.max(0, remaining + used + reserved - included)
+      : 0;
+  return {
+    overage: allowance?.overage ?? "block",
+    included,
+    ...(allowance?.cap === undefined ? {} : { cap: allowance.cap }),
+    carried,
+    ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+    ...(allowance?.unitPrice === undefined ? {} : { unitPrice: allowance.unitPrice }),
+    billed: billedOf(state, feature),
+    used,
+    reserved,
+    remaining,
+    ...(rates === undefined ? {} : { creditRates: rates }),
+  };
+};
+
+/**
+ * The money evidence a `MoneyCapExceeded` carries. The verdict judged the total;
+ * this is the split the rejection states — what the event bills, and what the
+ * open holds promise — so a caller reads the same numbers `Hold` and `Track`
+ * always reported.
+ */
+const moneyCapRefusalOf = (
+  verdict: Extract<Capacity, { readonly _tag: "Money" }>,
+  state: SubscribedState,
+  feature: string,
+  amount: number,
+): MoneyCapExceeded => {
+  const allowance = state.allowances[feature];
+  const used = usedOf(state, feature);
+  const reserved = reservedOf(state, feature);
+  const reservedCharge = chargeOf(
+    allowance?.unitPrice,
+    allowance?.included ?? null,
+    used,
+    reserved,
+  );
+  return new MoneyCapExceeded({
+    feature,
+    cap: verdict.cap,
+    billed: verdict.billed,
+    ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
+    charge: chargeOf(allowance?.unitPrice, allowance?.included ?? null, used + reserved, amount),
+  });
+};
+
+/** Every refusal a capacity verdict means for `TrackUsage`. */
+type UsageRefusal =
+  | AllowanceExceeded
+  | StandingBlocksUsage
+  | SpendCapExceeded
+  | MoneyCapExceeded
+  | CreditExceeded;
+
+/** The rejection a capacity verdict means for `TrackUsage`, or `null` when it allowed. */
+const usageRefusalOf = (
+  verdict: Capacity,
+  state: SubscribedState,
+  feature: string,
+  amount: number,
+): UsageRefusal | null => {
+  switch (verdict._tag) {
+    case "Allowed":
+      return null;
+    case "Standing":
+      return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
+    case "Remaining": {
+      const included = state.allowances[feature]?.included;
+      return new AllowanceExceeded({
+        feature,
+        included: typeof included === "number" ? included : 0,
+        used: usedOf(state, feature),
+        requested: verdict.requested,
+        remaining: verdict.remaining,
+      });
+    }
+    case "Ceiling":
+      return new SpendCapExceeded({
+        feature,
+        cap: verdict.cap,
+        used: usedOf(state, feature),
+        reserved: reservedOf(state, feature),
+        requested: verdict.requested,
+      });
+    case "Money":
+      return moneyCapRefusalOf(verdict, state, feature, amount);
+    case "Credits": {
+      const reserved = reservedCreditsOf(state);
+      return new CreditExceeded({
+        feature,
+        cost: verdict.cost,
+        balance: state.credits,
+        ...(reserved === 0 ? {} : { reserved }),
+      });
+    }
+  }
+};
+
+/** Every refusal a capacity verdict means for `Hold`. */
+type HoldRefusal = HoldExceeded | StandingBlocksUsage | SpendCapExceeded | MoneyCapExceeded;
+
+/** The rejection a capacity verdict means for `Hold`, or `null` when it allowed. */
+const holdRefusalOf = (
+  verdict: Capacity,
+  state: SubscribedState,
+  feature: string,
+  amount: number,
+): HoldRefusal | null => {
+  switch (verdict._tag) {
+    case "Allowed":
+      return null;
+    case "Standing":
+      return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
+    case "Remaining":
+      return new HoldExceeded({
+        feature,
+        requested: verdict.requested,
+        held: 0,
+        remaining: verdict.remaining,
+      });
+    case "Credits":
+      return new HoldExceeded({
+        feature,
+        requested: verdict.cost,
+        held: 0,
+        remaining: verdict.available,
+      });
+    case "Ceiling":
+      return new SpendCapExceeded({
+        feature,
+        cap: verdict.cap,
+        used: usedOf(state, feature),
+        reserved: reservedOf(state, feature),
+        requested: verdict.requested,
+      });
+    case "Money":
+      return moneyCapRefusalOf(verdict, state, feature, amount);
+  }
+};
+
 /**
  * One account's standing: subscription state and usage counters in one
  * aggregate, so a `TrackUsage` that would exceed a blocking allowance is
@@ -354,27 +484,29 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (DateTime.toEpochMillis(command.trialEndsAt) <= DateTime.toEpochMillis(now)) {
         return new TrialDeadlineNotLater({ current: now, requested: command.trialEndsAt });
       }
+      // A pack the account already bought survives a new activation; the
+      // plan's own grant is the only part that starts fresh.
+      const prepaid = prepaidCreditsOf(state);
       return [
         new TrialStarted({
-          tier: command.tier,
-          allowances: command.allowances,
-          remaining: startingRemaining(command.allowances),
-          periodStart: now,
-          periodEnd: command.trialEndsAt,
-          anchorTz: command.anchorTz ?? "UTC",
+          ...activationOf({
+            tier: command.tier,
+            allowances: command.allowances,
+            credits: command.credits + prepaid,
+            prepaidCredits: prepaid,
+            creditsExpire: command.creditsExpire,
+            ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
+            rates: command.rates,
+            ...(command.price === undefined ? {} : { price: command.price }),
+            period: {
+              start: now,
+              end: command.trialEndsAt,
+              anchorTz: command.anchorTz ?? "UTC",
+            },
+            previousCurrency: currentCurrency,
+            statusAfter: "trialing",
+          }),
           trialEndsAt: command.trialEndsAt,
-          ...(command.price === undefined ? {} : { price: command.price }),
-          ...((currency ?? currentCurrency) === undefined
-            ? {}
-            : { currency: (currency ?? currentCurrency)! }),
-          // A pack the account already bought survives a new activation; the
-          // plan's own grant is the only part that starts fresh.
-          credits: command.credits + prepaidCreditsOf(state),
-          ...carriedPrepaid(state, command.credits + prepaidCreditsOf(state)),
-          creditsExpire: command.creditsExpire,
-          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
-          rates: command.rates,
-          statusAfter: "trialing",
         }),
       ];
     },
@@ -394,27 +526,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const interval =
         command.price?.interval ?? (state._tag === "Subscribed" ? state.interval : "month");
       const period = periodFrom(now, interval, command.anchorTz ?? "UTC");
+      // A pack the account already bought survives a new activation; the
+      // plan's own grant is the only part that starts fresh.
+      const prepaid = prepaidCreditsOf(state);
       return [
         new SubscriptionActivated({
-          tier: command.tier,
-          allowances: command.allowances,
-          remaining: startingRemaining(command.allowances),
-          periodStart: period.start,
-          periodEnd: period.end,
-          anchorTz: period.anchorTz,
+          ...activationOf({
+            tier: command.tier,
+            allowances: command.allowances,
+            credits: command.credits + prepaid,
+            prepaidCredits: prepaid,
+            creditsExpire: command.creditsExpire,
+            ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
+            rates: command.rates,
+            ...(command.price === undefined ? {} : { price: command.price }),
+            period,
+            previousCurrency: currentCurrency,
+            statusAfter: "active",
+          }),
           interval,
-          ...((priceCurrency ?? currentCurrency) === undefined
-            ? {}
-            : { currency: (priceCurrency ?? currentCurrency)! }),
-          ...(command.price === undefined ? {} : { price: command.price }),
-          // A pack the account already bought survives a new activation; the
-          // plan's own grant is the only part that starts fresh.
-          credits: command.credits + prepaidCreditsOf(state),
-          ...carriedPrepaid(state, command.credits + prepaidCreditsOf(state)),
-          creditsExpire: command.creditsExpire,
-          ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
-          rates: command.rates,
-          statusAfter: "active",
         }),
       ];
     },
@@ -425,8 +555,6 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const current = subscribed(state, id);
       if (Schema.is(NotSubscribed)(current)) return current;
       for (const [feature, allowance] of Object.entries(command.allowances)) {
-        const used = usedOf(current, feature);
-        const reserved = reservedOf(current, feature);
         // Only a blocking allowance can be oversubscribed: below its count,
         // every later request is refused and the read model reports a negative
         // `remaining` for a feature that stops at zero. A billed or allowed
@@ -434,35 +562,40 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         // what overage means — so the change is allowed, and it is how a
         // mid-period price change reaches the standing. Open holds are owed
         // too: moving below them oversubscribes the allowance just the same.
-        if (
-          allowance.overage === "block" &&
-          allowance.included !== "unlimited" &&
-          used + reserved > allowance.included
-        ) {
-          return new DowngradeBelowUsage({
-            feature,
-            included: allowance.included,
-            used,
-            ...(reserved === 0 ? {} : { reserved }),
-          });
-        }
-        // The two ceilings are kept across a change too, and a ceiling already
-        // passed is a standing no command can leave: every later `TrackUsage`
-        // and `Hold` refuses until the period resets the counters. Money and
-        // units are refused separately because the evidence a console shows is
-        // a different sentence in each.
-        const billed = billedOf(current, feature);
-        if (allowance.moneyCap !== undefined && billed > allowance.moneyCap) {
-          return new DowngradeBelowSpend({ feature, moneyCap: allowance.moneyCap, billed });
-        }
-        const ceiling = spendCeilingOf(allowance);
-        if (ceiling !== null && used + reserved > ceiling) {
-          return new DowngradeBelowCeiling({
-            feature,
-            ceiling,
-            used,
-            ...(reserved === 0 ? {} : { reserved }),
-          });
+        //
+        // The two ceilings are kept across a change as well, and a ceiling
+        // already passed is a standing no command can leave: every later
+        // `TrackUsage` and `Hold` refuses until the period resets the counters.
+        // Money and units are refused separately because the evidence a console
+        // shows is a different sentence in each.
+        const refusal = downgradeOf(allowance, {
+          used: usedOf(current, feature),
+          reserved: reservedOf(current, feature),
+          billed: billedOf(current, feature),
+        });
+        switch (refusal._tag) {
+          case "Allowed":
+            break;
+          case "Usage":
+            return new DowngradeBelowUsage({
+              feature,
+              included: refusal.included,
+              used: refusal.used,
+              ...(refusal.reserved === undefined ? {} : { reserved: refusal.reserved }),
+            });
+          case "Spend":
+            return new DowngradeBelowSpend({
+              feature,
+              moneyCap: refusal.moneyCap,
+              billed: refusal.billed,
+            });
+          case "Ceiling":
+            return new DowngradeBelowCeiling({
+              feature,
+              ceiling: refusal.ceiling,
+              used: refusal.used,
+              ...(refusal.reserved === undefined ? {} : { reserved: refusal.reserved }),
+            });
         }
       }
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
@@ -502,7 +635,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           // is what the event records, while the expiry rule and the rate cards
           // move to the new tier's. The one-off part stays protected.
           credits: current.credits,
-          ...carriedPrepaid(current, current.credits),
+          ...carriedPrepaidOf(current, current.credits),
           creditsExpire: command.creditsExpire,
           ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
@@ -542,11 +675,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           }),
         ];
       }
-      const standing = standingOf(state.status);
-      if (!allowsUsage(state.status)) {
-        return new StandingBlocksUsage({ standing, status: state.status });
-      }
       const allowance = state.allowances[command.feature];
+      const verdict = capacityOf({
+        standing: standingOf(state.status),
+        feature: judgedOf(state, command.feature),
+        ask: {
+          amount: command.amount,
+          ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+        },
+      });
+      if (verdict._tag === "Standing") {
+        return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
+      }
       // A flag is granted, not metered: there is no counter to record usage
       // against, so a Track on one is refused however small the amount is.
       if (allowance !== undefined && isFlagGrant(allowance)) {
@@ -556,26 +696,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
+      const refusal = usageRefusalOf(verdict, state, command.feature, command.amount);
+      if (refusal !== null) return refusal;
       // A credit-priced feature spends the account's pool: the event carries
       // the cost and the balance after it, so the pool is a fold of the log.
       const rates = state.rates[command.feature];
       if (rates !== undefined) {
         const cost = command.amount * creditRateOf(rates, command.dimension);
-        // Open holds have already taken their credits out of what may be
-        // spent. Comparing against the whole pool would let one request spend
-        // the credits another hold is waiting to settle.
-        const spendable = availableOf(state, command.feature) ?? 0;
-        if (cost > spendable) {
-          const reserved = reservedCreditsOf(state);
-          return new CreditExceeded({
-            feature: command.feature,
-            cost,
-            // The pool is still the evidence an operator reads; `spendable` is
-            // what the comparison used.
-            balance: state.credits,
-            ...(reserved === 0 ? {} : { reserved }),
-          });
-        }
         return [
           new UsageRecorded({
             feature: command.feature,
@@ -592,74 +719,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
-      if (allowance === undefined) {
-        return new AllowanceExceeded({
-          feature: command.feature,
-          included: 0,
-          used,
-          requested: command.amount,
-          remaining: 0,
-        });
-      }
-      // A cap is a ceiling in the feature's own units. What is held counts, so
-      // a hold cannot promise a bill the allowance may not run.
-      const ceiling = spendCeilingOf(allowance);
-      if (ceiling !== null) {
-        const reserved = reservedOf(state, command.feature);
-        if (used + reserved + command.amount > ceiling) {
-          return new SpendCapExceeded({
-            feature: command.feature,
-            cap: allowance.cap!,
-            used,
-            reserved,
-            requested: command.amount,
-          });
-        }
-      }
-      // A postpaid feature prices only the part past `included`, and a money
-      // cap refuses in the same transaction as the usage.
-      const reservedUnits = reservedOf(state, command.feature);
-      // The event bills the units it records now, at their own position after
-      // `used`; the open holds are a separate promise. A money cap judges both:
-      // the promised total from `used` over `reserved + amount`, so the
-      // included room is counted once, not once per bucket.
-      const charge = chargeOf(allowance.unitPrice, allowance.included, used, command.amount);
-      const reservedCharge = chargeOf(allowance.unitPrice, allowance.included, used, reservedUnits);
-      const promisedCharge = chargeOf(
-        allowance.unitPrice,
-        allowance.included,
-        used + reservedUnits,
+      const charge = chargeOf(
+        allowance?.unitPrice,
+        allowance?.included ?? null,
+        used,
         command.amount,
       );
       const billed = billedOf(state, command.feature);
-      if (
-        allowance.moneyCap !== undefined &&
-        billed + reservedCharge + promisedCharge > allowance.moneyCap
-      ) {
-        return new MoneyCapExceeded({
-          feature: command.feature,
-          cap: allowance.moneyCap,
-          billed,
-          ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
-          charge: promisedCharge,
-        });
-      }
-      // An allowance that never runs out never blocks: `used` keeps counting
-      // and `remaining` stays absent.
-      if (
-        allowance.included !== "unlimited" &&
-        allowance.overage === "block" &&
-        remaining !== null &&
-        command.amount > remaining
-      ) {
-        return new AllowanceExceeded({
-          feature: command.feature,
-          included: allowance.included,
-          used,
-          requested: command.amount,
-          remaining,
-        });
-      }
       return [
         new UsageRecorded({
           feature: command.feature,
@@ -669,7 +735,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           creditsAfter: state.credits,
           usedAfter: used + command.amount,
           remainingAfter: remainingAfterSpending(remaining, command.amount),
-          ...(allowance.unitPrice === undefined
+          ...(allowance?.unitPrice === undefined
             ? {}
             : {
                 charge,
@@ -738,10 +804,21 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
       // A flag has no counter and no pool: it is granted or it is not.
       const allowance = state.allowances[command.feature];
+      const rates = state.rates[command.feature];
+      const verdict = capacityOf({
+        standing: standingOf(state.status),
+        feature: judgedOf(state, command.feature),
+        ask: {
+          amount: command.amount,
+          ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+        },
+      });
+      if (verdict._tag === "Standing") {
+        return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
+      }
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
-      const rates = state.rates[command.feature];
       // A hold with the id this standing already has is a replay: the retry
       // holds once, and the caller gets the same id back.
       if (holdOf(state, command.holdId) !== null) return [];
@@ -749,89 +826,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
-      // A feature the tier neither counts nor prices has no capacity to
-      // reserve. Without this check it would hold its units at rate 0 and
-      // settle usage the catalog never granted.
-      if (allowance === undefined && rates === undefined) {
-        return new HoldExceeded({
-          feature: command.feature,
-          requested: command.amount,
-          held: 0,
-          remaining: 0,
-        });
-      }
-      // A hold is a promise to bill, so it counts against the ceilings in the
-      // same transaction that would have held the units.
-      const used = usedOf(state, command.feature);
-      const reserved = reservedOf(state, command.feature);
-      const ceiling = allowance === undefined ? null : spendCeilingOf(allowance);
-      if (allowance !== undefined && ceiling !== null) {
-        if (used + reserved + command.amount > ceiling) {
-          return new SpendCapExceeded({
-            feature: command.feature,
-            cap: allowance.cap!,
-            used,
-            reserved,
-            requested: command.amount,
-          });
-        }
-      }
-      const reservedCharge = chargeOf(
-        allowance?.unitPrice,
-        allowance?.included ?? null,
-        used,
-        reserved,
-      );
-      // The hold is promised after the holds already open, so the cap judges
-      // the same incremental charge a settle will eventually bill.
-      const charge = chargeOf(
-        allowance?.unitPrice,
-        allowance?.included ?? null,
-        used + reserved,
-        command.amount,
-      );
-      const billedMoney = billedOf(state, command.feature);
-      if (
-        allowance?.moneyCap !== undefined &&
-        billedMoney + reservedCharge + charge > allowance.moneyCap
-      ) {
-        return new MoneyCapExceeded({
-          feature: command.feature,
-          cap: allowance.moneyCap,
-          billed: billedMoney,
-          ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
-          charge,
-        });
-      }
+      const refusal = holdRefusalOf(verdict, state, command.feature, command.amount);
+      if (refusal !== null) return refusal;
       // The rate is captured here, so the bill at settle is the price the work
       // was priced at, not whatever the catalog says when it finishes.
       const rate = rates === undefined ? 0 : creditRateOf(rates, command.dimension);
       const cost = command.amount * rate;
       const remaining = availableOf(state, command.feature);
-      const spendable = remaining ?? 0;
-      // A credit-priced feature holds credits from the pool, so the pool must
-      // cover it. A counted one holds its own units: a billed allowance may
-      // sit at a negative `remaining` and still hold into its cap, so only the
-      // block and ceiling checks below decide that case.
-      if (rates !== undefined && cost > spendable) {
-        return new HoldExceeded({
-          feature: command.feature,
-          requested: cost,
-          held: 0,
-          remaining: spendable,
-        });
-      }
-      // A blocking allowance has no room past `remaining`, so the hold stops
-      // there. A billed one holds into what it may bill — the cap is its
-      // ceiling, and it is judged above.
-      if (rates === undefined && allowance?.overage === "block" && command.amount > spendable) {
-        return new HoldExceeded({
-          feature: command.feature,
-          requested: command.amount,
-          held: 0,
-          remaining: spendable,
-        });
-      }
       // A credit-priced hold takes credits out of the pool; a counted one takes
       // its own units.
       const held = rates === undefined ? command.amount : cost;
@@ -902,14 +903,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         used + billed,
         otherReserved,
       );
-      if (
-        allowance?.moneyCap !== undefined &&
-        billedMoney + charge + reservedCharge > allowance.moneyCap
-      ) {
+      // The other open holds are promises to bill too; this one is being
+      // billed now, so it is in `charge`, not in `reservedCharge`. The money
+      // rule judges the total, and the evidence stays this command's own split.
+      const overflow = moneyOverflowOf(
+        { ...judgedOf(state, hold.feature), reserved: otherReserved },
+        billed,
+      );
+      if (overflow !== null) {
         return new MoneyCapExceeded({
           feature: hold.feature,
-          cap: allowance.moneyCap,
-          billed: billedMoney,
+          cap: overflow.cap,
+          billed: overflow.billed,
           ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
           charge,
         });
@@ -1146,65 +1151,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ],
   },
   evolve: {
-    TrialStarted: (state, event) => ({
-      _tag: "Subscribed" as const,
-      tier: event.tier,
-      status: event.statusAfter,
-      period: {
-        start: event.periodStart,
-        end: event.periodEnd,
-        anchorTz: event.anchorTz,
-      },
-      interval: event.price?.interval ?? ("month" as const),
-      trialEndsAt: event.trialEndsAt,
-      cancelAtPeriodEnd: false,
-      credits: event.credits,
-      prepaidCredits: event.prepaidCredits ?? 0,
-      creditsExpire: event.creditsExpire,
-      ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
-      rates: event.rates,
-      ...(event.currency === undefined
-        ? state._tag === "Subscribed" && state.currency !== undefined
-          ? { currency: state.currency }
-          : {}
-        : { currency: event.currency }),
-      ...(event.price === undefined ? {} : { price: event.price }),
-      usage: {},
-      remaining: event.remaining,
-      holds: {},
-      allowances: event.allowances,
-      refs: state.refs,
-      trialUsed: true,
-      dedupeKeys: {},
-      dunningAttempts: 0,
-    }),
-    SubscriptionActivated: (state, event) => ({
-      _tag: "Subscribed" as const,
-      tier: event.tier,
-      status: event.statusAfter,
-      period: {
-        start: event.periodStart,
-        end: event.periodEnd,
-        anchorTz: event.anchorTz,
-      },
-      interval: event.interval,
-      cancelAtPeriodEnd: false,
-      credits: event.credits,
-      prepaidCredits: event.prepaidCredits ?? 0,
-      creditsExpire: event.creditsExpire,
-      ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
-      rates: event.rates,
-      ...(event.currency === undefined ? {} : { currency: event.currency }),
-      ...(event.price === undefined ? {} : { price: event.price }),
-      usage: {},
-      remaining: event.remaining,
-      holds: {},
-      allowances: event.allowances,
-      refs: state.refs,
-      trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
-      dedupeKeys: {},
-      dunningAttempts: 0,
-    }),
+    TrialStarted: (state, event) => standingFrom(event, state, { trialUsed: true }),
+    SubscriptionActivated: (state, event) =>
+      standingFrom(event, state, {
+        trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
+      }),
     TierChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const {

@@ -178,10 +178,9 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     if (entry.remaining !== state.credits - heldCredits) return false;
   }
 
-  // The judgement the row carries is `check({ amount: 1 })`, computed by a
-  // second implementation (`allowsOne`) of the rule `evaluateCheck` applies.
-  // Two implementations of one ceiling are where a read model starts
-  // disagreeing with the write path, so this is what says they do not.
+  // The judgement the row carries is `check({ amount: 1 })`. Both read the same
+  // `capacityOf`, so this pins the row's `allowed` to the read path and its
+  // counters to the state the write path folded.
   for (const [feature, entry] of Object.entries(view.features)) {
     const asked = evaluateCheck(view, { account: propertyAccount, feature, amount: 1 });
     if (asked.allowed !== entry.allowed) return false;
@@ -195,8 +194,9 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
 /**
  * The read path and the write path must give one answer. `check()` is
  * advisory, but a caller that is told yes and then refused in the same
- * transaction has been lied to, and the two implementations of the same rule
- * (`evaluateCheck`/`allowsOne` and `decide`) are where that drift lives.
+ * transaction has been lied to. `decide` applies the rule to the standing and
+ * `check()` applies it to a folded view, so this pins the two inputs, not two
+ * copies of the rule.
  *
  * A flag is the one deliberate divergence: it is granted (the read says yes)
  * and it is not counted (the write refuses to meter it), so flags are skipped.
