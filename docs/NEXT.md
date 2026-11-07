@@ -169,9 +169,10 @@ records, `Paykit.world` builds the runtime graph with the catalog in the layer's
 `PaykitAtom.make({ url, catalog })` builds the browser client. The catalog constructors are
 discriminated unions, so `"unlimited"` beside `overage: "bill"`, a cap without a bill, a flag with a
 rate card, and a one-off pack with grants are editor errors; the runtime validator still refuses the
-serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call. What is left is `PolarBilling`
-(its product ids are `Output<string>`s, so the join needs a decision), the server-side tier join that
-would remove the browser's catalog copy, and `Paykit.handler`.
+serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call, and `PolarBilling`
+does the same for Polar: its product ids are `Output<string>`s, so the provider keeps the handle and
+resolves it at checkout or webhook time. What is left is the server-side tier join that would remove
+the browser's catalog copy, and `Paykit.handler`.
 
 ### 4. Auth
 

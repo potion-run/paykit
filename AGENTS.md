@@ -19,9 +19,10 @@ same model with a Better Auth session through the provider-neutral `Paykit.Sessi
 `Paykit.AdminFrom` resolver, so the identity provider is the only file that changes.
 `examples/tanstack` deploys a TanStack Start app on Cloudflare and makes its billing UI the
 first-class Effect Atom client: `PaykitAtom.make({ layer })` over the tenant Api, with
-account-keyed queries and command atoms that refresh them. All four are in the workspace, in the
-root `tsconfig.json` and in `pnpm test`, so an API change that breaks the advertised usage breaks a
-gate.
+account-keyed queries and command atoms that refresh them. `examples/polar` shows `PolarBilling`
+provisioning a product and handing its id to the Worker through the environment. All five are in
+the workspace, in the root `tsconfig.json` and in `pnpm test`, so an API change that breaks the
+advertised usage breaks a gate.
 
 A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
 carries rules a reader needs before touching it, and add it to the workspace globs and the root

@@ -64,6 +64,15 @@ pnpm --filter @potion.run/example-billing test
 pnpm --filter @potion.run/example-billing dev
 ```
 
+[`examples/polar`](./examples/polar) is the same loop with Polar rather than `Manual`.
+`PolarBilling` creates the product, its meter and its metered price, then hands their ids to the
+Worker through the environment; the runtime `Polar({ tiers, meters })` is built from those outputs.
+The test uses a fake Polar client, so it still needs no account.
+
+```sh
+pnpm --filter @potion.run/example-polar test
+```
+
 [`examples/auth`](./examples/auth) gates the same model with a
 [Better Auth](https://better-auth.com) session, and shows the provider-neutral
 `Paykit.SessionFrom` / `Paykit.AdminFrom` resolver that swaps Better Auth for

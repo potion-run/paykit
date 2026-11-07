@@ -419,9 +419,10 @@ yield* Paykit.BillingStack("Billing", { catalog, providers: [stripe] });
 `StripeBilling` is `StripePrices` + `Stripe` with the mapping derived once; it returns the
 `MoneyProvider` and the `SoldPrices` (as `stripe.sold`) for a caller that wants the keys. The two
 existing primitives stay: `StripePrices` for a deployment that manages the provider separately, and
-`Stripe` for a lookup key written by hand. The same shape applies to `PolarBilling` in
-`packages/paykit-polar`; it is still to do, because a Polar product id is an `Output<string>` and the
-join needs a decision about resolving it at the provider boundary.
+`Stripe` for a lookup key written by hand. `PolarBilling` in `packages/paykit-polar` has the same
+shape. Its product ids are `Output<string>`s because Polar mints them, so the provider keeps the
+handle and resolves it at checkout or webhook time instead of forcing the declaration to wait for an
+id that the deploy has not created yet.
 
 This is the one place the design changes a vendor package rather than the core, and it follows the
 Alchemy Stripe module's own split: `StripePrices` is the provisioning primitive, `Stripe(props)` is
