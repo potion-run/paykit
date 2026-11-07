@@ -272,7 +272,7 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsPurchased: (view, event, context): BillingStateView => {
       // A purchase is the refill that was owed, so the page stops reporting the
-      // failure it makes good on (ADR 0026).
+      // failure it makes good on (ADR 0027).
       const { topUpFailure: _madeGood, ...rest } = view;
       return withAccount(
         {

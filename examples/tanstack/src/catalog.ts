@@ -2,9 +2,11 @@ import { allowance, feature, tier } from "@potion.run/paykit/Read";
 
 /**
  * The catalog. Plain data, no provider ids, so the same tiers sell through
- * `Manual`, Stripe or Polar. It is imported by both sides: the Billing Worker
- * validates it at deploy, and the browser joins its terms onto a tier change
- * the same way a server would.
+ * `Manual`, Stripe or Polar.
+ *
+ * Only the Billing Worker imports it. The browser reads the validated value
+ * from `/api/billing/catalog`, so there is one catalog in the system and no
+ * second copy to go stale.
  */
 export const messages = feature({ id: "messages", name: "Messages" });
 

@@ -80,8 +80,9 @@ yielded/auth, a cookie or a deployment's own session service without touching
 the catalog or the model.
 
 [`examples/tanstack`](./examples/tanstack) is a TanStack Start app on Cloudflare whose billing UI is
-the first-class Effect Atom client. `PaykitAtom.make({ layer })` builds one runtime over the tenant
-Api: `entitlements(account)` and `billing(account)` are queries, every tenant verb is a command, and
+the first-class Effect Atom client. `PaykitAtom.make({ url })` builds one runtime over the tenant
+Api — reading the deploy's own catalog from `/api/billing/catalog`, so the browser bundles no second
+copy: `entitlements(account)` and `billing(account)` are queries, every tenant verb is a command, and
 a successful command invalidates the account's reactivity key — so the view refreshes without a
 manual call.
 

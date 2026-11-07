@@ -143,9 +143,15 @@ pack, cooldown })` records `cooldownUntil` on the purchase, defers a crossing in
 clears it with a scheduled `TopUpCooldownElapsed` at the deadline — and an off-session charge ([ADR
 0018](./adr/0018-a-saved-method-is-a-capability.md)) — an optional `charge` capability the policy
 prefers and falls back from to the invoice, recorded as `CreditsPurchased.chargeId`. A provider with
-neither capability is still `ProviderCapabilityMissing`, never a free pack. What is left is a
-per-tier cooldown (`Tier.topUp.cooldown`), a per-tier pack, and a `TopUpFailed` event for a decline
-the deployment must remember.
+neither capability is still `ProviderCapabilityMissing`, never a free pack. The last three landed
+together: [ADR 0026](./adr/0026-a-tier-states-its-whole-top-up-line.md) makes `Tier.topUp` the whole
+line — `{ threshold, cooldown?, pack? }` — so a tier states when it refills, how often, and with
+which pack, and the deployment's `Paykit.autoTopUp({ pack, cooldown })` is the fallback for a tier
+that names neither; [ADR 0027](./adr/0027-a-failed-top-up-is-a-fact-in-the-log.md) records
+`TopUpFailed` when the provider refuses both the saved method and the invoice, carries it on the
+standing as `topUpFailure`, renders it on the timeline, and leaves the cooldown to retry it. What is
+left is a retry budget rather than a cooldown window (a count on the standing and its own refusal),
+and a deployment that wants paging on consecutive failures.
 
 **A usage timeline** is done ([ADR
 0014](./adr/0014-a-usage-timeline-is-a-fold-over-the-account-log.md)): `timelineOf` /
@@ -172,13 +178,19 @@ are the example's job.
 Landed ([the configuration brief](./briefs/billing-configuration.md)). The four examples export one
 `billing.config.ts` and pass it to three one-call surfaces: `Paykit.BillingStack` validates and
 records, `Paykit.world` builds the runtime graph with the catalog in the layer's error channel, and
-`PaykitAtom.make({ url, catalog })` builds the browser client. The catalog constructors are
+`PaykitAtom.make({ url })` builds the browser client, reading the deploy's own catalog from the
+served `PaykitCatalogRpcs` read. The catalog constructors are
 discriminated unions, so `"unlimited"` beside `overage: "bill"`, a cap without a bill, a flag with a
 rate card, and a one-off pack with grants are editor errors; the runtime validator still refuses the
 serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call, and `PolarBilling`
 does the same for Polar: its product ids are `Output<string>`s, so the provider keeps the handle and
-resolves it at checkout or webhook time. What is left is the server-side tier join that would remove
-the browser's catalog copy, and `Paykit.handler`.
+resolves it at checkout or webhook time. The browser's catalog copy is gone: [ADR
+0028](./adr/0028-a-browser-reads-the-catalog-from-the-deploy.md) serves the deploy's own catalog over
+a guarded `Catalog` RPC, and `make` reads it once when the runtime is built, so a stale bundle can no
+longer join terms the server refuses with `CatalogMismatch`. What is left is the *join* itself — the
+Api taking a tier id and the server expanding it, which needs a tenant command surface because a
+model command's payload cannot be enriched between the RPC and `decide` — and `Paykit.handler`, which
+is where that surface and the catalog route both belong.
 
 ### 4. Auth
 

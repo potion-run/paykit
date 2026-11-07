@@ -1697,7 +1697,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         };
       }
       // A purchase is the refill that was owed, so the standing stops reporting
-      // a failure it has since made good on (ADR 0026).
+      // a failure it has since made good on (ADR 0027).
       const { topUpFailure: _madeGood, ...rest } = state;
       return {
         ...rest,

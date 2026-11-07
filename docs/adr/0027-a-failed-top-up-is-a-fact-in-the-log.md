@@ -1,8 +1,8 @@
-# 0026 — A top-up that could not be bought is a fact in the log
+# 0027 — A top-up that could not be bought is a fact in the log
 
 - **Status:** Accepted
 - **Date:** 2026-11-07
-- **Follows:** [0013](./0013-an-auto-top-up-is-a-purchase-on-a-crossing.md), [0017](./0017-a-top-up-cooldown-is-a-deadline-on-the-standing.md), [0018](./0018-a-saved-method-is-a-capability.md), [0025](./0025-a-tier-states-its-whole-top-up-line.md)
+- **Follows:** [0013](./0013-an-auto-top-up-is-a-purchase-on-a-crossing.md), [0017](./0017-a-top-up-cooldown-is-a-deadline-on-the-standing.md), [0018](./0018-a-saved-method-is-a-capability.md), [0026](./0026-a-tier-states-its-whole-top-up-line.md)
 
 ## Context
 

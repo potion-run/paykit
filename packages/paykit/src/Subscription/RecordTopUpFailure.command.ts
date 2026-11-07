@@ -11,7 +11,7 @@ import { AccountId } from "./Subscription.id.ts";
  * It is deliberately not a `PaymentFailed`: that event moves a standing into
  * grace, because it means the account owes money. A failed refill means the
  * opposite — the account was never charged — so the standing does not move
- * (ADR 0026).
+ * (ADR 0027).
  */
 export class TopUpFailed extends Domain.Event("TopUpFailed", {
   /** The `kind: "one_off"` pack the tier's line named. */

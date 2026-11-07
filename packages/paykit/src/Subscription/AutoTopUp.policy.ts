@@ -432,7 +432,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // crossing left it and the standing would otherwise read as if no
       // crossing happened. The failure becomes state rather than a defect —
       // a declined card is business, not a bug — and the cooldown the crossing
-      // opened is what retries it (ADR 0026).
+      // opened is what retries it (ADR 0027).
       //
       // The account's own provider, never every provider in the router: a
       // second one must not invoice the same crossing.

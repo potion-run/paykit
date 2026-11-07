@@ -1,4 +1,4 @@
-# 0025 — A tier states its whole top-up line
+# 0026 — A tier states its whole top-up line
 
 - **Status:** Accepted
 - **Date:** 2026-11-07

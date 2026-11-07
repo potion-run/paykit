@@ -271,7 +271,7 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * The last auto top-up this account's line could not buy. It is cleared by the
    * next successful purchase, so the field answers "is this account short of a
    * refill it was promised" rather than "did a refill ever fail". Absent on an
-   * account nothing has failed for (ADR 0026).
+   * account nothing has failed for (ADR 0027).
    */
   topUpFailure: Schema.optionalKey(TopUpFailureRecord),
   /**

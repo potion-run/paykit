@@ -394,6 +394,14 @@ export {
 } from "./TierCommand.ts";
 export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
+export type { PaykitCatalogClientError, PaykitCatalogClientOptions } from "./CatalogRpc.ts";
+export {
+  CatalogUnavailable,
+  PaykitCatalogClient,
+  PaykitCatalogHandlers,
+  PaykitCatalogRpcs,
+  PaykitCatalogServer,
+} from "./CatalogRpc.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 export {
@@ -499,13 +507,13 @@ export {
   AutoTopUp,
   AutoTopUpConfig,
   AutoTopUpInvalid,
-  TopUpPackUnresolved,
   autoTopUp,
   crossedThreshold,
   packFor,
-  topUpCooldownFor,
   topUpCommandId,
+  topUpCooldownFor,
   topUpFailureCommandId,
+  TopUpPackUnresolved,
 } from "./Subscription/AutoTopUp.policy.ts";
 export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
@@ -597,6 +605,10 @@ export {
 } from "./Subscription/RecordPayment.command.ts";
 export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
 export {
+  RecordTopUpFailure as RecordTopUpFailureCommand,
+  TopUpFailed,
+} from "./Subscription/RecordTopUpFailure.command.ts";
+export {
   Refund as RefundCommand,
   RefundExceedsCharged,
   RefundRecorded,
@@ -605,10 +617,6 @@ export {
   TopUpCooldownCleared,
   TopUpCooldownElapsed,
 } from "./Subscription/TopUpCooldownElapsed.command.ts";
-export {
-  RecordTopUpFailure as RecordTopUpFailureCommand,
-  TopUpFailed,
-} from "./Subscription/RecordTopUpFailure.command.ts";
 export {
   PaymentFailed,
   RecordPaymentFailure as RecordPaymentFailureCommand,

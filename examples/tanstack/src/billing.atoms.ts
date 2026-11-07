@@ -1,10 +1,14 @@
 import * as PaykitAtom from "@potion.run/paykit/Atom";
-import { billing as config } from "./billing.config.ts";
 
 /**
- * The paykit Atom client. `make` builds one runtime over the HTTP Api and the
- * catalog: `entitlements(account)` and `billing(account)` are queries, and
- * every tenant verb is a command that refreshes them.
+ * The paykit Atom client. `make` builds one runtime over the HTTP Api:
+ * `entitlements(account)` and `billing(account)` are queries, and every tenant
+ * verb is a command that refreshes them.
+ *
+ * The catalog is not passed in. The client reads it from the deploy at
+ * `/api/billing/catalog` when the runtime is built, so the browser joins a
+ * tier's terms from the same value the Billing Worker validates — a bundled
+ * second copy is a copy that can go stale.
  *
  * The base URL is same-origin. `src/worker.ts` forwards it to the Billing
  * Worker over a service binding and attaches the actor header, so the browser
@@ -13,5 +17,4 @@ import { billing as config } from "./billing.config.ts";
  */
 export const billing = PaykitAtom.make({
   url: "/api/billing",
-  catalog: config.catalog,
 });
