@@ -9,6 +9,12 @@ export class PaymentFailed extends Domain.Event("PaymentFailed", {
   graceUntilAfter: Schema.DateTimeUtc,
   statusAfter: Schema.Literal("grace"),
   attempt: Schema.Int,
+  /**
+   * The first failure of this dunning run. Optional so an event written before
+   * the retry ladder existed still decodes; `evolve` falls back to its own
+   * envelope time.
+   */
+  dunningStartedAt: Schema.optionalKey(Schema.DateTimeUtc),
 }) {}
 
 /**

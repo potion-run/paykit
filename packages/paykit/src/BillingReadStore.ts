@@ -17,7 +17,7 @@ export const BillingReadRow = Schema.Struct({
   periodEnd: Schema.DateTimeUtc,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
-  /** Payment failures recorded for this standing; the retries are the provider's. */
+  /** Payment failures recorded for this standing, including a policy retry. */
   dunningAttempts: Schema.Int,
   /** The money the last tier change moved, and the invoice it was billed on. */
   proration: Schema.optionalKey(Proration),

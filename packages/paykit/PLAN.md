@@ -12,8 +12,9 @@ Two planes, deliberately separated:
 
 - **Entitlement plane** (ours): is this account allowed to do this, right now, how much is
   left, and when does it reset. Answerable in one local read, no provider round trip.
-- **Money plane** (the provider's): checkout, cards, tax, invoices, receipts, retries that
-  chase a card. Ours only as a port with implementations.
+- **Money plane** (the provider's): checkout, cards, tax, invoices and receipts, and the
+  collection that chases a card. Ours only as a port with implementations; a deployment that wants
+  paykit's own dunning ladder opts into `Paykit.dunning`, and the vendors' schedules stay off.
 
 A subscription is not a payment. A payment is an event that changes a standing. Everything
 this library owns is derived from that sentence.
@@ -224,6 +225,7 @@ Subscription.aggregate   // id: account
 state: {
   tier, status: "trialing" | "active" | "grace" | "canceled" | "expired",
   period: { start, end, anchorTz }, trialEndsAt?, graceUntil?,
+  dunningStartedAt?,                        // the first failure of the current dunning run
   price?,                                   // what this account was sold at
   cancelAtPeriodEnd, credits, prepaidCredits?,  // purchased credits stay when the plan's expire
   billed?: { [feature]: number },              // money billed this period, a fold of UsageRecorded.charge
@@ -265,12 +267,13 @@ hold therefore refuses a second caller the unit the first one holds, without a s
 | `ClosePeriod` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | `NotSubscribed`, `PeriodNotClosed` | — |
 | `PeriodEnded` | `PeriodClosed`, `UsageReset`, `CreditsExpired` | — | — |
 | `GraceElapsed` | `SubscriptionExpired` | — | — |
+| `DunningRetry` | `DunningRetryDue` | — | — |
 | `AttachProviderRef` | `ProviderRefAttached` | — | — |
 
 `decide` is pure. It cannot read the clock, a provider or an ambient context, so authorization
 lives in middleware rather than in `decide`. `ClosePeriod`, `PeriodEnded`, `GraceElapsed`,
-`HoldElapsed` and `AttachProviderRef` carry no guard because a policy, a scheduler or a webhook
-translator sends them as the deployment. `Proration` is a pure function in `src/Proration.ts` with
+`DunningRetry`, `HoldElapsed` and `AttachProviderRef` carry no guard because a policy, a scheduler
+or a webhook translator sends them as the deployment. `Proration` is a pure function in `src/Proration.ts` with
 its own properties, and `evolve` copies the outcomes the events carry (`remainingAfter`,
 `periodAfter`, `priceAfter`) instead of re-deriving a rule.
 
@@ -358,14 +361,21 @@ no second log, and no read model that can disagree with the stream.
   and uses the period as the idempotency key. A provider without `usage` fails with
   `ProviderCapabilityMissing`; an account with no vendor reference has no meter to feed and is left
   to `Verify`.
-- `Dunning` — a policy on `PaymentFailed` schedules `GraceElapsed`, which expires only while the
-  account is still in grace. A recovery before the deadline makes it a no-op.
+- `Dunning` — a policy on `PaymentFailed`, `GraceEntered` and `DunningRetryDue` schedules
+  `GraceElapsed`, which expires only while the account is still in grace. A recovery before the
+  deadline makes it a no-op.
 
-  **Retries are the provider's.** Asking for the card to be charged again is a money-plane action
-  and the port has no operation for it, so paykit records what happened — `attempt` on
-  `PaymentFailed`, carried to `dunningAttempts` on both read models — and owns the grace window and
-  the expiry. An operator sees the count on the billing page and decides whether to extend grace;
-  the console is the reader, which is why the field is not write-only.
+  **Retries are opt-in, and a rung is a scheduled command.** `Paykit.dunning({ retries })` gives
+  the policy a ladder measured from the first failure of a run; without it nothing changes and the
+  vendor's retries are the only attempts. With it, `PaymentFailed` carries `dunningStartedAt`, the
+  policy schedules `DunningRetry` for each rung before `graceUntil`, and the command records
+  `DunningRetryDue` only while the run, attempt and deadline still match. The policy charges the
+  saved method through `Payments.charge` keyed by the run and attempt; a success records
+  `RecordPayment`, a decline records `RecordPaymentFailure` (the next attempt), and a provider
+  without `charge` is `ProviderCapabilityMissing`. `dunningAttempts` still counts failures, not
+  rungs. An operator sees the count on the billing page and decides whether to extend grace; the
+  console is the reader, which is why the field is not write-only. [ADR
+  0025](../../docs/adr/0025-a-dunning-ladder-is-a-scheduled-retry.md) is the record.
 - `HoldSweep` — a policy on `UsageReserved` schedules `HoldElapsed` at the hold's `expiresAt`, which
   releases it if it is still open. A hold settled or released first makes it a no-op, so a caller
   that crashes between hold and settle does not keep capacity forever. The release is the same
