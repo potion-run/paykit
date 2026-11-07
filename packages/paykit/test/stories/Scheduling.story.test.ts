@@ -214,6 +214,7 @@ it.effect("Dunning expires an account when grace elapses", () =>
         graceUntilAfter: at("2030-01-08T00:00:00Z"),
         statusAfter: "grace",
         attempt: 1,
+        dunningStartedAt: start,
       }),
     ),
     Story.clock(at("2030-01-08T00:00:00Z")),
@@ -249,6 +250,7 @@ it.effect("a payment before the deadline makes the scheduled expiry a no-op", ()
         graceUntilAfter: at("2030-01-08T00:00:00Z"),
         statusAfter: "grace",
         attempt: 1,
+        dunningStartedAt: start,
       }),
     ),
     Story.when(account, new RecordPayment({ amount: 1900, currency: "usd" })),
@@ -414,6 +416,7 @@ it.effect("counts payment failures on the billing page, and clears them on recov
         graceUntilAfter: at("2030-01-08T00:00:00Z"),
         statusAfter: "grace",
         attempt: 1,
+        dunningStartedAt: start,
       }),
     ),
     Story.view(BillingState, account, { status: "grace", dunningAttempts: 1 }),
@@ -429,11 +432,12 @@ it.effect("counts payment failures on the billing page, and clears them on recov
         graceUntilAfter: at("2030-01-15T00:00:00Z"),
         statusAfter: "grace",
         attempt: 2,
+        dunningStartedAt: start,
       }),
     ),
     Story.view(BillingState, account, { status: "grace", dunningAttempts: 2 }),
-    // The retries are the provider's; what paykit records is that they happened,
-    // and a payment settles the run.
+    // A failure records the attempt count whether a provider webhook or the
+    // dunning policy reported it, and a payment settles the run.
     Story.when(account, new RecordPayment({ amount: 1900, currency: "usd" })),
     Story.then(
       account,

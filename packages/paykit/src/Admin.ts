@@ -43,12 +43,26 @@ export {
   ChangeTierQuoted,
   ChangeTierAnswer,
   ChangeTierRejection,
-  AdminConsoleRpcs,
   ChangeTierRequest,
   makeAdminChangeTier,
 } from "./Admin/ChangeTier.ts";
 export type { AdminChangeTierShape } from "./Admin/ChangeTier.ts";
-export { AdminConsoleServer } from "./Admin/Server.ts";
+export {
+  AdminRefund,
+  AdminRefundClient,
+  AdminRefundHandlers,
+  AdminRefundLive,
+  AdminRefundRpcs,
+  RefundAnswer,
+  RefundApplied,
+  RefundFailed,
+  RefundRejected,
+  RefundRejection,
+  RefundRequest,
+  makeAdminRefund,
+} from "./Admin/Refund.ts";
+export type { AdminRefundShape } from "./Admin/Refund.ts";
+export { AdminConsoleRpcs, AdminConsoleServer } from "./Admin/Server.ts";
 export { AdminAction, actionsFor } from "./AdminActions.ts";
 export type { AdminActionDescriptor } from "./AdminActions.ts";
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";

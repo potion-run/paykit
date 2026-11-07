@@ -1,12 +1,15 @@
 # Refund: which event, which money, which provider call
 
-- **Status:** Landed; the open decisions are named at the end
+- **Status:** Landed, including the console screen; the open decisions are named at the end
 - **Follows:** [0019](../adr/0019-a-refund-names-the-charge-it-reverses.md),
   [0018](../adr/0018-a-saved-method-is-a-capability.md),
   [0003](../adr/0003-the-deploy-provisions-the-vendor.md)
 - **Touches:** `packages/paykit/src/{Payments,PaymentsMemory,PaymentsManual,PaymentsPolar,PaymentsStripe}.ts`,
   `packages/paykit/src/Subscription/{Refund.command,Subscription.state,Subscription.aggregate,BillingState.view,Entitlements.view}.ts`,
-  `packages/paykit/src/{Timeline,index}.ts`, `packages/paykit/src/Billing/{Admin.binding,BillingAdminInProcess.layer}.ts`,
+  `packages/paykit/src/{Timeline,index,AdminActions,Foldkit}.ts`,
+  `packages/paykit/src/Admin/{Refund,Server}.ts`,
+  `packages/paykit/src/Billing/{Admin.binding,BillingAdminInProcess.layer}.ts`,
+  `packages/paykit-admin/src/{actions,Message,Model,Requirements,update,view}.ts`,
   `packages/paykit-stripe/src/{Stripe,StripeClient}.ts`, `packages/paykit-polar/src/{Polar,PolarClient}.ts`
 
 ## The decision, in one page
@@ -67,6 +70,26 @@ that keeps `ChargeProration` off the Api.
 0". The timeline renders a `refund` entry with its amount, currency, provider id and reason. A unit
 that is neither — the pool, the counters — is untouched, and a test pins that.
 
+### 5. The console screen
+
+`AdminConsoleRpcs` carries a `Refund` op beside the reads and the tier change. Its handler
+(`AdminRefundHandlers`) is the in-process `Paykit.Refund` binding, so the Worker that serves
+`AdminConsoleServer` must be the Worker that holds the provider; `BillingAdminApiLayer` still has no
+refund, and the Api still cannot move money out.
+
+- **Request:** `{ account, chargeId, amount, currency, reason?, commandId? }`. The server allocates
+  the command id when absent; the console always sends one, because it is the provider's idempotency
+  key and the pending row's retry key.
+- **Answer:** `applied { commandId, refundId, refunded, currency }`, `rejected { rejection }` for
+  `RefundExceedsCharged | ProviderCapabilityMissing | PaymentDeclined`, or `failed { reason }` for a
+  transport failure whose outcome is unknown. A refusal before the provider is data, not a defect.
+- **The console action:** `actionsFor` offers `Refund` while a currency has `charged - refunded > 0`,
+  even after a standing is canceled or expired. The form asks for the charge id, amount, currency and
+  reason; the standing's currency is the default. The pending row keeps a typed `RpcRejected` (the
+  refund's own union) rather than pretending the refund is an Api command.
+- **The read:** `BillingState.charged` / `.refunded` render beside the plan, so "charged 4,900,
+  refunded 0" is on the page the operator uses to decide.
+
 ## Tests
 
 | Where | What it pins |
@@ -76,13 +99,13 @@ that is neither — the pool, the counters — is untouched, and a test pins tha
 | `test/bindings/AdminBindings.test.ts` | the binding refuses before the provider, is idempotent per dedupe key at the provider and in the log, and is absent from the Api layer |
 | `test/timeline/Timeline.test.ts` | money going back is its own entry, not a negative payment |
 | `test/conformance/Payments.test.ts` | every provider answers a refund id or refuses by capability |
+| `test/admin/RefundRpc.test.ts` | the RPC takes money through the in-process binding once per command id, refuses over the ceiling before the provider, answers `ProviderCapabilityMissing` without one, and allocates an id when the caller omits one |
+| `packages/paykit-admin/test/Transport.test.ts` | the refund RPC shares the console endpoint, and a tenant session is refused |
+| `packages/paykit-admin/test/Console.test.ts` | a refund sends `ApplyRefund` with one pending id, keeps a typed refusal, settles an applied one, and retries an unknown outcome with the same id |
+| `test/admin/Actions.test.ts` | `Refund` is offered while money is left, after a terminal standing, and not once the ceiling is spent |
 
 ## Worth deciding next
 
-- **A console screen.** The command and the binding exist; what is missing is an RPC an operator can
-  reach. `AdminConsoleRpcs` carries reads and a tier change, and a refund needs the same shape: an
-  operator-authenticated op that runs the in-process binding on the Worker that owns the provider. That
-  is a transport decision (which group, which input, what a stale quote means), not a model one.
 - **`RefundFailed`.** The vendor remains the authority on a refund's state. A refund the provider later
   fails is a webhook paykit does not model, and the page shows money that came back. An event plus a
   webhook kind is the next slice if a deployment needs it.

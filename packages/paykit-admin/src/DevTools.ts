@@ -114,11 +114,21 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
       graceUntilAfter: "2030-01-08T00:00:00Z",
       statusAfter: "grace",
       attempt: 1,
+      dunningStartedAt: "2030-01-01T00:00:00Z",
     }),
   },
   {
     tag: "GraceEntered",
     body: body({ graceUntil: "2030-01-08T00:00:00Z", statusAfter: "grace" }),
+  },
+  {
+    tag: "DunningRetryDue",
+    body: body({
+      attempt: 2,
+      startedAt: "2030-01-01T00:00:00Z",
+      amount: 1_900,
+      currency: "usd",
+    }),
   },
   {
     tag: "Recovered",

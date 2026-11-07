@@ -25,8 +25,9 @@ command-named bindings: `Check` from local state, `TrackUsage`, `SetQuantity` fo
 (the vendor's subscription-item quantity when the provider declares `quantity`, otherwise
 `ChargeQuantityProration` collecting the local proration), `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
-proration, dunning, trials, credits, bought packs whose credits survive a period close and are
-spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
+proration, dunning (an opt-in retry ladder that charges the saved method and records each
+attempt before grace expires), trials, credits, bought packs whose credits survive a period close
+and are spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
 the saved method, or invoices it, and records the pack against that charge or invoice, with an
 optional cooldown that defers the next refill to a scheduled deadline), a usage timeline folded from
 the account's events (one
@@ -106,8 +107,13 @@ standing no command could leave until the period reset.
   0019](./adr/0019-a-refund-names-the-charge-it-reverses.md), [brief](./briefs/refund.md)) and its
   model: `Refund` records `RefundRecorded`, the ceiling is what the log recorded as charged per
   currency, and the `Paykit.Refund` binding takes the money through `Payments.refund` before the
-  command. What is left is the screen: a `AdminConsoleRpcs` op that runs the in-process binding on
-  the Worker that holds the provider, since the Api layer deliberately cannot move money.
+  command. The screen landed with the model: `AdminConsoleRpcs` carries a `Refund` op whose handler
+  runs the in-process binding, `AdminRefundClient` is the browser half, and the console offers the
+  action whenever a currency still has money to send back — even for a terminal standing, because a
+  refund is money, not a move on the standing. The Api layer still cannot move money; the Worker that
+  serves `AdminConsoleServer` must be the one provided `Paykit.Refund`. What is left is a
+  `RefundFailed` event for a provider that later reverses a refund, and a refund that revokes credits
+  in the same call.
 - **Banded and package prices** are no longer local-only: [ADR
   0024](./adr/0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md) makes
   `usagePrices` the provider contract and maps a package to Stripe's
@@ -246,6 +252,9 @@ continues.
 - **A timeline is a fold, not a log.** `timelineOf` / `appendTimeline` read `AccountEvents`; they
   store nothing, add no number an event did not carry, and nothing in `decide` or `check` reads
   them. `lastSeq` makes a redelivered event a no-op.
+- **A refund is money, not a standing command.** It is offered while `charged - refunded` is
+  positive in a currency, even after the standing ends, and its command id is the provider's
+  idempotency key. The Api layer has no refund; only the process that holds the provider does.
 - **A top-up is a crossing, not a level.** The line is the standing tier's `topUp`, carried on the
   activation, change and schedule events; a tier without one never refills. The balance before the
   spend is on the event (`creditsAfter + cost`, `balanceAfter + amount`), so one crossing buys one

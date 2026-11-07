@@ -436,6 +436,13 @@ Paykit.BillingApi; // tenant commands, Entitlements, BillingState, AccountEvents
 Paykit.BillingAdminApi; // GrantCredits, ExtendTrial, ChangeTier, Subscription reads
 ```
 
+The console's own surface is `AdminConsoleRpcs` from `@potion.run/paykit/Admin`: the
+cross-account reads, the tier-change quote/apply, and the refund. `AdminConsoleServer` serves all
+three through one `Admin` middleware. `AdminRefund` is the one that needs the provider, so the
+process that serves it must be provided `Paykit.Refund` (the admin binding); `BillingAdminApi`
+deliberately has no refund, because an Api backend that cannot reach the provider must not take
+money out.
+
 Commands are pure decisions, events carry the outcome, and `evolve` copies it. `Domain.verify`
 is empty for the shipped model. Events are public API: add a field, never rename one.
 

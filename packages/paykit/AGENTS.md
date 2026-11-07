@@ -121,6 +121,13 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 - A period close resets every allowance except `resets: "never"`, which keeps its usage, open
   holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
   further period, and `EnterGrace` is refused once the standing is terminal.
+- Dunning retries are opt-in (`Paykit.dunning({ retries })`), and each rung is a scheduled
+  `DunningRetry` command, not a timer. The first failure of a run records `dunningStartedAt` on the
+  standing; the command records `DunningRetryDue` only while the standing is still in grace, the
+  attempt matches and that run still owns the ladder. The policy charges the saved method through
+  `Payments.charge` keyed by the run and attempt, records `RecordPayment` or
+  `RecordPaymentFailure`, and leaves `GraceElapsed` as the one hard stop. A provider without
+  `charge` is `ProviderCapabilityMissing`, never a silent no-op.
 - A scheduled tier change is data on the standing (`pendingTier`), not a second command queue. The
   close applies it before the reset, so the next period starts on the new tier's allowances; a
   second `ScheduleTierChange` replaces the first and a mid-period `ChangeTier` clears it.
@@ -198,6 +205,10 @@ around it.
 
 - Both surfaces go through the same `Command` with a `commandId` and typed `reply`. `Unknown`
   means exactly "retry with the same id", so a double click cannot double-credit.
+- `AdminConsoleRpcs` is the console's own surface — cross-account reads, the tier-change quote and
+  the refund — because neither Api can serve a cross-account list or take money out. A refund runs
+  the in-process binding, so `AdminConsoleServer` requires `Paykit.Refund` and the Worker that
+  serves it must be the one that holds the provider.
 - A view folds one key's events. Cross-account lists and metrics come from the `BillingRead`
   projection through `Paykit.List`, never from a view. `after` is a cursor, not an offset.
 - A usage timeline is a fold over `AccountEvents`, never a second log. `timelineOf` /
@@ -303,7 +314,7 @@ weakest guard it needs; the Api's composition of commands is the blast radius.
   `Expire` and the payment commands declare it, so a tenant session cannot reach them.
 - In-process senders — `Webhooks`, `Track`, `Hold`, `Subscribe` — provide the actor with
   `asSystem`. The deployment already authenticated the work; a send without a guard is for
-  `PeriodEnded`, `GraceElapsed`, `ClosePeriod` and `AttachProviderRef` only.
+  `PeriodEnded`, `GraceElapsed`, `DunningRetry`, `ClosePeriod` and `AttachProviderRef` only.
 - `InsecureSessionFromHeaders` and `InsecureAdminFromHeaders` read `x-paykit-actor` and
   `x-paykit-kind`. The name is the warning: any caller can name itself. They are development guards
   over `SessionFrom(resolve)` / `AdminFrom(resolve)`, the provider-neutral entry point: a resolver

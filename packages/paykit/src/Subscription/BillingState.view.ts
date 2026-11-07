@@ -51,9 +51,9 @@ export const BillingStateView = Schema.Struct({
   /** Money that went back, per currency. */
   refunded: Schema.optionalKey(MoneyByCurrency),
   /**
-   * How many payment failures this standing has recorded. The retries
-   * themselves are the provider's; this is what paykit knows about them, and
-   * the billing page is where an operator sees it before extending grace.
+   * How many payment failures this standing has recorded, including a failed
+   * retry the dunning policy made. The billing page is where an operator sees
+   * the run before extending grace.
    */
   dunningAttempts: Schema.Int,
   currency: Schema.optionalKey(Schema.String),
@@ -261,6 +261,9 @@ export class BillingState extends Domain.View("BillingState", {
         },
         context,
       ),
+    // A retry is a policy trigger, not a page value: the charge or the failure
+    // that follows it is what the page shows.
+    DunningRetryDue: (view, _event, context): BillingStateView => withAccount(view, context),
     GraceEntered: (view, event, context): BillingStateView =>
       withAccount({ ...view, status: "grace", graceUntil: event.graceUntil }, context),
     Recovered: (view, _event, context): BillingStateView =>

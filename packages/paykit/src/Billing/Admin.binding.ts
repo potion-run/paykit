@@ -351,9 +351,10 @@ export interface RecordPayment extends Binding.Service<
 export const RecordPayment = Binding.Service<RecordPayment>("Paykit.RecordPayment");
 
 /**
- * Record a failed payment and the grace deadline it opens. The retries are the
- * provider's; what paykit keeps is the attempt count a console shows and the
- * deadline the sweep acts on.
+ * Record a failed payment and the grace deadline it opens. The attempt count
+ * is what a console shows and the deadline is what the sweep acts on; a
+ * deployment that installs the `dunning` layer also retries the saved method
+ * on its ladder before that deadline.
  *
  * ### Recording a declined card
  * **Example:** Enter grace from a declined charge

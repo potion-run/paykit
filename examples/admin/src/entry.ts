@@ -1,7 +1,11 @@
 import * as Domain from "@alchemy.run/domain";
 import { BillingAdminApi } from "@potion.run/paykit";
 import { Console } from "@potion.run/paykit-admin";
-import { AdminChangeTierClient, AdminReadsClient } from "@potion.run/paykit/Admin";
+import {
+  AdminChangeTierClient,
+  AdminReadsClient,
+  AdminRefundClient,
+} from "@potion.run/paykit/Admin";
 import "@potion.run/paykit-admin/styles.css";
 import "./global.css";
 import * as Effect from "effect/Effect";
@@ -38,6 +42,7 @@ const resources = Layer.mergeAll(
   Connection,
   AdminReadsClient(`${location.origin}/console`),
   AdminChangeTierClient(`${location.origin}/console`),
+  AdminRefundClient(`${location.origin}/console`),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 
 Runtime.run(

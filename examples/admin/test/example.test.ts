@@ -1,6 +1,6 @@
 import { expect, it } from "@alchemy.run/test";
 import { BillingReadStore, type BillingReadRow } from "@potion.run/paykit";
-import { AdminReads, AdminReadsLive } from "@potion.run/paykit/Admin";
+import { AdminConsoleServer, AdminReads, AdminReadsLive } from "@potion.run/paykit/Admin";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -50,3 +50,12 @@ it("ships the catalog the deploy validates", () => {
   expect(Catalog.tiers.map((tier) => tier.id)).toEqual(["free", "pro", "scale"]);
   expect(Catalog.features.map((feature) => feature.id)).toEqual(["messages", "seats"]);
 });
+
+it.live("builds the console server from the world that holds the provider", () =>
+  Effect.gen(function* () {
+    // The console's refund runs the in-process binding, so this world has to
+    // provide `Paykit.Refund`; a host that drops it does not build.
+    const server = yield* AdminConsoleServer;
+    expect(server).toBeDefined();
+  }).pipe(Effect.provide(BillingTestLive)),
+);

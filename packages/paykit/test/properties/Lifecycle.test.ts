@@ -3,6 +3,7 @@ import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { tierTermsOf } from "../../src/Catalog.ts";
+import { DunningRetry } from "../../src/Subscription/DunningRetry.command.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
 import { GraceElapsed } from "../../src/Subscription/GraceElapsed.command.ts";
@@ -38,6 +39,7 @@ const Step = Schema.Union([
   Schema.TaggedStruct("Resume", {}),
   Schema.TaggedStruct("Expire", {}),
   Schema.TaggedStruct("GraceElapsed", {}),
+  Schema.TaggedStruct("DunningRetry", {}),
   Schema.TaggedStruct("ExtendTrial", { trialDays: TrialDays }),
   Schema.TaggedStruct("PeriodEnded", {}),
 ]);
@@ -73,6 +75,11 @@ const commandFor = (step: Step, state: SubscribedState, now: DateTime.Utc) => {
       return new Expire();
     case "GraceElapsed":
       return new GraceElapsed();
+    case "DunningRetry":
+      return new DunningRetry({
+        afterAttempt: state.dunningAttempts,
+        startedAt: state.dunningStartedAt ?? now,
+      });
     case "ExtendTrial":
       return new ExtendTrial({ trialEndsAt: DateTime.add(now, { days: step.trialDays }) });
     case "PeriodEnded":
@@ -88,6 +95,7 @@ const expectedRejections: Record<Step["_tag"], ReadonlyArray<string>> = {
   Resume: ["NotScheduled", "NotSubscribed"],
   Expire: ["NotInGrace"],
   GraceElapsed: [],
+  DunningRetry: [],
   ExtendTrial: ["TrialNotActive", "NotSubscribed", "TrialDeadlineNotLater"],
   PeriodEnded: [],
 };
@@ -180,6 +188,13 @@ describe("lifecycle", () => {
                 before.graceUntil !== undefined &&
                 DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(before.graceUntil);
               if (due !== (after.status === "expired")) return false;
+              break;
+            }
+            case "DunningRetry": {
+              // A rung records only while it is still the current run, and it
+              // never moves the standing out of grace by itself.
+              if (after.status !== "grace") return false;
+              if (decision[0]?._tag !== "DunningRetryDue") return false;
               break;
             }
             case "ExtendTrial": {

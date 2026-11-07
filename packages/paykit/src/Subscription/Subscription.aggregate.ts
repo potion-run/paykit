@@ -43,6 +43,7 @@ import {
 } from "./ClosePeriod.command.ts";
 import { ConsumeCredits, CreditExceedsBalance, CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
+import { DunningRetry, DunningRetryDue } from "./DunningRetry.command.ts";
 import { AlreadyInGrace, EnterGrace, GraceEntered } from "./EnterGrace.command.ts";
 import { Expire, SubscriptionExpired } from "./Expire.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
@@ -564,6 +565,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     AttachProviderRef,
     PeriodEnded,
     GraceElapsed,
+    DunningRetry,
     ResetAllowance,
     SetQuantity,
     RecordQuantityProrationInvoice,
@@ -978,7 +980,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
-    RecordPaymentFailure: (state, command) => {
+    RecordPaymentFailure: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
       if (state.status === "expired" || state.status === "canceled") return [];
       const graceUntil =
@@ -986,12 +988,41 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         DateTime.toEpochMillis(state.graceUntil) > DateTime.toEpochMillis(command.graceUntil)
           ? state.graceUntil
           : command.graceUntil;
+      // A failure that opens a new run starts the ladder now; a second failure
+      // in the same run keeps the first one, so every rung stays measured from
+      // the failure the deployment is actually dunning.
+      const dunningStartedAt = state.dunningAttempts === 0 ? now : (state.dunningStartedAt ?? now);
       return [
         new PaymentFailed({
           reason: command.reason,
           graceUntilAfter: graceUntil,
           statusAfter: "grace",
           attempt: state.dunningAttempts + 1,
+          dunningStartedAt,
+        }),
+      ];
+    },
+    DunningRetry: (state, command, { now }) => {
+      if (state._tag !== "Subscribed" || state.status !== "grace") return [];
+      if (state.graceUntil === undefined) return [];
+      // The deadline is the hard stop: a retry that is only being handled after
+      // grace passed belongs to `GraceElapsed`, not to the card.
+      if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(state.graceUntil)) return [];
+      if (state.dunningAttempts !== command.afterAttempt) return [];
+      if (state.dunningStartedAt === undefined) return [];
+      if (
+        DateTime.toEpochMillis(state.dunningStartedAt) !== DateTime.toEpochMillis(command.startedAt)
+      ) {
+        return [];
+      }
+      const price = state.price;
+      if (price === undefined) return [];
+      return [
+        new DunningRetryDue({
+          attempt: state.dunningAttempts + 1,
+          startedAt: state.dunningStartedAt,
+          amount: price.amount,
+          currency: price.currency,
         }),
       ];
     },
@@ -1605,33 +1636,42 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },
-    PaymentRecorded: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            status: event.statusAfter,
-            graceUntil: undefined,
-            dunningAttempts: 0,
-            charged: chargedWith(state, event.currency, event.amount),
-          }
-        : state,
-    PaymentFailed: (state, event) =>
+    PaymentRecorded: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { dunningStartedAt: _finishedRun, ...rest } = state;
+      return {
+        ...rest,
+        status: event.statusAfter,
+        graceUntil: undefined,
+        dunningAttempts: 0,
+        charged: chargedWith(state, event.currency, event.amount),
+      };
+    },
+    PaymentFailed: (state, event, envelope) =>
       state._tag === "Subscribed"
         ? {
             ...state,
             status: event.statusAfter,
             graceUntil: event.graceUntilAfter,
             dunningAttempts: event.attempt,
+            dunningStartedAt: event.dunningStartedAt ?? state.dunningStartedAt ?? envelope.at,
           }
         : state,
     GraceEntered: (state, event) =>
       state._tag === "Subscribed"
         ? { ...state, status: event.statusAfter, graceUntil: event.graceUntil }
         : state,
-    Recovered: (state, event) =>
-      state._tag === "Subscribed"
-        ? { ...state, status: event.statusAfter, graceUntil: undefined, dunningAttempts: 0 }
-        : state,
+    Recovered: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { dunningStartedAt: _finishedRun, ...rest } = state;
+      return {
+        ...rest,
+        status: event.statusAfter,
+        graceUntil: undefined,
+        dunningAttempts: 0,
+      };
+    },
+    DunningRetryDue: (state) => state,
     CreditsGranted: (state, event) =>
       state._tag === "Subscribed"
         ? {

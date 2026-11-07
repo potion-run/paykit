@@ -48,7 +48,7 @@ export const PaymentCapability = Schema.Literals([
   /**
    * Take an amount from the customer's saved method, without a checkout and
    * without the vendor's collection schedule. An auto top-up prefers it and
-   * falls back to `invoice`.
+   * falls back to `invoice`; a dunning retry requires it.
    */
   "charge",
   "refund",

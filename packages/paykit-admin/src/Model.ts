@@ -4,6 +4,7 @@ import {
   BillingOverview,
   PreviewAnswer,
   PreviewCommandSchema,
+  RefundRejection,
 } from "@potion.run/paykit/Admin";
 import { CommandIds } from "@potion.run/paykit/Foldkit";
 import {
@@ -94,7 +95,22 @@ export const AdminDenied = Schema.TaggedStruct("Denied", {
 
 export const AdminUnknown = Schema.TaggedStruct("Unknown", {});
 
-export const AdminFailure = Schema.Union([AdminRejected, AdminDenied, AdminUnknown]);
+/**
+ * A refusal from a console RPC whose command is not on the admin Api. A refund
+ * is the one such write: it moves money through the provider, so it cannot
+ * travel over `BillingAdminApi`, and its rejections are kept as typed evidence
+ * beside the Api's.
+ */
+export const AdminRpcRejected = Schema.TaggedStruct("RpcRejected", {
+  rejection: RefundRejection,
+});
+
+export const AdminFailure = Schema.Union([
+  AdminRejected,
+  AdminDenied,
+  AdminUnknown,
+  AdminRpcRejected,
+]);
 export type AdminFailure = typeof AdminFailure.Type;
 
 export const Pending = Schema.Struct({
@@ -252,7 +268,11 @@ export const openedAccount = (id: AccountId): AccountState => ({
   verify: Option.none(),
 });
 
-/** The action names the console can currently send. `ChangeTier` waits for a server quote. */
+/**
+ * The action names the console can currently send. `ChangeTier` waits for a
+ * server quote; `Refund` is the one action served by the console's own RPC
+ * rather than by the admin Api, because it moves money through the provider.
+ */
 export const ConsoleAction: ReadonlyArray<AdminAction> = [
   "GrantCredits",
   "ExtendTrial",
@@ -266,4 +286,5 @@ export const ConsoleAction: ReadonlyArray<AdminAction> = [
   "Resume",
   "ScheduleTierChange",
   "WithdrawTierChange",
+  "Refund",
 ];

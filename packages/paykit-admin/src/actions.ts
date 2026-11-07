@@ -58,7 +58,7 @@ export type ActionSpec<K extends AdminAction> = {
   readonly parse: (
     values: Readonly<Record<string, string>>,
   ) => Result.Result<Extract<AdminIntent, { readonly kind: K }>, string>;
-} & (K extends "ChangeTier"
+} & (K extends "ChangeTier" | "Refund"
   ? { readonly send?: undefined }
   : { readonly send: (args: SendArgs<K>) => AdminCommand });
 
@@ -92,6 +92,13 @@ export const AdminIntent = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("ChangeTier"), tier: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("ScheduleTierChange"), tier: Schema.String }),
   Schema.Struct({ kind: Schema.Literal("WithdrawTierChange") }),
+  Schema.Struct({
+    kind: Schema.Literal("Refund"),
+    chargeId: Schema.String,
+    amount: Schema.Int,
+    currency: Schema.String,
+    reason: Schema.optionalKey(Schema.String),
+  }),
 ]);
 export type AdminIntent = typeof AdminIntent.Type;
 
@@ -116,6 +123,12 @@ const dateTime = (value: string, label: string): Result.Result<DateTime.Utc, str
 };
 
 const selectTier = (value: string): Result.Result<string, string> => nonEmpty(value, "tier");
+
+/** An optional note: absent and blank are the same thing, so the field can stay empty. */
+const optionalText = (value: string | undefined): string | undefined => {
+  const trimmed = (value ?? "").trim();
+  return trimmed === "" ? undefined : trimmed;
+};
 
 export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
   GrantCredits: {
@@ -247,6 +260,34 @@ export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
     parse: (values) =>
       Result.map(selectTier(values.tier ?? ""), (tier) => ({ kind: "ChangeTier", tier })),
   },
+  Refund: {
+    fields: [
+      { name: "chargeId", label: "Charge id", control: "text" },
+      { name: "amount", label: "Amount (minor units)", control: "number" },
+      {
+        name: "currency",
+        label: "Currency",
+        control: "text",
+        default: ({ currency }) => currency,
+      },
+      { name: "reason", label: "Reason (optional)", control: "text" },
+    ],
+    parse: (values) =>
+      Result.flatMap(nonEmpty(values.chargeId ?? "", "charge id"), (chargeId) =>
+        Result.flatMap(positiveInt(values.amount ?? ""), (amount) =>
+          Result.map(nonEmpty(values.currency ?? "", "currency"), (currency) => {
+            const reason = optionalText(values.reason);
+            return {
+              kind: "Refund" as const,
+              chargeId,
+              amount,
+              currency,
+              ...(reason === undefined ? {} : { reason }),
+            };
+          }),
+        ),
+      ),
+  },
   ScheduleTierChange: {
     fields: [{ name: "tier", label: "New tier", control: "tier" }],
     parse: (values) =>
@@ -326,6 +367,8 @@ export const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, strin
       return OperatorActions.ChangeTier.parse(draft.values);
     case "ScheduleTierChange":
       return OperatorActions.ScheduleTierChange.parse(draft.values);
+    case "Refund":
+      return OperatorActions.Refund.parse(draft.values);
   }
 };
 

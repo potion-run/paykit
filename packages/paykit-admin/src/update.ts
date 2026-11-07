@@ -1,5 +1,5 @@
 import type { AdminPreviewInput } from "@potion.run/paykit/Admin";
-import { AdminQueries, ApplyChangeTier, next } from "@potion.run/paykit/Foldkit";
+import { AdminQueries, ApplyChangeTier, ApplyRefund, next } from "@potion.run/paykit/Foldkit";
 import {
   type EntitlementsState,
   type AccountEvent,
@@ -39,6 +39,7 @@ import {
   type ActionDraft,
   AdminFailure,
   AdminRejected,
+  AdminRpcRejected,
   AdminUnknown,
   type AdminIntent,
   ChangeTierApplying,
@@ -379,7 +380,7 @@ const failureReason = (failure: CommandFailure): string =>
     Match.exhaustive,
   );
 
-type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" }>;
+type BillingAdminIntent = Exclude<AdminIntent, { readonly kind: "ChangeTier" | "Refund" }>;
 
 /**
  * Dispatch one parsed intent to the row that declared it. Each case is a
@@ -500,6 +501,62 @@ const applyChangeTier = (
   };
 };
 
+/** A refund names its own command id: it is the provider's idempotency key. */
+const refundCommand = (
+  account: AccountState,
+  intent: Extract<AdminIntent, { readonly kind: "Refund" }>,
+  commandId: string,
+) =>
+  Command.mapMessage(
+    ApplyRefund({
+      commandId,
+      input: {
+        account: account.id,
+        chargeId: intent.chargeId,
+        amount: intent.amount,
+        currency: intent.currency,
+        ...(intent.reason === undefined ? {} : { reason: intent.reason }),
+      },
+    }),
+    (message) => Message.ReceivedAdminRefund({ message }),
+  );
+
+/**
+ * A refund is a plain send, not a quote: the ceiling is the server's to check
+ * against the log, and the provider's idempotency key is the command id. The
+ * pending row makes a retry after an unknown outcome replay the same refund
+ * instead of asking the ceiling for headroom the first attempt may have spent.
+ */
+const applyRefund = (
+  model: Model,
+  account: AccountState,
+  intent: Extract<AdminIntent, { readonly kind: "Refund" }>,
+): UpdateReturn => {
+  const allocation = next(model.commandIds);
+  const pending = PendingSchema.make({
+    commandId: allocation.commandId,
+    intent,
+    status: "Sending",
+    reason: Option.none(),
+    failure: Option.none(),
+  });
+  return {
+    model: modifyFields(model, {
+      commandIds: () => allocation.commandIds,
+      account: () =>
+        Option.some(
+          modifyFields(account, {
+            draft: () => Option.none(),
+            change: () => Option.none(),
+            pending: () => [pending, ...account.pending],
+            notice: () => Option.none(),
+          }),
+        ),
+    }),
+    commands: [refundCommand(account, intent, allocation.commandId)],
+  };
+};
+
 const submit = (model: Model, account: AccountState, draft: ActionDraft): UpdateReturn => {
   const parsed = parseDraft(draft);
   if (Result.isFailure(parsed)) {
@@ -513,6 +570,10 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
 
   if (parsed.success.kind === "ChangeTier") {
     return quoteChangeTier(model, account, parsed.success.tier);
+  }
+
+  if (parsed.success.kind === "Refund") {
+    return applyRefund(model, account, parsed.success);
   }
 
   const allocation = next(model.commandIds);
@@ -1379,6 +1440,68 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         Match.exhaustive,
       ),
 
+    ReceivedAdminRefund: ({ message: refund }) =>
+      Match.value(refund).pipe(
+        Match.withReturnType<UpdateReturn>(),
+        Match.tag("SucceededRefund", ({ commandId, answer }) =>
+          Match.value(answer).pipe(
+            Match.withReturnType<UpdateReturn>(),
+            Match.tag("applied", ({ refundId, refunded, currency }) => {
+              const next = settle(model, commandId, "Accepted", Option.none());
+              const confirmed = updateAccount(next, (value) =>
+                modifyFields(value, {
+                  draft: () => Option.none(),
+                  notice: () =>
+                    Option.some(`Refunded ${refundId}; ${currency} refunded so far: ${refunded}.`),
+                }),
+              );
+              return afterWrite(confirmed.model);
+            }),
+            Match.tag("rejected", ({ rejection }) => {
+              const next = settle(
+                model,
+                commandId,
+                "Rejected",
+                Option.some(rejection._tag),
+                Option.some(AdminRpcRejected.make({ rejection })),
+              );
+              return updateAccount(next, (value) =>
+                modifyFields(value, {
+                  draft: () => Option.none(),
+                  notice: () => Option.some(`Rejected: ${rejection._tag}`),
+                }),
+              );
+            }),
+            Match.tag("failed", ({ reason }) => {
+              const next = settle(
+                model,
+                commandId,
+                "Unknown",
+                Option.some(reason),
+                Option.some(AdminUnknown.make({})),
+              );
+              return updateAccount(next, (value) =>
+                modifyFields(value, { notice: () => Option.some(reason) }),
+              );
+            }),
+            Match.exhaustive,
+          ),
+        ),
+        Match.tag("FailedRefund", ({ commandId, error }) => {
+          const next = settle(
+            model,
+            commandId,
+            "Unknown",
+            Option.some(error._tag),
+            Option.some(AdminUnknown.make({})),
+          );
+          return updateAccount(next, (value) =>
+            modifyFields(value, { notice: () => Option.some(`Refund failed: ${error._tag}`) }),
+          );
+        }),
+        Match.exhaustive,
+      ),
+
     ReceivedBilling: ({ state }) =>
       updateAccount(model, (account) =>
         Option.isSome(state) && state.value.account !== account.id
@@ -1507,6 +1630,13 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               (message) => Message.ReceivedAdminChange({ message }),
             ),
           ],
+        };
+      }
+
+      if (pending.value.intent.kind === "Refund") {
+        return {
+          model: retried,
+          commands: [refundCommand(account, pending.value.intent, commandId)],
         };
       }
 

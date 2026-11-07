@@ -323,6 +323,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   trialUsed: Schema.Boolean,
   dedupeKeys: Schema.Record(Schema.String, Schema.Boolean),
   dunningAttempts: Schema.Int,
+  /**
+   * The failure that started the current dunning run. The retry ladder is
+   * measured from here, and a scheduled retry carries the same instant so a
+   * leftover schedule cannot charge the next run.
+   */
+  dunningStartedAt: Schema.optionalKey(Schema.DateTimeUtc),
   lastClosedPeriodStart: Schema.optional(Schema.DateTimeUtc),
 });
 export type SubscribedState = typeof SubscribedState.Type;

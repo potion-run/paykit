@@ -109,7 +109,15 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
       : [];
   const admin =
     bindings === "admin" || bindings === "both"
-      ? [BillingAdminInProcess.pipe(Layer.provide(model), Layer.provide(catalog))]
+      ? [
+          BillingAdminInProcess.pipe(
+            Layer.provide(model),
+            // The refund resolves the account's provider when the layer is
+            // built, exactly as `BillingInProcess` does for its money verbs.
+            Layer.provide(router),
+            Layer.provide(catalog),
+          ),
+        ]
       : [];
   const only = providers.length === 1 ? providers[0] : undefined;
 

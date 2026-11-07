@@ -185,9 +185,28 @@ describe("admin actions", () => {
     expect(running).not.toContain("Resume");
   });
 
-  it("offers no action once a standing is over", () => {
+  it("offers no standing action once a standing is over", () => {
     expect(actions("canceled")).toEqual([]);
     expect(actions("expired")).toEqual([]);
+  });
+
+  it("offers a refund while money is left, even after the standing ends", () => {
+    const charged = { usd: 4_900 };
+    const refunded = { usd: 1_000 };
+    const over = (status: "canceled" | "expired") =>
+      actionsFor({ ...state(status), charged, refunded }).map((entry) => entry.action);
+
+    expect(over("canceled")).toEqual(["Refund"]);
+    expect(over("expired")).toEqual(["Refund"]);
+
+    // Charged minus refunded is the ceiling the binding enforces; nothing left
+    // means the button would be a guaranteed `RefundExceedsCharged`.
+    const nothingLeft = actionsFor({
+      ...state("active"),
+      charged,
+      refunded: { usd: 4_900 },
+    });
+    expect(nothingLeft.map((entry) => entry.action)).not.toContain("Refund");
   });
 
   it("offers ChangeTier only with another compatible tier", () => {
@@ -367,6 +386,10 @@ const commandFor = (
       const input = scheduleTierChangeInputOf(generatedCatalog, tierId);
       return input === null ? null : new ScheduleTierChange(input);
     }
+    case "Refund":
+      // Money, not a standing command: the binding and its console RPC own the
+      // ceiling, and `test/bindings/AdminBindings.test.ts` is its gate.
+      return null;
   }
 };
 
@@ -383,6 +406,9 @@ describe("offered actions", () => {
         const offered = actionsFor(billing, { catalog: generatedCatalog, entitlements });
 
         for (const descriptor of offered) {
+          // A refund is checked against the log by the refund binding, not by
+          // `Subscription.predict`; it is not a command on the standing.
+          if (descriptor.action === "Refund") continue;
           const tiers: ReadonlyArray<string | null> =
             descriptor.action === "ChangeTier" || descriptor.action === "ScheduleTierChange"
               ? descriptor.tiers
