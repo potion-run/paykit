@@ -1,5 +1,10 @@
 import { AdminAction, PreviewCommandSchema } from "@potion.run/paykit/Admin";
-import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
+import {
+  AdminChangeCommands,
+  AdminQueries,
+  AdminRefundCommands,
+  BillingAdmin,
+} from "@potion.run/paykit/Foldkit";
 import {
   BillingStateView,
   EntitlementsState,
@@ -34,6 +39,7 @@ export const Message = defineMessageUnion({
   ReceivedAdminQuery: { message: AdminQueries.Message },
   ReceivedAdminResult: { message: BillingAdmin.Message },
   ReceivedAdminChange: { message: AdminChangeCommands.Message },
+  ReceivedAdminRefund: { message: AdminRefundCommands.Message },
 
   ReceivedBilling: { state: Schema.Option(BillingStateView) },
   ReceivedEntitlements: { state: Schema.Option(EntitlementsState) },

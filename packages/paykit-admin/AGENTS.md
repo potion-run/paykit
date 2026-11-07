@@ -63,6 +63,14 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   handler, serialization and auth layers.
 - **Actions are intents.** A form produces an `AdminIntent` after parsing, and
   only then becomes a command.
+- **A refund is a console RPC, not an Api command.** It moves money through the
+  provider, so `AdminConsoleRpcs.Refund` runs the in-process binding on the
+  Worker that owns the provider; `BillingAdminApi` has no refund. The console
+  offers it while `charged - refunded` is positive in a currency, even after a
+  terminal standing, because a refund is money rather than a move on the
+  standing. Its command id is the provider's idempotency key; a retry after an
+  unknown outcome reuses it. Keep the typed rejection as `RpcRejected`, not a
+  message string.
 - **A tier change is a quote, then an apply.** The server computes the
   proration and applies only the amount the operator confirmed. A mismatch is
   a requote, never a silently different charge. Do not send `BillingAdmin`'s
@@ -114,5 +122,7 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 action and every refusal, a route test for every navigation the console can
 start, and a contract test when `BillingAdminApi` gains a command the console
 should expose. A new command that the console ignores is a review decision,
-not an accident. Every action the console offers is checked against
+not an accident. Every standing action the console offers is checked against
 `Subscription.predict` by a property test in `packages/paykit/test/admin`.
+`Refund` is the exception: it is not a command on the standing, and its ceiling
+is the refund binding's, checked by `test/admin/RefundRpc.test.ts`.

@@ -25,6 +25,13 @@ export const AdminAction = Schema.Literals([
   "Expire",
   "ScheduleCancellation",
   "Resume",
+  /**
+   * Money back to the customer. Unlike every other action, it is not a command
+   * on the standing: it takes money through the provider and records a refund,
+   * so it stays available after a standing ends and is gated by what the
+   * account was charged, not by its phase.
+   */
+  "Refund",
 ]);
 export type AdminAction = typeof AdminAction.Type;
 
@@ -38,7 +45,7 @@ export interface AdminActionDescriptor {
   readonly tiers: ReadonlyArray<string>;
 }
 
-const actionOrder: ReadonlyArray<AdminAction> = [
+const actionOrder: ReadonlyArray<Exclude<AdminAction, "Refund">> = [
   "GrantCredits",
   "ExtendTrial",
   "ChangeTier",
@@ -52,6 +59,20 @@ const actionOrder: ReadonlyArray<AdminAction> = [
   "ScheduleCancellation",
   "Resume",
 ];
+
+/**
+ * The currencies this account can still be refunded in: charged minus already
+ * refunded, per currency, with the same ceiling the binding checks. Only a
+ * positive remainder is offered, so a button is never a guaranteed
+ * `RefundExceedsCharged`.
+ */
+export const refundableCurrencies = (
+  charged: BillingStateView["charged"],
+  refunded: BillingStateView["refunded"],
+): ReadonlyArray<string> =>
+  Object.keys(charged ?? {})
+    .filter((currency) => (charged?.[currency] ?? 0) - (refunded?.[currency] ?? 0) > 0)
+    .sort();
 
 /**
  * A pack is a purchase, not a tier: it grants credits, has no allowances, and
@@ -138,7 +159,9 @@ const scheduleTiers = (
  * `DowngradeBelowCeiling` and `DowngradeBelowSpend` apply. `ScheduleTierChange`
  * is offered for every other compatible tier, because a move those rules refuse
  * now is exactly what belongs at the boundary. `WithdrawTierChange` is offered
- * only while a change is scheduled. The model still decides: this function
+ * only while a change is scheduled. `Refund` is offered whenever a currency
+ * still has money to send back, even on a terminal standing: it is a money
+ * operation, not a move on the standing. The model still decides: this function
  * never replaces a rejection or a preview.
  *
  * ### Offering actions from a billing snapshot
@@ -156,7 +179,7 @@ const scheduleTiers = (
 export const actionsFor = (
   state: Pick<
     BillingStateView,
-    "status" | "tier" | "currency" | "cancelAtPeriodEnd" | "pendingTier"
+    "status" | "tier" | "currency" | "cancelAtPeriodEnd" | "pendingTier" | "charged" | "refunded"
   >,
   options: {
     readonly catalog?: Catalog;
@@ -164,7 +187,11 @@ export const actionsFor = (
   } = {},
 ): ReadonlyArray<AdminActionDescriptor> => {
   const phase = standingPhaseTagOfStatus(state.status);
-  if (phase === "Expired" || phase === "Canceled") return [];
+  const refundable = refundableCurrencies(state.charged, state.refunded);
+  const offerRefund: ReadonlyArray<AdminActionDescriptor> =
+    refundable.length === 0 ? [] : [{ action: "Refund", tiers: [] }];
+
+  if (phase === "Expired" || phase === "Canceled") return offerRefund;
 
   const tiers = changeTiers(state, options.catalog, options.entitlements);
   const scheduled = scheduleTiers(state, options.catalog);
@@ -172,7 +199,7 @@ export const actionsFor = (
   const isActive = phase === "Active";
   const isGrace = phase === "Grace";
 
-  const isOffered = (action: AdminAction): boolean => {
+  const isOffered = (action: Exclude<AdminAction, "Refund">): boolean => {
     switch (action) {
       case "GrantCredits":
         return true;
@@ -200,12 +227,13 @@ export const actionsFor = (
     }
   };
 
-  const tiersFor = (action: AdminAction): ReadonlyArray<string> => {
+  const tiersFor = (action: Exclude<AdminAction, "Refund">): ReadonlyArray<string> => {
     if (action === "ChangeTier") return tiers;
     return action === "ScheduleTierChange" ? scheduled : [];
   };
 
-  return actionOrder.flatMap((action) =>
-    isOffered(action) ? [{ action, tiers: tiersFor(action) } satisfies AdminActionDescriptor] : [],
+  const standing = actionOrder.flatMap((action) =>
+    isOffered(action) ? [{ action, tiers: tiersFor(action) }] : [],
   );
+  return refundable.length === 0 ? standing : [...standing, ...offerRefund];
 };

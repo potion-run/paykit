@@ -11,8 +11,9 @@ export const Provider = billing.providers[0]!;
 /**
  * The model, catalog, provider and cookie guards the admin Worker serves. The
  * guards read the same-origin session cookie, so the browser's live reads can
- * be pushed over a WebSocket. The process serves no binding: the Api and the
- * console are resolved from the model directly.
+ * be pushed over a WebSocket. The process serves the admin binding because the
+ * console's refund runs it in-process: the Api and the console reads are
+ * resolved from the model directly, but money moves through `Paykit.Refund`.
  *
  * The only difference between this and the test is the platform — the Worker
  * passes `DomainCloudflare.layerDurableObjects()`, the test takes the default
@@ -21,5 +22,5 @@ export const Provider = billing.providers[0]!;
 export const BillingTestLive = Paykit.world({
   ...billing,
   guards: CookieGuards,
-  bindings: "none",
+  bindings: "admin",
 });
