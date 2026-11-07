@@ -684,8 +684,8 @@ export type {
 export { encodeVendorPart } from "./VendorId.ts";
 export { Outbound, OutboundDeliveryError, OutboundEvents, outboundSignature } from "./Outbound.ts";
 export type { OutboundEndpoint, OutboundRequest } from "./Outbound.ts";
-export { PaymentsPolar } from "./PaymentsPolar.ts";
-export type { PolarBindings, PolarProps, PolarTier } from "./PaymentsPolar.ts";
+export { PaymentsPolar, resolvePolarProductId } from "./PaymentsPolar.ts";
+export type { PolarBindings, PolarProductId, PolarProps, PolarTier } from "./PaymentsPolar.ts";
 export {
   PaymentCapability,
   PaymentCapabilities,

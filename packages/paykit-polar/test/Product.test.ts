@@ -8,6 +8,8 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { MeterProvider } from "../src/Meter.ts";
+import type { PolarClient } from "../src/Polar.ts";
+import { PolarBilling } from "../src/PolarBilling.ts";
 import { PolarPrices } from "../src/Prices.ts";
 import { ProductProvider } from "../src/Product.ts";
 
@@ -360,6 +362,34 @@ const { test } = Test.make({
 });
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+
+/** The checkout path is not exercised here; the join is what this file proves. */
+const unusedClient: PolarClient = {
+  createCheckoutSession: () => Effect.die("checkout is not part of a deploy"),
+  createCustomerSession: () => Effect.die("portal is not part of a deploy"),
+  createInvoice: () => Effect.die("invoice is not part of a deploy"),
+  createRefund: () => Effect.die("refund is not part of a deploy"),
+};
+
+test.provider("joins provisioning and the provider into one call", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const billing = yield* stack.deploy(
+      PolarBilling("Billing", {
+        accessToken: "polar_fake",
+        origin: "https://app.example.com",
+        tiers: { pro: proPrice },
+        client: unusedClient,
+      }),
+    );
+
+    // The deploy's product is the provider's product, not a second one.
+    expect(billing.sold.products.pro.startsWith("prod_")).toBe(true);
+    expect(polar.products.size).toBe(1);
+    expect(billing.prices).toEqual({ pro: proPrice });
+    expect(billing.capabilities.has("checkout")).toBe(true);
+  }),
+);
 
 test.provider("creates one product per tier, and a second deploy changes nothing", (stack) =>
   Effect.gen(function* () {

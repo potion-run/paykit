@@ -27,6 +27,12 @@
       "path": "./examples/billing/tsconfig.test.json"
     },
     {
+      "path": "./examples/polar"
+    },
+    {
+      "path": "./examples/polar/tsconfig.test.json"
+    },
+    {
       "path": "./scripts/tsconfig.json"
     },
     {

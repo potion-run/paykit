@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import { WebhookInvalid, WebhookSignatureInvalid } from "@potion.run/paykit";
+import * as Output from "alchemy/Output";
+import { RuntimeContext, type BaseRuntimeContext } from "alchemy/RuntimeContext";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -9,7 +11,7 @@ import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { polarWebhook } from "../src/Webhooks.ts";
 import { assertProperty } from "./support/Property.ts";
-import { request, secret, sign, tiers } from "./support/Webhook.ts";
+import { proPrice, request, secret, sign, tiers } from "./support/Webhook.ts";
 
 const webhook = polarWebhook({ secret: Redacted.make(secret), tiers });
 
@@ -61,6 +63,27 @@ describe("Polar webhooks", () => {
       expect(String(exit.cause)).not.toContain("WebhookSignatureInvalid");
     }),
   );
+
+  it.effect("resolves a product handle a deploy created before the delivery", () => {
+    const context: BaseRuntimeContext = {
+      Type: "Test",
+      id: "test",
+      env: {},
+      set: (key) => Effect.succeed(key),
+      get: <T>() => Effect.succeed("prod_123" as T),
+    };
+    const deferred = polarWebhook({
+      secret: Redacted.make(secret),
+      tiers: { pro: { price: proPrice, productId: Output.literal("prod_123") } },
+    });
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(at);
+      const event = Option.getOrThrow(
+        yield* deferred(request({ timestamp: atSeconds, body: orderPaid })),
+      );
+      expect(event.tier).toBe("pro");
+    }).pipe(Effect.provideService(RuntimeContext, context));
+  });
 
   it.effect("turns order.paid into a payment the model can record", () =>
     Effect.gen(function* () {

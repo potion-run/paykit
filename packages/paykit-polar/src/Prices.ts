@@ -2,6 +2,7 @@ import {
   asPricing,
   soleUnitPriceOf,
   unitsOf,
+  type PolarTier,
   type Price,
   type Pricing,
   type PricingValue,
@@ -208,6 +209,38 @@ export interface SoldPrices {
   /** tier → feature → the per-seat price the product carries. */
   readonly seats: Readonly<Record<string, Readonly<Record<string, UnitPrice>>>>;
 }
+
+/**
+ * The `Polar({ tiers })` map for a set of catalog prices and the products
+ * `PolarPrices` created for them.
+ *
+ * Pure, so the join is testable without a Polar organization. A Polar product
+ * id is an `Output<string>` because Polar mints it, so the handle is passed
+ * through unchanged: `Polar()` resolves it when a checkout or a webhook needs
+ * it, after the deploy has created the product.
+ */
+export const soldTiers = (
+  tiers: Readonly<Record<string, TierPrice>>,
+  sold: SoldPrices,
+): Readonly<Record<string, PolarTier>> =>
+  Object.fromEntries(
+    Object.entries(tiers).map(([tier, value]) => {
+      const { price, kind, usage, seats } = normalize(value);
+      return [
+        tier,
+        {
+          price,
+          // The product map and the tier map come from the same declaration,
+          // so a missing id is a deploy bug, not a runtime fallback.
+          productId: sold.products[tier]!,
+          // A one-time product cannot carry a metered or a per-seat price, and
+          // `PolarPrices` did not create one for it.
+          ...(kind === "one_off" || Object.keys(usage).length === 0 ? {} : { usage }),
+          ...(kind === "one_off" || Object.keys(seats).length === 0 ? {} : { seats }),
+        },
+      ];
+    }),
+  );
 
 /**
  * The Polar products a tier is sold through, reconciled from the catalog.

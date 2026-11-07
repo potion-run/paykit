@@ -1,6 +1,9 @@
+import * as Output from "alchemy/Output";
+import { RuntimeContext } from "alchemy/RuntimeContext";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type { UnitPrice } from "./Allowance.ts";
 import {
   PaymentDeclined,
@@ -70,10 +73,18 @@ export interface PolarBindings {
   }) => Effect.Effect<{}, PaymentError>;
 }
 
+/**
+ * A Polar product id, or the deferred handle `PolarPrices` returns while a
+ * deploy is still planning. A product id is minted by Polar, so a stack can
+ * only know it after the product resource applies; the provider resolves the
+ * handle at the one place it is used, never at declaration time.
+ */
+export type PolarProductId = string | Output.Output<string>;
+
 /** Where a tier lives in Polar, and the same price the catalog states. */
 export interface PolarTier {
   readonly price: Price;
-  readonly productId: string;
+  readonly productId: PolarProductId;
   /**
    * One metered price per billable feature, embedded in the product. The deploy
    * checks each unit price against the catalog before anything is billed.
@@ -95,6 +106,47 @@ export interface PolarProps {
   readonly bindings: PolarBindings;
   readonly tiers?: Readonly<Record<string, PolarTier>>;
 }
+
+/**
+ * Resolve a tier's product handle to the id Polar's API expects.
+ *
+ * A hand-written config already holds the string; `PolarBilling` holds the
+ * `Output` for the product its deploy created. Resolving here, at the provider
+ * boundary, keeps the deploy from needing an id that does not exist yet.
+ *
+ * ### Resolving a provisioned product
+ * **Example:** Turn the deploy's output into the id checkout sends
+ * ```typescript
+ * const productId = yield* resolvePolarProductId(sold.products.pro);
+ * ```
+ *
+ * @primitive
+ * @product Polar
+ */
+export const resolvePolarProductId = (productId: PolarProductId): Effect.Effect<string> =>
+  typeof productId === "string"
+    ? Effect.succeed(productId)
+    : Effect.gen(function* () {
+        if (!Output.isOutput(productId)) {
+          return yield* Effect.die("a Polar productId must be a string or an Output");
+        }
+        // The accessor reads the applied product from the ambient runtime
+        // context. Asking for the context optionally keeps the `Payments` port
+        // free of a requirement; a provider created by `PolarBilling` is used
+        // in the deployment, where that context exists.
+        const context = yield* Effect.serviceOption(RuntimeContext);
+        if (Option.isNone(context)) {
+          return yield* Effect.die("a deferred Polar productId needs a runtime context");
+        }
+        // Yielding an Output binds it to the context and hands back the
+        // accessor that reads the applied resource's attribute. Alchemy leaves
+        // an Output's `Req` as `any`, so name the context it actually needs.
+        const deferred = productId as Output.Output<string, RuntimeContext>;
+        return yield* Effect.gen(function* () {
+          const read = yield* deferred;
+          return yield* read;
+        }).pipe(Effect.provideService(RuntimeContext, context.value));
+      });
 
 /**
  * A Polar merchant of record. It owns tax, receipts and the portal; paykit
@@ -134,11 +186,13 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
             }),
           );
         }
-        return props.bindings.createCheckoutSession({
-          account,
-          tier,
-          productId: mapped.productId,
-          kind,
+        return Effect.gen(function* () {
+          return yield* props.bindings.createCheckoutSession({
+            account,
+            tier,
+            productId: yield* resolvePolarProductId(mapped.productId),
+            kind,
+          });
         });
       },
       createInvoice: ({

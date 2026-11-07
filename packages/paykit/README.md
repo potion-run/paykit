@@ -404,10 +404,12 @@ signatures and the webhook decoder; paykit owns the model.
 Each vendor package also provisions its side of the catalog. `StripePrices` creates one product and
 base price per priced tier, plus a billing meter and a metered price for every `usage` feature, and
 returns `{ prices, usage, meters }`; `PolarPrices` creates one product per tier with its fixed and
-metered prices, plus one meter per `usage` feature, and returns `{ products, meters }`. Hand the
-`meters` map and the per-tier `usage` prices to `Stripe({ tiers, meters })` or `Polar({ tiers, meters })`
-so the runtime can report the close. Both keep retired prices, products and meters in the vendor,
-and neither lets a provider id into the catalog.
+metered prices, plus one meter per `usage` feature, and returns `{ products, meters }`. `StripeBilling`
+and `PolarBilling` join provisioning and the provider in one call for the common deployment; a
+deployment that configures them separately hands the `meters` map and the per-tier `usage` prices to
+`Stripe({ tiers, meters })` or `Polar({ tiers, meters })` so the runtime can report the close. Both
+keep retired prices, products and meters in the vendor, and neither lets a provider id into the
+catalog.
 
 ## The model
 
