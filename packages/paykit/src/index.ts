@@ -425,10 +425,12 @@ export {
   periodFrom,
   standingOf,
   statusOf,
+  topUpFailureOf,
 } from "./Subscription/Subscription.state.ts";
 export type {
   SubscribedState,
   SubscriptionState,
+  TopUpFailureRecord,
   UnsubscribedState,
 } from "./Subscription/Subscription.state.ts";
 export {
@@ -503,6 +505,7 @@ export {
   packFor,
   topUpCooldownFor,
   topUpCommandId,
+  topUpFailureCommandId,
 } from "./Subscription/AutoTopUp.policy.ts";
 export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
@@ -593,6 +596,10 @@ export {
   TopUpCooldownCleared,
   TopUpCooldownElapsed,
 } from "./Subscription/TopUpCooldownElapsed.command.ts";
+export {
+  RecordTopUpFailure as RecordTopUpFailureCommand,
+  TopUpFailed,
+} from "./Subscription/RecordTopUpFailure.command.ts";
 export {
   PaymentFailed,
   RecordPaymentFailure as RecordPaymentFailureCommand,

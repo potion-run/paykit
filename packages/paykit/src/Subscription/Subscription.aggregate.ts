@@ -78,6 +78,7 @@ import {
   ProrationInvoiced,
   RecordProrationInvoice,
 } from "./RecordProrationInvoice.command.ts";
+import { RecordTopUpFailure, TopUpFailed } from "./RecordTopUpFailure.command.ts";
 import { Recover, Recovered } from "./Recover.command.ts";
 import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.ts";
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
@@ -550,6 +551,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     GrantCredits,
     PurchaseCredits,
     Refund,
+    RecordTopUpFailure,
     TopUpCooldownElapsed,
     ConsumeCredits,
     ScheduleCancellation,
@@ -1284,6 +1286,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    RecordTopUpFailure: (state, command, { commandId, now }) => {
+      // A failure with no pack to name is a policy that lost a race with a
+      // purchase that succeeded, not a fact about money. Recording nothing is
+      // the honest answer; the purchase is already the log's record.
+      if (command.tier.length === 0) return [];
+      return [
+        new TopUpFailed({
+          tier: command.tier,
+          ...(command.price === undefined ? {} : { price: command.price }),
+          provider: command.provider,
+          reason: command.reason,
+          at: now,
+          commandId,
+        }),
+      ];
+    },
     TopUpCooldownElapsed: (state, _command, { now }) => {
       // The deadline is scheduled, so an account with no cooldown and a fire
       // before the deadline are both ordinary states, not operator mistakes.
@@ -1629,23 +1647,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         event.price === undefined
           ? state.charged
           : chargedWith(state, event.price.currency, event.price.amount);
-      return state._tag === "Subscribed"
-        ? {
-            ...state,
-            credits: event.balanceAfter,
-            prepaidCredits: event.prepaidAfter,
-            ...(charged === undefined ? {} : { charged }),
-            ...(event.cooldownUntil === undefined
-              ? {}
-              : { topUpCooldownUntil: event.cooldownUntil }),
-          }
-        : {
-            ...state,
-            credits: event.balanceAfter,
-            prepaidCredits: event.prepaidAfter,
-            ...(event.rates === undefined ? {} : { rates: event.rates }),
-            ...(charged === undefined ? {} : { charged }),
-          };
+      if (state._tag !== "Subscribed") {
+        return {
+          ...state,
+          credits: event.balanceAfter,
+          prepaidCredits: event.prepaidAfter,
+          ...(event.rates === undefined ? {} : { rates: event.rates }),
+          ...(charged === undefined ? {} : { charged }),
+        };
+      }
+      // A purchase is the refill that was owed, so the standing stops reporting
+      // a failure it has since made good on (ADR 0026).
+      const { topUpFailure: _madeGood, ...rest } = state;
+      return {
+        ...rest,
+        credits: event.balanceAfter,
+        prepaidCredits: event.prepaidAfter,
+        ...(charged === undefined ? {} : { charged }),
+        ...(event.cooldownUntil === undefined ? {} : { topUpCooldownUntil: event.cooldownUntil }),
+      };
     },
     RefundRecorded: (state, event) => ({
       ...state,
@@ -1660,6 +1680,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         },
       },
     }),
+    TopUpFailed: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            topUpFailure: {
+              tier: event.tier,
+              ...(event.price === undefined ? {} : { price: event.price }),
+              provider: event.provider,
+              reason: event.reason,
+              at: event.at,
+            },
+          }
+        : state,
     TopUpCooldownCleared: (state) => {
       if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
       const { topUpCooldownUntil: _cleared, ...rest } = state;

@@ -270,6 +270,17 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({}),
   },
   {
+    tag: "TopUpFailed",
+    body: body({
+      tier: "credits_100k",
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      provider: "stripe",
+      reason: "PaymentDeclined",
+      at: "2030-01-01T00:00:00.000Z",
+      commandId: "topup_dev_2",
+    }),
+  },
+  {
     tag: "RefundRecorded",
     body: body({
       chargeId: "ch_dev_1",

@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
 import { creditRatesOf, tierOf, type Catalog } from "../Catalog.ts";
@@ -13,6 +14,7 @@ import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from
 import type { Price, TopUpTerms } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
+import { RecordTopUpFailure } from "./RecordTopUpFailure.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import { creditsOf, standingTierOf, topUpCooldownOf, topUpOf } from "./Subscription.state.ts";
 import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
@@ -235,6 +237,20 @@ export const topUpCooldownCommandId = (account: string, seq: number): string =>
   `topup-cooldown:${account}:${seq}`;
 
 /**
+ * The id of the record a crossing writes when its refill could not be bought.
+ * Derived from the crossing like the purchase's, so a redelivered spend records
+ * the failure it already recorded rather than one per attempt.
+ */
+export const topUpFailureCommandId = (account: string, seq: number): string =>
+  `topup-failed:${account}:${seq}`;
+
+/** The tag of a provider's refusal, for a record an operator can match. */
+const failureTag = (error: unknown): string => {
+  const tag = (error as { readonly _tag?: unknown } | null)?._tag;
+  return typeof tag === "string" ? tag : "unknown";
+};
+
+/**
  * When a spend takes an account's credit pool across its tier's top-up line,
  * buy the pack the deployment named: open an invoice for its price with the
  * account's provider, then record the purchase.
@@ -411,9 +427,30 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
         );
       });
 
+      // A refill that could not be bought is a fact the deployment has to see:
+      // nothing was charged and nothing was granted, so the pool is where the
+      // crossing left it and the standing would otherwise read as if no
+      // crossing happened. The failure becomes state rather than a defect —
+      // a declined card is business, not a bug — and the cooldown the crossing
+      // opened is what retries it (ADR 0026).
+      //
       // The account's own provider, never every provider in the router: a
       // second one must not invoice the same crossing.
-      yield* Effect.provide(purchase, chosen.payments).pipe(Effect.orDie);
+      const outcome = yield* Effect.provide(purchase, chosen.payments).pipe(Effect.result);
+      if (Result.isFailure(outcome)) {
+        yield* asSystem(
+          subscriptions.send(
+            key,
+            new RecordTopUpFailure({
+              tier: pack.tier,
+              price: pack.price,
+              provider: chosen.name,
+              reason: failureTag(outcome.failure),
+            }),
+            { commandId: topUpFailureCommandId(key.id, envelope.seq) },
+          ),
+        ).pipe(Effect.catchCause(() => Effect.void));
+      }
     });
   }),
 );

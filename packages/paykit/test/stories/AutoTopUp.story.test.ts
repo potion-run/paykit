@@ -23,6 +23,7 @@ import {
   AutoTopUpInvalid,
   autoTopUp,
   topUpCommandId,
+  topUpFailureCommandId,
 } from "../../src/Subscription/AutoTopUp.policy.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
@@ -31,6 +32,7 @@ import {
   CreditsPurchased,
   PurchaseCredits,
 } from "../../src/Subscription/PurchaseCredits.command.ts";
+import { TopUpFailed } from "../../src/Subscription/RecordTopUpFailure.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TopUpCooldownCleared } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
@@ -530,6 +532,79 @@ it.effect("falls back to the invoice when the saved method is declined", () => {
     Story.view(Entitlements, account, { credits: 5_500 }),
   );
 });
+
+it.effect(
+  "records the refill it could not buy, and leaves the pool where the spend left it",
+  () => {
+    // Both money paths refuse: the saved method is declined and the invoice
+    // cannot be opened, so the crossing had no way to buy the pack.
+    const declined = new PaymentDeclined({
+      provider: "stripe",
+      code: "card_declined",
+      message: "the card was declined",
+    });
+    const processor = PaymentsStripe({
+      bindings: {
+        createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
+        createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
+        charge: () => Effect.fail(declined),
+        createInvoice: () => Effect.fail(declined),
+      },
+    });
+    return storyWith(processor, { pack: "pack" })(
+      ...subscribed,
+      Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+      Story.then(
+        account,
+        new UsageRecorded({
+          feature: "ai",
+          amount: 1_500,
+          cost: 1_500,
+          creditsAfter: 500,
+          usedAfter: 1_500,
+          remainingAfter: 500,
+        }),
+      ),
+      Story.call(Payments.charge, {
+        account: account.id,
+        amount: 4_900,
+        currency: "usd",
+        commandId: topUpCommandId(account.id, 2),
+      }),
+      Story.failed(Payments.charge, declined),
+      Story.call(Payments.createInvoice, {
+        account: account.id,
+        amount: 4_900,
+        currency: "usd",
+        commandId: topUpCommandId(account.id, 2),
+      }),
+      Story.failed(Payments.createInvoice, declined),
+      // Nothing was charged and nothing was granted, so the failure is the whole
+      // record of the crossing — and the pool is exactly where the spend left it.
+      Story.then(
+        account,
+        new TopUpFailed({
+          tier: "pack",
+          price: pack.price!,
+          provider: "stripe",
+          reason: "PaymentDeclined",
+          at: start,
+          commandId: topUpFailureCommandId(account.id, 2),
+        }),
+      ),
+      Story.view(Entitlements, account, { credits: 500 }),
+      Story.view(BillingState, account, {
+        topUpFailure: {
+          tier: "pack",
+          price: pack.price!,
+          provider: "stripe",
+          reason: "PaymentDeclined",
+          at: start,
+        },
+      }),
+    );
+  },
+);
 
 it.effect("does nothing for a tier that states no top-up line", () =>
   // The policy is installed and the pack is valid, but this tier never asked

@@ -30,6 +30,7 @@ export const TimelineKind = Schema.Literals([
   "credit-expire",
   "payment",
   "payment-failed",
+  "topup-failed",
   "refund",
   "proration",
   "period",
@@ -515,6 +516,22 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         ...stamped(input, periodOf),
         kind: "payment-failed",
         reason: event.reason,
+      };
+      return appended(timeline, entry);
+    }
+
+    case "TopUpFailed": {
+      // A refill that could not be bought collected nothing, so the entry has
+      // no money on it: what it records is which pack was wanted and what
+      // refused it, which is the pair an operator acts on (ADR 0026).
+      const entry: TimelineEntry = {
+        ...stamped(input, periodOf),
+        kind: "topup-failed",
+        tier: event.tier,
+        reason: event.reason,
+        ...(event.price === undefined
+          ? {}
+          : { price: event.price, currency: event.price.currency }),
       };
       return appended(timeline, entry);
     }

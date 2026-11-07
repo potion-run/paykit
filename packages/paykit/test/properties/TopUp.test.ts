@@ -17,8 +17,13 @@ import {
   PurchaseCredits,
 } from "../../src/Subscription/PurchaseCredits.command.ts";
 import {
+  RecordTopUpFailure,
+  TopUpFailed,
+} from "../../src/Subscription/RecordTopUpFailure.command.ts";
+import {
   initialSubscriptionState,
   topUpCooldownOf,
+  topUpFailureOf,
 } from "../../src/Subscription/Subscription.state.ts";
 import {
   TopUpCooldownCleared,
@@ -26,7 +31,7 @@ import {
 } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { assertProperty } from "../support/Property.ts";
-import { decideAt, evolveAt, isAccepted, start, subscribedAt } from "./Arbitraries.ts";
+import { commandOf, decideAt, evolveAt, isAccepted, start, subscribedAt } from "./Arbitraries.ts";
 
 const Credits = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20_000 })));
 const Rate = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20 })));
@@ -390,5 +395,70 @@ describe("the pack and the bound a standing's line selects", () => {
     );
     expect(topUpCooldownFor(terms, { threshold: 0 })).toEqual(Duration.minutes(30));
     expect(topUpCooldownFor({ ...terms, cooldown: null }, { threshold: 0 })).toBeNull();
+  });
+  describe("a refill that could not be bought", () => {
+    const state = subscribedAt("pro");
+    const failure = new RecordTopUpFailure({
+      tier: "pack",
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      provider: "stripe",
+      reason: "PaymentDeclined",
+    });
+
+    it("is recorded as its own event, carrying what was wanted and what refused it", () => {
+      const decision = decideAt(state, failure, start, "across");
+      expect(isAccepted(decision)).toBe(true);
+      if (!isAccepted(decision)) return;
+      const [event] = decision as ReadonlyArray<TopUpFailed>;
+      // The crossing's id, so an operator can tie the failure to the spend and a
+      // redelivery records the same one rather than one per attempt.
+      expect(event).toMatchObject({
+        _tag: "TopUpFailed",
+        commandId: "across",
+        at: start,
+        tier: "pack",
+        provider: "stripe",
+        reason: "PaymentDeclined",
+      });
+    });
+
+    it("lands on the standing, and is cleared by the purchase that makes it good", () => {
+      const decision = decideAt(state, failure, start, "across");
+      expect(isAccepted(decision)).toBe(true);
+      if (!isAccepted(decision)) return;
+      const failed = evolveAt(state, decision, start, "across");
+      expect(topUpFailureOf(failed)?.reason).toBe("PaymentDeclined");
+
+      const bought = decideAt(
+        failed,
+        new PurchaseCredits({
+          tier: "pack",
+          amount: 100,
+          price: { amount: 4_900, currency: "usd", interval: "month" },
+          invoiceId: "in_1",
+        }),
+        start,
+        "bought",
+      );
+      expect(isAccepted(bought)).toBe(true);
+      if (!isAccepted(bought)) return;
+      expect(topUpFailureOf(evolveAt(failed, bought, start, "bought"))).toBeNull();
+    });
+
+    it("survives a tier change, because the failure happened", () => {
+      const decision = decideAt(state, failure, start, "across");
+      expect(isAccepted(decision)).toBe(true);
+      if (!isAccepted(decision)) return;
+      const failed = evolveAt(state, decision, start, "across");
+      const moved = decideAt(
+        failed,
+        commandOf({ _tag: "ChangeTier", tier: "pro" }, failed, start),
+        start,
+        "move",
+      );
+      expect(isAccepted(moved)).toBe(true);
+      if (!isAccepted(moved)) return;
+      expect(topUpFailureOf(evolveAt(failed, moved, start, "move"))).not.toBeNull();
+    });
   });
 });

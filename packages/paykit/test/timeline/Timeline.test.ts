@@ -7,6 +7,7 @@ import { CreditsGranted } from "../../src/Subscription/GrantCredits.command.ts";
 import { UsageReserved } from "../../src/Subscription/Hold.command.ts";
 import { CreditsPurchased } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { PaymentRecorded } from "../../src/Subscription/RecordPayment.command.ts";
+import { TopUpFailed } from "../../src/Subscription/RecordTopUpFailure.command.ts";
 import { RefundRecorded } from "../../src/Subscription/Refund.command.ts";
 import { UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
@@ -256,4 +257,31 @@ it("moves a trial's period end without inventing a billing entry", () => {
 
 it("has no entries before the first event", () => {
   expect(timelineOf([])).toEqual(initialTimeline);
+});
+
+it("renders a refill that could not be bought as its own entry, with no money on it", () => {
+  // A failed top-up collected nothing, so the entry records the pack and the
+  // refusal rather than an amount: money that never moved has no amount.
+  const timeline = timelineOf([
+    input(1, activated),
+    input(
+      2,
+      new TopUpFailed({
+        tier: "pack",
+        price: { amount: 4_900, currency: "usd", interval: "month" },
+        provider: "stripe",
+        reason: "PaymentDeclined",
+        at: start,
+        commandId: "topup-failed:acct:2",
+      }),
+    ),
+  ]);
+  const entry = timeline.entries.at(-1);
+  expect(entry?.kind).toBe("topup-failed");
+  expect(entry?.tier).toBe("pack");
+  expect(entry?.reason).toBe("PaymentDeclined");
+  expect(entry?.currency).toBe("usd");
+  // No charge and no credit: the pool is untouched by a refusal.
+  expect(entry?.charge).toBeUndefined();
+  expect(entry?.credits).toBeUndefined();
 });

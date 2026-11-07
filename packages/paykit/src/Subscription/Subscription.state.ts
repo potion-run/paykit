@@ -171,6 +171,25 @@ export const Holds = Schema.Record(Schema.String, HoldRecord);
 export type Holds = typeof Holds.Type;
 
 /**
+ * The last auto top-up a standing could not buy: what was wanted, who refused
+ * it, and when. It is the standing's copy of a `TopUpFailed` event, so a page
+ * answers "why is this pool still low" without folding the account's log.
+ */
+export const TopUpFailureRecord = Schema.Struct({
+  /** The `kind: "one_off"` pack the tier's line named. */
+  tier: Schema.String,
+  /** What the pack would have cost. */
+  price: Schema.optionalKey(Price),
+  /** The provider that refused, or `"none"` when the account had none. */
+  provider: Schema.String,
+  /** The refusal's tag, for an operator to match. */
+  reason: Schema.String,
+  /** When the crossing gave up. */
+  at: Schema.DateTimeUtc,
+});
+export type TopUpFailureRecord = typeof TopUpFailureRecord.Type;
+
+/**
  * What an account with no standing looks like: it may still hold checkout refs,
  * and a one-off pack may already have put credits in its pool.
  */
@@ -248,6 +267,13 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * on a purchase a checkout completed.
    */
   topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
+   * The last auto top-up this account's line could not buy. It is cleared by the
+   * next successful purchase, so the field answers "is this account short of a
+   * refill it was promised" rather than "did a refill ever fail". Absent on an
+   * account nothing has failed for (ADR 0026).
+   */
+  topUpFailure: Schema.optionalKey(TopUpFailureRecord),
   /**
    * Money this account was charged, per currency: a fold of `PaymentRecorded`,
    * `CreditsPurchased.price` and `ProrationInvoiced`. It is the ceiling a
@@ -421,6 +447,14 @@ export const topUpThresholdOf = (state: SubscriptionState): number | null =>
 /** The tier this standing is on, or `null` when it never subscribed. */
 export const standingTierOf = (state: SubscriptionState): string | null =>
   state._tag === "Subscribed" ? state.tier : null;
+
+/**
+ * The last refill this standing could not buy, or `null` when nothing failed or
+ * a purchase has since succeeded. A failure is a standing's fact, so an account
+ * with no plan has none.
+ */
+export const topUpFailureOf = (state: SubscriptionState): TopUpFailureRecord | null =>
+  state._tag === "Subscribed" ? (state.topUpFailure ?? null) : null;
 
 /**
  * The deadline a top-up cooldown ends at, or `null` when one is not open. Only a

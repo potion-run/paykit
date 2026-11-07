@@ -349,6 +349,12 @@ deployment's default); a tier without one never refills. Only a spend crosses �
 reservation does not — and one crossing buys one pack, so the next refill costs at least the pack's
 credits in spending. A deployment that never provides the layer pays nothing for the policy.
 
+A refill that cannot be bought is a fact, not a defect: when the provider refuses both the saved
+method and the invoice, the policy records `TopUpFailed` — the pack, the provider, the refusal's tag
+and the crossing — and leaves the pool exactly where the spend left it. The standing carries it as
+`topUpFailure`, `BillingState` shows it, and the timeline renders a `topup-failed` entry with no money
+on it. The next successful purchase clears it, and the cooldown the crossing opened is what retries.
+
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no
 count to report, and `resetsAt` is still there because the period still exists. `Track`, `Hold`,
