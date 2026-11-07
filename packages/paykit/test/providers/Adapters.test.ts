@@ -1,4 +1,6 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Output from "alchemy/Output";
+import { RuntimeContext, type BaseRuntimeContext } from "alchemy/RuntimeContext";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -138,6 +140,36 @@ describe("provider adapters", () => {
         ),
       );
       expect(missing).toBeInstanceOf(PaymentDeclined);
+    }),
+  );
+
+  it.effect("Polar resolves a product handle minted by the deploy", () =>
+    Effect.gen(function* () {
+      // `PolarBilling` holds an Output until the deploy has created the
+      // product. The provider boundary is where that handle becomes an id.
+      const context: BaseRuntimeContext = {
+        Type: "Test",
+        id: "test",
+        env: {},
+        set: (key) => Effect.succeed(key),
+        get: <T>() => Effect.succeed("prod_deferred" as T),
+      };
+      const provider = PaymentsPolar({
+        bindings: polarBindings,
+        tiers: { pro: { price, productId: Output.literal("prod_1") } },
+      });
+      const url = yield* withProvider(
+        provider,
+        Effect.gen(function* () {
+          const checkout = yield* (yield* Payments).createCheckout({
+            account: "acct_1",
+            tier: "pro",
+            kind: "subscription",
+          });
+          return checkout.url;
+        }),
+      ).pipe(Effect.provideService(RuntimeContext, context));
+      expect(url).toBe("https://polar.test/checkout/prod_deferred");
     }),
   );
 

@@ -6,6 +6,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { meterNameOf } from "../src/Meter.ts";
+import { PolarBilling } from "../src/PolarBilling.ts";
 import { POLAR_BASE_URL } from "../src/PolarClient.ts";
 import { PolarPrices, productNameOf } from "../src/Prices.ts";
 import { polarProviders } from "../src/Providers.ts";
@@ -182,6 +183,29 @@ test.provider.skipIf(!hasToken)(
         value: sold.meters.messages,
       });
       expect(meter?.metadata.paykit_feature).toBe("messages");
+    }),
+);
+
+test.provider.skipIf(!hasToken)(
+  "joins the products it creates into the provider in one call",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const billing = yield* stack.deploy(
+        PolarBilling("Billing", {
+          accessToken: accessToken ?? "",
+          server: "sandbox",
+          origin: "https://app.example.com",
+          tiers: { pro: proPrice },
+        }),
+      );
+
+      const product = yield* readProduct(billing.sold.products.pro);
+      expect(product.id).toBe(billing.sold.products.pro);
+      expect(product.name).toBe(productNameOf(stack.stage, "pro"));
+      expect(billing.prices).toEqual({ pro: proPrice });
+      expect(billing.capabilities.has("checkout")).toBe(true);
     }),
 );
 

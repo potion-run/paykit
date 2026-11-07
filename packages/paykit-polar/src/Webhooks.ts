@@ -1,4 +1,5 @@
 import {
+  resolvePolarProductId,
   type PolarTier,
   type WebhookError,
   type WebhookEvent,
@@ -184,9 +185,16 @@ export const polarWebhook = (
 ): ((
   request: PolarWebhookRequest,
 ) => Effect.Effect<Option.Option<WebhookEvent>, PolarWebhookError>) => {
-  const byProduct = new Map(
-    Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [mapped.productId, tier]),
-  );
+  // A hand-written config carries ids, so the common lookup stays a Map. A
+  // product created by `PolarBilling` is still an Output when the provider is
+  // declared, so its handle is resolved only for a delivery that names an id
+  // no plain entry matched.
+  const byProduct = new Map<string, string>();
+  const deferred: Array<readonly [string, PolarTier]> = [];
+  for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
+    if (typeof mapped.productId === "string") byProduct.set(mapped.productId, tier);
+    else deferred.push([tier, mapped]);
+  }
   const secret = Redacted.value(props.secret);
   const toleranceSeconds = props.toleranceSeconds ?? 300;
 
@@ -229,9 +237,18 @@ export const polarWebhook = (
     // A product no tier maps is not a standing change: the event is dropped
     // rather than refused, so an unrelated one-off product does not make the
     // endpoint retry forever. A tier is never invented.
-    const tierOf = (productId: string | null): { readonly tier?: string } => {
-      const tier = productId === null ? undefined : byProduct.get(productId);
-      return tier === undefined ? {} : { tier };
+    const tierOf = (productId: string | null): Effect.Effect<{ readonly tier?: string }> => {
+      if (productId === null) return Effect.succeed({});
+      const known = byProduct.get(productId);
+      if (known !== undefined) return Effect.succeed({ tier: known });
+      return Effect.gen(function* () {
+        for (const [tier, mapped] of deferred) {
+          if ((yield* resolvePolarProductId(mapped.productId)) === productId) {
+            return { tier };
+          }
+        }
+        return {};
+      });
     };
 
     switch (envelope.type) {
@@ -247,7 +264,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "checkout_completed",
           account,
-          ...tierOf(checkout.product_id),
+          ...(yield* tierOf(checkout.product_id)),
           amount: checkout.total_amount,
           currency: checkout.currency,
         });
@@ -264,7 +281,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_succeeded",
           account,
-          ...tierOf(order.product_id),
+          ...(yield* tierOf(order.product_id)),
           amount: order.total_amount,
           currency: order.currency,
         });
@@ -281,7 +298,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_failed",
           account,
-          ...tierOf(subscription.product_id),
+          ...(yield* tierOf(subscription.product_id)),
           amount: subscription.amount,
           currency: subscription.currency,
           reason: "past_due",
@@ -300,7 +317,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "subscription_canceled",
           account,
-          ...tierOf(subscription.product_id),
+          ...(yield* tierOf(subscription.product_id)),
         });
       }
 

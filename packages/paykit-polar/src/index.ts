@@ -12,6 +12,7 @@ export {
   productNameOf,
   productNamePrefixOf,
   retiredProducts,
+  soldTiers,
 } from "./Prices.ts";
 export type {
   FoundProduct,
@@ -20,6 +21,9 @@ export type {
   SoldPrices,
   SoldProduct,
 } from "./Prices.ts";
+// Provisioning and the provider in one call, for the common deployment.
+export { PolarBilling } from "./PolarBilling.ts";
+export type { PolarBillingProps, PolarBillingProvider } from "./PolarBilling.ts";
 export { RetiredProducts } from "./RetiredProducts.ts";
 export type { ArchivedProducts } from "./RetiredProducts.ts";
 export { PAYKIT_TIER, Product } from "./Product.ts";

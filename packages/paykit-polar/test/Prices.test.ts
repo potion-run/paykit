@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Output from "alchemy/Output";
 import {
   priceDeclarations,
   productNameOf,
   productNamePrefixOf,
   retiredProducts,
+  soldTiers,
   type FoundProduct,
 } from "../src/Prices.ts";
 
@@ -156,6 +158,55 @@ describe("product declarations", () => {
 
   it("declares nothing for a catalog with no prices", () => {
     expect(priceDeclarations({}, stage)).toEqual([]);
+  });
+});
+
+describe("the provider join", () => {
+  const product = Output.literal("prod_pro");
+  const sold = {
+    products: { pro: product },
+    meters: { messages: "paykit_prod_messages" },
+    seats: { pro: { seats: { amount: 1_000, currency: "usd" } } },
+  };
+
+  it("carries the catalog price and the product the deploy created", () => {
+    const mapped = soldTiers({ pro: { price: pro } }, sold).pro;
+    expect(mapped?.price).toEqual(pro);
+    // The product id is an Output at declaration time; `Polar()` resolves it
+    // once the deploy has applied the product, not when the map is built.
+    expect(mapped?.productId).toBe(product);
+  });
+
+  it("carries every metered and seat price the catalog states", () => {
+    const unitPrice = { amount: 2, currency: "usd" };
+    const mapped = soldTiers(
+      {
+        pro: {
+          price: pro,
+          usage: { messages: unitPrice },
+          seats: { seats: { amount: 1_000, currency: "usd" } },
+        },
+      },
+      sold,
+    ).pro;
+    expect(mapped?.usage).toEqual({ messages: unitPrice });
+    expect(mapped?.seats).toEqual({ seats: { amount: 1_000, currency: "usd" } });
+  });
+
+  it("drops usage and seats from a one-off pack, because its product has neither", () => {
+    const mapped = soldTiers(
+      {
+        pro: {
+          price: pro,
+          kind: "one_off",
+          usage: { messages: { amount: 2, currency: "usd" } },
+          seats: { seats: { amount: 1_000, currency: "usd" } },
+        },
+      },
+      sold,
+    ).pro;
+    expect(mapped?.usage).toBe(undefined);
+    expect(mapped?.seats).toBe(undefined);
   });
 });
 
