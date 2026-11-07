@@ -1070,6 +1070,14 @@ const featuresView = (model: Model, h: HtmlBuilder<Message>): Html => {
   );
 };
 
+/** Money a billing page sums per currency, as one readable line. */
+const moneyByCurrency = (amounts: Readonly<Record<string, number>> | undefined): string => {
+  const entries = Object.entries(amounts ?? {});
+  return entries.length === 0
+    ? "Nothing"
+    : entries.map(([currency, amount]) => formatMoney(amount, currency)).join(", ");
+};
+
 const billingView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html =>
   card(
     h,
@@ -1123,6 +1131,8 @@ const billingView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html =
             [],
             [h.dt([], ["Credits"]), h.dd([], [formatMoney(billing.credits, billing.currency)])],
           ),
+          h.div([], [h.dt([], ["Charged"]), h.dd([], [moneyByCurrency(billing.charged)])]),
+          h.div([], [h.dt([], ["Refunded"]), h.dd([], [moneyByCurrency(billing.refunded)])]),
           h.div(
             [],
             [h.dt([], ["Trial ends"]), h.dd([], [formatOptionalDateTime(billing.trialEndsAt)])],
@@ -2047,6 +2057,9 @@ const failureView = (failure: AdminFailure, h: HtmlBuilder<Message>): Html =>
     ),
     Match.tag("Denied", ({ error }) =>
       h.pre([h.Class("pk-failure")], [JSON.stringify(error, null, 2)]),
+    ),
+    Match.tag("RpcRejected", ({ rejection }) =>
+      h.pre([h.Class("pk-failure")], [JSON.stringify(rejection, null, 2)]),
     ),
     Match.tag("Unknown", () => h.empty),
     Match.exhaustive,

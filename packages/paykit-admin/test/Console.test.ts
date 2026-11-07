@@ -6,6 +6,7 @@ import {
   Catalog,
   CreditsGranted,
   NotSubscribed,
+  RefundExceedsCharged,
   SubscriptionActivated,
   UsageRecorded,
   UsageReserved,
@@ -22,8 +23,16 @@ import {
   PreviewAccepted,
   PreviewRejected,
   PreviewUnpredictable,
+  RefundApplied,
+  RefundRejected,
 } from "@potion.run/paykit/Admin";
-import { AdminChangeCommands, AdminQueries, BillingAdmin } from "@potion.run/paykit/Foldkit";
+import {
+  AdminChangeCommands,
+  AdminQueries,
+  AdminRefundCommands,
+  BillingAdmin,
+} from "@potion.run/paykit/Foldkit";
+import type { BillingStateView } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -93,7 +102,7 @@ const opened = (): Model => {
   return update(model, Message.ClickedAccount({ account })).model;
 };
 
-const billing = {
+const billing: BillingStateView = {
   account: account,
   tier: "pro",
   status: "active" as const,
@@ -134,8 +143,9 @@ const entitlementsState = {
   },
 };
 
-const withBilling = (): Model =>
-  update(opened(), Message.ReceivedBilling({ state: Option.some(billing) })).model;
+const withBilling = (overrides: Partial<typeof billing> = {}): Model =>
+  update(opened(), Message.ReceivedBilling({ state: Option.some({ ...billing, ...overrides }) }))
+    .model;
 
 const withDraft = (amount: string): Model => {
   const model = withBilling();
@@ -153,6 +163,16 @@ const withScheduleDraft = (tier: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "ScheduleTierChange" })).model;
   return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
+};
+
+/** A refund draft over a standing that was charged more than it gave back. */
+const withRefundDraft = (amount: string): Model => {
+  const model = withBilling({ charged: { usd: 4_900 }, refunded: { usd: 900 } });
+  const openedDraft = update(model, Message.ClickedAction({ action: "Refund" })).model;
+  return update(
+    update(openedDraft, Message.UpdatedDraftField({ field: "chargeId", value: "ch_1" })).model,
+    Message.UpdatedDraftField({ field: "amount", value: amount }),
+  ).model;
 };
 
 describe("the console model", () => {
@@ -335,8 +355,108 @@ describe("the console model", () => {
     ).toBe("Sending");
   });
 
+  it("sends a refund through the console RPC with one pending id", () => {
+    const result = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+    expect(result.commands?.map((command) => command.name)).toEqual(["ApplyRefund"]);
+    if (Option.isNone(result.model.account)) return;
+    const pending = result.model.account.value.pending[0];
+    expect(pending?.intent.kind).toBe("Refund");
+    expect(result.commands?.[0]?.args?.commandId).toBe(pending?.commandId);
+    expect(Option.isNone(result.model.account.value.draft)).toBe(true);
+  });
+
+  it("keeps a refused refund typed as evidence", () => {
+    const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+    if (Option.isNone(submitted.model.account)) return;
+    const pending = submitted.model.account.value.pending[0];
+    if (pending === undefined) return;
+
+    const refused = update(
+      submitted.model,
+      Message.ReceivedAdminRefund({
+        message: AdminRefundCommands.Message.SucceededRefund({
+          commandId: pending.commandId,
+          answer: RefundRejected.make({
+            commandId: pending.commandId,
+            rejection: new RefundExceedsCharged({
+              currency: "usd",
+              charged: 4_900,
+              refunded: 4_000,
+              requested: 1_000,
+            }),
+          }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(refused.account)) return;
+    const settled = refused.account.value.pending[0];
+    expect(settled?.status).toBe("Rejected");
+    if (settled !== undefined && Option.isSome(settled.failure)) {
+      expect(settled.failure.value._tag).toBe("RpcRejected");
+      if (settled.failure.value._tag === "RpcRejected") {
+        expect(settled.failure.value.rejection._tag).toBe("RefundExceedsCharged");
+      }
+    }
+  });
+
+  it("settles an applied refund and re-reads the list", () => {
+    const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+    if (Option.isNone(submitted.model.account)) return;
+    const pending = submitted.model.account.value.pending[0];
+    if (pending === undefined) return;
+
+    const applied = update(
+      submitted.model,
+      Message.ReceivedAdminRefund({
+        message: AdminRefundCommands.Message.SucceededRefund({
+          commandId: pending.commandId,
+          answer: RefundApplied.make({
+            commandId: pending.commandId,
+            refundId: "re_1",
+            refunded: 1_900,
+            currency: "usd",
+          }),
+        }),
+      }),
+    );
+    expect(applied.commands?.map((command) => command.name)).toEqual(["ListAccounts"]);
+    if (Option.isNone(applied.model.account)) return;
+    expect(applied.model.account.value.pending[0]?.status).toBe("Accepted");
+    expect(
+      Option.match(applied.model.account.value.notice, {
+        onNone: () => "",
+        onSome: (notice) => notice,
+      }),
+    ).toContain("re_1");
+  });
+
+  it("retries a refund with the same command id after an unknown outcome", () => {
+    const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+    if (Option.isNone(submitted.model.account)) return;
+    const pending = submitted.model.account.value.pending[0];
+    if (pending === undefined) return;
+
+    const unknown = update(
+      submitted.model,
+      Message.ReceivedAdminRefund({
+        message: AdminRefundCommands.Message.FailedRefund({
+          commandId: pending.commandId,
+          error: new AdminReadFailed({ reason: "offline", message: "offline" }),
+        }),
+      }),
+    ).model;
+    if (Option.isNone(unknown.account)) return;
+    expect(unknown.account.value.pending[0]?.status).toBe("Unknown");
+
+    const retried = update(unknown, Message.ClickedRetryPending({ commandId: pending.commandId }));
+    expect(retried.commands?.map((command) => command.name)).toEqual(["ApplyRefund"]);
+    expect(retried.commands?.[0]?.args?.commandId).toBe(pending.commandId);
+  });
+
   it("covers every admin Api command", () => {
-    const covered = [...ConsoleAction].sort();
+    // Refund is not on the Api: it runs on the console's RPC because the Api
+    // layer cannot reach the provider. It is covered by the console's stories.
+    const covered = ConsoleAction.filter((action) => action !== "Refund").sort();
     const served = BillingAdminApi.commands.map((command) => command.tag).sort();
     expect(covered).toEqual(served);
   });

@@ -32,8 +32,9 @@ The allowance table carries the reset timestamp, rollover amount, credit
 rates, limits and current access, not just the count.
 
 The account page offers these actions: `GrantCredits`, `ExtendTrial`,
-`ChangeTier`, `EnterGrace`, `RecordPayment`, `RecordPaymentFailure`, `Recover`,
-`Expire`, `ScheduleCancellation` and `Resume`.
+`ChangeTier`, `ScheduleTierChange`, `WithdrawTierChange`, `EnterGrace`,
+`RecordPayment`, `RecordPaymentFailure`, `Recover`, `Expire`,
+`ScheduleCancellation`, `Resume` and `Refund`.
 
 Two panels ask questions instead of writing: **Ask the model** runs `Preview` —
 the same `decide` a write runs — and shows the events it would record or the
@@ -45,6 +46,17 @@ write.
 its own clock, the operator confirms that amount, and the server applies only
 if the recomputed amount still matches. A stale quote comes back as a requote,
 never as a different charge.
+
+`Refund` is the one action served by the console's own RPC rather than by
+`BillingAdminApi`: it takes money out through the provider, and the Api layer
+deliberately cannot. The console offers it while a currency still has
+`charged - refunded` left, even after a standing is canceled or expired;
+`BillingState` shows both totals beside the plan. The charge id, amount,
+currency and reason are the form, and the command id is the provider's
+idempotency key, so an unknown outcome retries the same refund instead of
+asking the ceiling for headroom the first attempt spent. Provide
+`AdminRefundClient` beside the other resources, and serve `AdminConsoleServer`
+from the Worker that holds `Paykit.Refund`.
 
 The console shows account ids and billing state only. paykit stores no customer
 records, so there is no name, email or profile to show.
@@ -221,12 +233,17 @@ what they did to the Model.
 ## Mount it
 
 `Console` is a normal Foldkit application. The host provides the
-`BillingAdminApi` client and the `Admin` read port as resources:
+`BillingAdminApi` client and the console's RPC clients as resources — the reads,
+the tier change and the refund:
 
 ```ts
 import * as Domain from "@alchemy.run/domain";
 import { BillingAdminApi } from "@potion.run/paykit";
-import { AdminReadsClient } from "@potion.run/paykit/Admin";
+import {
+  AdminChangeTierClient,
+  AdminReadsClient,
+  AdminRefundClient,
+} from "@potion.run/paykit/Admin";
 import { CommandHeaders } from "@potion.run/paykit/Foldkit";
 import { Console } from "@potion.run/paykit-admin";
 import "@potion.run/paykit-admin/styles.css";
@@ -249,6 +266,8 @@ const Connection = BillingAdminApi.layerClient.pipe(
 const resources = Layer.mergeAll(
   Connection,
   AdminReadsClient(`${location.origin}/console`, { headers }),
+  AdminChangeTierClient(`${location.origin}/console`, { headers }),
+  AdminRefundClient(`${location.origin}/console`, { headers }),
   Layer.succeed(CommandHeaders, {
     get: () => Effect.succeed(headers),
   }),
@@ -297,6 +316,7 @@ const resources = Layer.mergeAll(
   Connection,
   AdminReadsClient(`${location.origin}/console`),
   AdminChangeTierClient(`${location.origin}/console`),
+  AdminRefundClient(`${location.origin}/console`),
 ).pipe(Layer.provide(FetchHttpClient.layer));
 ```
 
@@ -312,8 +332,10 @@ you.
 
 The account list and overview span keys, so they are not Domain Api reads.
 `AdminReadsRpcs` is an Effect RPC group with the same `Admin` middleware as
-the admin commands, and `AdminChangeTierRpcs` adds the tier-change write. Both
-are merged into `AdminConsoleRpcs`.
+the admin commands; `AdminChangeTierRpcs` adds the tier-change write and
+`AdminRefundRpcs` adds the refund. All three are merged into
+`AdminConsoleRpcs`, so one endpoint and one `Admin` guard cover every console
+call.
 
 `AdminConsoleServer` builds the Worker handler from the hosted model and
 captures the host’s middleware context once, the way `Domain.Api` serves an
@@ -335,10 +357,14 @@ fetch: Effect.gen(function* () {
 });
 ```
 
-Provide the hosted model’s `BillingReadStore`, `CatalogService`, `Subscription`
-and `Admin` guard while building `AdminConsoleServer`. The example’s
-`BillingLayers` does exactly that. Serve the app and both surfaces on one
-origin, so the session cookie reaches commands and WebSocket live reads.
+Provide the hosted model’s `BillingReadStore`, `CatalogService`, `Subscription`,
+`Paykit.Refund` and `Admin` guard while building `AdminConsoleServer`. The
+refund is why the console server must be the Worker that holds the provider:
+`BillingAdminApiLayer` has no refund, and a host that provides the console
+without the in-process admin binding does not build. The example’s
+`BillingLayers` serves `bindings: "admin"` for exactly that reason. Serve the
+app and both surfaces on one origin, so the session cookie reaches commands and
+WebSocket live reads.
 
 ## Deploy with Alchemy
 

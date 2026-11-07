@@ -198,6 +198,10 @@ around it.
 
 - Both surfaces go through the same `Command` with a `commandId` and typed `reply`. `Unknown`
   means exactly "retry with the same id", so a double click cannot double-credit.
+- `AdminConsoleRpcs` is the console's own surface — cross-account reads, the tier-change quote and
+  the refund — because neither Api can serve a cross-account list or take money out. A refund runs
+  the in-process binding, so `AdminConsoleServer` requires `Paykit.Refund` and the Worker that
+  serves it must be the one that holds the provider.
 - A view folds one key's events. Cross-account lists and metrics come from the `BillingRead`
   projection through `Paykit.List`, never from a view. `after` is a cursor, not an offset.
 - A usage timeline is a fold over `AccountEvents`, never a second log. `timelineOf` /

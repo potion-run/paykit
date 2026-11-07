@@ -14,7 +14,9 @@ import { CookieGuards, exampleActor, sessionCookies } from "./Session.ts";
  * - `/session` — mints the development session cookie. A production host
  *   replaces this with its own sign-in and sets the same cookie fields.
  * - `/admin`   — `BillingAdminApi`, the writes and keyed reads.
- * - `/console` — `AdminConsoleServer`, the cross-account reads and the tier change.
+ * - `/console` — `AdminConsoleServer`, the cross-account reads, the tier change
+ *   and the refund. The refund is why this Worker serves the admin binding: it
+ *   is the process that holds the provider, and money only moves here.
  *
  * The Foldkit app is a separate Website Worker on the same origin, forwarding
  * these paths over a service binding.
@@ -50,7 +52,7 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
       Paykit.world({
         ...billing,
         guards: CookieGuards,
-        bindings: "none",
+        bindings: "admin",
         platform: DomainCloudflare.layerDurableObjects(),
       }),
     ),

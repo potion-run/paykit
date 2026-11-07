@@ -32,7 +32,7 @@ import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { planChangeTier } from "../TierCommand.ts";
-import { AdminReadError, AdminReadFailed, AdminReadsRpcs } from "./Reads.ts";
+import { AdminReadError, AdminReadFailed } from "./Reads.ts";
 
 /** A tier change the console asks the server to quote or apply. */
 export const ChangeTierRequest = Schema.Struct({
@@ -221,9 +221,6 @@ export const AdminChangeTierHandlers = Effect.map(makeAdminChangeTier, (change) 
     ChangeTier: (input: ChangeTierRequest) => change.change(input),
   }),
 );
-
-/** Every RPC the console's server exposes, reads and the tier change. */
-export const AdminConsoleRpcs = AdminReadsRpcs.merge(AdminChangeTierRpcs);
 
 const transportFailure = (error: RpcClientError.RpcClientError): AdminReadFailed =>
   new AdminReadFailed({ reason: error.reason._tag, message: error.message });

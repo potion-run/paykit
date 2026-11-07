@@ -14,6 +14,7 @@ import {
   PreviewAnswer,
   ProviderRefsAnswer,
 } from "./Admin/Reads.ts";
+import { AdminRefund, RefundAnswer, RefundRequest } from "./Admin/Refund.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingReadPage, BillingReadQuery } from "./BillingReadStore.ts";
 import { Catalog } from "./Catalog.ts";
@@ -210,6 +211,37 @@ export const ApplyChangeTier = Command.define("ApplyChangeTier", {
 export const AdminChangeCommands = {
   Message: AdminChangeMessage,
   ChangeTier: ApplyChangeTier,
+};
+
+export const AdminRefundMessage = defineMessageUnion({
+  SucceededRefund: { commandId: Schema.String, answer: RefundAnswer },
+  FailedRefund: { commandId: Schema.String, error: AdminReadError },
+});
+export type AdminRefundMessage = typeof AdminRefundMessage.Type;
+
+/**
+ * Send money back through the server's in-process refund binding. The command
+ * id is the provider's idempotency key, so a retry of an unknown outcome must
+ * carry the same one rather than ask for a second refund.
+ */
+export const ApplyRefund = Command.define("ApplyRefund", {
+  args: { commandId: Schema.String, input: RefundRequest },
+  messages: [AdminRefundMessage],
+  execute: Effect.fn(function* ({ commandId, input }) {
+    const refund = yield* AdminRefund;
+    return yield* refund.refund({ ...input, commandId }).pipe(
+      Effect.match({
+        onSuccess: (answer) => AdminRefundMessage.SucceededRefund({ commandId, answer }),
+        onFailure: (error) => AdminRefundMessage.FailedRefund({ commandId, error }),
+      }),
+    );
+  }),
+});
+
+/** The money-moving command, beside the tier change and apart from the Api. */
+export const AdminRefundCommands = {
+  Message: AdminRefundMessage,
+  Refund: ApplyRefund,
 };
 
 /** Every query Command, in one place, next to the Api-derived `BillingAdmin`. */
