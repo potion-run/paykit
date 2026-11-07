@@ -10,7 +10,7 @@ import {
 } from "./Allowance.ts";
 import { CreditRateCards, Feature, RateCard, cardFromRates } from "./Feature.ts";
 import { currencyOfPricing, unitsOf, type Pricing } from "./Pricing.ts";
-import { CreditsExpire, Price, Tier, priceFor, type TierKind } from "./Tier.ts";
+import { CreditsExpire, Price, Tier, priceFor, type TierKind, type TopUpTerms } from "./Tier.ts";
 
 /**
  * The deploy-time catalog: every declared feature and every purchasable tier.
@@ -201,6 +201,16 @@ export class CatalogOneOffWithoutPrice extends Schema.TaggedError<CatalogOneOffW
 export class CatalogTopUpOnPack extends Schema.TaggedError<CatalogTopUpOnPack>()(
   "CatalogTopUpOnPack",
   { tier: Schema.String },
+) {}
+
+/**
+ * A tier's top-up line names a pack the catalog does not sell. It is a refusal
+ * rather than a deferred failure because the deploy is the last place the name
+ * can be checked against the catalog it came from.
+ */
+export class CatalogUnknownTopUpPack extends Schema.TaggedError<CatalogUnknownTopUpPack>()(
+  "CatalogUnknownTopUpPack",
+  { tier: Schema.String, pack: Schema.String },
 ) {}
 
 /** A unit price where nothing is billed. A unit price only prices an overage. */
@@ -402,6 +412,7 @@ export const CatalogError = Schema.Union([
   CatalogOneOffCreditsExpire,
   CatalogOneOffWithoutPrice,
   CatalogTopUpOnPack,
+  CatalogUnknownTopUpPack,
   CatalogUnitPriceWithoutBilling,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
@@ -711,6 +722,14 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
   }
 
   const declared = new Set(catalog.features.map((feature) => feature.id));
+  // The packs an auto top-up line may name: a one-off tier is a pack by
+  // definition, and the loop below already requires its credits and its price,
+  // so naming one here is enough for the runtime to buy it.
+  const packs = new Set(
+    catalog.tiers
+      .filter((tier) => (tier.kind ?? "subscription") === "one_off")
+      .map((tier) => tier.id as string),
+  );
   const kinds = new Map(catalog.features.map((feature) => [feature.id, feature.kind]));
   const cards = new Map<string, RateCard>();
   const creditPriced = new Set<string>();
@@ -759,6 +778,12 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     }
     if (tier.grants.length === 0) {
       return Result.fail(new CatalogEmptyTier({ tier: tier.id }));
+    }
+    // A line may name the pack it buys, and the name is checked here rather
+    // than in the policy: a crossing is the wrong moment to discover a typo.
+    const topUpPack = tier.topUp?.pack;
+    if (topUpPack !== undefined && !packs.has(topUpPack)) {
+      return Result.fail(new CatalogUnknownTopUpPack({ tier: tier.id, pack: topUpPack }));
     }
     // A price may be sold in several currencies, but each one is stated once,
     // and none of them may repeat the base currency.
@@ -979,8 +1004,8 @@ export interface TierCreditTerms {
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
   readonly rates: CreditRateCards;
-  /** Credits at or below which a spend buys the deployment's pack. Absent means never. */
-  readonly topUp?: number;
+  /** Credits at or below which a spend is a crossing, and how the tier refills. Absent means never. */
+  readonly topUp?: TopUpTerms;
 }
 
 /** What a tier grants in credits, with the defaults the catalog implies. */

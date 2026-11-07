@@ -191,7 +191,7 @@ describe("activationOf", () => {
           credits: input.credits,
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
-          ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
+          ...(input.topUp === undefined ? {} : { topUp: { threshold: input.topUp } }),
           rates:
             input.rates === undefined
               ? {}
@@ -219,7 +219,7 @@ describe("activationOf", () => {
         if (grant.tier !== "pro") return false;
         if (grant.statusAfter !== input.status) return false;
         if (grant.creditsExpire !== input.creditsExpire) return false;
-        if (grant.topUp !== input.topUp) return false;
+        if ((grant.topUp?.threshold ?? null) !== (input.topUp ?? null)) return false;
         if (grant.periodStart !== period.start || grant.periodEnd !== period.end) return false;
         if (grant.anchorTz !== period.anchorTz) return false;
         if (JSON.stringify(grant.price) !== JSON.stringify(input.price)) return false;
@@ -267,7 +267,7 @@ describe("standingFrom", () => {
           credits: input.credits,
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
-          ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
+          ...(input.topUp === undefined ? {} : { topUp: { threshold: input.topUp } }),
           rates:
             input.rates === undefined
               ? {}
@@ -300,7 +300,8 @@ describe("standingFrom", () => {
           return false;
         if (JSON.stringify(state.remaining) !== JSON.stringify(activation.remaining)) return false;
         if (state.creditsExpire !== activation.creditsExpire) return false;
-        if (state.topUp !== activation.topUp) return false;
+        if ((state.topUp?.threshold ?? null) !== (activation.topUp?.threshold ?? null))
+          return false;
         if (JSON.stringify(state.rates) !== JSON.stringify(activation.rates)) return false;
         if (JSON.stringify(state.price) !== JSON.stringify(activation.price)) return false;
 
@@ -356,7 +357,7 @@ describe("standingFrom", () => {
           credits: input.credits,
           prepaidCredits: input.prepaid,
           creditsExpire: input.creditsExpire,
-          ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
+          ...(input.topUp === undefined ? {} : { topUp: { threshold: input.topUp } }),
           rates:
             input.rates === undefined
               ? {}

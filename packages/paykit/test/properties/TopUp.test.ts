@@ -1,11 +1,13 @@
-import { describe, it } from "@alchemy.run/test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import {
   crossedThreshold,
+  packFor,
   topUpCooldownCommandId,
+  topUpCooldownFor,
   topUpCommandId,
   type CreditSpend,
 } from "../../src/Subscription/AutoTopUp.policy.ts";
@@ -347,4 +349,46 @@ describe("the purchase records the money it was given", () => {
       { runs: 150, size: 30 },
     ),
   );
+});
+
+describe("the pack and the bound a standing's line selects", () => {
+  const fallback = {
+    tier: "pack",
+    amount: 5_000,
+    price: { amount: 4_900, currency: "usd", interval: "month" as const },
+  };
+  const small = {
+    tier: "pack_small",
+    amount: 100,
+    price: { amount: 990, currency: "usd", interval: "month" as const },
+  };
+  const terms = {
+    fallback,
+    packs: new Map([["pack_small", small]]),
+    rates: {},
+    cooldown: Duration.minutes(30),
+  };
+
+  it("buys the deployment's pack when the tier names none", () => {
+    expect(packFor(terms, undefined)).toEqual(fallback);
+  });
+
+  it("buys the pack the tier names", () => {
+    expect(packFor(terms, "pack_small")).toEqual(small);
+  });
+
+  it("answers nothing for a name the layer never resolved, rather than a different pack", () => {
+    // The catalog refuses such a name, so a miss means the standing and the
+    // catalog disagreed; buying the fallback would silently sell the wrong
+    // product at the wrong price.
+    expect(packFor(terms, "pack_1m")).toBeNull();
+  });
+
+  it("prefers the tier's cooldown, then the deployment's, then none", () => {
+    expect(topUpCooldownFor(terms, { threshold: 0, cooldown: Duration.hours(1) })).toEqual(
+      Duration.hours(1),
+    );
+    expect(topUpCooldownFor(terms, { threshold: 0 })).toEqual(Duration.minutes(30));
+    expect(topUpCooldownFor({ ...terms, cooldown: null }, { threshold: 0 })).toBeNull();
+  });
 });

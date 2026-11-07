@@ -27,7 +27,7 @@ const pro = tier({
   id: "pro",
   price: proPrice,
   credits: 5_000,
-  topUp: 100,
+  topUp: { threshold: 100 },
   grants: [allowance(messages, { included: 2_000, overage: "bill" })],
 });
 const packPrice = { amount: 4_900, currency: "usd", interval: "month" as const };
@@ -50,7 +50,7 @@ describe("subscribeInputOf", () => {
       allowances: allowancesOf(testCatalog, "pro"),
       credits: 5_000,
       creditsExpire: "period",
-      topUp: 100,
+      topUp: { threshold: 100 },
       rates: {},
       price: proPrice,
       anchorTz: "Europe/Berlin",
@@ -80,7 +80,7 @@ describe("scheduleTierChangeInputOf", () => {
       allowances: allowancesOf(testCatalog, "pro"),
       credits: 5_000,
       creditsExpire: "period",
-      topUp: 100,
+      topUp: { threshold: 100 },
       rates: {},
       price: proPrice,
     });

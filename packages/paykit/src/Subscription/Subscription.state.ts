@@ -15,7 +15,7 @@ import {
 import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
-import { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
+import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
 
 export { creditRateOf } from "../Feature.ts";
 
@@ -159,7 +159,7 @@ export const PendingTier = Schema.Struct({
   credits: Schema.Int,
   creditsExpire: CreditsExpire,
   /** Credits at or below which the new tier's spends buy the deployment's pack. */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   rates: CreditRateCards,
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Interval),
@@ -240,7 +240,7 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * Absent means this tier never refills. It travels on the standing because
    * `decide` is pure and the policy runs without the catalog.
    */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   /**
    * When the last policy-opened top-up's cooldown ends. A crossing while this is
    * set is deferred, not refused: `TopUpCooldownElapsed` clears it at the
@@ -411,8 +411,16 @@ export const billedOf = (state: SubscribedState, feature: string): number =>
   state.billed?.[feature] ?? 0;
 
 /** The auto top-up line this standing holds, or `null` when it never refills. */
-export const topUpOf = (state: SubscriptionState): number | null =>
+export const topUpOf = (state: SubscriptionState): TopUpTerms | null =>
   state._tag === "Subscribed" ? (state.topUp ?? null) : null;
+
+/** The credits at or below which a spend on this standing is a crossing, or `null`. */
+export const topUpThresholdOf = (state: SubscriptionState): number | null =>
+  topUpOf(state)?.threshold ?? null;
+
+/** The tier this standing is on, or `null` when it never subscribed. */
+export const standingTierOf = (state: SubscriptionState): string | null =>
+  state._tag === "Subscribed" ? state.tier : null;
 
 /**
  * The deadline a top-up cooldown ends at, or `null` when one is not open. Only a

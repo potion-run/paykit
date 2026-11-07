@@ -10,34 +10,47 @@ import { asSystem } from "../Auth/Actor.ts";
 import { creditRatesOf, tierOf, type Catalog } from "../Catalog.ts";
 import type { CreditRateCards } from "../Feature.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
-import type { Price } from "../Tier.ts";
+import type { Price, TopUpTerms } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { creditsOf, topUpCooldownOf, topUpOf } from "./Subscription.state.ts";
+import { creditsOf, standingTierOf, topUpCooldownOf, topUpOf } from "./Subscription.state.ts";
 import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
 import { UsageRecorded } from "./TrackUsage.command.ts";
 
 /** A spend that can take an account's pool across the threshold. */
 export type CreditSpend = UsageRecorded | CreditsConsumed;
 
-/**
- * The pack a deployment buys, resolved from the catalog when the layer is
- * built. The threshold is not here: it is the standing's, because it differs by
- * tier. `decide` never sees this; only the policy does.
- */
-export interface AutoTopUpTerms {
+/** One pack a crossing may buy, resolved from the catalog when the layer is built. */
+export interface AutoTopUpPack {
   /** The `kind: "one_off"` tier that is bought. */
   readonly tier: string;
   /** Credits the pack grants. */
   readonly amount: number;
   /** What the pack costs, copied onto the purchase event as evidence. */
   readonly price: Price;
+}
+
+/**
+ * The packs a deployment may buy, resolved from the catalog when the layer is
+ * built. The line itself is not here: it is the standing's, because it differs
+ * by tier. `decide` never sees this; only the policy does.
+ */
+export interface AutoTopUpTerms {
+  /** The pack a standing buys when its tier names none. */
+  readonly fallback: AutoTopUpPack;
+  /**
+   * Every pack a tier names, by id, resolved once. A tier that states a
+   * `topUp.pack` selects from this table; the catalog has already refused a
+   * name nothing sells, so a miss here means the two disagreed.
+   */
+  readonly packs: ReadonlyMap<string, AutoTopUpPack>;
   /** The catalog's rate cards, so a pack can be spent before a plan exists. */
   readonly rates: CreditRateCards;
   /**
    * The shortest time between two policy-opened purchases, or `null` for none.
-   * The pack is the cooldown when this is absent, as it always was.
+   * A tier that states its own cooldown overrides this; the pack is the only
+   * bound when neither does.
    */
   readonly cooldown: Duration.Duration | null;
 }
@@ -54,6 +67,17 @@ export class AutoTopUpInvalid extends Schema.TaggedError<AutoTopUpInvalid>()("Au
   reason: Schema.Literals(["unknown-pack", "not-a-pack", "no-credits", "no-price"]),
 }) {}
 
+/**
+ * A standing named a pack the layer never resolved. The catalog refuses a name
+ * that is not a one-off tier, so this means a standing and the catalog it was
+ * sold from have disagreed — a defect, not a refusal, because a crossing is not
+ * the place to discover it and there is no second pack to fall back to.
+ */
+export class TopUpPackUnresolved extends Schema.TaggedError<TopUpPackUnresolved>()(
+  "TopUpPackUnresolved",
+  { tier: Schema.String, pack: Schema.String },
+) {}
+
 /** What `Paykit.autoTopUp` resolves once: the pack to buy. */
 export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpTerms>()(
   "paykit/AutoTopUp",
@@ -67,14 +91,14 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  * pack costs.
  *
  * ### Refilling a pool from a pack
- * **Example:** Buy a 100k pack when a pro account falls to 5k credits, at most
- * once an hour
+ * **Example:** Buy the tier's own pack when a pro account falls to 5k credits,
+ * at most once an hour
  * ```typescript
  * const pro = Paykit.tier({
  *   id: "pro",
  *   price: { amount: 1_900, currency: "usd", interval: "month" },
  *   credits: 50_000,
- *   topUp: 5_000,
+ *   topUp: { threshold: 5_000, cooldown: Duration.hours(1), pack: "credits_100k" },
  *   grants: [Paykit.allowance(messages, { included: 2_000 })],
  * });
  *
@@ -102,39 +126,80 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  */
 export const autoTopUp = (options: {
   readonly catalog: Catalog;
-  /** The `kind: "one_off"` tier to buy; its credits and price come from the catalog. */
+  /**
+   * The `kind: "one_off"` pack a tier buys when it names none; its credits and
+   * price come from the catalog. A tier that states `topUp.pack` buys that one
+   * instead.
+   */
   readonly pack: string;
   /**
-   * The shortest time between two policy-opened purchases. Absent, the pack is
-   * the only bound, so a pool that crosses again buys again.
+   * The shortest time between two policy-opened purchases, for every tier that
+   * does not state its own. Absent, only a tier's own cooldown or the pack
+   * itself bounds a refill.
    */
   readonly cooldown?: Duration.Duration;
 }): Layer.Layer<AutoTopUpConfig, AutoTopUpInvalid> =>
   Layer.effect(
     AutoTopUpConfig,
     Effect.gen(function* () {
-      const pack = tierOf(options.catalog, options.pack);
-      if (pack === null) {
-        return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "unknown-pack" });
-      }
-      if ((pack.kind ?? "subscription") !== "one_off") {
-        return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "not-a-pack" });
-      }
-      if (pack.credits === undefined || pack.credits <= 0) {
-        return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "no-credits" });
-      }
-      if (pack.price === undefined) {
-        return yield* new AutoTopUpInvalid({ pack: options.pack, reason: "no-price" });
+      const fallback = yield* resolvePack(options.catalog, options.pack);
+      // Every pack a tier names is resolved once, here, so a crossing never
+      // reads the catalog. The catalog has already refused a name that is not
+      // a one-off tier with credits and a price, so this loop cannot fail for a
+      // catalog this layer was given; it still reports the pack it refused if
+      // the two ever disagree.
+      const packs = new Map<string, AutoTopUpPack>([[fallback.tier, fallback]]);
+      for (const tier of options.catalog.tiers) {
+        const named = tier.topUp?.pack;
+        if (named === undefined || packs.has(named)) continue;
+        packs.set(named, yield* resolvePack(options.catalog, named));
       }
       return {
-        tier: pack.id,
-        amount: pack.credits,
-        price: pack.price,
+        fallback,
+        packs,
         rates: creditRatesOf(options.catalog),
         cooldown: options.cooldown ?? null,
       } satisfies AutoTopUpTerms;
     }),
   );
+
+/** One pack, resolved from the catalog, or the reason it cannot be bought. */
+const resolvePack = (
+  catalog: Catalog,
+  packId: string,
+): Effect.Effect<AutoTopUpPack, AutoTopUpInvalid> =>
+  Effect.gen(function* () {
+    const pack = tierOf(catalog, packId);
+    if (pack === null) {
+      return yield* new AutoTopUpInvalid({ pack: packId, reason: "unknown-pack" });
+    }
+    if ((pack.kind ?? "subscription") !== "one_off") {
+      return yield* new AutoTopUpInvalid({ pack: packId, reason: "not-a-pack" });
+    }
+    if (pack.credits === undefined || pack.credits <= 0) {
+      return yield* new AutoTopUpInvalid({ pack: packId, reason: "no-credits" });
+    }
+    if (pack.price === undefined) {
+      return yield* new AutoTopUpInvalid({ pack: packId, reason: "no-price" });
+    }
+    return { tier: pack.id, amount: pack.credits, price: pack.price } satisfies AutoTopUpPack;
+  });
+
+/**
+ * The pack a standing's line buys: the one its tier names, or the deployment's
+ * default when it names none.
+ */
+export const packFor = (terms: AutoTopUpTerms, pack: string | undefined): AutoTopUpPack | null =>
+  pack === undefined ? terms.fallback : (terms.packs.get(pack) ?? null);
+
+/**
+ * The bound on how often one account may be charged: the tier's own cooldown,
+ * then the deployment's, then none at all.
+ */
+export const topUpCooldownFor = (
+  terms: AutoTopUpTerms,
+  line: TopUpTerms,
+): Duration.Duration | null => line.cooldown ?? terms.cooldown;
 
 /**
  * Whether this spend took the pool from above the threshold to at or below it.
@@ -224,8 +289,9 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       const standing = yield* subscriptions.state(key);
       // The line is the tier's, not the deployment's: a tier that never stated
       // one never refills, however the pack is configured.
-      const threshold = topUpOf(standing);
-      if (threshold === null) return;
+      const line = topUpOf(standing);
+      if (line === null) return;
+      const threshold = line.threshold;
       // While a cooldown is open the deadline is the only thing that may buy,
       // and it buys through its own event below. Dropping the crossing here is
       // what defers it instead of buying a second pack inside the window.
@@ -242,6 +308,21 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
           : crossedThreshold(event, threshold);
       if (!due) return;
       if (creditsOf(standing) > threshold) return;
+
+      // The product is the standing's line first and the deployment's second:
+      // a free tier and an enterprise tier refill the pools they have.
+      const pack = packFor(config, line.pack);
+      if (pack === null) {
+        return yield* Effect.die(
+          new TopUpPackUnresolved({
+            tier: standingTierOf(standing) ?? "none",
+            pack: line.pack ?? "none",
+          }),
+        );
+      }
+      // The bound on how often one account is charged is the tier's, so a
+      // scheduled change moves it at the boundary with the line and the pack.
+      const cooldown = topUpCooldownFor(config, line);
 
       const chosen = providerFor(router, standing.refs);
       const canCharge = chosen !== null && chosen.capabilities.has("charge");
@@ -260,8 +341,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // event already carries: a policy that read a clock would answer
       // differently on a redelivery, and the standing would record a deadline
       // the log does not explain.
-      const cooldownUntil =
-        config.cooldown === null ? null : DateTime.addDuration(envelope.at, config.cooldown);
+      const cooldownUntil = cooldown === null ? null : DateTime.addDuration(envelope.at, cooldown);
 
       // The deadline is written before the purchase that records it: a crash
       // between the two leaves a command that fires against a standing with no
@@ -291,8 +371,8 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
         // record paykit already keeps.
         const money = {
           account: key.id,
-          amount: config.price.amount,
-          currency: config.price.currency,
+          amount: pack.price.amount,
+          currency: pack.price.currency,
           commandId,
         };
         const invoice = service
@@ -319,9 +399,9 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
           subscriptions.send(
             key,
             new PurchaseCredits({
-              tier: config.tier,
-              amount: config.amount,
-              price: config.price,
+              tier: pack.tier,
+              amount: pack.amount,
+              price: pack.price,
               rates: config.rates,
               ...paid,
               ...(cooldownUntil === null ? {} : { cooldownUntil }),

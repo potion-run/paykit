@@ -2,7 +2,7 @@ import type * as DateTime from "effect/DateTime";
 import { isQuantityGrant, pricingOf, type Allowances } from "../Allowance.ts";
 import type { CreditRateCards } from "../Feature.ts";
 import { currencyOfPricing } from "../Pricing.ts";
-import type { CreditsExpire, Interval, Price, TopUpThreshold } from "../Tier.ts";
+import type { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
   includedRemainingOf,
   nextResetAt,
@@ -105,7 +105,7 @@ export interface ActivationInput<S extends SubscriptionStatus = SubscriptionStat
   /** The part of that pool a pack bought; clamped to `credits`. */
   readonly prepaidCredits?: number;
   readonly creditsExpire: CreditsExpire;
-  readonly topUp?: TopUpThreshold;
+  readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly price?: Price;
   /** The period the activation opens. */
@@ -143,7 +143,7 @@ export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStat
   readonly credits: number;
   readonly prepaidCredits?: number;
   readonly creditsExpire: CreditsExpire;
-  readonly topUp?: TopUpThreshold;
+  readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly periodStart: DateTime.Utc;
   readonly periodEnd: DateTime.Utc;
@@ -219,7 +219,7 @@ export interface StandingGrant {
   readonly credits: number;
   readonly prepaidCredits?: number;
   readonly creditsExpire: CreditsExpire;
-  readonly topUp?: TopUpThreshold;
+  readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly periodStart: DateTime.Utc;
   readonly periodEnd: DateTime.Utc;

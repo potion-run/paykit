@@ -62,11 +62,13 @@ export {
   TierCustomize,
   TierId,
   TierKind,
+  TopUpPackId,
+  TopUpTerms,
   TopUpThreshold,
   priceFor,
   tier,
 } from "./Tier.ts";
-export type { TierInput } from "./Tier.ts";
+export type { TierInput, TopUpTermsInput } from "./Tier.ts";
 export {
   Catalog,
   CatalogDuplicateAllowance,
@@ -114,6 +116,7 @@ export {
   CatalogOneOffGrant,
   CatalogOneOffWithoutPrice,
   CatalogTopUpOnPack,
+  CatalogUnknownTopUpPack,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
   CatalogUnitPriceWithoutBilling,
@@ -494,11 +497,14 @@ export {
   AutoTopUp,
   AutoTopUpConfig,
   AutoTopUpInvalid,
+  TopUpPackUnresolved,
   autoTopUp,
   crossedThreshold,
+  packFor,
+  topUpCooldownFor,
   topUpCommandId,
 } from "./Subscription/AutoTopUp.policy.ts";
-export type { AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
+export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export {
   ScheduleTierChange as ScheduleTierChangeCommand,

@@ -6,7 +6,7 @@ import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
-import { Interval, Price, TopUpThreshold } from "../Tier.ts";
+import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   chargedWith,
@@ -28,7 +28,7 @@ export const BillingStateView = Schema.Struct({
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   /**
    * When the last top-up's cooldown ends. Present means a crossing is deferred
    * until then, so "refilling below 5,000 credits, next refill allowed at 09:30"
