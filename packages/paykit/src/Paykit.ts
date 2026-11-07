@@ -25,6 +25,7 @@ import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
+import { Dunning, dunning } from "./Subscription/Dunning.policy.ts";
 import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { tier } from "./Tier.ts";
 import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
@@ -147,6 +148,8 @@ export const Paykit = {
   Model: PaykitModel,
   ModelHandlers: PaykitHandlers,
   autoTopUp,
+  dunning,
+  Dunning,
   PeriodCloseUsage,
   BillingApi,
   BillingAdminApi,

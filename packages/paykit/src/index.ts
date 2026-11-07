@@ -510,7 +510,16 @@ export {
   WithdrawTierChange as WithdrawTierChangeCommand,
 } from "./Subscription/WithdrawTierChange.command.ts";
 export type { PendingTier } from "./Subscription/Subscription.state.ts";
-export { Dunning } from "./Subscription/Dunning.policy.ts";
+export {
+  Dunning,
+  DunningConfig,
+  DunningInvalid,
+  dunning,
+  dunningChargeCommandId,
+  dunningRetryCommandId,
+} from "./Subscription/Dunning.policy.ts";
+export type { DunningTerms } from "./Subscription/Dunning.policy.ts";
+export { DunningRetry, DunningRetryDue } from "./Subscription/DunningRetry.command.ts";
 export {
   AccountOrder,
   BillingReadQuery,
@@ -620,6 +629,7 @@ export {
 } from "./Subscription/ClosePeriod.command.ts";
 export { Expire as ExpireCommand, SubscriptionExpired } from "./Subscription/Expire.command.ts";
 export { GraceElapsed } from "./Subscription/GraceElapsed.command.ts";
+export { DunningRetry as DunningRetryCommand } from "./Subscription/DunningRetry.command.ts";
 export { PeriodEnded } from "./Subscription/PeriodEnded.command.ts";
 export {
   ExtendTrial as ExtendTrialCommand,

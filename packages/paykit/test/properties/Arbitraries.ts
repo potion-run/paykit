@@ -9,6 +9,7 @@ import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.comm
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
+import { DunningRetry } from "../../src/Subscription/DunningRetry.command.ts";
 import { EnterGrace } from "../../src/Subscription/EnterGrace.command.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
@@ -236,6 +237,7 @@ export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("Expire", {}),
   Schema.TaggedStruct("ExtendTrial", { trialDays: TrialDays }),
   Schema.TaggedStruct("GraceElapsed", {}),
+  Schema.TaggedStruct("DunningRetry", {}),
   Schema.TaggedStruct("AttachProviderRef", {}),
 ]);
 export type CommandPlan = typeof CommandPlan.Type;
@@ -373,6 +375,14 @@ export const commandOf = (
       return new ExtendTrial({ trialEndsAt: DateTime.add(now, { days: plan.trialDays }) });
     case "GraceElapsed":
       return new GraceElapsed();
+    case "DunningRetry": {
+      const running = state._tag === "Subscribed" ? state : undefined;
+      const startedAt = running?.dunningStartedAt ?? now;
+      return new DunningRetry({
+        afterAttempt: running?.dunningAttempts ?? 0,
+        startedAt,
+      });
+    }
     case "AttachProviderRef":
       return new AttachProviderRef({ provider: "test", refs: { customer: "cus_property" } });
   }

@@ -25,8 +25,9 @@ command-named bindings: `Check` from local state, `TrackUsage`, `SetQuantity` fo
 (the vendor's subscription-item quantity when the provider declares `quantity`, otherwise
 `ChargeQuantityProration` collecting the local proration), `Hold`/`SettleHold`/`ReleaseHold` as
 addressable entities, a policy that releases a hold on its own deadline,
-proration, dunning, trials, credits, bought packs whose credits survive a period close and are
-spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
+proration, dunning (an opt-in retry ladder that charges the saved method and records each
+attempt before grace expires), trials, credits, bought packs whose credits survive a period close
+and are spendable before a plan exists, auto top-up (a spend that crosses the standing tier's line charges
 the saved method, or invoices it, and records the pack against that charge or invoice, with an
 optional cooldown that defers the next refill to a scheduled deadline), a usage timeline folded from
 the account's events (one

@@ -116,7 +116,7 @@ export const EntitlementsState = Schema.Struct({
   periodEnd: Schema.DateTimeUtc,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
-  /** Payment failures recorded for this standing; the retries are the provider's. */
+  /** Payment failures recorded for this standing, including a policy retry. */
   dunningAttempts: Schema.Int,
   /** The money the last tier change moved, and the invoice it was billed on. */
   proration: Schema.optionalKey(Proration),
@@ -462,6 +462,9 @@ export class Entitlements extends Domain.View("Entitlements", {
         { ...withStanding(view, "grace", "grace"), dunningAttempts: event.attempt },
         context,
       ),
+    // A retry is a policy trigger, not a fact this read model shows: the
+    // failure that follows it moves `dunningAttempts`.
+    DunningRetryDue: (view, _event, context): EntitlementsState => withAccount(view, context),
     GraceEntered: (view, _event, context): EntitlementsState =>
       withAccount(withStanding(view, "grace", "grace"), context),
     PaymentRecorded: (view, _event, context): EntitlementsState =>
