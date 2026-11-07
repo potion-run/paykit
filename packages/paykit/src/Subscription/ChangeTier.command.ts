@@ -6,7 +6,7 @@ import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { Proration as ProrationValue } from "../Proration.ts";
-import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
+import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
@@ -73,7 +73,7 @@ export class TierChanged extends Domain.Event("TierChanged", {
   /** The new tier's expiry rule for the pool. */
   creditsExpire: CreditsExpire,
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   /** The new tier's rate cards, so `check` prices from the standing. */
   rates: CreditRateCards,
   /** The next boundary of every allowance that runs on its own schedule. */
@@ -97,7 +97,7 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     /** What the new tier grants; carrying the balance over means it is not re-granted. */
     credits: Schema.Int,
     creditsExpire: CreditsExpire,
-    topUp: Schema.optionalKey(TopUpThreshold),
+    topUp: Schema.optionalKey(TopUpTerms),
     rates: CreditRateCards,
     proration: Schema.optionalKey(ProrationValue),
   },

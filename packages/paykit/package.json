@@ -85,6 +85,7 @@
   "devDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
     "@alchemy.run/test": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",

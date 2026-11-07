@@ -6,7 +6,7 @@ import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Proration } from "../Proration.ts";
-import { Interval, Price, TopUpThreshold } from "../Tier.ts";
+import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   chargedWith,
@@ -14,6 +14,7 @@ import {
   PendingTier,
   refundedWith,
   SubscriptionStatus,
+  TopUpFailureRecord,
 } from "./Subscription.state.ts";
 
 /** What a billing page shows. */
@@ -28,13 +29,19 @@ export const BillingStateView = Schema.Struct({
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   /**
    * When the last top-up's cooldown ends. Present means a crossing is deferred
    * until then, so "refilling below 5,000 credits, next refill allowed at 09:30"
    * is one sentence the page can say without reading the log.
    */
   topUpCooldownUntil: Schema.optionalKey(Schema.DateTimeUtc),
+  /**
+   * The last refill this account's line could not buy, cleared by the next
+   * purchase. "Refilling below 5,000 credits, last attempt declined by Stripe"
+   * is the sentence that separates a deferred crossing from a broken one.
+   */
+  topUpFailure: Schema.optionalKey(TopUpFailureRecord),
   /**
    * Money this account was charged, per currency, in minor units. With
    * `refunded` it is what a console offers to send back: "charged 4,900,
@@ -263,15 +270,33 @@ export class BillingState extends Domain.View("BillingState", {
       withoutGrace({ ...view, status: "active", dunningAttempts: 0 }, context),
     CreditsGranted: (view, event, context): BillingStateView =>
       withAccount({ ...view, credits: event.balanceAfter }, context),
-    CreditsPurchased: (view, event, context): BillingStateView =>
-      withAccount(
+    CreditsPurchased: (view, event, context): BillingStateView => {
+      // A purchase is the refill that was owed, so the page stops reporting the
+      // failure it makes good on (ADR 0027).
+      const { topUpFailure: _madeGood, ...rest } = view;
+      return withAccount(
         {
-          ...view,
+          ...rest,
           credits: event.balanceAfter,
           ...(event.price === undefined
             ? {}
             : { charged: chargedWith(view, event.price.currency, event.price.amount) }),
           ...(event.cooldownUntil === undefined ? {} : { topUpCooldownUntil: event.cooldownUntil }),
+        },
+        context,
+      );
+    },
+    TopUpFailed: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          topUpFailure: {
+            tier: event.tier,
+            ...(event.price === undefined ? {} : { price: event.price }),
+            provider: event.provider,
+            reason: event.reason,
+            at: event.at,
+          },
         },
         context,
       ),

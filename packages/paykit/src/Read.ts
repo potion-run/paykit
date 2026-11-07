@@ -65,11 +65,13 @@ export {
   Tier,
   TierCustomize,
   TierId,
+  TopUpPackId,
+  TopUpTerms,
   TopUpThreshold,
   priceFor,
   tier,
 } from "./Tier.ts";
-export type { TierInput } from "./Tier.ts";
+export type { TierInput, TopUpTermsInput } from "./Tier.ts";
 export {
   BillingReadPage,
   BillingReadQuery,

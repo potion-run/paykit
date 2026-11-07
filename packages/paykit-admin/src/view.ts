@@ -1202,6 +1202,23 @@ const adjustmentsView = (
               h.dd([], [formatOptionalDateTime(billing.topUpCooldownUntil)]),
             ],
           ),
+          // The last refill that could not be bought, cleared by the next
+          // purchase. A page that shows the line and the cooldown but not the
+          // refusal cannot tell a deferred crossing from a broken one.
+          h.div(
+            [],
+            [
+              h.dt([], ["Last refill"]),
+              h.dd(
+                [],
+                [
+                  billing.topUpFailure === undefined
+                    ? "—"
+                    : `${billing.topUpFailure.tier} refused by ${billing.topUpFailure.provider} (${billing.topUpFailure.reason}) at ${formatOptionalDateTime(billing.topUpFailure.at)}`,
+                ],
+              ),
+            ],
+          ),
           h.div([], [h.dt([], ["Billing anchor"]), h.dd([], [billing.anchorTz])]),
         ],
       ),

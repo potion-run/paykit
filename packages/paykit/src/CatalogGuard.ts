@@ -7,8 +7,7 @@ import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { pricingKey } from "./Pricing.ts";
-import { priceFor } from "./Tier.ts";
-import type { Price } from "./Tier.ts";
+import { priceFor, topUpKey, type Price, type TopUpTerms } from "./Tier.ts";
 
 /** The catalog-derived fields a command may carry on the wire. */
 interface CatalogCarried {
@@ -17,7 +16,7 @@ interface CatalogCarried {
   readonly price?: Price;
   readonly credits?: number;
   readonly creditsExpire?: string;
-  readonly topUp?: number;
+  readonly topUp?: TopUpTerms;
   readonly rates?: CreditRateCards;
 }
 
@@ -142,8 +141,10 @@ export const catalogMismatchOf = (
   }
   // The line at which a spend refills the pool is a plan term like the grant
   // itself: a caller that moves it would buy a pack the deploy never agreed to.
-  const expectedTopUp = tier.topUp === undefined ? "none" : String(tier.topUp);
-  const actualTopUp = input.topUp === undefined ? "none" : String(input.topUp);
+  // The whole line is compared — the threshold, the cooldown and the pack —
+  // because a caller that changes any of them changes what a crossing costs.
+  const expectedTopUp = topUpKey(tier.topUp);
+  const actualTopUp = topUpKey(input.topUp);
   if (expectedTopUp !== actualTopUp) {
     return new CatalogMismatch({
       tier: tier.id,

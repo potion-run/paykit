@@ -23,6 +23,7 @@ import {
   AutoTopUpInvalid,
   autoTopUp,
   topUpCommandId,
+  topUpFailureCommandId,
 } from "../../src/Subscription/AutoTopUp.policy.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
@@ -31,6 +32,7 @@ import {
   CreditsPurchased,
   PurchaseCredits,
 } from "../../src/Subscription/PurchaseCredits.command.ts";
+import { TopUpFailed } from "../../src/Subscription/RecordTopUpFailure.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TopUpCooldownCleared } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
@@ -44,7 +46,7 @@ const plan = tier({
   id: "plan",
   price,
   credits: 2_000,
-  topUp: 1_000,
+  topUp: { threshold: 1_000 },
   grants: [allowance(messages, { included: 100 })],
 });
 
@@ -99,7 +101,7 @@ const subscribed = [
       price,
       credits: 2_000,
       creditsExpire: "period",
-      topUp: 1_000,
+      topUp: { threshold: 1_000 },
       rates,
     }),
   ),
@@ -111,7 +113,7 @@ const subscribed = [
       remaining: { messages: 100 },
       credits: 2_000,
       creditsExpire: "period",
-      topUp: 1_000,
+      topUp: { threshold: 1_000 },
       rates,
       periodStart: start,
       periodEnd: monthLater,
@@ -223,7 +225,7 @@ it.effect("buys the pack when a spend takes the pool across the threshold", () =
       }),
     ),
     // The page carries the line the standing refills on, not just the pack.
-    Story.view(BillingState, account, { topUp: 1_000 }),
+    Story.view(BillingState, account, { topUp: { threshold: 1_000 } }),
     Story.view(Entitlements, account, { credits: 5_500 }),
   );
 });
@@ -531,6 +533,79 @@ it.effect("falls back to the invoice when the saved method is declined", () => {
   );
 });
 
+it.effect(
+  "records the refill it could not buy, and leaves the pool where the spend left it",
+  () => {
+    // Both money paths refuse: the saved method is declined and the invoice
+    // cannot be opened, so the crossing had no way to buy the pack.
+    const declined = new PaymentDeclined({
+      provider: "stripe",
+      code: "card_declined",
+      message: "the card was declined",
+    });
+    const processor = PaymentsStripe({
+      bindings: {
+        createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
+        createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
+        charge: () => Effect.fail(declined),
+        createInvoice: () => Effect.fail(declined),
+      },
+    });
+    return storyWith(processor, { pack: "pack" })(
+      ...subscribed,
+      Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+      Story.then(
+        account,
+        new UsageRecorded({
+          feature: "ai",
+          amount: 1_500,
+          cost: 1_500,
+          creditsAfter: 500,
+          usedAfter: 1_500,
+          remainingAfter: 500,
+        }),
+      ),
+      Story.call(Payments.charge, {
+        account: account.id,
+        amount: 4_900,
+        currency: "usd",
+        commandId: topUpCommandId(account.id, 2),
+      }),
+      Story.failed(Payments.charge, declined),
+      Story.call(Payments.createInvoice, {
+        account: account.id,
+        amount: 4_900,
+        currency: "usd",
+        commandId: topUpCommandId(account.id, 2),
+      }),
+      Story.failed(Payments.createInvoice, declined),
+      // Nothing was charged and nothing was granted, so the failure is the whole
+      // record of the crossing — and the pool is exactly where the spend left it.
+      Story.then(
+        account,
+        new TopUpFailed({
+          tier: "pack",
+          price: pack.price!,
+          provider: "stripe",
+          reason: "PaymentDeclined",
+          at: start,
+          commandId: topUpFailureCommandId(account.id, 2),
+        }),
+      ),
+      Story.view(Entitlements, account, { credits: 500 }),
+      Story.view(BillingState, account, {
+        topUpFailure: {
+          tier: "pack",
+          price: pack.price!,
+          provider: "stripe",
+          reason: "PaymentDeclined",
+          at: start,
+        },
+      }),
+    );
+  },
+);
+
 it.effect("does nothing for a tier that states no top-up line", () =>
   // The policy is installed and the pack is valid, but this tier never asked
   // to refill: the line is the tier's, not the deployment's.
@@ -682,3 +757,117 @@ it.effect("refuses a config the catalog cannot back", () =>
     );
   }),
 );
+
+// A catalog where the tier states its own pack and its own bound, so what the
+// deployment names is only the fallback — the case a deployment with a small
+// free tier and a large paid one actually has.
+const picky = tier({
+  id: "picky",
+  price,
+  credits: 2_000,
+  topUp: { threshold: 1_000, cooldown: Duration.hours(1), pack: "pack_small" },
+  grants: [allowance(messages, { included: 100 })],
+});
+
+const pickyCatalog = Effect.runSync(
+  catalog({ features: [messages, ai], tiers: [picky, pack, smallPack] }),
+);
+const pickyTerms = allowancesOf(pickyCatalog, "picky")!;
+const pickyLine = { threshold: 1_000, cooldown: Duration.hours(1), pack: "pack_small" };
+const tierCooldownEnds = at("2030-01-01T01:00:00Z");
+
+const subscribedPicky = [
+  Story.provide(Actor, system("test")),
+  Story.clock(start),
+  Story.when(
+    account,
+    new Subscribe({
+      tier: "picky",
+      allowances: pickyTerms,
+      price,
+      credits: 2_000,
+      creditsExpire: "period",
+      topUp: pickyLine,
+      rates,
+    }),
+  ),
+  Story.then(
+    account,
+    new SubscriptionActivated({
+      tier: "picky",
+      allowances: pickyTerms,
+      remaining: { messages: 100 },
+      credits: 2_000,
+      creditsExpire: "period",
+      topUp: pickyLine,
+      rates,
+      periodStart: start,
+      periodEnd: monthLater,
+      anchorTz: "UTC",
+      interval: "month",
+      currency: "usd",
+      price,
+      statusAfter: "active",
+    }),
+  ),
+] as const;
+
+it.effect("buys the pack and honours the bound the tier states, not the deployment's", () => {
+  const handlers = PaykitHandlers.pipe(
+    Layer.provide(MemoryBillingReadStore),
+    Layer.provideMerge(paymentsRouter(PaymentsMemory())),
+  );
+  // The deployment names the big pack and a half-hour bound; this tier states
+  // both of its own, and both its own win.
+  return Story.make(PaykitModel, {
+    layer: handlers.pipe(
+      Layer.provideMerge(
+        autoTopUp({
+          catalog: pickyCatalog,
+          pack: "pack",
+          cooldown: halfHour,
+        }).pipe(Layer.orDie),
+      ),
+    ),
+  })(
+    ...subscribedPicky,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    // The tier's pack is the product bought, so the provider is asked for the
+    // small pack's price, not the deployment's default.
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 990,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.returned(Payments.charge, { chargeId: "ch_1" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack_small",
+        amount: 100,
+        price: smallPack.price!,
+        rates,
+        chargeId: "ch_1",
+        // An hour, because the tier said an hour: a scheduled change moves
+        // this bound at the boundary along with the line and the pack.
+        cooldownUntil: tierCooldownEnds,
+        balanceAfter: 600,
+        prepaidAfter: 100,
+      }),
+    ),
+    Story.view(Entitlements, account, { credits: 600 }),
+    Story.view(BillingState, account, { topUp: pickyLine }),
+  );
+});

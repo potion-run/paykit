@@ -4,6 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { grant } from "../src/Allowance.ts";
 import {
+  CatalogUnknownTopUpPack,
   CatalogCarryOverNeverResets,
   CatalogCarryOverOnFlag,
   CatalogCreditRatesOnFlag,
@@ -406,13 +407,13 @@ describe("catalog", () => {
       id: "plan",
       price: { amount: 1_900, currency: "usd", interval: "month" },
       credits: 5_000,
-      topUp: 500,
+      topUp: { threshold: 500 },
       grants: [allowance(messages, { included: 100 })],
     });
     const accepted = defineCatalog({ features: [messages], tiers: [plan] });
     expect(Result.isSuccess(accepted)).toBe(true);
     if (Result.isSuccess(accepted)) {
-      expect(creditTermsOf(accepted.success, "plan")?.topUp).toBe(500);
+      expect(creditTermsOf(accepted.success, "plan")?.topUp).toEqual({ threshold: 500 });
     }
 
     // A pack has no standing, so a threshold on it would never be read.
@@ -421,7 +422,7 @@ describe("catalog", () => {
       kind: "one_off",
       price: { amount: 100, currency: "usd", interval: "month" },
       credits: 10,
-      topUp: 5,
+      topUp: { threshold: 5 },
       grants: [],
     });
     const refused = defineCatalog({ features: [messages], tiers: [pack] });
@@ -574,6 +575,75 @@ describe("catalog", () => {
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogInvalid);
+    }
+  });
+  it("refuses a top-up line that names a pack nothing sells", () => {
+    const plan = tier({
+      id: "plan",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      credits: 5_000,
+      topUp: { threshold: 500, pack: "credits_1m" },
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const result = defineCatalog({ features: [messages], tiers: [plan] });
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(CatalogUnknownTopUpPack);
+      if (result.failure._tag !== "CatalogUnknownTopUpPack") return;
+      expect(result.failure.pack).toBe("credits_1m");
+    }
+  });
+
+  it("refuses a top-up line that names a plan, because only a pack is bought", () => {
+    const pack = tier({
+      id: "credits_1m",
+      kind: "one_off",
+      price: { amount: 9_900, currency: "usd", interval: "month" },
+      credits: 1_000_000,
+      grants: [],
+    });
+    const other = tier({
+      id: "other",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      credits: 5_000,
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const plan = tier({
+      id: "plan",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      credits: 5_000,
+      topUp: { threshold: 500, pack: "other" },
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const result = defineCatalog({ features: [messages], tiers: [pack, other, plan] });
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(result.failure).toBeInstanceOf(CatalogUnknownTopUpPack);
+    }
+  });
+
+  it("accepts a top-up line that names a pack the catalog sells", () => {
+    const pack = tier({
+      id: "credits_1m",
+      kind: "one_off",
+      price: { amount: 9_900, currency: "usd", interval: "month" },
+      credits: 1_000_000,
+      grants: [],
+    });
+    const plan = tier({
+      id: "plan",
+      price: { amount: 1_900, currency: "usd", interval: "month" },
+      credits: 5_000,
+      topUp: { threshold: 500, pack: "credits_1m" },
+      grants: [allowance(messages, { included: 100 })],
+    });
+    const result = defineCatalog({ features: [messages], tiers: [pack, plan] });
+    expect(Result.isSuccess(result)).toBe(true);
+    if (Result.isSuccess(result)) {
+      expect(creditTermsOf(result.success, "plan")?.topUp).toEqual({
+        threshold: 500,
+        pack: "credits_1m",
+      });
     }
   });
 });

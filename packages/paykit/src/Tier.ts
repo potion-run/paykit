@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import { Allowance } from "./Allowance.ts";
 import { RateCard } from "./Feature.ts";
@@ -53,12 +54,75 @@ export const CreditsExpire = Schema.Literals(["period", "never"]);
 export type CreditsExpire = typeof CreditsExpire.Type;
 
 /**
- * Credits at or below which a spend buys the deployment's auto top-up pack.
- * It is a line on the tier, not a price: the pack is the product, and this is
- * when a plan's pool should be refilled.
+ * Credits at or below which a spend buys an auto top-up pack. It is a line on
+ * the tier, not a price: the pack is the product, and this is when a plan's
+ * pool should be refilled.
  */
 export const TopUpThreshold = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
 export type TopUpThreshold = typeof TopUpThreshold.Type;
+
+/**
+ * The id of the `kind: "one_off"` pack a tier's line buys, as the catalog
+ * names it. It is a plain string rather than a branded `TierId` because the
+ * catalog is what resolves it, and a brand at this boundary would buy nothing
+ * and cost every variant author a cast.
+ */
+export const TopUpPackId = Schema.String.pipe(Schema.check(Schema.isMinLength(1)));
+export type TopUpPackId = typeof TopUpPackId.Type;
+
+/**
+ * A tier's whole auto top-up line: when to refill, how often, and with what.
+ *
+ * The three travel together because they are one sentence — "refill below
+ * 5,000 credits from the 100k pack, at most hourly" — and a deployment that
+ * could state one without the others would refill an enterprise pool with a
+ * free tier's pack.
+ */
+export const TopUpTerms = Schema.Struct({
+  /** Credits at or below which a spend on this tier is a crossing. */
+  threshold: TopUpThreshold,
+  /**
+   * The shortest time between two purchases on this tier. Absent, the line is
+   * the deployment's `Paykit.autoTopUp({ cooldown })`, and absent there too,
+   * each crossing buys.
+   */
+  cooldown: Schema.optionalKey(Schema.Duration),
+  /**
+   * The `kind: "one_off"` pack this tier buys. Absent, the tier buys the pack
+   * the deployment named as its default.
+   */
+  pack: Schema.optionalKey(TopUpPackId),
+});
+export type TopUpTerms = typeof TopUpTerms.Type;
+
+/**
+ * A tier's auto top-up line as an author writes it: the same shape as
+ * {@link TopUpTerms}, with the pack named by a plain string the catalog
+ * resolves.
+ */
+export interface TopUpTermsInput {
+  /** Credits at or below which a spend on this tier is a crossing. */
+  readonly threshold: number;
+  /** The shortest time between two purchases on this tier. */
+  readonly cooldown?: Duration.Duration;
+  /** The `kind: "one_off"` pack this tier buys, by id. */
+  readonly pack?: string;
+}
+
+/**
+ * A stable key for everything a top-up line says, so the guard can tell one
+ * line from another without comparing object identity. Written field by field
+ * rather than through `JSON.stringify` on the value, so a `Duration` is
+ * compared as its millis and cannot be spelled two ways.
+ */
+export const topUpKey = (terms: TopUpTerms | undefined): string =>
+  terms === undefined
+    ? "none"
+    : JSON.stringify([
+        String(terms.threshold),
+        terms.cooldown === undefined ? "none" : String(Duration.toMillis(terms.cooldown)),
+        terms.pack ?? "none",
+      ]);
 
 /**
  * How a tier is bought: a subscription opens a period, while a one-off pack is
@@ -73,7 +137,8 @@ export const TierCustomize = Schema.Struct({
   price: Schema.optionalKey(Price),
   credits: Schema.optionalKey(Schema.Int),
   creditsExpire: Schema.optionalKey(CreditsExpire),
-  topUp: Schema.optionalKey(TopUpThreshold),
+  /** Replaces the base tier's whole line; a withdrawn line is `topUp: undefined` on the base. */
+  topUp: Schema.optionalKey(TopUpTerms),
   grants: Schema.optionalKey(Schema.Array(Allowance)),
   rateCard: Schema.optionalKey(Schema.Record(Schema.String, RateCard)),
 });
@@ -95,10 +160,10 @@ export const Tier = Schema.Struct({
   /** @default "period" for a subscription, "never" for a one-off pack */
   creditsExpire: Schema.optionalKey(CreditsExpire),
   /**
-   * Credits at or below which a spend buys the deployment's auto top-up pack.
-   * Absent means this tier never refills; a one-off pack cannot state one.
+   * When this tier refills, how often, and with which pack. Absent means this
+   * tier never refills; a one-off pack cannot state one.
    */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   grants: Schema.Array(Allowance),
   /**
    * The base tier this one is a named alternative of, e.g. annual Pro. The
@@ -130,10 +195,10 @@ export interface SubscriptionTierInput {
   /** @default "period" */
   readonly creditsExpire?: CreditsExpire;
   /**
-   * Credits at or below which a spend buys the deployment's auto top-up pack.
-   * Absent means this tier never refills.
+   * When this tier refills, how often, and with which pack. Absent means this
+   * tier never refills.
    */
-  readonly topUp?: number;
+  readonly topUp?: TopUpTermsInput;
   /**
    * What the tier grants. A subscription that grants nothing could never
    * activate, so the tuple requires at least one allowance.
@@ -179,7 +244,7 @@ export interface VariantTierInput {
   readonly price?: Price;
   readonly credits?: number;
   readonly creditsExpire?: CreditsExpire;
-  readonly topUp?: number;
+  readonly topUp?: TopUpTermsInput;
   readonly grants?: readonly Allowance[];
   readonly variantOf: string;
   readonly customize?: TierCustomize;
@@ -188,6 +253,12 @@ export interface VariantTierInput {
 
 /** A tier as an author writes it. */
 export type TierInput = SubscriptionTierInput | VariantTierInput | OneOffTierInput;
+
+const topUpTermsOf = (input: TopUpTermsInput): TopUpTerms => ({
+  threshold: input.threshold,
+  ...(input.cooldown === undefined ? {} : { cooldown: input.cooldown }),
+  ...(input.pack === undefined ? {} : { pack: input.pack }),
+});
 
 /**
  * Declare a purchasable bundle. The catalog validates it; this stays pure.
@@ -232,7 +303,7 @@ export const tier = (input: TierInput): Tier => {
     ...(input.price === undefined ? {} : { price: { ...input.price } }),
     ...(input.credits === undefined ? {} : { credits: input.credits }),
     ...(creditsExpire === undefined ? {} : { creditsExpire }),
-    ...(input.topUp === undefined ? {} : { topUp: input.topUp }),
+    ...(input.topUp === undefined ? {} : { topUp: topUpTermsOf(input.topUp) }),
     ...(input.variantOf === undefined ? {} : { variantOf: input.variantOf as TierId }),
     ...(input.customize === undefined ? {} : { customize: input.customize }),
     ...(input.rateCard === undefined ? {} : { rateCard: { ...input.rateCard } }),

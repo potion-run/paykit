@@ -63,6 +63,7 @@ import {
 } from "./Billing/TrackUsage.binding.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
+import { PaykitCatalogClient, type PaykitCatalogClientError } from "./CatalogRpc.ts";
 import { CatalogService, catalogLayer } from "./CatalogService.ts";
 import type { CheckResult } from "./Check.ts";
 import { type BillingStateView } from "./Subscription/BillingState.view.ts";
@@ -158,8 +159,21 @@ export interface BillingAtomLayerOptions<E = never> extends BillingAtomBaseOptio
 export interface BillingAtomUrlOptions extends BillingAtomBaseOptions {
   /** The base URL of the served `BillingApi`, e.g. `/api/billing`. */
   readonly url: string;
-  /** The catalog the deploy sells. It is validated into the client layer. */
-  readonly catalog: CatalogInput;
+  /**
+   * The catalog the deploy sells, when the client already holds it — a Worker
+   * sharing the deploy's own config module, or a test.
+   *
+   * Omit it in a browser: the client then reads the deploy's catalog from
+   * `url` once, through {@link PaykitCatalogClient}. A bundled second copy is a
+   * drift hazard — a stale asset joins terms the server's guard refuses with
+   * `CatalogMismatch` — so the served value is the one the model was built with.
+   */
+  readonly catalog?: CatalogInput;
+  /**
+   * Where the deploy serves its catalog, when it does not sit at
+   * `${url}/catalog`. Only read when `catalog` is omitted.
+   */
+  readonly catalogUrl?: string;
   /** The HTTP client to use. Defaults to `FetchHttpClient.layer`. */
   readonly httpClient?: Layer.Layer<HttpClient.HttpClient>;
 }
@@ -295,11 +309,10 @@ const billingAtom = <E>(
  * import { RegistryProvider, useAtomSet, useAtomValue } from "@effect/atom-react";
  * import * as PaykitAtom from "@potion.run/paykit/Atom";
  * import * as AsyncResult from "effect/reactivity/AsyncResult";
- * import { billingCatalog } from "./billing.config.ts";
  *
+ * // No catalog: `make` reads the deploy's own from `/api/billing/catalog`.
  * export const billing = PaykitAtom.make({
  *   url: "/api/billing",
- *   catalog: billingCatalog,
  * });
  *
  * const entitlements = billing.entitlements("acct_1");
@@ -326,21 +339,38 @@ const billingAtom = <E>(
  * @primitive
  * @product Usage
  */
-const clientLayer = (options: BillingAtomUrlOptions) =>
-  Layer.unwrap(
-    Effect.map(catalog(options.catalog), (parsed) =>
-      Layer.mergeAll(
-        catalogLayer(parsed),
-        BillingApi.layerClientHttp(options.url).pipe(
-          Layer.provide(options.httpClient ?? FetchHttpClient.layer),
-        ),
-      ),
-    ),
+const clientLayer = (
+  options: BillingAtomUrlOptions,
+): Layer.Layer<BillingClient | CatalogService, BillingAtomClientError, never> => {
+  const httpClient = options.httpClient ?? FetchHttpClient.layer;
+  const catalogService =
+    options.catalog === undefined
+      ? PaykitCatalogClient(options.catalogUrl ?? `${options.url}/catalog`)
+      : Layer.unwrap(Effect.map(catalog(options.catalog), (parsed) => catalogLayer(parsed)));
+  return Layer.mergeAll(
+    catalogService.pipe(Layer.provide(httpClient)),
+    BillingApi.layerClientHttp(options.url).pipe(Layer.provide(httpClient)),
   );
+};
 
-export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E | CatalogError> => {
-  const layer: Layer.Layer<BillingClient | CatalogService, E | CatalogError, never> =
-    "layer" in options ? options.layer : clientLayer(options);
+/**
+ * What building a client can fail with before it answers anything: a catalog
+ * this build cannot validate, a deploy that does not serve one, and — when the
+ * catalog is served — the session the read needs.
+ */
+export type BillingAtomClientError = CatalogError | PaykitCatalogClientError;
+
+export const make = <E = never>(
+  options: BillingAtomOptions<E>,
+): BillingAtoms<E | BillingAtomClientError> => {
+  // The served catalog adds a failure to the layer's channel that the local
+  // one does not have, so the union is cast once here rather than repeated at
+  // every atom below.
+  const layer = ("layer" in options ? options.layer : clientLayer(options)) as Layer.Layer<
+    BillingClient | CatalogService,
+    E | BillingAtomClientError,
+    never
+  >;
   const factory = options.runtime ?? Atom.runtime;
   const runtime = factory(
     // `provideMerge` keeps the Api client and the catalog on the runtime, so an

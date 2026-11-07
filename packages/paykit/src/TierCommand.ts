@@ -4,7 +4,7 @@ import { type Catalog, tierTermsOf, type TierTerms } from "./Catalog.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
-import type { CreditsExpire, Price, TopUpThreshold } from "./Tier.ts";
+import type { CreditsExpire, Price, TopUpTerms } from "./Tier.ts";
 
 /**
  * One join from a tier id to the input a command carries.
@@ -34,7 +34,7 @@ export interface TierGrantInput {
   readonly allowances: Allowances;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
-  readonly topUp?: TopUpThreshold;
+  readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly price?: Price;
 }

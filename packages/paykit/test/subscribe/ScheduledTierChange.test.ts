@@ -61,7 +61,7 @@ const schedule = () =>
     allowances: { messages: small },
     credits: 0,
     creditsExpire: "period",
-    topUp: 20,
+    topUp: { threshold: 20 },
     rates: {},
   });
 
@@ -75,7 +75,7 @@ describe("a tier change scheduled for the boundary", () => {
     expect(verdict.events[0]).toMatchObject({
       tier: "small",
       allowances: { messages: small },
-      topUp: 20,
+      topUp: { threshold: 20 },
     });
   });
 
@@ -86,7 +86,7 @@ describe("a tier change scheduled for the boundary", () => {
         allowances: { messages: small },
         credits: 0,
         creditsExpire: "period",
-        topUp: 20,
+        topUp: { threshold: 20 },
         rates: {},
         currency: "usd",
         interval: "month",
@@ -112,11 +112,11 @@ describe("a tier change scheduled for the boundary", () => {
     const [changed] = verdict.events as ReadonlyArray<{
       _tag: string;
       allowances?: unknown;
-      topUp?: number;
+      topUp?: { threshold: number };
     }>;
     expect(changed?.allowances).toEqual({ messages: small });
-    expect(changed?.topUp).toBe(20);
-    expect((verdict.state as SubscribedState).topUp).toBe(20);
+    expect(changed?.topUp).toEqual({ threshold: 20 });
+    expect((verdict.state as SubscribedState).topUp).toEqual({ threshold: 20 });
 
     const reset = verdict.events.find((event) => event._tag === "UsageReset");
     // The new tier's included count, not the old one and not the usage carried
@@ -136,7 +136,7 @@ describe("a tier change scheduled for the boundary", () => {
 
 describe("a top-up line on the standing", () => {
   it("moves with a mid-period change, and is cleared by a tier that states none", () => {
-    const state = subscribed({ topUp: 500 });
+    const state = subscribed({ topUp: { threshold: 500 } });
     const verdict = Subscription.predict(
       state,
       new ChangeTier({
@@ -157,13 +157,13 @@ describe("a top-up line on the standing", () => {
 
   it("lands with a scheduled change at the boundary", () => {
     const state = subscribed({
-      topUp: 500,
+      topUp: { threshold: 500 },
       pendingTier: {
         tier: "small",
         allowances: { messages: small },
         credits: 0,
         creditsExpire: "period",
-        topUp: 20,
+        topUp: { threshold: 20 },
         rates: {},
         currency: "usd",
         interval: "month",
@@ -180,8 +180,8 @@ describe("a top-up line on the standing", () => {
     expect(verdict._tag).toBe("Accepted");
     if (verdict._tag !== "Accepted") return;
     const changed = verdict.events.find((event) => event._tag === "TierChanged");
-    expect(changed).toMatchObject({ topUp: 20 });
-    expect((verdict.state as SubscribedState).topUp).toBe(20);
+    expect(changed).toMatchObject({ topUp: { threshold: 20 } });
+    expect((verdict.state as SubscribedState).topUp).toEqual({ threshold: 20 });
   });
 });
 

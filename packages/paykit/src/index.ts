@@ -62,11 +62,13 @@ export {
   TierCustomize,
   TierId,
   TierKind,
+  TopUpPackId,
+  TopUpTerms,
   TopUpThreshold,
   priceFor,
   tier,
 } from "./Tier.ts";
-export type { TierInput } from "./Tier.ts";
+export type { TierInput, TopUpTermsInput } from "./Tier.ts";
 export {
   Catalog,
   CatalogDuplicateAllowance,
@@ -114,6 +116,7 @@ export {
   CatalogOneOffGrant,
   CatalogOneOffWithoutPrice,
   CatalogTopUpOnPack,
+  CatalogUnknownTopUpPack,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
   CatalogUnitPriceWithoutBilling,
@@ -391,6 +394,14 @@ export {
 } from "./TierCommand.ts";
 export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
+export type { PaykitCatalogClientError, PaykitCatalogClientOptions } from "./CatalogRpc.ts";
+export {
+  CatalogUnavailable,
+  PaykitCatalogClient,
+  PaykitCatalogHandlers,
+  PaykitCatalogRpcs,
+  PaykitCatalogServer,
+} from "./CatalogRpc.ts";
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 export {
@@ -422,10 +433,12 @@ export {
   periodFrom,
   standingOf,
   statusOf,
+  topUpFailureOf,
 } from "./Subscription/Subscription.state.ts";
 export type {
   SubscribedState,
   SubscriptionState,
+  TopUpFailureRecord,
   UnsubscribedState,
 } from "./Subscription/Subscription.state.ts";
 export {
@@ -496,9 +509,13 @@ export {
   AutoTopUpInvalid,
   autoTopUp,
   crossedThreshold,
+  packFor,
   topUpCommandId,
+  topUpCooldownFor,
+  topUpFailureCommandId,
+  TopUpPackUnresolved,
 } from "./Subscription/AutoTopUp.policy.ts";
-export type { AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
+export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 export {
   ScheduleTierChange as ScheduleTierChangeCommand,
@@ -587,6 +604,10 @@ export {
   RecordPayment as RecordPaymentCommand,
 } from "./Subscription/RecordPayment.command.ts";
 export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
+export {
+  RecordTopUpFailure as RecordTopUpFailureCommand,
+  TopUpFailed,
+} from "./Subscription/RecordTopUpFailure.command.ts";
 export {
   Refund as RefundCommand,
   RefundExceedsCharged,

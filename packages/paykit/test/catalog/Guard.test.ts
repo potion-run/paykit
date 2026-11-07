@@ -11,7 +11,7 @@ const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  topUp: 500,
+  topUp: { threshold: 500 },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
 const ceilTier = tier({
@@ -97,7 +97,7 @@ describe("the catalog guard", () => {
       allowances: pro,
       price: proPrice,
       ...proTerms,
-      topUp: 1_000,
+      topUp: { threshold: 1_000 },
     });
     expect(moved?.field).toBe("topUp");
 
@@ -114,7 +114,7 @@ describe("the catalog guard", () => {
     const freeClaim = catalogMismatchOf(testCatalog, {
       tier: "free",
       allowances: free,
-      topUp: 500,
+      topUp: { threshold: 500 },
     });
     expect(freeClaim?.field).toBe("topUp");
   });

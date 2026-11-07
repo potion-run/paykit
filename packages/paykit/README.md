@@ -315,9 +315,10 @@ credit-priced feature reports the same `remaining`, `track({ feature, amount, di
 `amount × rate` from it, and a request the pool cannot cover is refused with `CreditExceeded`.
 `check({ feature, amount, dimension })` prices the request before comparing it, so it answers from
 the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
-default) zeroes it at a period close while `"never"` keeps it. A tier may also state `topUp`, the
-credit line at or below which a spend buys the deployment's auto top-up pack; a one-off pack cannot
-state one.
+default) zeroes it at a period close while `"never"` keeps it. A tier may also state `topUp`: the
+whole auto top-up line — `threshold` (the credit line at or below which a spend is a crossing),
+`cooldown` (the shortest time between two purchases on this tier) and `pack` (the `kind: "one_off"`
+tier to buy). A one-off pack cannot state one.
 
 A postpaid allowance states a `unitPrice` in minor units and optionally a `moneyCap`. The billable
 part is only what is past `included`; `track()` records the charge and the feature's period total,
@@ -338,14 +339,21 @@ A `kind: "one_off"` tier is a prepaid pack: it grants credits, has no allowances
 `payment_succeeded` grants the credits. There is still one pool, but the part a pack bought is
 protected: a period close expires only the plan's credits, and spending drains the plan's first.
 
-A deployment can also refill the pool itself. `autoTopUp({ catalog, pack })` provides a policy that
-buys the named `kind: "one_off"` pack when a spend takes the pool from above the tier's `topUp` line
-to at or below it: it asks the account's provider for the pack's price as an invoice keyed by the
-crossing, and records the purchase with that invoice id. The line is catalog data on the tier and
-rides the standing's events, so a free tier and an enterprise tier refill where their own grants run
-low; a tier without one never refills. Only a spend crosses — a grant, an expiry or a hold
+A deployment can also refill the pool itself. `autoTopUp({ catalog, pack, cooldown? })` provides a
+policy that buys a `kind: "one_off"` pack when a spend takes the pool from above the tier's
+`topUp.threshold` to at or below it: it asks the account's provider for the pack's price as an
+invoice keyed by the crossing, and records the purchase with that invoice id. The line is catalog
+data on the tier and rides the standing's events, so a tier states when it refills, how often
+(`topUp.cooldown`, which overrides the deployment's) and with what (`topUp.pack`, which overrides the
+deployment's default); a tier without one never refills. Only a spend crosses — a grant, an expiry or a hold
 reservation does not — and one crossing buys one pack, so the next refill costs at least the pack's
 credits in spending. A deployment that never provides the layer pays nothing for the policy.
+
+A refill that cannot be bought is a fact, not a defect: when the provider refuses both the saved
+method and the invoice, the policy records `TopUpFailed` — the pack, the provider, the refusal's tag
+and the crossing — and leaves the pool exactly where the spend left it. The standing carries it as
+`topUpFailure`, `BillingState` shows it, and the timeline renders a `topup-failed` entry with no money
+on it. The next successful purchase clears it, and the cooldown the crossing opened is what retries.
 
 `included: "unlimited"` grants an allowance with no end. `check()` answers
 `{ allowed: true, remaining: null, resetsAt, standing }`: `remaining` is `null` because there is no

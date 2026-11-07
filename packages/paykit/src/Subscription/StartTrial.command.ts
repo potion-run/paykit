@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpThreshold } from "../Tier.ts";
+import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import type { SubscriptionStatus } from "./Subscription.state.ts";
@@ -24,7 +24,7 @@ export class TrialStarted extends Domain.Event("TrialStarted", {
   prepaidCredits: Schema.optionalKey(Schema.Int),
   creditsExpire: CreditsExpire,
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
-  topUp: Schema.optionalKey(TopUpThreshold),
+  topUp: Schema.optionalKey(TopUpTerms),
   rates: CreditRateCards,
   periodStart: Schema.DateTimeUtc,
   periodEnd: Schema.DateTimeUtc,
@@ -47,7 +47,7 @@ export class StartTrial extends Domain.Command("StartTrial", {
     allowances: Allowances,
     credits: Schema.Int,
     creditsExpire: CreditsExpire,
-    topUp: Schema.optionalKey(TopUpThreshold),
+    topUp: Schema.optionalKey(TopUpTerms),
     rates: CreditRateCards,
     trialEndsAt: Schema.DateTimeUtc,
     anchorTz: Schema.optionalKey(Schema.String),
