@@ -205,8 +205,8 @@ longer join terms the server refuses with `CatalogMismatch`.
 `Paykit.moneyRoutes(provider)` is promoted beside it, which is where the copy the billing and polar
 examples each carried went. What is left is the *join* itself — the Api taking a tier id and the
 server expanding it, which needs a tenant command surface because a model command's payload cannot be
-enriched between the RPC and `decide` — and moving the examples that still speak the Fetch API onto
-the handler.
+enriched between the RPC and `decide`. `examples/polar` is on the handler now, `/` included; the
+tanstack example keeps its own adapter because it is a framework entry point, not a path table.
 
 ### 4. Auth
 

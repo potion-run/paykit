@@ -68,7 +68,10 @@ examples cannot disagree about what a `TierNotInCatalog` or a spent `RefundExcee
 ## Consequences
 
 - An example's `Worker.ts` becomes the Worker's own concerns: the binding, the world, and the paths
-  paykit does not know about.
+  paykit does not know about. `examples/polar` is migrated: its two money routes are the handler's
+  and its `/` page arrives as a `routes` entry, so the file no longer has a path table. It runs on a
+  `bindings: "tenant"` world with `surfaces: "none"`, which is the case that proves the handler asks
+  for the Api's middleware and not a second model.
 - `moneyRoutes` has one definition rather than two, and the two examples that had it keep working by
   importing it.
 - The handler is a function, not a Layer, so it composes with the existing one-handler-per-Worker
