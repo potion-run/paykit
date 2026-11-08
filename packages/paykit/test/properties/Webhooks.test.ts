@@ -90,9 +90,11 @@ describe("the webhook action table", () => {
     assertProperty(Arbitrary.schema(Triage), ({ kind, subscribed, status }) => {
       const state = stateIn(subscribed, status);
       const phase = phaseOf(state);
+
       // The classifier and the phase table are two views of the same state;
       // they must agree for every status, not only the ones a fixture names.
       if (phase !== (subscribed ? standingPhaseTagOfStatus(status) : "Unsubscribed")) return false;
+
       return webhookActionOf(kind, state) === WEBHOOK_TRANSITIONS[kind][phase];
     }),
   );

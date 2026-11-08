@@ -18,14 +18,17 @@ const Money = Schema.Struct({
   currency: Schema.Literals(["usd", "eur"]),
   interval: Schema.Literals(["month", "annual"]),
 });
+
 const Included = Schema.Union([
   Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1_000 }))),
   Schema.Literal("unlimited"),
 ]);
+
 const UnitPrice = Schema.Struct({
   amount: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   currency: Schema.Literals(["usd", "eur"]),
 });
+
 const AllowanceSpec = Schema.Struct({
   included: Included,
   overage: Schema.Literals(["block", "bill", "allow"]),
@@ -39,6 +42,7 @@ const AllowanceSpec = Schema.Struct({
     Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10_000 }))),
   ),
 });
+
 type AllowanceSpec = typeof AllowanceSpec.Type;
 
 const TierSpec = Schema.Struct({
@@ -50,6 +54,7 @@ const TierSpec = Schema.Struct({
   ),
   creditsExpire: Schema.optionalKey(Schema.Literals(["period", "never"])),
 });
+
 type TierSpec = typeof TierSpec.Type;
 
 const PackSpec = Schema.Struct({
@@ -57,6 +62,7 @@ const PackSpec = Schema.Struct({
   price: Money,
   cooldownMinutes: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 120 }))),
 });
+
 type PackSpec = typeof PackSpec.Type;
 
 const CatalogSpec = Schema.Struct({
@@ -76,10 +82,12 @@ const CatalogSpec = Schema.Struct({
 const buildAllowance = (spec: AllowanceSpec, currency?: string): Allowance => {
   const overage =
     spec.included === "unlimited" ? "allow" : spec.unitPrice !== undefined ? "bill" : spec.overage;
+
   const unitPrice =
     spec.included === "unlimited" || spec.unitPrice === undefined
       ? undefined
       : { ...spec.unitPrice, currency: currency ?? spec.unitPrice.currency };
+
   return allowance(messages, {
     included: spec.included,
     overage,
@@ -98,7 +106,9 @@ const buildTier = (spec: TierSpec, index: number, pack: PackSpec | undefined): T
     ...(spec.messages === undefined ? [] : [buildAllowance(spec.messages, spec.price?.currency)]),
     ...(spec.sso ? [grant(sso)] : []),
   ];
+
   const atLeastOne = grants.length === 0 ? [allowance(messages, { included: 100 })] : grants;
+
   return tier({
     id: `tier_${index}`,
     ...(spec.price === undefined ? {} : { price: spec.price }),
@@ -138,6 +148,7 @@ const build = (spec: typeof CatalogSpec.Type): CatalogInput => ({
 
 const accepted = (input: CatalogInput): Catalog | null => {
   const result = defineCatalog(input);
+
   return Result.isFailure(result) ? null : result.success;
 };
 
@@ -152,20 +163,24 @@ describe("the served catalog", () => {
       Arbitrary.schema(CatalogSpec),
       (spec) => {
         const catalog = accepted(build(spec));
+
         if (catalog === null) return false;
 
         const wire = Schema.encodeSync(CatalogCodec)(catalog);
         // The wire form is JSON, not a structure that happens to serialize:
         // an RPC carries it through `JSON.parse`/`JSON.stringify` unchanged.
         const parsed = JSON.parse(JSON.stringify(wire));
+
         if (!same(parsed, wire)) return false;
 
         const received = Schema.decodeSync(CatalogCodec)(parsed);
+
         if (!same(Schema.encodeSync(CatalogCodec)(received), wire)) return false;
 
         // A client validates what arrived, exactly as `PaykitCatalogClient`
         // does, and gets the value the deploy validated, not a rewrite of it.
         const served = accepted(received);
+
         return served !== null && same(Schema.encodeSync(CatalogCodec)(served), wire);
       },
       { runs: 80, size: 30 },

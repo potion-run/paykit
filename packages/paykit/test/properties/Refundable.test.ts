@@ -12,6 +12,7 @@ import {
 import { assertProperty } from "../support/Property.ts";
 
 const Currency = Schema.Literals(["usd", "eur", "gbp"]);
+
 /**
  * Amounts biased toward zero and small values: the interesting cases are a
  * currency with no headroom and one with exactly a cent, which a uniform
@@ -29,6 +30,7 @@ const MoneySpec = Schema.Struct({
   eur: Schema.optionalKey(Cents),
   gbp: Schema.optionalKey(Cents),
 });
+
 type MoneySpec = typeof MoneySpec.Type;
 
 const Money = Schema.Struct({ charged: MoneySpec, refunded: MoneySpec });
@@ -52,6 +54,7 @@ describe("refundable currencies", () => {
     assertProperty(Arbitrary.schema(Money), ({ charged, refunded }) => {
       const state = stateWith(money(charged), money(refunded));
       const offered = refundableCurrencies(state.charged, state.refunded);
+
       // The console's list and the command's ceiling are the same arithmetic:
       // a currency is offered exactly when `refundableOf` has headroom.
       const expected = [...Currency.literals]
@@ -59,9 +62,12 @@ describe("refundable currencies", () => {
         .sort();
 
       if (!same(offered, expected)) return false;
+
       if (new Set(offered).size !== offered.length) return false;
+
       return offered.every((currency) => {
         const headroom = (state.charged?.[currency] ?? 0) - (state.refunded?.[currency] ?? 0);
+
         return headroom > 0 && headroom === refundableOf(state, currency);
       });
     }),
@@ -79,6 +85,7 @@ describe("refundable currencies", () => {
       ({ charged, refunded, status }) => {
         const moneyCharged = money(charged);
         const moneyRefunded = money(refunded);
+
         const actions = actionsFor({
           status,
           tier: "pro",
@@ -86,10 +93,12 @@ describe("refundable currencies", () => {
           charged: moneyCharged,
           refunded: moneyRefunded,
         });
+
         const refunds = actions.filter((descriptor) => descriptor.action === "Refund");
         const refundable = refundableCurrencies(moneyCharged, moneyRefunded).length > 0;
 
         if (refunds.length !== (refundable ? 1 : 0)) return false;
+
         // A refund is a money operation, not a standing move: when offered it
         // is always the last descriptor, whatever phase the standing is in.
         return !refundable || actions[actions.length - 1]?.action === "Refund";
