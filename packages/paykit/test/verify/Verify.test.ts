@@ -18,14 +18,17 @@ import { tier } from "../../src/Tier.ts";
 import { Verify, verifyState } from "../../src/Verify.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const testCatalog: Catalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier] }),
 );
+
 const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
@@ -65,6 +68,7 @@ it("a priced standing with no vendor reference is drift", () => {
     catalog: testCatalog,
     provider: processor,
   });
+
   expect(mismatches.length).toBe(1);
   expect(mismatches[0]?._tag).toBe("MissingProviderRef");
 });
@@ -75,6 +79,7 @@ it("a priced standing with its vendor reference is clean", () => {
     subscribed("pro", { refs: { stripe: { customer: "cus_1" } } }),
     { catalog: testCatalog, provider: processor },
   );
+
   expect(mismatches).toEqual([]);
 });
 
@@ -83,6 +88,7 @@ it("a free standing needs no vendor reference", () => {
     catalog: testCatalog,
     provider: processor,
   });
+
   expect(mismatches).toEqual([]);
 });
 
@@ -92,6 +98,7 @@ it("a vendor reference with no standing is drift", () => {
     { _tag: "Unsubscribed", refs: { stripe: { checkout: "cs_1" } } },
     { catalog: testCatalog, provider: processor },
   );
+
   expect(mismatches[0]?._tag).toBe("OrphanProviderRef");
 });
 
@@ -104,6 +111,7 @@ it("a sold tier no provider can charge is drift", () => {
       provider: { name: "stripe", capabilities: new Set(["refund"]) },
     },
   );
+
   expect(mismatches[0]?._tag).toBe("TierHasNoPurchasePath");
 });
 

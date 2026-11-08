@@ -103,10 +103,12 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
   );
 
   const bindings = options.bindings ?? "tenant";
+
   const tenant =
     bindings === "tenant" || bindings === "both"
       ? [BillingInProcess.pipe(Layer.provide(model), Layer.provide(router), Layer.provide(catalog))]
       : [];
+
   const admin =
     bindings === "admin" || bindings === "both"
       ? [
@@ -119,6 +121,7 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
           ),
         ]
       : [];
+
   const only = providers.length === 1 ? providers[0] : undefined;
 
   // The common half — the model, the catalog, the router and the host's
@@ -134,6 +137,8 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
     ...payments,
     ...(only === undefined ? [] : [only.payments]),
   );
+
+  // SAFETY: the merge provides exactly the services the layer union names.
   return Layer.mergeAll(base, ...tenant, ...admin) as Layer.Layer<
     Layer.Success<typeof base> | BindingServices<B>,
     never,

@@ -63,7 +63,9 @@ const guarded = (
       // `Actor` is the effect a guarded command runs with: it reads the actor
       // the middleware provided.
       const outcome = yield* Effect.exit(guard(Actor, { headers, payload }));
+
       if (Exit.isSuccess(outcome)) return { actor: outcome.value };
+
       return { error: tagOf(Option.getOrNull(Cause.findErrorOption(outcome.cause))) };
     }),
   );
@@ -110,6 +112,7 @@ describe("the cookie session", () => {
       ["pk_actor", "ops_1"],
       ["pk_kind", "admin"],
     ]);
+
     for (const [, , options] of local) {
       expect(options).toMatchObject({ httpOnly: true, path: "/", sameSite: "lax" });
       expect(options?.secure).toBeUndefined();

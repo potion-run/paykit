@@ -68,6 +68,7 @@ export const ActionDraft = Schema.Struct({
   /** The form strings, keyed by `ActionField.name`. */
   values: Schema.Record(Schema.String, Schema.String),
 });
+
 export type ActionDraft = typeof ActionDraft.Type;
 
 /** What the operator asked for, after parsing and before sending a command. */
@@ -100,6 +101,7 @@ export const AdminIntent = Schema.Union([
     reason: Schema.optionalKey(Schema.String),
   }),
 ]);
+
 export type AdminIntent = typeof AdminIntent.Type;
 
 const wrap = (message: typeof BillingAdmin.Message.Type) =>
@@ -107,6 +109,7 @@ const wrap = (message: typeof BillingAdmin.Message.Type) =>
 
 const positiveInt = (value: string): Result.Result<number, string> => {
   const parsed = Number(value);
+
   return Number.isSafeInteger(parsed) && parsed > 0
     ? Result.succeed(parsed)
     : Result.fail("Enter a positive whole amount in minor units.");
@@ -117,6 +120,7 @@ const nonEmpty = (value: string, label: string): Result.Result<string, string> =
 
 const dateTime = (value: string, label: string): Result.Result<DateTime.Utc, string> => {
   const parsed = new Date(value);
+
   return Number.isNaN(parsed.getTime())
     ? Result.fail(`Enter a valid ${label}.`)
     : Result.succeed(DateTime.fromDateUnsafe(parsed));
@@ -127,10 +131,13 @@ const selectTier = (value: string): Result.Result<string, string> => nonEmpty(va
 /** An optional note: absent and blank are the same thing, so the field can stay empty. */
 const optionalText = (value: string | undefined): string | undefined => {
   const trimmed = (value ?? "").trim();
+
   return trimmed === "" ? undefined : trimmed;
 };
 
-export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
+const operatorActionTable = (table: { readonly [K in AdminAction]: ActionSpec<K> }) => table;
+
+export const OperatorActions = operatorActionTable({
   GrantCredits: {
     fields: [{ name: "amount", label: "Amount (minor units)", control: "number" }],
     parse: (values) =>
@@ -277,6 +284,7 @@ export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
         Result.flatMap(positiveInt(values.amount ?? ""), (amount) =>
           Result.map(nonEmpty(values.currency ?? "", "currency"), (currency) => {
             const reason = optionalText(values.reason);
+
             return {
               kind: "Refund" as const,
               chargeId,
@@ -297,6 +305,7 @@ export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
       // `TierNotInCatalog` instead of the console guessing.
       const input =
         catalog === null ? null : scheduleTierChangeInputOf(catalog, intent.tier, currency);
+
       return Command.mapMessage(
         BillingAdmin.ScheduleTierChange({
           target,
@@ -313,7 +322,7 @@ export const OperatorActions: { readonly [K in AdminAction]: ActionSpec<K> } = {
       );
     },
   },
-};
+});
 
 /** The values a new draft starts with, from the table's fields. */
 export const draftFor = (
@@ -324,6 +333,7 @@ export const draftFor = (
     onNone: () => "usd",
     onSome: (state) => state.currency ?? "usd",
   });
+
   const values = Object.fromEntries(
     OperatorActions[kind].fields.map((field) => [
       field.name,
@@ -334,6 +344,7 @@ export const draftFor = (
           : field.default,
     ]),
   );
+
   return { kind, values };
 };
 
@@ -375,5 +386,6 @@ export const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, strin
 /** Set one field, ignoring a name the open action does not ask for. */
 export const updatedDraft = (draft: ActionDraft, field: string, value: string): ActionDraft => {
   const known = OperatorActions[draft.kind].fields.some((entry) => entry.name === field);
+
   return known ? { ...draft, values: { ...draft.values, [field]: value } } : draft;
 };

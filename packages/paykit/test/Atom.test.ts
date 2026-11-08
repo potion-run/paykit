@@ -30,11 +30,13 @@ import { Subscription } from "../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../src/Tier.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const pro = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 1_000, overage: "bill" })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
 
 const account = "acct_atom";
@@ -76,6 +78,7 @@ const httpClient = (server: { readonly fetch: unknown }) =>
     (request) =>
       Effect.gen(function* () {
         const web = yield* HttpClientRequest.toWeb(request);
+
         const served = yield* (
           server.fetch as unknown as Effect.Effect<
             HttpServerResponse.HttpServerResponse,
@@ -89,6 +92,7 @@ const httpClient = (server: { readonly fetch: unknown }) =>
           ),
           Effect.scoped,
         );
+
         return HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(served));
       }) as never,
   );
@@ -101,19 +105,25 @@ const settled = <A, E>(
   Effect.gen(function* () {
     const latch = Latch.makeUnsafe();
     const current = registry.get(atom);
+
     if (!current.waiting && current._tag !== "Initial") return current;
+
     const unsubscribe = registry.subscribe(atom, (value) => {
       if (!value.waiting && value._tag !== "Initial") latch.openUnsafe();
     });
+
     yield* latch.await;
     yield* Effect.sync(unsubscribe);
+
     return registry.get(atom);
   });
 
 /** A successful value, or the cause the atom failed with. */
 const valueOf = <A, E>(result: AsyncResult.AsyncResult<A, E>): Effect.Effect<A, E> => {
   if (AsyncResult.isSuccess(result)) return Effect.succeed(result.value);
+
   if (AsyncResult.isFailure(result)) return Effect.failCause(result.cause);
+
   return Effect.die(new Error("the atom did not settle"));
 };
 
@@ -134,10 +144,13 @@ const seedStanding = <E>(
     const context = yield* valueOf(built);
     const client = Context.get(context, BillingApi.Client);
     const terms = tierTermsOf(testCatalog, "free");
+
     if (terms === null) return yield* Effect.die(new Error("the test catalog has no free tier"));
+
     const receipt = yield* client
       .Subscribe(Subscription.ref(account).id, { tier: "free", ...terms }, { headers: actorHeader })
       .pipe(Effect.orDie);
+
     // The purchase is a command; wait on the view it committed before the
     // query reads, exactly as the binding would after a tracked usage.
     yield* client.Entitlements.get(Subscription.ref(account).id, {
@@ -215,6 +228,7 @@ it.live("a foreign account is a typed failure, not a second account's read", () 
 
     const result = yield* settled(registry, foreign);
     expect(AsyncResult.isFailure(result)).toBe(true);
+
     if (AsyncResult.isFailure(result)) {
       const error = Cause.findErrorOption(result.cause);
       expect(String(error)).toContain("Forbidden");
@@ -225,6 +239,7 @@ it.live("a foreign account is a typed failure, not a second account's read", () 
 it.live("the atom client speaks the Api's HTTP protocol", () =>
   Effect.gen(function* () {
     const server = yield* BillingApi;
+
     // The request carries a different actor than the account it targets, so
     // the Api's Session guard refuses it over the wire; the atom decodes the
     // refusal into the class a caller matches, not a transport error.
@@ -247,6 +262,7 @@ it.live("the atom client speaks the Api's HTTP protocol", () =>
     registry.set(trackUsage, { feature: "messages", amount: 1, dedupeKey: "http-atom" });
     const result = yield* settled(registry, trackUsage);
     expect(AsyncResult.isFailure(result)).toBe(true);
+
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
       expect(String(error)).toContain("Forbidden");

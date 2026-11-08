@@ -35,10 +35,12 @@ const Case = Schema.Struct({
   tiers: Schema.Array(Word).pipe(Schema.check(Schema.isMaxLength(6))),
   found: Schema.Array(FoundSeed).pipe(Schema.check(Schema.isMaxLength(10))),
 });
+
 type Case = typeof Case.Type;
 
 const nameOf = (input: Case, seed: Case["found"][number]): string => {
   const declared = input.tiers.map((tier) => productNameOf(input.stage, tier));
+
   switch (seed.kind) {
     case "declared":
       // A tier the catalog still sells, when it has one.
@@ -63,19 +65,23 @@ const nameOf = (input: Case, seed: Case["found"][number]): string => {
  */
 const sweep = (input: Case) => {
   const price = { amount: 1_900, currency: "usd", interval: "month" as const };
+
   const declarations = priceDeclarations(
     Object.fromEntries(input.tiers.map((tier) => [tier, price])),
     input.stage,
   );
+
   const found: ReadonlyArray<FoundProduct> = input.found.map((seed, index) => ({
     id: `prod_${index}`,
     name: nameOf(input, seed),
     tier: seed.tier,
     archived: seed.archived,
   }));
+
   const retired = retiredProducts(declarations, found, input.stage);
   const declared = new Set(input.tiers.map((tier) => productNameOf(input.stage, tier)));
   const prefix = productNamePrefixOf(input.stage);
+
   const expected = found.filter(
     (product) =>
       !product.archived &&
@@ -83,6 +89,7 @@ const sweep = (input: Case) => {
       product.name.startsWith(prefix) &&
       !declared.has(product.name),
   );
+
   return { declarations, found, retired, expected };
 };
 
@@ -97,6 +104,7 @@ describe("the Polar archive sweep", () => {
       Arbitrary.schema(Case),
       (input) => {
         const { retired, expected } = sweep(input);
+
         return (
           retired.length === expected.length &&
           retired.every((product, index) => product.id === expected[index]!.id)
@@ -116,6 +124,7 @@ describe("the Polar archive sweep", () => {
       (input) => {
         const { declarations, found, retired } = sweep(input);
         const archived = new Set(retired.map((product) => product.id));
+
         const again = retiredProducts(
           declarations,
           found.map((product) => ({
@@ -124,6 +133,7 @@ describe("the Polar archive sweep", () => {
           })),
           input.stage,
         );
+
         return again.length === 0;
       },
       { runs: 120, size: 40 },
@@ -140,6 +150,7 @@ describe("the Polar archive sweep", () => {
       (input) => {
         const { retired } = sweep(input);
         const declared = new Set(input.tiers.map((tier) => productNameOf(input.stage, tier)));
+
         return retired.every((product) => !declared.has(product.name));
       },
       { runs: 120, size: 20 },
@@ -156,6 +167,7 @@ describe("the Polar archive sweep", () => {
       Arbitrary.schema(Schema.Struct({ stage: Word, tier: Word })),
       ({ stage, tier }) => {
         const prefix = productNamePrefixOf(stage);
+
         return (
           productNameOf(stage, tier).startsWith(prefix) &&
           prefix.endsWith(":") &&

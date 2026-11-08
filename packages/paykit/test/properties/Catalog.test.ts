@@ -47,6 +47,7 @@ const AllowanceSpec = Schema.Struct({
     Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1_000 }))),
   ),
 });
+
 type AllowanceSpec = typeof AllowanceSpec.Type;
 
 const TierSpec = Schema.Struct({
@@ -65,6 +66,7 @@ const TierSpec = Schema.Struct({
     }),
   ),
 });
+
 type TierSpec = typeof TierSpec.Type;
 
 const CatalogSpec = Schema.Struct({
@@ -73,6 +75,7 @@ const CatalogSpec = Schema.Struct({
     Schema.check(Schema.isMaxLength(3)),
   ),
 });
+
 type CatalogSpec = typeof CatalogSpec.Type;
 
 /**
@@ -83,10 +86,12 @@ type CatalogSpec = typeof CatalogSpec.Type;
 const buildAllowance = (spec: AllowanceSpec, currency?: string): Allowance => {
   const overage =
     spec.included === "unlimited" ? "allow" : spec.unitPrice !== undefined ? "bill" : spec.overage;
+
   const unitPrice =
     spec.included === "unlimited" || spec.unitPrice === undefined
       ? undefined
       : { ...spec.unitPrice, currency: currency ?? spec.unitPrice.currency };
+
   return allowance(messages, {
     included: spec.included,
     overage,
@@ -114,11 +119,14 @@ const buildPack = (
 
 const buildTier = (spec: TierSpec, index: number): Tier => {
   if (spec.pack !== undefined) return buildPack(spec.pack, index);
+
   const grants = [
     ...(spec.messages === undefined ? [] : [buildAllowance(spec.messages, spec.price?.currency)]),
     ...(spec.sso ? [grant(sso)] : []),
   ];
+
   const atLeastOne = grants.length === 0 ? [allowance(messages, { included: 100 })] : grants;
+
   return tier({
     id: `tier_${index}`,
     ...(spec.price === undefined ? {} : { price: spec.price }),
@@ -137,6 +145,7 @@ const build = (spec: CatalogSpec): CatalogInput => ({
 
 const accepted = (input: CatalogInput): Catalog | null => {
   const result = defineCatalog(input);
+
   return Result.isFailure(result) ? null : result.success;
 };
 
@@ -150,20 +159,25 @@ describe("catalog properties", () => {
       (spec) => {
         const input = build(spec);
         const catalog = accepted(input);
+
         if (catalog === null) return false;
 
         // Validation is a decode, not a rewrite: a catalog that passed is the
         // same catalog when it is validated again.
         const again = defineCatalog(catalog);
+
         if (Result.isFailure(again)) return false;
+
         if (!same(again.success, catalog)) return false;
 
         // Every term the catalog implies passes its own guard. A command built
         // by the catalog's owner must never be refused by the guard.
         for (const declared of catalog.tiers) {
           const terms = tierTermsOf(catalog, declared.id);
+
           if (terms === null) return false;
           const mismatch = catalogMismatchOf(catalog, { tier: declared.id, ...terms });
+
           if (mismatch !== null) return false;
         }
 
@@ -194,13 +208,16 @@ describe("catalog properties", () => {
       ),
       ({ catalog: spec, mutation, tierIndex }) => {
         const catalog = accepted(build(spec));
+
         if (catalog === null) return false;
         const declared = catalog.tiers[tierIndex % catalog.tiers.length]!;
         const terms = tierTermsOf(catalog, declared.id);
+
         if (terms === null) return false;
 
         const carried: Record<string, unknown> = { tier: declared.id, ...terms };
         let field: string;
+
         switch (mutation) {
           case "tier":
             carried.tier = "tier_that_does_not_exist";
@@ -208,6 +225,7 @@ describe("catalog properties", () => {
             break;
           case "allowances": {
             const entry = Object.entries(terms.allowances)[0];
+
             if (entry === undefined) return true;
             const [feature, first] = entry;
             carried.allowances = {
@@ -220,12 +238,15 @@ describe("catalog properties", () => {
             field = "allowances";
             break;
           }
+
           case "cap":
           case "unitPrice":
           case "moneyCap": {
             const entry = Object.entries(terms.allowances)[0];
+
             if (entry === undefined) return true;
             const [feature, first] = entry;
+
             const mutated =
               mutation === "cap"
                 ? { ...first, cap: (first.cap ?? 0) + 1 }
@@ -238,10 +259,12 @@ describe("catalog properties", () => {
                       },
                     }
                   : { ...first, moneyCap: (first.moneyCap ?? 0) + 1 };
+
             carried.allowances = { ...terms.allowances, [feature]: mutated };
             field = "allowances";
             break;
           }
+
           case "price":
             carried.price =
               terms.price === undefined
@@ -267,6 +290,7 @@ describe("catalog properties", () => {
         }
 
         const mismatch = catalogMismatchOf(catalog, carried as never);
+
         return mismatch !== null && mismatch.field === field;
       },
       { runs: 100, size: 30 },

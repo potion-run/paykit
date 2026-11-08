@@ -56,6 +56,7 @@ const usd = (amount: number, units?: number) => ({
 
 const failureOf = (t: ReturnType<typeof tier>) => {
   const result = defineCatalog({ features: [messages], tiers: [t] });
+
   return Result.isFailure(result) ? result.failure : null;
 };
 
@@ -88,6 +89,7 @@ describe("a price is a function of the billable count", () => {
         { upTo: "inf", amount: 5, currency: "usd", units: 1_000 },
       ],
     });
+
     // The first 10,000 at one cent each, then $5 per 1,000.
     expect(priceOf(graduated, 10_000)).toBe(10_000);
     // 10,000 at one cent each, then 5,000 at $5 per 1,000: $25.
@@ -106,6 +108,7 @@ describe("a price is a function of the billable count", () => {
         { upTo: "inf", amount: 5, currency: "usd", units: 1_000 },
       ],
     });
+
     // 15,000 units all land in the second band: 15 packages of $5.
     expect(priceOf(volume, 15_000)).toBe(75);
     // Crossing the boundary reprices the whole total, so the event that
@@ -123,6 +126,7 @@ describe("a price is a function of the billable count", () => {
         { upTo: "inf", amount: 2, currency: "usd" },
       ],
     });
+
     const lines = pricedLines(graduated, 90, 110);
     expect(lines.map((line) => line.quantity)).toEqual([10, 10]);
     expect(lines.map((line) => line.amount)).toEqual([10, 20]);
@@ -190,6 +194,7 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ),
     );
+
     expect(outOfOrder === null ? false : Schema.is(CatalogPricingBand)(outOfOrder)).toBe(true);
 
     const noEnd = failureOf(
@@ -201,6 +206,7 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ),
     );
+
     expect(noEnd === null ? false : Schema.is(CatalogPricingBand)(noEnd)).toBe(true);
   });
 
@@ -217,6 +223,7 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ),
     );
+
     expect(failure === null ? false : Schema.is(CatalogVolumeRateRises)(failure)).toBe(true);
   });
 
@@ -235,7 +242,9 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ],
     });
+
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(Schema.is(CatalogPricingWithoutBilling)(result.failure)).toBe(true);
     }
@@ -260,7 +269,9 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ],
     });
+
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(Schema.is(CatalogPricingConflict)(result.failure)).toBe(true);
     }
@@ -280,11 +291,13 @@ describe("the catalog validates the price shapes it can express", () => {
         ],
       }),
     );
+
     expect(failure === null ? false : Schema.is(CatalogPricingCurrency)(failure)).toBe(true);
   });
 
   it("validates a non-consumable quantity: one seat price, no reset, a cap", () => {
     const seats = feature({ id: "seats", kind: "non_consumable" });
+
     const seatTier = (grant: ReturnType<typeof allowance>) =>
       tier({
         id: "team",
@@ -294,8 +307,10 @@ describe("the catalog validates the price shapes it can express", () => {
 
     const seatFailureOf = (t: ReturnType<typeof tier>) => {
       const result = defineCatalog({ features: [seats], tiers: [t] });
+
       return Result.isFailure(result) ? result.failure : null;
     };
+
     const valid = defineCatalog({
       features: [seats],
       tiers: [
@@ -309,6 +324,7 @@ describe("the catalog validates the price shapes it can express", () => {
         ),
       ],
     });
+
     expect(Result.isSuccess(valid)).toBe(true);
 
     const resets = seatFailureOf(
@@ -317,6 +333,7 @@ describe("the catalog validates the price shapes it can express", () => {
         resets: "day",
       }),
     );
+
     expect(resets === null ? false : Schema.is(CatalogQuantityResets)(resets)).toBe(true);
 
     const ladder = seatFailureOf(
@@ -335,6 +352,7 @@ describe("the catalog validates the price shapes it can express", () => {
         }),
       ),
     );
+
     expect(ladder === null ? false : Schema.is(CatalogQuantityPricing)(ladder)).toBe(true);
 
     const noPrice = seatFailureOf(seatTier(allowance(seats, { included: 5, overage: "bill" })));
@@ -343,6 +361,7 @@ describe("the catalog validates the price shapes it can express", () => {
     const cap = seatFailureOf(
       seatTier(allowance(seats, { included: 5, overage: "allow", cap: 2 })),
     );
+
     expect(cap === null ? false : Schema.is(CatalogQuantityCap)(cap)).toBe(true);
   });
 
@@ -358,6 +377,7 @@ describe("the catalog validates the price shapes it can express", () => {
         ],
       }),
     );
+
     expect(
       quantityOnMetered === null ? false : Schema.is(CatalogQuantityKind)(quantityOnMetered),
     ).toBe(true);
@@ -372,7 +392,9 @@ describe("the catalog validates the price shapes it can express", () => {
       ],
       tiers: [],
     });
+
     expect(Result.isFailure(cardOnQuantity)).toBe(true);
+
     if (Result.isFailure(cardOnQuantity)) {
       expect(Schema.is(CatalogRateCardOnQuantity)(cardOnQuantity.failure)).toBe(true);
     }
@@ -383,6 +405,7 @@ describe("the catalog validates the price shapes it can express", () => {
         grants: [allowance(messages, { included: 5, prorate: "immediate" })],
       }),
     );
+
     expect(
       prorateOnMetered === null ? false : Schema.is(CatalogProrateOnMetered)(prorateOnMetered),
     ).toBe(true);
@@ -406,6 +429,7 @@ describe("the catalog validates the price shapes it can express", () => {
         ),
       ],
     });
+
     expect(Result.isSuccess(result)).toBe(true);
   });
 });
@@ -422,6 +446,7 @@ describe("a rate card prices on a dimension, a property match and a multiplier",
       default: 1,
       rules: [{ match: { size: "large" }, credits: 16 }],
     });
+
     expect(creditRateOf(ruled, { properties: { size: "large" } })).toBe(16);
     expect(creditRateOf(ruled, { properties: { size: "small" } })).toBe(1);
   });
@@ -434,17 +459,21 @@ describe("a rate card prices on a dimension, a property match and a multiplier",
         { match: { region: "eu" }, add: 2 },
       ],
     });
+
     expect(creditRateOf(card, { properties: { lifecycle: "spot" } })).toBe(3);
     expect(creditRateOf(card, { properties: { lifecycle: "spot", region: "eu" } })).toBe(5);
+
     const negative = rateCard({
       default: 1,
       multipliers: [{ match: { free: "yes" }, add: -10 }],
     });
+
     expect(creditRateOf(negative, { properties: { free: "yes" } })).toBe(0);
   });
 
   it("lets a tier replace one feature's card", () => {
     const ai = feature({ id: "ai", creditRates: { default: 1, "gpt-large": 10 } });
+
     const result = Effect.runSync(
       catalog({
         features: [ai, messages],
@@ -459,6 +488,7 @@ describe("a rate card prices on a dimension, a property match and a multiplier",
         ],
       }),
     );
+
     expect(ratesOf(result, "pro")?.ai).toEqual({
       default: 5,
       dimensions: { "gpt-large": 99 },
@@ -476,7 +506,9 @@ describe("a rate card prices on a dimension, a property match and a multiplier",
         }),
       ],
     });
+
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(Schema.is(CatalogRateCardOverride)(result.failure)).toBe(true);
     }
@@ -490,6 +522,7 @@ describe("a variant is a named alternative of a base tier", () => {
     credits: 1_000,
     grants: [allowance(messages, { included: 2_000 })],
   });
+
   const annual = tier({
     id: "pro_annual",
     variantOf: "pro",
@@ -517,7 +550,9 @@ describe("a variant is a named alternative of a base tier", () => {
         }),
       ],
     });
+
     expect(Result.isFailure(unknown)).toBe(true);
+
     if (Result.isFailure(unknown)) {
       expect(Schema.is(CatalogUnknownVariant)(unknown.failure)).toBe(true);
     }
@@ -529,7 +564,9 @@ describe("a variant is a named alternative of a base tier", () => {
         tier({ id: "b", variantOf: "a", grants: [allowance(messages, { included: 1 })] }),
       ],
     });
+
     expect(Result.isFailure(cycle)).toBe(true);
+
     if (Result.isFailure(cycle)) {
       expect(Schema.is(CatalogVariantCycle)(cycle.failure)).toBe(true);
     }
@@ -547,7 +584,9 @@ describe("a variant is a named alternative of a base tier", () => {
         },
       ],
     });
+
     expect(Result.isFailure(pack)).toBe(true);
+
     if (Result.isFailure(pack)) {
       expect(Schema.is(CatalogVariantOnPack)(pack.failure)).toBe(true);
     }
@@ -585,6 +624,7 @@ describe("a tier can be sold in more than one currency", () => {
         ],
       }),
     );
+
     expect(tierTermsOf(result, "pro", "eur")?.price?.amount).toBe(1_800);
     expect(tierTermsOf(result, "pro", "eur")?.price?.currency).toBe("eur");
     expect(tierTermsOf(result, "pro", "jpy")).toBe(null);
@@ -611,7 +651,9 @@ describe("a tier can be sold in more than one currency", () => {
         }),
       ],
     });
+
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(Schema.is(CatalogAdditionalCurrency)(result.failure)).toBe(true);
     }
@@ -622,6 +664,7 @@ describe("a rollover can be capped, and a reset can run on its own schedule", ()
   const at = (iso: string) => DateTime.makeUnsafe(iso);
   const start = at("2030-01-01T00:00:00Z");
   const end = at("2030-02-01T00:00:00Z");
+
   const state = (over: Partial<SubscribedState> = {}): SubscribedState =>
     ({
       _tag: "Subscribed",

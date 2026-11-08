@@ -46,13 +46,17 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
 
         if (url.pathname === "/bootstrap") {
           const actor: ActorValue | null = actorFromHeaders(request.headers);
+
           if (actor === null) {
             return HttpServerResponse.text("No x-paykit-actor header", { status: 401 });
           }
+
           const state = yield* subscription.state(Subscription.ref(actor.id));
+
           if (state._tag !== "Subscribed") {
             const subscribe = yield* subscribeOf(actor.id);
             const started = yield* Effect.result(subscribe({ tier: "free" }));
+
             if (Result.isFailure(started)) {
               return HttpServerResponse.jsonUnsafe(
                 { error: started.failure._tag },
@@ -60,6 +64,7 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
               );
             }
           }
+
           return HttpServerResponse.jsonUnsafe({ account: actor.id });
         }
 

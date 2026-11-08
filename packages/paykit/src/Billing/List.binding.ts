@@ -5,6 +5,7 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Every refusal a cross-account page can answer. It is unguarded by design. */
 export type ListRefusal = never;
+
 export type ListError = BindingError<ListRefusal>;
 
 /** A page never refuses; the tool has no guard, so there is nothing to narrow. */

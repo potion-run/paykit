@@ -12,6 +12,7 @@ import {
 
 const step = (command: CommandPlan, advanceDays = 0): ScriptStep => ({ command, advanceDays });
 const script = (...steps: ReadonlyArray<ScriptStep>): Script => ({ steps });
+
 const declined = (plan: CommandPlan, state: SubscriptionState) =>
   decideAt(state, commandOf(plan, state, start), start, `terminal-${plan._tag}`);
 

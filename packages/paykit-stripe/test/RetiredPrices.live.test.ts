@@ -62,6 +62,7 @@ test.provider.skipIf(!hasKey)(
         active: true,
         limit: 1,
       }).pipe(Effect.provide(live(key)));
+
       expect(before.data.length).toBe(1);
       const scalePriceId = before.data[0]!.id!;
 
@@ -87,6 +88,7 @@ test.provider.skipIf(!hasKey)(
       const kept = yield* GetPrices({ lookup_keys: [proKey], active: true, limit: 1 }).pipe(
         Effect.provide(live(key)),
       );
+
       expect(kept.data.length).toBe(1);
 
       // A second sweep is a no-op: archiving is idempotent, so a deploy that

@@ -10,6 +10,7 @@ interface Fetcher {
 export default {
   fetch(request: Request, env: { readonly ASSETS: Fetcher; readonly BILLING: Fetcher }) {
     const { pathname } = new URL(request.url);
+
     return pathname === "/session" ||
       pathname.startsWith("/admin") ||
       pathname.startsWith("/console")

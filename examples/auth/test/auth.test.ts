@@ -34,22 +34,28 @@ const signUp = (auth: AuthInstance, email: string) =>
       headers: { "content-type": "application/json", origin: "http://localhost" },
       body: JSON.stringify({ name: "Example User", email, password: "example-password-123" }),
     });
+
     const response = yield* auth.fetch.pipe(
       Effect.provideService(HttpServerRequest, HttpServerRequestModule.fromWeb(request)),
       Effect.provide(RuntimeContext.phantom),
       Effect.scoped,
       Effect.orDie,
     );
+
     const web = HttpServerResponse.toWeb(response);
     expect(web.status).toBe(200);
+
     const body = (yield* Effect.promise(() => web.json())) as {
       readonly user: { readonly id: string; readonly email: string };
     };
+
     const cookie = web.headers
       .getSetCookie()
       .map((entry) => entry.split(";", 1)[0])
       .join("; ");
+
     expect(cookie.length).toBeGreaterThan(0);
+
     return { id: body.user.id, email: body.user.email, cookie };
   });
 
@@ -107,11 +113,13 @@ describe("the auth-gated billing app", () => {
         // caller may choose: a session for this user can only act for itself.
         const free = yield* tierCommand("free");
         yield* tenant.Subscribe(account, free, asUser);
+
         const receipt = yield* tenant.TrackUsage(
           account,
           { feature: "messages", amount: 5, dedupeKey: "first" },
           asUser,
         );
+
         const view = yield* tenant.Entitlements.get(account, { atLeast: receipt, ...asUser });
         expect(view?.features.messages?.remaining).toBe(95);
 
@@ -119,6 +127,7 @@ describe("the auth-gated billing app", () => {
         const anonymous = yield* Effect.exit(
           tenant.TrackUsage(account, { feature: "messages", amount: 1, dedupeKey: "anon" }),
         );
+
         expect(anonymous._tag).toBe("Failure");
         expect(String(anonymous)).toContain("Unauthenticated");
 
@@ -130,6 +139,7 @@ describe("the auth-gated billing app", () => {
             asUser,
           ),
         );
+
         expect(other._tag).toBe("Failure");
         expect(String(other)).toContain("Forbidden");
       }).pipe(Effect.provide(world(auth)));
@@ -153,6 +163,7 @@ describe("the auth-gated billing app", () => {
         const refused = yield* Effect.exit(
           admin.GrantCredits(account, { amount: 500 }, { headers: { cookie: user.cookie } }),
         );
+
         expect(refused._tag).toBe("Failure");
         expect(String(refused)).toContain("Forbidden");
 
@@ -161,6 +172,7 @@ describe("the auth-gated billing app", () => {
           { amount: 500 },
           { headers: { cookie: operator.cookie } },
         );
+
         expect(granted.reply).toEqual({ balance: 500 });
       }).pipe(Effect.provide(world(auth)));
     }),
@@ -182,10 +194,13 @@ describe("the auth-gated billing app", () => {
             headers: { cookie: user.cookie },
           }),
         );
+
         expect(signedIn.status).toBe(200);
+
         const body = (yield* Effect.promise(() => signedIn.json())) as {
           readonly invoiceId?: string;
         };
+
         // `Manual` sells through an invoice. The account on it is the session's
         // user id; the query's `account` is ignored by construction.
         expect(typeof body.invoiceId).toBe("string");

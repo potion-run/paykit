@@ -52,6 +52,7 @@ export const VerifyMismatch = Schema.Union([
   OrphanProviderRef,
   TierHasNoPurchasePath,
 ]);
+
 export type VerifyMismatch = typeof VerifyMismatch.Type;
 
 /** What `verify` judges an account against: the catalog and the provider it runs on. */
@@ -88,19 +89,25 @@ export const verifyState = (
   const providerName = provider?.name ?? "memory";
   const refs = state.refs;
   const carriesRef = Object.keys(refs).length > 0;
+
   if (state._tag !== "Subscribed") {
     return carriesRef ? [new OrphanProviderRef({ account, provider: Object.keys(refs)[0]! })] : [];
   }
+
   const tier = tierOf(catalog, state.tier);
+
   if (tier === null) return [];
+
   if (tier.price !== undefined) {
     if (provider !== null && refs[provider.name] === undefined) {
       return [new MissingProviderRef({ account, tier: tier.id, provider: providerName })];
     }
+
     if (!sellsAnything(provider)) {
       return [new TierHasNoPurchasePath({ account, tier: tier.id, provider: providerName })];
     }
   }
+
   return [];
 };
 
@@ -130,13 +137,16 @@ export const Verify = Effect.fn("Paykit.Verify")(function* () {
 
   return Effect.fn("Paykit.Verify.account")(function* (input: { readonly account: string }) {
     const state = yield* subscription.state(Subscription.ref(input.account));
+
     // With a router, the account's own provider is the one that could sell its
     // tier; without one, the single layer in context is.
     const routed = Option.match(router, {
       onNone: () => null,
       onSome: (set) => providerFor(set, state.refs),
     });
+
     const provider = routed ?? Option.getOrNull(yield* Effect.serviceOption(PaymentsProvider));
+
     return verifyState(input.account, state, { catalog, provider });
   });
 });

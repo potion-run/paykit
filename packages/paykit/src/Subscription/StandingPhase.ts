@@ -18,6 +18,7 @@ export const StandingPhaseTag = Schema.Literals([
   "Expired",
   "Canceled",
 ]);
+
 export type StandingPhaseTag = typeof StandingPhaseTag.Type;
 
 /**
@@ -49,14 +50,17 @@ export const StandingPhase = Schema.Union([
   Schema.TaggedStruct("Expired", {}),
   Schema.TaggedStruct("Canceled", {}),
 ]);
+
 export type StandingPhase = typeof StandingPhase.Type;
 
 /** The auto top-up window: closed, open, or past its deadline but not cleared. */
 export const TopUpCooldownCondition = Schema.Literals(["none", "open", "lapsed"]);
+
 export type TopUpCooldownCondition = typeof TopUpCooldownCondition.Type;
 
 /** The last tier change's money: absent, owed, billed, or a credit. */
 export const ProrationCondition = Schema.Literals(["none", "owed", "billed", "credit"]);
+
 export type ProrationCondition = typeof ProrationCondition.Type;
 
 /**
@@ -85,6 +89,7 @@ export const StandingConditions = Schema.Struct({
   /** Credits a one-off pack bought before a standing existed. */
   unplannedCredits: Schema.Int,
 });
+
 export type StandingConditions = typeof StandingConditions.Type;
 
 const reached = (at: DateTime.Utc, deadline: DateTime.Utc): boolean =>
@@ -113,6 +118,7 @@ const reached = (at: DateTime.Utc, deadline: DateTime.Utc): boolean =>
  */
 export const standingPhaseOf = (state: SubscriptionState, at: DateTime.Utc): StandingPhase => {
   if (state._tag === "Unsubscribed") return { _tag: "Unsubscribed" };
+
   // The close, not `trialEndsAt`, is what actually moves a trial: the
   // rollover is scheduled from `period.end` and `ExtendTrial` keeps the two
   // together. A view carries the same period end, so both paths agree.
@@ -232,12 +238,14 @@ export const standingConditionsOf = (
 
   const holds = Object.values(state.holds).filter((hold) => hold.status === "open");
   const lapsedHolds = holds.filter((hold) => reached(at, hold.expiresAt)).length;
+
   const cooldown =
     state.topUpCooldownUntil === undefined
       ? "none"
       : reached(at, state.topUpCooldownUntil)
         ? "lapsed"
         : "open";
+
   const proration =
     state.proration === undefined
       ? "none"
@@ -273,6 +281,7 @@ export const STANDING_TRANSITIONS = [
   "changeTier",
   "other",
 ] as const;
+
 export type StandingTransition = (typeof STANDING_TRANSITIONS)[number];
 
 /**
@@ -393,7 +402,7 @@ export const nextStandingPhase = (
   transition: StandingTransition,
 ): StandingPhaseTag => STANDING_PHASE_TRANSITIONS[phase][transition];
 
-const COMMAND_TRANSITIONS: Readonly<Record<string, StandingTransition>> = {
+const COMMAND_TRANSITIONS = {
   StartTrial: "trial",
   Subscribe: "activate",
   EnterGrace: "dunning",
@@ -407,7 +416,7 @@ const COMMAND_TRANSITIONS: Readonly<Record<string, StandingTransition>> = {
   ChangeTier: "changeTier",
   ScheduleTierChange: "changeTier",
   WithdrawTierChange: "changeTier",
-};
+} satisfies Readonly<Record<string, StandingTransition>>;
 
 /**
  * The move a command names, as the table's second key.
@@ -437,7 +446,11 @@ export const standingTransitionOf = (
   if (command._tag === "ClosePeriod" || command._tag === "PeriodEnded") {
     return state._tag === "Subscribed" && state.cancelAtPeriodEnd ? "cancelAtBoundary" : "close";
   }
-  return COMMAND_TRANSITIONS[command._tag] ?? "other";
+
+  // SAFETY: `Object.hasOwn` checked the key, so this is a known command tag.
+  return Object.hasOwn(COMMAND_TRANSITIONS, command._tag)
+    ? COMMAND_TRANSITIONS[command._tag as keyof typeof COMMAND_TRANSITIONS]
+    : "other";
 };
 
 /** One reachable phase edge, and the commands and events that take it. */

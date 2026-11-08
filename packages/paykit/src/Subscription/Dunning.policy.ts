@@ -71,10 +71,12 @@ export const dunning = (options: DunningTerms): Layer.Layer<DunningConfig, Dunni
     Effect.gen(function* () {
       for (const [index, retry] of options.retries.entries()) {
         const millis = Duration.toMillis(retry);
+
         if (!Number.isFinite(millis) || millis <= 0) {
           return yield* new DunningInvalid({ index, reason: "not-positive" });
         }
       }
+
       return { retries: options.retries };
     }),
   );
@@ -126,28 +128,35 @@ export const DunningLive = Dunning.toLayer(
     // A deployment that asked for retries needs a provider to charge. Resolve
     // the router while the layer is built, like every policy that calls one.
     const router = Option.getOrNull(yield* Effect.serviceOption(PaymentsRouter));
+
     if (config !== null && router === null) {
       return yield* Effect.die(new ProviderCapabilityMissing({ provider: "none", op: "charge" }));
     }
 
     return Effect.fn("Paykit.Dunning.react")(function* ({ key, event }) {
       const standing = yield* subscriptions.state(key);
+
       if (standing._tag !== "Subscribed") return;
 
       if (event._tag === "DunningRetryDue") {
         if (router === null) return;
+
         if (standing.status !== "grace" || standing.graceUntil === undefined) return;
         const graceUntil = standing.graceUntil;
+
         if (standing.dunningStartedAt === undefined) return;
+
         if (
           DateTime.toEpochMillis(standing.dunningStartedAt) !==
           DateTime.toEpochMillis(event.startedAt)
         ) {
           return;
         }
+
         if (standing.dunningAttempts + 1 !== event.attempt) return;
 
         const chosen = providerFor(router, standing.refs);
+
         if (chosen === null || !chosen.capabilities.has("charge")) {
           return yield* Effect.die(
             new ProviderCapabilityMissing({ provider: chosen?.name ?? "none", op: "charge" }),
@@ -156,6 +165,7 @@ export const DunningLive = Dunning.toLayer(
 
         const charge = Effect.gen(function* () {
           const payments = yield* Payments;
+
           return yield* payments.charge({
             account: key.id,
             amount: event.amount,
@@ -189,6 +199,7 @@ export const DunningLive = Dunning.toLayer(
             ProviderCapabilityMissing: (missing) => Effect.die(missing),
           }),
         );
+
         return;
       }
 
@@ -203,13 +214,17 @@ export const DunningLive = Dunning.toLayer(
 
       if (config === null || event._tag !== "PaymentFailed") return;
       const startedAt = standing.dunningStartedAt;
+
       if (startedAt === undefined || standing.price === undefined) return;
 
       const graceMillis = DateTime.toEpochMillis(standing.graceUntil);
+
       for (let index = standing.dunningAttempts - 1; index < config.retries.length; index++) {
         const retry = config.retries[index];
+
         if (retry === undefined) continue;
         const retryAt = DateTime.addDuration(startedAt, retry);
+
         // A rung at or past the deadline is not a retry; `GraceElapsed` acts there.
         if (DateTime.toEpochMillis(retryAt) >= graceMillis) continue;
         const afterAttempt = index + 1;

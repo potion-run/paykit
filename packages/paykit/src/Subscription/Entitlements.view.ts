@@ -37,6 +37,7 @@ export const PricedUnits = Schema.Struct({
   unitPrice: UnitPrice,
   quantity: Schema.Int,
 });
+
 export type PricedUnits = typeof PricedUnits.Type;
 
 /** What a tier grants, what has been used, and when it resets. */
@@ -104,6 +105,7 @@ export const FeatureEntitlement = Schema.Struct({
    */
   priced: Schema.optionalKey(Schema.Record(Schema.String, PricedUnits)),
 });
+
 export type FeatureEntitlement = typeof FeatureEntitlement.Type;
 
 /** The `check()` read model: per-feature remaining and the account's standing. */
@@ -130,13 +132,14 @@ export const EntitlementsState = Schema.Struct({
   resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
+
 export type EntitlementsState = typeof EntitlementsState.Type;
 
 /** One event's billable units added to the price it was recorded at. */
 const pricedAfter = (
   current: Readonly<Record<string, PricedUnits>> | undefined,
   line: { readonly key: string; readonly unitPrice: UnitPrice; readonly quantity: number },
-): Record<string, PricedUnits> => ({
+) => ({
   ...current,
   [line.key]: {
     unitPrice: line.unitPrice,
@@ -203,6 +206,7 @@ export class Entitlements extends Domain.View("Entitlements", {
   rejects: [Forbidden],
   validate: Effect.fn(function* ({ key }) {
     const actor = yield* Actor;
+
     if (!mayActOn(actor, key.id)) {
       return yield* new Forbidden({
         account: key.id,
@@ -273,6 +277,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       // A new tier change replaces what the old one owed and the invoice that
       // settled it; carrying either forward would report stale money.
       const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
+
       return withAccount(
         {
           ...rest,
@@ -304,12 +309,15 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     UsageRecorded: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined) return withAccount(view, context);
+
       // A credit-priced feature spends the shared pool, so it moves the balance
       // and leaves `remaining` to the pool helper; a counted feature moves its
       // own counter.
       if (feature.creditRates !== undefined) {
         const spent = withCreditsOf(view, event.creditsAfter, heldOf(view.features));
+
         return withAccount(
           {
             ...spent,
@@ -321,6 +329,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           context,
         );
       }
+
       return withAccount(
         {
           ...view,
@@ -329,6 +338,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             ...view.features,
             [event.feature]: (() => {
               const billed = event.billedAfter ?? feature.billed ?? 0;
+
               return {
                 ...feature,
                 used: event.usedAfter,
@@ -362,13 +372,16 @@ export class Entitlements extends Domain.View("Entitlements", {
     // holds, not a counter a command writes.
     UsageReserved: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined) return withAccount(view, context);
+
       if (feature.creditRates !== undefined) {
         return withAccount(
           withCreditsOf(view, view.credits, heldOf(view.features) + event.cost),
           context,
         );
       }
+
       return withAccount(
         {
           ...view,
@@ -395,13 +408,16 @@ export class Entitlements extends Domain.View("Entitlements", {
     // hold and returns whatever it did not bill.
     UsageSettled: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined) return withAccount(view, context);
+
       if (feature.creditRates !== undefined) {
         return withAccount(
           withCreditsOf(view, view.credits, Math.max(0, heldOf(view.features) - event.cost)),
           context,
         );
       }
+
       return withAccount(
         {
           ...view,
@@ -428,13 +444,16 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     UsageReleased: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined) return withAccount(view, context);
+
       if (feature.creditRates !== undefined) {
         return withAccount(
           withCreditsOf(view, view.credits, Math.max(0, heldOf(view.features) - event.cost)),
           context,
         );
       }
+
       return withAccount(
         {
           ...view,
@@ -501,11 +520,14 @@ export class Entitlements extends Domain.View("Entitlements", {
       ),
     QuantityChanged: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined || feature.kind !== "non_consumable") {
         return withAccount(view, context);
       }
+
       const remaining =
         feature.cap === undefined ? null : Math.max(0, feature.cap - event.quantityAfter);
+
       return withAccount(
         {
           ...view,
@@ -530,11 +552,14 @@ export class Entitlements extends Domain.View("Entitlements", {
       withAccount(view, context),
     AllowanceReset: (view, event, context): EntitlementsState => {
       const feature = view.features[event.feature];
+
       if (feature === undefined || feature.kind === "non_consumable") {
         return withAccount(view, context);
       }
+
       const { priced: _priced, billed: _billed, ...carried } = feature;
       const { [event.feature]: _previous, ...resetAt } = view.resetAt ?? {};
+
       return withAccount(
         {
           ...view,
@@ -592,6 +617,7 @@ export class Entitlements extends Domain.View("Entitlements", {
                   },
                 ];
               }
+
               // `resets: "never"` keeps its usage and open reservations: the
               // boundary moves the period, not this allowance.
               const kept = event.kept?.[feature] === true;
@@ -609,6 +635,7 @@ export class Entitlements extends Domain.View("Entitlements", {
               // the counter belongs to the period, not to the new allowance.
               const { priced: recordedPrices, billed: recordedBilled, ...carried } = value;
               const billed = kept ? recordedBilled : undefined;
+
               return [
                 feature,
                 {
@@ -668,6 +695,7 @@ export class Entitlements extends Domain.View("Entitlements", {
     CreditsPurchased: (view, event, context): EntitlementsState => {
       const pooled = withPool(view, event.balanceAfter);
       const rates = event.rates;
+
       if (rates === undefined) return withAccount(pooled, context);
 
       // A purchase before any plan is the one time the view has a pool but no
@@ -677,6 +705,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       const standing = pooled.tier === "" && event.balanceAfter > 0 ? "good" : pooled.standing;
       const held = heldOf(pooled.features);
       const features = { ...pooled.features };
+
       for (const [feature, card] of Object.entries(rates)) {
         features[feature] = creditFeatureOf(
           card,
@@ -686,6 +715,7 @@ export class Entitlements extends Domain.View("Entitlements", {
           standing,
         );
       }
+
       return withAccount({ ...pooled, standing, features }, context);
     },
     CreditsConsumed: (view, event, context): EntitlementsState =>
@@ -817,9 +847,11 @@ const spendableOf = (
   },
 ): number | null => {
   const remaining = recordedCount(recorded, feature);
+
   // `undefined` is "this event says nothing about the feature"; `null` is a
   // recorded absence of a count, and must survive as one.
   if (remaining !== undefined) return remaining;
+
   return includedRemainingOf(allowance);
 };
 
@@ -828,6 +860,7 @@ const heldOf = (features: Readonly<Record<string, FeatureEntitlement>>): number 
   for (const value of Object.values(features)) {
     if (value.creditRates !== undefined) return value.reserved;
   }
+
   return 0;
 };
 
@@ -936,18 +969,21 @@ const featuresOf = (
   standing: Standing,
   keepUsage = false,
   resetAt?: Readonly<Record<string, DateTime.Utc>>,
-): Record<string, FeatureEntitlement> => ({
+) => ({
   ...Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
       const used = keepUsage ? (previous[feature]?.used ?? 0) : 0;
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
       const billed = keepUsage ? (previous[feature]?.billed ?? 0) : 0;
       const priced = keepUsage ? previous[feature]?.priced : undefined;
+
       if (isQuantityGrant(allowance)) {
         const free = typeof allowance.included === "number" ? allowance.included : 0;
         const quantity = keepUsage ? Math.max(previous[feature]?.quantity ?? free, free) : free;
+
         const quantityRemaining =
           allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity);
+
         return [
           feature,
           {
@@ -970,7 +1006,9 @@ const featuresOf = (
           },
         ];
       }
+
       const spendable = spendableOf(remaining, feature, allowance);
+
       return [
         feature,
         {

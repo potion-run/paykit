@@ -53,6 +53,7 @@ describe("cross-account list", () => {
       accounts.map((account) => row(account)),
       { take: 2 },
     );
+
     // A new account sorts before the cursor, so it is not served twice.
     const grown = ["acct_0", ...accounts].map((account) => row(account));
     const second = queryRows(grown, { take: 2, after: first.next! });
@@ -68,6 +69,7 @@ describe("cross-account list", () => {
       accounts.map((account) => row(account)),
       { order: "desc", take: 2 },
     );
+
     expect(page.rows.map((entry) => entry.account)).toEqual(["acct_e", "acct_d"]);
     expect(page.next).toBe("acct_d");
   });
@@ -79,6 +81,7 @@ describe("cross-account list", () => {
       row("acct_c", { tier: "scale" }),
       row("acct_d", { standing: "grace", status: "grace", tier: "scale" }),
     ];
+
     expect(queryRows(rows, { standing: "grace" }).rows.map((entry) => entry.account)).toEqual([
       "acct_b",
       "acct_d",
@@ -96,6 +99,7 @@ describe("cross-account list", () => {
     const many = Array.from({ length: MAX_PAGE + 20 }, (_, index) =>
       row(`acct_${String(index).padStart(4, "0")}`),
     );
+
     expect(queryRows(many, { take: 10_000 }).rows.length).toBe(MAX_PAGE);
     expect(queryRows(many).rows.length).toBe(DEFAULT_PAGE);
   });
@@ -111,6 +115,7 @@ describe("the List binding", () => {
   it.live("pages the projection through the store", () =>
     Effect.gen(function* () {
       const store = yield* BillingReadStore;
+
       for (const account of accounts) yield* store.upsert(row(account));
       const list = yield* List();
       const first = yield* list({ take: 2 });

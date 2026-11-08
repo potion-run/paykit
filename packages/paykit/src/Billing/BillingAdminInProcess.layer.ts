@@ -66,8 +66,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
     GrantCredits,
     Effect.gen(function* () {
       const subscription = yield* Subscription;
+
       return Effect.fn("Paykit.GrantCredits")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.GrantCredits.add")(function* (request) {
           const receipt = yield* bound(toGrantCreditsError)(
             asSystem(
@@ -76,6 +78,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           return receipt.reply;
         });
       });
@@ -86,8 +89,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.ExtendTrial")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ExtendTrial.extend")(function* (request) {
           const receipt = yield* bound(toExtendTrialError)(
             asSystem(
@@ -96,7 +101,9 @@ export const BillingAdminInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           const view = yield* bound(toExtendTrialError)(billing.query(ref, { atLeast: receipt }));
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -107,8 +114,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.EnterGrace")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.EnterGrace.open")(function* (request) {
           const receipt = yield* bound(toEnterGraceError)(
             asSystem(
@@ -117,7 +126,9 @@ export const BillingAdminInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           const view = yield* bound(toEnterGraceError)(billing.query(ref, { atLeast: receipt }));
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -128,15 +139,19 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.Recover")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Recover.standing")(function* (request) {
           const receipt = yield* bound(toRecoverError)(
             asSystem(
               subscription.send(ref, new RecoverCommand(), { commandId: request.dedupeKey }),
             ),
           );
+
           const view = yield* bound(toRecoverError)(billing.query(ref, { atLeast: receipt }));
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -147,13 +162,17 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.Expire")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Expire.standing")(function* (request) {
           const receipt = yield* bound(toExpireError)(
             asSystem(subscription.send(ref, new ExpireCommand(), { commandId: request.dedupeKey })),
           );
+
           const view = yield* bound(toExpireError)(billing.query(ref, { atLeast: receipt }));
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -164,8 +183,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.RecordPayment")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.RecordPayment.record")(function* (request) {
           const receipt = yield* bound(toRecordPaymentError)(
             asSystem(
@@ -176,7 +197,9 @@ export const BillingAdminInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toRecordPaymentError)(billing.query(ref, { atLeast: receipt }));
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -187,8 +210,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.RecordPaymentFailure")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.RecordPaymentFailure.record")(function* (request) {
           const receipt = yield* bound(toRecordPaymentFailureError)(
             asSystem(
@@ -202,9 +227,11 @@ export const BillingAdminInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toRecordPaymentFailureError)(
             billing.query(ref, { atLeast: receipt }),
           );
+
           return standingSnapshot(Option.getOrNull(view));
         });
       });
@@ -215,14 +242,17 @@ export const BillingAdminInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const router = yield* Effect.serviceOption(PaymentsRouter);
+
       return Effect.fn("Paykit.Refund")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Refund.charge")(function* (request) {
           const state = yield* subscription.state(ref);
           // A retry with the same dedupe key is the refund the first attempt
           // recorded: answer it instead of asking the ceiling for headroom that
           // attempt already spent.
           const previous = refundOfCommand(state, request.dedupeKey);
+
           if (previous !== null) {
             return {
               refundId: previous.refundId,
@@ -230,10 +260,12 @@ export const BillingAdminInProcess = Layer.mergeAll(
               currency: previous.currency,
             };
           }
+
           // The ceiling is checked here as well as in `decide`, because the
           // provider call comes first: a refund the model would refuse must not
           // take money out on the way to being refused.
           const refundable = refundableOf(state, request.currency);
+
           if (request.amount > refundable) {
             return yield* bound(toRefundError)(
               Effect.fail(
@@ -246,23 +278,28 @@ export const BillingAdminInProcess = Layer.mergeAll(
               ),
             );
           }
+
           const chosen = Option.match(router, {
             onNone: () => null,
             onSome: (set) => providerFor(set, state.refs),
           });
+
           const attempt = Effect.gen(function* () {
             const payments = yield* Effect.serviceOption(Payments);
+
             if (Option.isNone(payments)) {
               return yield* new ProviderCapabilityMissing({
                 provider: chosen?.name ?? "none",
                 op: "refund",
               });
             }
+
             const { refundId } = yield* payments.value.refund({
               chargeId: request.chargeId,
               amount: request.amount,
               commandId: request.dedupeKey,
             });
+
             // The receipt is keyed by the operator's dedupe key, so a retry
             // records the refund the provider already took rather than a second.
             const receipt = yield* asSystem(
@@ -278,7 +315,10 @@ export const BillingAdminInProcess = Layer.mergeAll(
                 { commandId: request.dedupeKey },
               ),
             );
+
             const record = receipt.events.find((event) => event._tag === "RefundRecorded");
+
+            // SAFETY: the event was decoded from the refund schema, which states `refundedAfter` as a number.
             return {
               refundId,
               refunded:
@@ -288,6 +328,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
               currency: request.currency,
             };
           });
+
           return yield* bound(toRefundError)(
             chosen === null ? attempt : Effect.provide(attempt, chosen.payments),
           );

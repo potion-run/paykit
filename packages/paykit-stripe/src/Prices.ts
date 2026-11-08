@@ -8,7 +8,7 @@ import {
   type Pricing,
   type PricingValue,
   type StripeTier,
-  type TierId,
+  TierId,
   type TierKind,
   type UnitPrice,
 } from "@potion.run/paykit";
@@ -152,10 +152,13 @@ export const declaredLookupKeys = (
   declarations: ReadonlyArray<PriceDeclaration>,
 ): ReadonlySet<string> => {
   const keys = new Set<string>();
+
   for (const declaration of declarations) {
     keys.add(declaration.lookupKey);
+
     for (const usage of declaration.usage) keys.add(usage.lookupKey);
   }
+
   return keys;
 };
 
@@ -179,6 +182,7 @@ export const retiredPrices = (
 ): ReadonlyArray<FoundPrice> => {
   const prefix = lookupKeyPrefixOf(stage);
   const declared = declaredLookupKeys(declarations);
+
   return found.filter(
     (price) =>
       price.active &&
@@ -207,6 +211,7 @@ export const priceDeclarations = (
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([tier, value]) => {
       const { price, kind, usage, seats } = normalize(value);
+
       return {
         tier,
         kind,
@@ -227,6 +232,7 @@ export const priceDeclarations = (
                   const pricing = asPricing(value);
                   const unitPrice = soleUnitPriceOf(pricing);
                   const keepsPricing = unitPrice === null || unitsOf(unitPrice) > 1;
+
                   return {
                     feature,
                     ...(unitPrice === null ? {} : { unitPrice }),
@@ -282,10 +288,12 @@ export const soldTiers = (
   Object.fromEntries(
     Object.entries(tiers).map(([tier, value]) => {
       const { price, usage, seats } = normalize(value);
+
       const usagePrices = Object.fromEntries(
         Object.entries(usage).map(([feature, value]) => {
           const pricing = asPricing(value);
           const unitPrice = soleUnitPriceOf(pricing);
+
           return [
             feature,
             {
@@ -295,12 +303,14 @@ export const soldTiers = (
           ];
         }),
       );
+
       const seatPrices = Object.fromEntries(
         Object.entries(seats).map(([feature, unitPrice]) => [
           feature,
           { unitPrice, lookupKey: sold.seats[tier]?.[feature] },
         ]),
       );
+
       return [
         tier,
         {
@@ -377,6 +387,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
 ) {
   const stack = yield* Stack;
   const declarations = priceDeclarations(props.tiers, stack.stage);
+
   if (
     declarations.some((declaration) =>
       declaration.usage.some(
@@ -388,6 +399,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
   ) {
     yield* registerMeteredPriceProvider;
   }
+
   const prices: Record<string, string> = {};
   const usage: Record<string, Record<string, string>> = {};
   const seats: Record<string, Record<string, string>> = {};
@@ -398,9 +410,12 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
   const features = [
     ...new Set(declarations.flatMap((declaration) => declaration.usage.map((u) => u.feature))),
   ].sort((left, right) => left.localeCompare(right));
+
   const createdMeters = new Map<string, Stripe.BillingMeter>();
+
   for (const feature of features) {
     const eventName = meterEventNameOf(stack.stage, feature);
+
     const meter = yield* Stripe.BillingMeter(`${id}Meter_${feature}`, {
       displayName: eventName,
       eventName,
@@ -408,6 +423,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       customerMapping: { type: "by_id", eventPayloadKey: "stripe_customer_id" },
       valueSettings: { eventPayloadKey: "value" },
     }).pipe(RemovalPolicy.retain());
+
     createdMeters.set(feature, meter);
     meters[feature] = eventName;
   }
@@ -419,6 +435,7 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       name: declaration.tier,
       metadata: { paykit_tier: declaration.tier },
     }).pipe(RemovalPolicy.retain());
+
     // One base price per tier, found by its lookup key, retained when the
     // catalog moves on.
     yield* Stripe.Price(`${id}${declaration.priceResource}`, {
@@ -433,14 +450,18 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
     prices[declaration.tier] = declaration.lookupKey;
 
     const metered: Record<string, string> = {};
+
     for (const price of declaration.usage) {
       const meter = createdMeters.get(price.feature)!;
+
       const pricing =
         price.pricing ??
         (price.unitPrice === undefined
           ? null
           : { _tag: "unit" as const, unitPrice: price.unitPrice });
+
       if (pricing === null) continue;
+
       if (pricing._tag === "unit" && unitsOf(pricing.unitPrice) === 1) {
         yield* Stripe.Price(`${id}${price.priceResource}`, {
           product,
@@ -462,11 +483,14 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
           pricing,
         }).pipe(RemovalPolicy.retain());
       }
+
       metered[price.feature] = price.lookupKey;
     }
+
     usage[declaration.tier] = metered;
 
     const seatPrices: Record<string, string> = {};
+
     for (const seat of declaration.seats) {
       yield* Stripe.Price(`${id}${seat.priceResource}`, {
         product,
@@ -477,12 +501,13 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
       }).pipe(RemovalPolicy.retain());
       seatPrices[seat.feature] = seat.lookupKey;
     }
+
     seats[declaration.tier] = seatPrices;
   }
 
-  return { prices, usage, seats, meters } as SoldPrices;
+  return { prices, usage, seats, meters } satisfies SoldPrices;
 });
 
 /** The tier id a declaration was built from, narrowed for a caller that reads it back. */
 export const tierOfDeclaration = (declaration: PriceDeclaration): TierId =>
-  declaration.tier as TierId;
+  TierId.make(declaration.tier);

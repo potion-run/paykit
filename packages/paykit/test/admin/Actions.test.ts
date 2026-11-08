@@ -43,21 +43,25 @@ import {
 import { assertProperty } from "../support/Property.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const pro = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const scale = tier({
   id: "scale",
   price: { amount: 9_900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 5_000 })],
 });
+
 const euro = tier({
   id: "euro",
   price: { amount: 1_900, currency: "eur", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [free, pro, scale, euro] }),
 );
@@ -72,6 +76,7 @@ const capped = tier({
   price: { amount: 900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 100, overage: "bill", cap: 20 })],
 });
+
 const metered = tier({
   id: "metered",
   price: { amount: 1_900, currency: "usd", interval: "month" },
@@ -84,6 +89,7 @@ const metered = tier({
     }),
   ],
 });
+
 const ceilings = Effect.runSync(catalog({ features: [messages], tiers: [capped, metered] }));
 
 const state = (
@@ -193,6 +199,7 @@ describe("admin actions", () => {
   it("offers a refund while money is left, even after the standing ends", () => {
     const charged = { usd: 4_900 };
     const refunded = { usd: 1_000 };
+
     const over = (status: "canceled" | "expired") =>
       actionsFor({ ...state(status), charged, refunded }).map((entry) => entry.action);
 
@@ -206,6 +213,7 @@ describe("admin actions", () => {
       charged,
       refunded: { usd: 4_900 },
     });
+
     expect(nothingLeft.map((entry) => entry.action)).not.toContain("Refund");
   });
 
@@ -213,6 +221,7 @@ describe("admin actions", () => {
     const descriptor = actionsFor(state("active"), { catalog: testCatalog }).find(
       (candidate) => candidate.action === "ChangeTier",
     );
+
     expect(descriptor?.tiers).toEqual(["free", "scale"]);
   });
 
@@ -221,6 +230,7 @@ describe("admin actions", () => {
       catalog: testCatalog,
       entitlements: entitlements(4_500),
     }).find((candidate) => candidate.action === "ChangeTier");
+
     // `free` grants 100 and `scale` grants 5,000; 4,500 fits scale but not free.
     expect(descriptor?.tiers).toEqual(["scale"]);
   });
@@ -233,6 +243,7 @@ describe("admin actions", () => {
       catalog: testCatalog,
       entitlements: entitlements(0, 4_500),
     }).find((candidate) => candidate.action === "ChangeTier");
+
     expect(descriptor?.tiers).toEqual(["scale"]);
   });
 
@@ -247,6 +258,7 @@ describe("admin actions", () => {
       },
       grants: [allowance(messages, { included: 2_000 })],
     });
+
     const multi = Effect.runSync(catalog({ features: [messages], tiers: [pro, bilingual] }));
     const offered = actionsFor({ ...state("active"), currency: "eur" }, { catalog: multi });
 
@@ -272,6 +284,7 @@ describe("admin actions", () => {
       catalog: ceilings,
       entitlements: ceilingEntitlements({ used: 190, billed: 450 }),
     });
+
     expect(offered.map((descriptor) => descriptor.action)).not.toContain("ChangeTier");
   });
 
@@ -308,6 +321,7 @@ const entitlementHandlers = Entitlements.definition.evolve as unknown as Record<
 const foldBilling = (events: ReadonlyArray<Event>): BillingStateView =>
   events.reduce<BillingStateView>((view, event) => {
     const handler = billingHandlers[event._tag];
+
     return handler === undefined ? view : handler(view, event, { key: { id: propertyAccount } });
   }, initialBillingState);
 
@@ -315,6 +329,7 @@ const foldBilling = (events: ReadonlyArray<Event>): BillingStateView =>
 const foldEntitlements = (events: ReadonlyArray<Event>): EntitlementsState =>
   events.reduce<EntitlementsState>((view, event) => {
     const handler = entitlementHandlers[event._tag];
+
     return handler === undefined ? view : handler(view, event, { key: { id: propertyAccount } });
   }, initialEntitlements);
 
@@ -344,6 +359,7 @@ const commandFor = (
   now: DateTime.Utc,
 ): ConsoleCommand | null => {
   const soon = DateTime.add(now, { days: 7 });
+
   // An extension has to land past the deadline already in force, which is not
   // the same as past `now`: a trial extended twice must move forward twice.
   const extended =
@@ -355,6 +371,7 @@ const commandFor = (
           { days: 7 },
         )
       : soon;
+
   switch (action) {
     case "GrantCredits":
       return new GrantCredits({ amount: 250 });
@@ -379,13 +396,17 @@ const commandFor = (
     case "ChangeTier": {
       if (tierId === null) return null;
       const plan = planChangeTier(generatedCatalog, tierId, state, now);
+
       return plan === null ? null : new ChangeTier(plan.input);
     }
+
     case "ScheduleTierChange": {
       if (tierId === null) return null;
       const input = scheduleTierChangeInputOf(generatedCatalog, tierId);
+
       return input === null ? null : new ScheduleTierChange(input);
     }
+
     case "Refund":
       // Money, not a standing command: the binding and its console RPC own the
       // ceiling, and `test/bindings/AdminBindings.test.ts` is its gate.
@@ -409,26 +430,33 @@ describe("offered actions", () => {
           // A refund is checked against the log by the refund binding, not by
           // `Subscription.predict`; it is not a command on the standing.
           if (descriptor.action === "Refund") continue;
+
           const tiers: ReadonlyArray<string | null> =
             descriptor.action === "ChangeTier" || descriptor.action === "ScheduleTierChange"
               ? descriptor.tiers
               : [null];
+
           // `actionsFor` must not offer a change with no tier to change to.
           if (tiers.length === 0) return false;
+
           for (const tierId of tiers) {
             const command = commandFor(descriptor.action, tierId, state, now);
+
             if (command === null) return false;
+
             const prediction = Subscription.predict(state, command, {
               id,
               now,
               context,
             });
+
             // An action the console offers is an action the model must not
             // refuse: the operator would be looking at a button that can only
             // return a rejection.
             if (prediction._tag === "Rejected") return false;
           }
         }
+
         return true;
       },
       { runs: 300, size: 40 },
@@ -453,6 +481,7 @@ describe("a change at the period end", () => {
       catalog: testCatalog,
       entitlements: entitlements(4_500),
     });
+
     const change = offered.find((descriptor) => descriptor.action === "ChangeTier");
     const schedule = offered.find((descriptor) => descriptor.action === "ScheduleTierChange");
     expect(change?.tiers).toEqual(["scale"]);
@@ -474,8 +503,10 @@ describe("a change at the period end", () => {
       credits: 10_000,
       grants: [] as never,
     });
+
     const withPack = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, pack] }));
     const offered = actionsFor(state("active"), { catalog: withPack });
+
     for (const action of ["ChangeTier", "ScheduleTierChange"] as const) {
       expect(offered.find((descriptor) => descriptor.action === action)?.tiers).not.toContain(
         "pack",
@@ -485,9 +516,11 @@ describe("a change at the period end", () => {
 
   it("offers the withdrawal only while a change is scheduled", () => {
     const pendingTier = pending("free");
+
     const offered = actionsFor({ ...state("active"), pendingTier } as never, {
       catalog: testCatalog,
     });
+
     expect(offered.map((descriptor) => descriptor.action)).toContain("WithdrawTierChange");
 
     const withdrawn = actionsFor(state("active"), { catalog: testCatalog });

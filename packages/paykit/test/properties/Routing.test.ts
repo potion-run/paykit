@@ -15,6 +15,7 @@ import { subscribedAt, testCatalog } from "./Arbitraries.ts";
 /** A provider set keyed the way `paymentsRouter` keys it. */
 const setOf = (names: ReadonlyArray<string>): ProviderSet => {
   const all = names.map((name) => ({ ...Memory(), name }));
+
   return {
     all,
     byName: new Map(all.map((provider) => [provider.name, provider])),
@@ -35,11 +36,13 @@ describe("provider routing", () => {
         const chosen = providerFor(set, refs);
         const firstKnown = keys.find((key) => key === "a" || key === "b");
         const expected = firstKnown ?? "a";
+
         if (chosen?.name !== expected) return false;
 
         // The same set and refs resolve the same provider: no map iteration
         // surprise, no fallback that ignores the refs.
         const again = providerFor(set, refs);
+
         return again?.name === chosen.name;
       },
       { runs: 80, size: 12 },
@@ -52,7 +55,9 @@ describe("provider routing", () => {
       (names) => {
         const set = setOf(names);
         const chosen = providerFor(set, {});
+
         if (set.fallback === null) return chosen === null;
+
         return chosen?.name === set.fallback.name;
       },
       { runs: 40, size: 8 },
@@ -66,6 +71,7 @@ describe("provider routing", () => {
 });
 
 const Capability = Schema.Literals(["checkout", "invoice", "refund", "portal"]);
+
 const VerifyCase = Schema.Struct({
   connected: Schema.Boolean,
   tier: Schema.Literals(["free", "pro"]),
@@ -91,14 +97,17 @@ describe("standing verification", () => {
         const state = connected
           ? withRefs(subscribedAt(tier), refs)
           : withRefs(initialSubscriptionState, refs);
+
         const target =
           provider === undefined
             ? null
             : { name: provider.name, capabilities: new Set(provider.capabilities) };
+
         const findings = verifyState("acct_verify_property", state, {
           catalog: testCatalog,
           provider: target,
         });
+
         const tags = findings.map((finding) => finding._tag);
 
         if (!connected) {
@@ -110,7 +119,9 @@ describe("standing verification", () => {
         }
 
         if (tier === "free") return tags.length === 0;
+
         if (target === null) return tags.length === 0;
+
         if (!refs.includes(target.name)) {
           return (
             tags.length === 1 &&
@@ -118,7 +129,9 @@ describe("standing verification", () => {
             (findings[0] as MissingProviderRef).provider === target.name
           );
         }
+
         const canSell = target.capabilities.has("checkout") || target.capabilities.has("invoice");
+
         return canSell
           ? tags.length === 0
           : tags.length === 1 &&

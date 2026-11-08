@@ -104,8 +104,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.TrackUsage")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.TrackUsage.record")(function* (request) {
           const receipt = yield* bound(toTrackUsageError)(
             asSystem(
@@ -123,9 +125,11 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toTrackUsageError)(
             entitlements.query(ref, { atLeast: receipt }),
           );
+
           return usageOutcome(Option.getOrNull(view), request);
         });
       });
@@ -135,6 +139,7 @@ export const BillingInProcess = Layer.mergeAll(
     ChargeQuantityProration,
     Effect.gen(function* () {
       const charge = yield* chargeQuantityProrationOperation();
+
       return Effect.fn("Paykit.ChargeQuantityProration")(function* (account) {
         return Effect.fn("Paykit.ChargeQuantityProration.account")(function* (request) {
           return yield* bound(toChargeQuantityProrationError)(charge(account, request));
@@ -148,8 +153,10 @@ export const BillingInProcess = Layer.mergeAll(
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
       const router = Option.getOrNull(yield* Effect.serviceOption(PaymentsRouter));
+
       return Effect.fn("Paykit.SetQuantity")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.SetQuantity.set")(function* (request) {
           const receipt = yield* bound(toSetQuantityError)(
             asSystem(
@@ -164,30 +171,38 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toSetQuantityError)(
             entitlements.query(ref, { atLeast: receipt }),
           );
+
           const known = Option.getOrNull(view);
           // A provider that owns the subscription item's quantity is told the
           // new total. `immediate` makes it invoice the difference; `none`
           // leaves the next period to bill it. The local proration is still the
           // record; an invoice the vendor opens is recorded on it.
           const state = yield* subscription.state(ref);
+
           if (state._tag === "Subscribed" && router !== null) {
             const chosen = providerFor(router, state.refs);
+
             const vendorSubscription =
               chosen === null ? undefined : state.refs[chosen.name]?.subscription;
+
             const allowance = state.allowances[request.feature];
+
             if (chosen !== null && vendorSubscription !== undefined && allowance !== undefined) {
               if (chosen.capabilities.has("quantity")) {
                 const attempt = Effect.gen(function* () {
                   const payments = yield* Effect.serviceOption(Payments);
+
                   if (Option.isNone(payments)) {
                     return yield* new ProviderCapabilityMissing({
                       provider: chosen.name,
                       op: "setQuantity",
                     });
                   }
+
                   const result = yield* Option.getOrThrow(payments).setQuantity({
                     account,
                     subscription: vendorSubscription,
@@ -197,7 +212,9 @@ export const BillingInProcess = Layer.mergeAll(
                     proration: allowance.prorate === "period_end" ? "none" : "immediate",
                     commandId: request.dedupeKey,
                   });
+
                   const proration = receipt.reply.proration;
+
                   if (result.invoiceId !== undefined && proration !== undefined) {
                     // A second attempt at the same change finds the invoice
                     // already recorded; that is the replay, not a failure.
@@ -217,10 +234,12 @@ export const BillingInProcess = Layer.mergeAll(
                     );
                   }
                 });
+
                 yield* chosen === null ? attempt : Effect.provide(attempt, chosen.payments);
               }
             }
           }
+
           // A no-op decision records no event, so the reply cannot carry the
           // quantity; the read model just caught up to the change and is the
           // same number a caller reads next.
@@ -238,10 +257,13 @@ export const BillingInProcess = Layer.mergeAll(
     Check,
     Effect.gen(function* () {
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.Check")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Check.ask")(function* (request) {
           const view = yield* bound(toCheckError)(entitlements.query(ref));
+
           return evaluateCheck(Option.getOrNull(view), { account, ...request });
         });
       });
@@ -252,10 +274,13 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.Hold")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Hold.place")(function* (request) {
           const holdId = request.holdId ?? request.dedupeKey;
+
           const receipt = yield* bound(toHoldError)(
             asSystem(
               subscription.send(
@@ -274,8 +299,10 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toHoldError)(entitlements.query(ref, { atLeast: receipt }));
           const remaining = Option.getOrNull(view)?.features[request.feature]?.remaining ?? null;
+
           return { holdId, remaining };
         });
       });
@@ -286,8 +313,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.SettleHold")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.SettleHold.hold")(function* (request) {
           const receipt = yield* bound(toSettleHoldError)(
             asSystem(
@@ -302,10 +331,12 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
           yield* bound(toSettleHoldError)(entitlements.query(ref, { atLeast: receipt }));
+
           return receipt.reply;
         });
       });
@@ -316,8 +347,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.ReleaseHold")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ReleaseHold.hold")(function* (request) {
           const receipt = yield* bound(toReleaseHoldError)(
             asSystem(
@@ -326,7 +359,9 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           yield* bound(toReleaseHoldError)(entitlements.query(ref, { atLeast: receipt }));
+
           return receipt.reply;
         });
       });
@@ -337,8 +372,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
+
       return Effect.fn("Paykit.ConsumeCredits")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ConsumeCredits.spend")(function* (request) {
           const receipt = yield* bound(toConsumeCreditsError)(
             asSystem(
@@ -347,7 +384,9 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           yield* bound(toConsumeCreditsError)(entitlements.query(ref, { atLeast: receipt }));
+
           return receipt.reply;
         });
       });
@@ -358,8 +397,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.ScheduleCancellation")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ScheduleCancellation.schedule")(function* (request) {
           const receipt = yield* bound(toCancelError)(
             asSystem(
@@ -368,7 +409,9 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           const view = yield* bound(toCancelError)(billing.query(ref, { atLeast: receipt }));
+
           return { cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false };
         });
       });
@@ -379,13 +422,17 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.Resume")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.Resume.undo")(function* (request) {
           const receipt = yield* bound(toResumeError)(
             asSystem(subscription.send(ref, new ResumeCommand(), { commandId: request.dedupeKey })),
           );
+
           const view = yield* bound(toResumeError)(billing.query(ref, { atLeast: receipt }));
+
           return { cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false };
         });
       });
@@ -400,18 +447,23 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const catalog = yield* CatalogService;
       const subscription = yield* Subscription;
+
       return Effect.fn("Paykit.ChangeTier")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ChangeTier.move")(function* (request) {
           const state = yield* subscription.state(ref);
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+
           const plan =
             state._tag === "Subscribed" ? planChangeTier(catalog, request.tier, state, now) : null;
+
           if (plan === null) {
             return yield* bound(toChangeTierError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
+
           yield* bound(toChangeTierError)(
             asSystem(
               subscription.send(ref, new ChangeTierCommand(plan.input), {
@@ -419,6 +471,7 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           return { tier: request.tier, proration: plan.proration };
         });
       });
@@ -430,20 +483,25 @@ export const BillingInProcess = Layer.mergeAll(
       const catalog = yield* CatalogService;
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.ScheduleTierChange")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
           const state = yield* subscription.state(ref);
+
           const scheduled = scheduleTierChangeInputOf(
             catalog,
             request.tier,
             state._tag === "Subscribed" ? state.currency : undefined,
           );
+
           if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
+
           const receipt = yield* bound(toScheduleTierChangeError)(
             asSystem(
               subscription.send(ref, new ScheduleTierChangeCommand(scheduled), {
@@ -451,9 +509,11 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           const view = yield* bound(toScheduleTierChangeError)(
             billing.query(ref, { atLeast: receipt }),
           );
+
           return { pendingTier: viewTier(Option.getOrNull(view)) };
         });
       });
@@ -464,8 +524,10 @@ export const BillingInProcess = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.WithdrawTierChange")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.WithdrawTierChange.take")(function* (request) {
           const receipt = yield* bound(toWithdrawTierChangeError)(
             asSystem(
@@ -474,9 +536,11 @@ export const BillingInProcess = Layer.mergeAll(
               }),
             ),
           );
+
           const view = yield* bound(toWithdrawTierChangeError)(
             billing.query(ref, { atLeast: receipt }),
           );
+
           return { pendingTier: viewTier(Option.getOrNull(view)) };
         });
       });
@@ -488,18 +552,22 @@ export const BillingInProcess = Layer.mergeAll(
       const catalog = yield* CatalogService;
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+
       return Effect.fn("Paykit.StartTrial")(function* (account) {
         const ref = Subscription.ref(account);
+
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
           const grant = subscribeInputOf(catalog, request.tier, {
             ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
             ...(request.currency === undefined ? {} : { currency: request.currency }),
           });
+
           if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
+
           const receipt = yield* bound(toStartTrialError)(
             asSystem(
               subscription.send(
@@ -509,8 +577,10 @@ export const BillingInProcess = Layer.mergeAll(
               ),
             ),
           );
+
           const view = yield* bound(toStartTrialError)(billing.query(ref, { atLeast: receipt }));
           const standing = Option.getOrNull(view);
+
           return {
             tier: standing?.tier ?? request.tier,
             status: standing?.status ?? "trialing",
@@ -527,6 +597,7 @@ export const BillingInProcess = Layer.mergeAll(
     Subscribe,
     Effect.gen(function* () {
       const subscribe = yield* subscribeOperation();
+
       return Effect.fn("Paykit.Subscribe")(function* (account) {
         return Effect.fn("Paykit.Subscribe.start")(function* (request) {
           return yield* bound(toSubscribeError)(
@@ -545,6 +616,7 @@ export const BillingInProcess = Layer.mergeAll(
     Preview,
     Effect.gen(function* () {
       const preview = yield* previewOperation();
+
       return Effect.fn("Paykit.Preview")(function* (account) {
         return Effect.fn("Paykit.Preview.decide")(function* (request) {
           return yield* bound(toPreviewError)(preview({ account, command: request.command }));
@@ -556,6 +628,7 @@ export const BillingInProcess = Layer.mergeAll(
     Portal,
     Effect.gen(function* () {
       const portal = yield* portalOperation();
+
       return Effect.fn("Paykit.Portal")(function* (account) {
         return Effect.fn("Paykit.Portal.open")(function* () {
           return yield* bound(toPortalError)(portal({ account }));
@@ -567,6 +640,7 @@ export const BillingInProcess = Layer.mergeAll(
     ChargeProration,
     Effect.gen(function* () {
       const chargeProration = yield* chargeProrationOperation();
+
       return Effect.fn("Paykit.ChargeProration")(function* (account) {
         return Effect.fn("Paykit.ChargeProration.account")(function* () {
           return yield* bound(toChargeProrationError)(
@@ -584,6 +658,7 @@ export const BillingInProcess = Layer.mergeAll(
     List,
     Effect.gen(function* () {
       const list = yield* listOperation();
+
       return Effect.fn("Paykit.List")(function* () {
         return Effect.fn("Paykit.List.page")(function* (query) {
           return yield* bound(toListError)(list(query));
@@ -595,6 +670,7 @@ export const BillingInProcess = Layer.mergeAll(
     Webhook,
     Effect.gen(function* () {
       const webhook = yield* webhookOperation();
+
       return Effect.fn("Paykit.Webhook")(function* () {
         return Effect.fn("Paykit.Webhook.apply")(function* (event) {
           return yield* bound(toWebhookError)(webhook(event));

@@ -16,6 +16,7 @@ export const formatMoney = (amount: number, currency: string | undefined): strin
   if (currency === undefined) return `${amount} minor units`;
   const digits = fractionDigits(currency);
   const formatter = currencyFormatter(currency);
+
   return formatter === null
     ? `${amount} ${currency.toUpperCase()} minor units`
     : formatter.format(amount / 10 ** digits);

@@ -104,6 +104,7 @@ export const priceDeclarations = (
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([tier, value]) => {
       const { price, kind, usage, seats } = normalize(value);
+
       return {
         tier,
         kind,
@@ -124,6 +125,7 @@ export const priceDeclarations = (
                   const pricing = asPricing(value);
                   const unitPrice = soleUnitPriceOf(pricing);
                   const keepsPricing = unitPrice === null || unitsOf(unitPrice) > 1;
+
                   return {
                     feature,
                     ...(unitPrice === null ? {} : { unitPrice }),
@@ -183,6 +185,7 @@ export const retiredProducts = (
 ): ReadonlyArray<FoundProduct> => {
   const prefix = productNamePrefixOf(stage);
   const declared = declaredProductNames(declarations);
+
   return found.filter(
     (product) =>
       !product.archived &&
@@ -226,6 +229,7 @@ export const soldTiers = (
   Object.fromEntries(
     Object.entries(tiers).map(([tier, value]) => {
       const { price, kind, usage, seats } = normalize(value);
+
       return [
         tier,
         {
@@ -307,12 +311,15 @@ export const PolarPrices = Effect.fn("Polar.Prices")(function* (
   const features = [
     ...new Set(declarations.flatMap((declaration) => declaration.usage.map((u) => u.feature))),
   ].sort((left, right) => left.localeCompare(right));
+
   const createdMeters = new Map<string, Meter>();
+
   for (const feature of features) {
     const meter = yield* Meter(`${id}Meter_${feature}`, {
       feature,
       eventName: meterEventNameOf(stack.stage, feature),
     }).pipe(RemovalPolicy.retain());
+
     createdMeters.set(feature, meter);
     meters[feature] = meterEventNameOf(stack.stage, feature);
   }
@@ -329,11 +336,12 @@ export const PolarPrices = Effect.fn("Polar.Prices")(function* (
       })),
       seats: declaration.seats.map((seat) => ({ unitPrice: seat.unitPrice })),
     }).pipe(RemovalPolicy.retain());
+
     products[declaration.tier] = product.id;
     seats[declaration.tier] = Object.fromEntries(
       declaration.seats.map((seat) => [seat.feature, seat.unitPrice]),
     );
   }
 
-  return { products, meters, seats } as SoldPrices;
+  return { products, meters, seats } satisfies SoldPrices;
 });

@@ -32,15 +32,19 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: { amount: 9900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 5000, overage: "block" })],
 });
+
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
+
 const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const scale = allowancesOf(testCatalog, "scale")!;
@@ -50,6 +54,7 @@ const account = "acct_proration";
 
 const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const end = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+
 /** The whole period is unused at its start, so an upgrade owes credit − charge. */
 const upgrade = prorate({ from: proPrice, to: scalePrice, period: { start, end }, at: start })!;
 const downgrade = prorate({ from: scalePrice, to: undefined, period: { start, end }, at: start })!;
@@ -80,6 +85,7 @@ const invoicing = (asked: Array<Invoice>, failWith?: PaymentDeclined) =>
                   currency: args.currency,
                   ...(args.commandId === undefined ? {} : { commandId: args.commandId }),
                 });
+
                 return { invoiceId: `inv_${asked.length}` };
               })
             : Effect.fail(failWith),
@@ -145,6 +151,7 @@ const run = <A, E, R>(
 describe("charging a proration", () => {
   it.live("opens one invoice for the difference an upgrade moved", () => {
     const asked: Array<Invoice> = [];
+
     return run(
       Effect.gen(function* () {
         yield* upgraded;
@@ -171,6 +178,7 @@ describe("charging a proration", () => {
 
   it.live("shows the charge and its invoice on the billing page", () => {
     const asked: Array<Invoice> = [];
+
     return run(
       Effect.gen(function* () {
         yield* upgraded;
@@ -182,10 +190,12 @@ describe("charging a proration", () => {
         // command commits; wait for it rather than racing it. The budget is in
         // seconds because a loaded suite delivers slower than a quiet one.
         let page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
+
         for (let attempt = 0; attempt < 500 && page?.proration === undefined; attempt++) {
           yield* Effect.sleep("10 millis");
           page = Option.getOrNull(yield* billing.query(Subscription.ref(account)));
         }
+
         expect(page?.proration).toEqual({
           currency: "usd",
           credit: 1900,
@@ -199,10 +209,12 @@ describe("charging a proration", () => {
         // wait for it instead of assuming one delivery feeds both.
         const reads = yield* BillingReadStore;
         let row = yield* reads.get(account);
+
         for (let attempt = 0; attempt < 500 && row?.proration === undefined; attempt++) {
           yield* Effect.sleep("10 millis");
           row = yield* reads.get(account);
         }
+
         expect(row?.proration?.due).toBe(8000);
         expect(row?.prorationInvoice).toBe("inv_1");
       }),
@@ -212,6 +224,7 @@ describe("charging a proration", () => {
 
   it.live("bills once: a second call answers nothing, not a second invoice", () => {
     const asked: Array<Invoice> = [];
+
     return run(
       Effect.gen(function* () {
         yield* upgraded;
@@ -229,6 +242,7 @@ describe("charging a proration", () => {
 
   it.live("a standing with no tier change has nothing to charge", () => {
     const asked: Array<Invoice> = [];
+
     return run(
       Effect.gen(function* () {
         const subscription = yield* Subscription;
@@ -253,6 +267,7 @@ describe("charging a proration", () => {
 
   it.live("a downgrade credit is recorded, never charged", () => {
     const asked: Array<Invoice> = [];
+
     return run(
       Effect.gen(function* () {
         const subscription = yield* Subscription;
@@ -292,11 +307,13 @@ describe("charging a proration", () => {
 
   it.live("a provider that refuses the invoice leaves nothing recorded", () => {
     const asked: Array<Invoice> = [];
+
     const refused = new PaymentDeclined({
       provider: "test",
       code: "card_declined",
       message: "card_declined",
     });
+
     return run(
       Effect.gen(function* () {
         yield* upgraded;
@@ -305,6 +322,7 @@ describe("charging a proration", () => {
         expect(error).toBeInstanceOf(PaymentDeclined);
         const subscription = yield* Subscription;
         const state = yield* subscription.state(Subscription.ref(account));
+
         // No invoice id, so the charge can be retried rather than lost.
         if (state._tag === "Subscribed") expect(state.prorationInvoice).toBeUndefined();
       }),
@@ -318,10 +336,13 @@ describe("charging a proration", () => {
       from: Schema.Literals(["free", "pro", "scale"]),
       to: Schema.Literals(["free", "pro", "scale"]),
     });
+
     const priceOf = (tier: "free" | "pro" | "scale") =>
       tier === "pro" ? proPrice : tier === "scale" ? scalePrice : undefined;
+
     const allowancesFor = (tier: "free" | "pro" | "scale") =>
       tier === "pro" ? pro : tier === "scale" ? scale : free;
+
     const period = { start, end };
 
     return assertProperty(
@@ -330,18 +351,21 @@ describe("charging a proration", () => {
         const asked: Array<Invoice> = [];
         const fromPrice = priceOf(from);
         const toPrice = priceOf(to);
+
         const proration = prorate({
           from: fromPrice,
           to: toPrice,
           period,
           at: start,
         });
+
         const due = proration?.due ?? 0;
         const account = "acct_charge_property";
 
         return Effect.gen(function* () {
           const subscription = yield* Subscription;
           const ref = Subscription.ref(account);
+
           const subscribed = yield* Effect.result(
             subscription.send(
               ref,
@@ -355,6 +379,7 @@ describe("charging a proration", () => {
               }),
             ),
           );
+
           if (Result.isFailure(subscribed)) return false;
 
           const changed = yield* Effect.result(
@@ -371,6 +396,7 @@ describe("charging a proration", () => {
               }),
             ),
           );
+
           if (Result.isFailure(changed)) return false;
 
           const charge = yield* ChargeProration(account);
@@ -380,14 +406,21 @@ describe("charging a proration", () => {
             // The positive difference is charged once, for the amount the log
             // recorded. A second call finds the invoice and charges nothing.
             if (Result.isFailure(first)) return false;
+
             if (first.success.outcome !== "charged") return false;
+
             if (first.success.amount !== due) return false;
+
             if (first.success.currency !== proration!.currency) return false;
+
             if (asked.length !== 1 || asked[0]?.amount !== due) return false;
 
             const second = yield* Effect.result(charge());
+
             if (Result.isFailure(second)) return false;
+
             if (second.success.outcome !== "nothing") return false;
+
             return asked.length === 1;
           }
 

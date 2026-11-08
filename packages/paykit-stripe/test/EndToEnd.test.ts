@@ -31,16 +31,19 @@ import { stripeWebhook } from "../src/Webhooks.ts";
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const scalePrice = { amount: 9900, currency: "usd", interval: "month" as const };
+
 const proTier = tier({
   id: "pro",
   price: proPrice,
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: scalePrice,
   grants: [allowance(messages, { included: 9_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, scaleTier] }));
 const scale = allowancesOf(testCatalog, "scale")!;
 const account = "acct_e2e";
@@ -51,6 +54,7 @@ const stripeClient = (asked: Array<Record<string, unknown>> = []): StripeClient 
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: `https://checkout.stripe.test/${request.tier}` };
     }),
   createBillingPortalSession: () =>
@@ -58,6 +62,7 @@ const stripeClient = (asked: Array<Record<string, unknown>> = []): StripeClient 
   createInvoice: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { invoiceId: "in_proration" };
     }),
   createRefund: () => Effect.sync(() => ({ refundId: "re_test" })),
@@ -73,11 +78,13 @@ const world = (client: StripeClient) => {
     },
     client,
   });
+
   const model = PaykitModel.layer(PaykitHandlers).pipe(
     Layer.provideMerge(MemoryBillingReadStore),
     Layer.provide(Domain.InMemory),
     Layer.provideMerge(Layer.succeed(Actor, system("test"))),
   );
+
   return Layer.mergeAll(
     model,
     // The bindings resolve the model, the catalog and the provider when the
@@ -105,6 +112,7 @@ const sign = (body: string, timestamp: string): string =>
 
 const delivery = Effect.gen(function* () {
   const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000));
+
   const body = JSON.stringify({
     id: "evt_e2e",
     type: "checkout.session.completed",
@@ -119,6 +127,7 @@ const delivery = Effect.gen(function* () {
       },
     },
   });
+
   return {
     headers: { "stripe-signature": sign(body, timestamp) },
     body,
@@ -140,12 +149,14 @@ describe("Stripe, from checkout to check()", () => {
 
       const check = yield* Check(account);
       let result = yield* check({ feature: "messages", amount: 1 });
+
       // A view is fed by deliveries, so the read catches up just after the
       // command commits. The budget is in seconds: a loaded suite is slower.
       for (let attempt = 0; attempt < 500 && !result.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
         result = yield* check({ feature: "messages", amount: 1 });
       }
+
       expect(result.allowed).toBe(true);
       expect(result.remaining).toBe(2_000);
       expect(result.standing).toBe("good");
@@ -170,13 +181,16 @@ describe("Stripe, from checkout to check()", () => {
 
   it.live("charges an upgrade's proration as one Stripe invoice", () => {
     const asked: Array<Record<string, unknown>> = [];
+
     return Effect.gen(function* () {
       yield* purchased;
 
       const subscription = yield* Subscription;
       const ref = Subscription.ref(account);
       const state = yield* subscription.state(ref);
+
       if (state._tag !== "Subscribed") return yield* Effect.die("expected a standing");
+
       const proration =
         prorate({
           from: proPrice,
@@ -184,6 +198,7 @@ describe("Stripe, from checkout to check()", () => {
           period: { start: state.period.start, end: state.period.end },
           at: state.period.start,
         }) ?? undefined;
+
       yield* subscription.send(
         ref,
         new ChangeTierCommand({
@@ -211,6 +226,7 @@ describe("Stripe, from checkout to check()", () => {
       const tampered = { ...carried, body: carried.body.replace("1900", "100") };
       const exit = yield* Effect.exit(webhook(tampered));
       expect(exit._tag).toBe("Failure");
+
       if (exit._tag === "Failure") expect(String(exit.cause)).toContain("WebhookSignatureInvalid");
     }).pipe(Effect.provide(world(stripeClient()))),
   );

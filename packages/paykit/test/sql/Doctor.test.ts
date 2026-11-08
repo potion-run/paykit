@@ -21,6 +21,7 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
 const free = allowancesOf(testCatalog, "free")!;
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
@@ -30,6 +31,7 @@ const opened = (account = "acct_doctor") =>
     const sql = sqliteExecutor();
     yield* migrate(sql);
     const log = SqlEventLog(sql, { now: () => 1_000 });
+
     const events = Subscription.definition.decide.Subscribe(
       initialSubscriptionState,
       new Subscribe({
@@ -47,6 +49,7 @@ const opened = (account = "acct_doctor") =>
         now: at,
       },
     ) as ReadonlyArray<{ readonly _tag: string }>;
+
     for (const event of events) {
       const cls = Subscription.definition.events.find((candidate) => candidate.tag === event._tag)!;
       yield* log.append({
@@ -60,6 +63,7 @@ const opened = (account = "acct_doctor") =>
         deliveries: [],
       });
     }
+
     return { sql, log };
   });
 
@@ -130,6 +134,7 @@ describe("doctor", () => {
     Effect.gen(function* () {
       const { log } = yield* opened("acct_a");
       const b = yield* opened("acct_b");
+
       for (const row of yield* b.log.events("Subscription", "acct_b")) {
         yield* log.append({
           aggregate: row.aggregate,
@@ -142,6 +147,7 @@ describe("doctor", () => {
           deliveries: [],
         });
       }
+
       const first = yield* doctor(log);
       yield* log.upsertReadModel(first.find((mismatch) => mismatch.account === "acct_a")!.rebuilt);
       const mismatches = yield* doctor(log);
@@ -180,6 +186,7 @@ describe("doctor", () => {
       ]);
       const exit = yield* Effect.exit(doctor(log));
       expect(exit._tag).toBe("Failure");
+
       if (exit._tag !== "Failure") return;
       // A decode failure is the doctor's typed failure, not a defect out of a sync decoder.
       expect(String(exit.cause)).toContain("SchemaError");
@@ -192,15 +199,18 @@ describe("doctor", () => {
       (script) =>
         Effect.gen(function* () {
           const { events, now } = walk(script);
+
           if (events.length === 0) return true;
 
           const sql = sqliteExecutor();
           yield* migrate(sql);
           const log = SqlEventLog(sql, { now: () => now.epochMilliseconds });
+
           for (const [index, event] of events.entries()) {
             const cls = Subscription.definition.events.find(
               (candidate) => candidate.tag === event._tag,
             );
+
             if (cls === undefined) return false;
             yield* log.append({
               aggregate: "Subscription",
@@ -217,9 +227,11 @@ describe("doctor", () => {
           // The rebuild is the reference: doctor reports the missing read
           // model, and once written it must agree with the log.
           const first = yield* doctor(log);
+
           if (first.length !== 1) return false;
           yield* log.upsertReadModel(first[0]!.rebuilt);
           const second = yield* doctor(log);
+
           return second.length === 0;
         }),
       { runs: 20, size: 40 },

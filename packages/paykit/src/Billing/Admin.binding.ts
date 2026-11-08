@@ -109,6 +109,7 @@ export interface AdminRequest {
 }
 
 const grantRefusals = [NotSubscribed, Unauthenticated, Forbidden] as const;
+
 const extendRefusals = [
   NotSubscribed,
   TrialNotActive,
@@ -116,6 +117,7 @@ const extendRefusals = [
   Unauthenticated,
   Forbidden,
 ] as const;
+
 const graceRefusals = [
   NotSubscribed,
   AlreadyInGrace,
@@ -123,9 +125,11 @@ const graceRefusals = [
   Unauthenticated,
   Forbidden,
 ] as const;
+
 const recoverRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
 const expireRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
 const paymentRefusals = [NotInGrace, Unauthenticated, Forbidden] as const;
+
 const refundRefusals = [
   RefundExceedsCharged,
   ProviderCapabilityMissing,
@@ -133,25 +137,40 @@ const refundRefusals = [
   Unauthenticated,
   Forbidden,
 ] as const;
+
 const paymentFailureRefusals = [Unauthenticated, Forbidden] as const;
 
 /** Every refusal this operator command can answer. */
 export type GrantCreditsRefusal = InstanceType<(typeof grantRefusals)[number]>;
+
 export type ExtendTrialRefusal = InstanceType<(typeof extendRefusals)[number]>;
+
 export type EnterGraceRefusal = InstanceType<(typeof graceRefusals)[number]>;
+
 export type RecoverRefusal = InstanceType<(typeof recoverRefusals)[number]>;
+
 export type ExpireRefusal = InstanceType<(typeof expireRefusals)[number]>;
+
 export type RecordPaymentRefusal = InstanceType<(typeof paymentRefusals)[number]>;
+
 export type RefundRefusal = InstanceType<(typeof refundRefusals)[number]>;
+
 export type RecordPaymentFailureRefusal = InstanceType<(typeof paymentFailureRefusals)[number]>;
 
 export type GrantCreditsError = BindingError<GrantCreditsRefusal>;
+
 export type ExtendTrialError = BindingError<ExtendTrialRefusal>;
+
 export type EnterGraceError = BindingError<EnterGraceRefusal>;
+
 export type RecoverError = BindingError<RecoverRefusal>;
+
 export type ExpireError = BindingError<ExpireRefusal>;
+
 export type RecordPaymentError = BindingError<RecordPaymentRefusal>;
+
 export type RefundError = BindingError<RefundRefusal>;
+
 export type RecordPaymentFailureError = BindingError<RecordPaymentFailureRefusal>;
 
 /** A layer's own failure, as each binding's declared union. */
@@ -159,24 +178,31 @@ export const toGrantCreditsError = toBindingError(
   "Paykit.GrantCredits",
   oneOf<GrantCreditsRefusal>(grantRefusals),
 );
+
 export const toExtendTrialError = toBindingError(
   "Paykit.ExtendTrial",
   oneOf<ExtendTrialRefusal>(extendRefusals),
 );
+
 export const toEnterGraceError = toBindingError(
   "Paykit.EnterGrace",
   oneOf<EnterGraceRefusal>(graceRefusals),
 );
+
 export const toRecoverError = toBindingError(
   "Paykit.Recover",
   oneOf<RecoverRefusal>(recoverRefusals),
 );
+
 export const toExpireError = toBindingError("Paykit.Expire", oneOf<ExpireRefusal>(expireRefusals));
+
 export const toRecordPaymentError = toBindingError(
   "Paykit.RecordPayment",
   oneOf<RecordPaymentRefusal>(paymentRefusals),
 );
+
 export const toRefundError = toBindingError("Paykit.Refund", oneOf<RefundRefusal>(refundRefusals));
+
 export const toRecordPaymentFailureError = toBindingError(
   "Paykit.RecordPaymentFailure",
   oneOf<RecordPaymentFailureRefusal>(paymentFailureRefusals),
@@ -186,24 +212,31 @@ export const toRecordPaymentFailureError = toBindingError(
 export type GrantCreditsVerb = (
   request: GrantCreditsRequest,
 ) => Effect.Effect<GrantCreditsResult, GrantCreditsError>;
+
 /** The verb of a bound `ExtendTrial`. */
 export type ExtendTrialVerb = (
   request: ExtendTrialRequest,
 ) => Effect.Effect<StandingSnapshot, ExtendTrialError>;
+
 /** The verb of a bound `EnterGrace`. */
 export type EnterGraceVerb = (
   request: EnterGraceRequest,
 ) => Effect.Effect<StandingSnapshot, EnterGraceError>;
+
 /** The verb of a bound `Recover`. */
 export type RecoverVerb = (request: AdminRequest) => Effect.Effect<StandingSnapshot, RecoverError>;
+
 /** The verb of a bound `Expire`. */
 export type ExpireVerb = (request: AdminRequest) => Effect.Effect<StandingSnapshot, ExpireError>;
+
 /** The verb of a bound `RecordPayment`. */
 export type RecordPaymentVerb = (
   request: RecordPaymentRequest,
 ) => Effect.Effect<StandingSnapshot, RecordPaymentError>;
+
 /** The verb of a bound `Refund`. */
 export type RefundVerb = (request: RefundRequest) => Effect.Effect<RefundResult, RefundError>;
+
 /** The verb of a bound `RecordPaymentFailure`. */
 export type RecordPaymentFailureVerb = (
   request: RecordPaymentFailureRequest,

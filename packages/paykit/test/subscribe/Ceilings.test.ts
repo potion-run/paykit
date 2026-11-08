@@ -96,6 +96,7 @@ describe("a tier change into a ceiling already passed", () => {
     const verdict = decide(state, changeTo({ included: 0, moneyCap: 50 }));
 
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(DowngradeBelowSpend);
     expect(verdict.rejection).toMatchObject({ feature: "messages", moneyCap: 50, billed: 80 });
@@ -114,6 +115,7 @@ describe("a tier change into a ceiling already passed", () => {
     const verdict = decide(state, changeTo({ included: 100, cap: 50 }));
 
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(DowngradeBelowCeiling);
     expect(verdict.rejection).toMatchObject({ feature: "messages", ceiling: 150, used: 200 });

@@ -31,11 +31,14 @@ export const miniBars = <Message>(h: HtmlBuilder<Message>, options: MiniBarsOpti
   const count = values.length;
   const max = count === 0 ? 0 : Math.max(...values.map(finite));
   const barWidth = Math.max((100 - gap * Math.max(0, count - 1)) / Math.max(count, 1), 0.5);
+
   const bars = values.flatMap((raw, index) => {
     const value = finite(raw);
     const x = index * (barWidth + gap);
+
     if (value === 0) {
       if (floor <= 0) return [];
+
       return [
         h.rect([
           h.Attribute("x", String(x)),
@@ -47,9 +50,11 @@ export const miniBars = <Message>(h: HtmlBuilder<Message>, options: MiniBarsOpti
         ]),
       ];
     }
+
     const ratio = max > 0 ? value / max : 0;
     const height = Math.max(ratio * 100, minHeight);
     const opacity = options.opacityRamp === true ? 0.35 + ratio * 0.65 : 1;
+
     return [
       h.rect([
         h.Attribute("x", String(x)),
@@ -62,6 +67,7 @@ export const miniBars = <Message>(h: HtmlBuilder<Message>, options: MiniBarsOpti
       ]),
     ];
   });
+
   return h.svg(
     [
       h.Attribute("viewBox", "0 0 100 100"),

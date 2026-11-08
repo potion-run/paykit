@@ -22,26 +22,31 @@ const recording = (asked: Array<Record<string, unknown>> = []): StripeClient => 
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: `https://checkout.stripe.test/${request.priceIds.join(",")}` };
     }),
   createBillingPortalSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: "https://billing.stripe.test/portal" };
     }),
   createInvoice: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { invoiceId: "in_proration" };
     }),
   createRefund: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { refundId: "re_test" };
     }),
   charge: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { chargeId: "pi_off_session" };
     }),
 });
@@ -53,12 +58,14 @@ describe("Stripe as a paykit provider", () => {
   it.effect("sells a tier through one checkout, with the price the catalog maps", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers,
         client: recording(asked),
       });
+
       const session = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -69,6 +76,7 @@ describe("Stripe as a paykit provider", () => {
           });
         }),
       );
+
       expect(session.url).toContain("price_123");
       expect(asked[0]).toMatchObject({
         priceIds: ["price_123"],
@@ -84,6 +92,7 @@ describe("Stripe as a paykit provider", () => {
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
       const seatPrice = { amount: 1_000, currency: "usd" } as const;
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
@@ -99,6 +108,7 @@ describe("Stripe as a paykit provider", () => {
           setSubscriptionItemQuantity: (request) =>
             Effect.sync(() => {
               asked.push(request as never);
+
               return { invoiceId: "in_seat" };
             }),
         },
@@ -106,6 +116,7 @@ describe("Stripe as a paykit provider", () => {
 
       expect(provider.capabilities.has("quantity")).toBe(true);
       expect(provider.seatPrices).toEqual({ pro: { seats: seatPrice } });
+
       const result = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -120,6 +131,7 @@ describe("Stripe as a paykit provider", () => {
           });
         }),
       );
+
       expect(result).toEqual({ invoiceId: "in_seat" });
       expect(asked[0]).toMatchObject({
         subscription: "sub_1",
@@ -135,6 +147,7 @@ describe("Stripe as a paykit provider", () => {
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
       const unitPrice = { amount: 2, currency: "usd" } as const;
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
@@ -151,6 +164,7 @@ describe("Stripe as a paykit provider", () => {
           reportUsage: (request) =>
             Effect.sync(() => {
               asked.push(request as never);
+
               return {};
             }),
         },
@@ -158,6 +172,7 @@ describe("Stripe as a paykit provider", () => {
 
       expect(provider.capabilities.has("usage")).toBe(true);
       expect(provider.unitPrices).toEqual({ pro: { messages: unitPrice } });
+
       const session = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -168,6 +183,7 @@ describe("Stripe as a paykit provider", () => {
           });
         }),
       );
+
       expect(session.url).toContain("price_123,price_msg");
 
       const periodStart = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
@@ -201,12 +217,14 @@ describe("Stripe as a paykit provider", () => {
   it.effect("opens a one-off purchase and forwards the kind", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers,
         client: recording(asked),
       });
+
       yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -229,12 +247,14 @@ describe("Stripe as a paykit provider", () => {
         tiers,
         client: recording(),
       });
+
       const portal = yield* runWith(
         provider,
         Effect.gen(function* () {
           return yield* (yield* Payments).createPortal({ account: "acct_1" });
         }),
       );
+
       expect(portal.url).toContain("portal");
     }),
   );
@@ -242,13 +262,16 @@ describe("Stripe as a paykit provider", () => {
   it.effect("bills a proration as one invoice with one line item", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers,
         client: recording(asked),
       });
+
       expect(provider.capabilities.has("invoice")).toBe(true);
+
       const invoice = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -259,6 +282,7 @@ describe("Stripe as a paykit provider", () => {
           });
         }),
       );
+
       expect(invoice.invoiceId).toBe("in_proration");
       expect(asked[0]).toMatchObject({
         customerExternalId: "acct_1",
@@ -287,6 +311,7 @@ describe("Stripe as a paykit provider", () => {
             ),
         },
       });
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -299,7 +324,9 @@ describe("Stripe as a paykit provider", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
+
       if (error._tag === "PaymentDeclined") expect(error.message).toContain("card_declined");
     }),
   );
@@ -311,6 +338,7 @@ describe("Stripe as a paykit provider", () => {
         origin: "https://app.example.com",
         client: recording(),
       });
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -323,6 +351,7 @@ describe("Stripe as a paykit provider", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
     }),
   );
@@ -334,6 +363,7 @@ describe("Stripe as a paykit provider", () => {
       tiers,
       client: recording(),
     });
+
     expect(provider.kind).toBe("processor");
     expect(provider.capabilities.has("checkout")).toBe(true);
     expect(provider.capabilities.has("invoice")).toBe(true);
@@ -351,14 +381,17 @@ describe("Stripe as a paykit provider", () => {
         createBillingPortalSession: recording().createBillingPortalSession,
         createInvoice: recording().createInvoice,
       };
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers,
         client: partial,
       });
+
       expect(provider.capabilities.has("refund")).toBe(false);
       expect(provider.capabilities.has("charge")).toBe(false);
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -367,6 +400,7 @@ describe("Stripe as a paykit provider", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(ProviderCapabilityMissing);
     }),
   );
@@ -380,22 +414,27 @@ describe("Stripe as a paykit provider", () => {
         webhookSecret: Redacted.make("whsec_e2e"),
         client: recording(),
       });
+
       expect(provider.webhook?.provider).toBe("stripe");
       const body = JSON.stringify({ id: "evt_1", type: "customer.created", data: { object: {} } });
       const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000));
+
       const tag = new Bun.CryptoHasher("sha256", new TextEncoder().encode("whsec_e2e"))
         .update(`${timestamp}.${body}`)
         .digest("hex");
+
       const decoded = yield* provider.webhook!.decode({
         headers: { "stripe-signature": `t=${timestamp},v1=${tag}` },
         body,
       });
+
       expect(decoded._tag).toBe("None");
 
       const bare = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
       });
+
       expect(bare.webhook).toBe(undefined);
     }),
   );
@@ -405,6 +444,7 @@ describe("Stripe as a paykit provider", () => {
       secretKey: Redacted.make("sk_test_1"),
       origin: "https://app.example.com",
     });
+
     expect(provider.kind).toBe("processor");
     expect(stripeBaseUrl({})).toBe(STRIPE_API_BASE_URL);
     const client = distilledStripeClient({ secretKey: Redacted.make("sk_test_1") });

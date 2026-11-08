@@ -40,7 +40,9 @@ export const STRIPE_API_BASE_URL = "https://api.stripe.com";
  */
 export const distilledStripeClient = (config: StripeClientConfig): StripeClient => {
   const apiBaseUrl = config.apiBaseUrl ?? STRIPE_API_BASE_URL;
+
   /** A vendor failure is a declined payment the model can record. */
+  // SAFETY: a thrown value is untyped; this reads the one field a payment error reports and falls back to `String(cause)`.
   const declined = (op: string) => (cause: unknown) =>
     new PaymentDeclined({
       provider: "stripe",
@@ -103,6 +105,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
                   idempotencyKey: `${request.commandId}:${step}`,
                 }),
               );
+
         const draft = yield* idempotent(
           "draft",
           CreateInvoice({
@@ -111,6 +114,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             auto_advance: false,
           }),
         );
+
         if (draft.id === undefined) {
           return yield* new PaymentDeclined({
             provider: "stripe",
@@ -118,6 +122,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             message: "createInvoice returned an invoice with no id",
           });
         }
+
         yield* idempotent(
           "item",
           CreateInvoiceitem({
@@ -128,6 +133,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             description: request.description,
           }),
         );
+
         const finalized = yield* idempotent(
           "finalize",
           CreateInvoiceFinalize({
@@ -135,6 +141,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             auto_advance: true,
           }),
         );
+
         if (finalized.id === undefined) {
           return yield* new PaymentDeclined({
             provider: "stripe",
@@ -142,12 +149,14 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             message: "createInvoice finalized an invoice with no id",
           });
         }
+
         return { invoiceId: finalized.id };
       }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
     resolvePrice: (lookupKey) =>
       GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
         Effect.flatMap((prices) => {
           const price = prices.data[0];
+
           return price?.id === undefined
             ? Effect.fail(
                 new PaymentDeclined({
@@ -222,9 +231,11 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         const subscription = yield* GetSubscription({
           subscription_exposed_id: request.subscription,
         });
+
         const item = subscription.items.data.find(
           (candidate) => candidate.price?.id === request.priceId,
         );
+
         if (item === undefined) {
           return yield* new PaymentDeclined({
             provider: "stripe",
@@ -232,16 +243,20 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
             message: `subscription ${request.subscription} has no item for ${request.priceId}`,
           });
         }
+
         const update = UpdateSubscription({
           subscription_exposed_id: request.subscription,
           items: [{ id: item.id, quantity: request.quantity }],
           proration_behavior: request.proration === "immediate" ? "always_invoice" : "none",
         });
+
         const updated = yield* request.commandId === undefined
           ? update
           : update.pipe(Stripe.withRequestOptions({ idempotencyKey: request.commandId }));
+
         const latest = updated.latest_invoice;
         const invoiceId = typeof latest === "string" ? latest : latest?.id;
+
         return invoiceId === undefined ? {} : { invoiceId };
       }).pipe(Effect.mapError(declined("setSubscriptionItemQuantity")), Effect.provide(live)),
     // One meter event per feature, carrying the billable quantity. Stripe's

@@ -114,9 +114,12 @@ export type StripeUsagePrice =
 /** Read a usage mapping in any of the forms the provider config accepts. */
 const pricingOfUsage = (usage: StripeUsagePrice): Pricing => {
   if ("pricing" in usage && usage.pricing !== undefined) return usage.pricing;
+
   if ("unitPrice" in usage && usage.unitPrice !== undefined) {
     return { _tag: "unit", unitPrice: usage.unitPrice };
   }
+
+  // SAFETY: after the `pricing` and `unitPrice` checks, the remaining usage is the one-rate input shape.
   return asPricing(usage as PricingValue);
 };
 
@@ -175,6 +178,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
     ...(props.bindings.setQuantity === undefined ? [] : (["quantity"] as const)),
   ]);
+
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "stripe", op }));
 
@@ -190,6 +194,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
         kind: TierKind;
       }) => {
         const mapped = props.tiers?.[tier];
+
         if (mapped === undefined) {
           return Effect.fail(
             new PaymentDeclined({
@@ -199,6 +204,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
           );
         }
+
         // The base price and every metered price are line items on the same
         // subscription. Without the metered prices, a meter event has no price
         // to charge and the vendor invoice would omit the usage.
@@ -206,15 +212,18 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
           mapped,
           ...Object.values(mapped.usage ?? {}).map(handleOf),
         ];
+
         return Effect.forEach(
           handles,
           (handle): Effect.Effect<string, PaymentError> => {
             if (handle.priceId !== undefined) return Effect.succeed(handle.priceId);
+
             // Configured by key: ask Stripe which price answers for the tier
             // now, so a replaced price needs no config change.
             if (handle.lookupKey !== undefined && props.bindings.resolvePrice !== undefined) {
               return props.bindings.resolvePrice(handle.lookupKey);
             }
+
             return Effect.fail(
               new PaymentDeclined({
                 provider: "stripe",
@@ -305,6 +314,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
       }) => {
         if (props.bindings.setQuantity === undefined) return missing("setQuantity");
         const seat = props.tiers?.[tier]?.seats?.[feature];
+
         if (seat === undefined) {
           return Effect.fail(
             new PaymentDeclined({
@@ -314,7 +324,9 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
           );
         }
+
         const handle = handleOf(seat);
+
         const price =
           handle.priceId !== undefined
             ? Effect.succeed(handle.priceId)
@@ -327,6 +339,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
                     message: `seat ${tier}/${feature} has no priceId and no resolvable lookupKey`,
                   }),
                 );
+
         return price.pipe(
           Effect.flatMap((priceId) =>
             props.bindings.setQuantity!({ subscription, priceId, quantity, proration, commandId }),
@@ -345,6 +358,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
           : props.bindings.reportUsage(args),
     }),
   );
+
   const payments = Layer.merge(
     service,
     Layer.succeed(PaymentsProvider, { name: "stripe", capabilities }),
@@ -353,23 +367,30 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
   const prices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [tier, mapped.price]),
   );
+
   const usagePrices: Record<string, Record<string, Pricing>> = {};
   const unitPrices: Record<string, Record<string, UnitPrice>> = {};
+
   for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
     if (mapped.usage === undefined) continue;
+
     for (const [feature, usage] of Object.entries(mapped.usage)) {
       const pricing = pricingOfUsage(usage);
       (usagePrices[tier] ??= {})[feature] = pricing;
       const sole = soleUnitPriceOf(pricing);
+
       if (sole !== null) (unitPrices[tier] ??= {})[feature] = sole;
     }
   }
 
   const seatPrices: Record<string, Record<string, UnitPrice>> = {};
+
   for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
     if (mapped.seats === undefined) continue;
+
     for (const [feature, seat] of Object.entries(mapped.seats)) {
       const unitPrice = soleUnitPriceOf(pricingOfUsage(seat));
+
       if (unitPrice !== null) (seatPrices[tier] ??= {})[feature] = unitPrice;
     }
   }

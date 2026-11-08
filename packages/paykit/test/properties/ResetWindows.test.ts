@@ -25,6 +25,7 @@ import { decideAt, evolveAt, isAccepted, start, subscribedIn } from "./Arbitrari
 
 const price = { amount: 1_900, currency: "usd", interval: "month" as const };
 const seats = feature({ id: "seats", name: "Seats", kind: "non_consumable" });
+
 const AllResets = Schema.Literals([
   "hour",
   "day",
@@ -35,12 +36,14 @@ const AllResets = Schema.Literals([
   "annual",
   "never",
 ]);
+
 type AllResets = typeof AllResets.Type;
 
 const scheduleOf = (resets: AllResets, every: number) => ({ resets, resetEvery: every });
 
 const everyIntervalOf = (allowance: { readonly resets: Resets; readonly resetEvery?: number }) => {
   const every = allowance.resetEvery ?? 1;
+
   switch (allowance.resets) {
     case "never":
       return null;
@@ -66,26 +69,31 @@ const daily = tier({
   price,
   grants: [allowance(messages, { included: 10, resets: "day" })],
 });
+
 const fourHourly = tier({
   id: "four-hourly",
   price,
   grants: [allowance(messages, { included: 10, resets: "hour", resetEvery: 4 })],
 });
+
 const quarterly = tier({
   id: "quarterly",
   price,
   grants: [allowance(messages, { included: 10, resets: "quarter" })],
 });
+
 const monthly = tier({
   id: "monthly",
   price,
   grants: [allowance(messages, { included: 10, resets: "month" })],
 });
+
 const dailyCarry = tier({
   id: "daily-carry",
   price,
   grants: [allowance(messages, { included: 10, resets: "day", carryOver: true, carryCap: 5 })],
 });
+
 const monthlyCarry = tier({
   id: "monthly-carry",
   price,
@@ -107,10 +115,12 @@ const Stock = Schema.Literals([
   "daily-carry",
   "monthly-carry",
 ]);
+
 type Stock = typeof Stock.Type;
 
 /** The tiers whose boundary the period does not own. */
 const WindowStock = Schema.Literals(["daily", "four-hourly", "quarterly", "daily-carry"]);
+
 type WindowStock = typeof WindowStock.Type;
 
 const same = (left: unknown, right: unknown): boolean =>
@@ -126,6 +136,7 @@ const recordedAmount = (
   state: ReadonlyArray<{ readonly _tag: string; readonly feature?: string }>,
 ): number => {
   const recorded = state.find((event) => event._tag === "UsageRecorded");
+
   return recorded === undefined ? 0 : ((recorded as { amount?: number }).amount ?? 0);
 };
 
@@ -149,25 +160,33 @@ describe("a reset runs on its own schedule", () => {
         const from = DateTime.add(start, { days: fromDays });
         const schedule = scheduleOf(resets, every);
         const boundary = nextResetAt(from, schedule);
+
         const windows = resetWindowsOf(
           { messages: allowance(messages, { included: 10, resets, resetEvery: every }) },
           from,
         );
 
         if (resets === "never") return boundary === null && windows.messages === undefined;
+
         if (boundary === null) return false;
+
         if (DateTime.toEpochMillis(boundary) <= DateTime.toEpochMillis(from)) return false;
 
         const interval = everyIntervalOf(schedule)!;
+
         if (!same(boundary, DateTime.add(from, interval))) return false;
 
         // A multiplier can only move the boundary later, never earlier.
         const single = nextResetAt(from, scheduleOf(resets, 1))!;
+
         if (DateTime.toEpochMillis(boundary) < DateTime.toEpochMillis(single)) return false;
 
         const tied = periodTiedReset(schedule);
+
         if (tied !== ((resets === "month" || resets === "annual") && every === 1)) return false;
+
         if (tied !== (windows.messages === undefined)) return false;
+
         return windows.messages === undefined || same(windows.messages, boundary);
       },
       { runs: 120, size: 30 },
@@ -205,11 +224,13 @@ describe("a reset runs on its own schedule", () => {
           ...(carryOver ? { carryOver: true } : {}),
           ...(carryOver && carryCap !== undefined ? { carryCap } : {}),
         });
+
         const state = stateAt(built, remaining === "fallback" ? undefined : remaining);
         const current = remaining === "fallback" ? included : remaining;
         const reset = resetOf(state, "messages", built);
         const own = resetOfFeature(state, "messages", built);
         const cap = carryCapOf(built);
+
         const ownCarried =
           built.carryOver === true ? Math.min(Math.max(current, 0), cap ?? included) : 0;
 
@@ -217,16 +238,23 @@ describe("a reset runs on its own schedule", () => {
         // A quantity is never a counter, so it survives a close; the same is
         // true of `never` and of a window the period does not own.
         const kept = built.resets === "never" || !periodTiedReset(built);
+
         if (kept) {
           if (reset.kept !== true || reset.carried !== 0) return false;
+
           if (reset.remaining !== current) return false;
+
           return own.carried === ownCarried && own.remaining === included + ownCarried;
         }
 
         if (reset.kept !== false) return false;
+
         if (reset.carried !== ownCarried) return false;
+
         if (reset.remaining !== included + ownCarried) return false;
+
         if (reset.remaining > included + (cap ?? included)) return false;
+
         return reset.carried === own.carried && reset.remaining === own.remaining;
       },
       { runs: 120, size: 30 },
@@ -253,6 +281,7 @@ describe("a reset runs on its own schedule", () => {
         const opened = subscribedIn(schedules, stock);
         const allowance = opened.allowances.messages!;
         const boundary = opened.resetAt?.messages;
+
         if (boundary === undefined) return false;
 
         const tracked =
@@ -264,9 +293,12 @@ describe("a reset runs on its own schedule", () => {
                 start,
                 "use",
               );
+
         if (!isAccepted(tracked)) return false;
         const afterUsage = evolveAt(opened, tracked, start, "use");
+
         if (afterUsage._tag !== "Subscribed") return false;
+
         const heldDecision =
           held === 0
             ? []
@@ -281,8 +313,10 @@ describe("a reset runs on its own schedule", () => {
                 start,
                 "hold",
               );
+
         if (!isAccepted(heldDecision)) return false;
         const state = evolveAt(afterUsage, heldDecision, start, "hold");
+
         if (state._tag !== "Subscribed") return false;
 
         // Not due yet: the boundary is in the future.
@@ -292,58 +326,77 @@ describe("a reset runs on its own schedule", () => {
           start,
           "early",
         );
+
         if (!isAccepted(early) || early.length !== 0) return false;
 
         // The boundary after this one is not this window's boundary.
         const next = nextResetAt(boundary, allowance)!;
+
         const stale = decideAt(
           state,
           new ResetAllowance({ feature: "messages", at: next }),
           boundary,
           "stale",
         );
+
         if (!isAccepted(stale) || stale.length !== 0) return false;
 
         const at = DateTime.add(boundary, { days: lateDays });
+
         const due = decideAt(
           state,
           new ResetAllowance({ feature: "messages", at: boundary }),
           at,
           "due",
         );
+
         if (!isAccepted(due) || due.length === 0) return false;
 
         const reset = due.find(
           (event): event is InstanceType<typeof AllowanceReset> => event._tag === "AllowanceReset",
         );
+
         if (reset === undefined) return false;
 
         const expected = resetOfFeature(state, "messages", allowance);
         let carried = 0;
+
         if (allowance.carryOver === true) {
           const cap = carryCapOf(allowance) ?? 10;
           carried = Math.min(Math.max(state.remaining.messages ?? 0, 0), cap);
         }
+
         if (reset.feature !== "messages") return false;
+
         if (reset.carried !== carried) return false;
+
         if (reset.remaining !== 10 + carried) return false;
+
         if (!same(reset.remaining, expected.remaining)) return false;
+
         // A late fire starts the next window where it actually fired.
         if (!same(reset.resetAt, nextResetAt(at, allowance))) return false;
 
         const released = due.filter((event) => event._tag === "UsageReleased");
+
         const openHolds = Object.values(state.holds).filter(
           (entry) => entry.status === "open" && entry.feature === "messages",
         ).length;
+
         if (released.length !== openHolds) return false;
+
         if (released.length === 1 && (released[0] as { reason?: string }).reason !== "reset") {
           return false;
         }
 
         const after = evolveAt(state, due, at, "due");
+
         if (after._tag !== "Subscribed") return false;
+
         if (after.usage.messages !== 0) return false;
+
         if (after.remaining.messages !== reset.remaining) return false;
+
         if (!same(after.resetAt?.messages, reset.resetAt)) return false;
 
         // The same command is a replay: this window has already closed.
@@ -353,6 +406,7 @@ describe("a reset runs on its own schedule", () => {
           at,
           "again",
         );
+
         return isAccepted(again) && again.length === 0;
       },
       { runs: 100, size: 30 },
@@ -375,6 +429,7 @@ describe("a reset runs on its own schedule", () => {
       ({ tier: stock, usage }) => {
         const opened = subscribedIn(schedules, stock);
         const allowance = opened.allowances.messages!;
+
         const tracked =
           usage === 0
             ? []
@@ -384,28 +439,37 @@ describe("a reset runs on its own schedule", () => {
                 start,
                 "use",
               );
+
         if (!isAccepted(tracked)) return false;
         const state = evolveAt(opened, tracked, start, "use");
+
         if (state._tag !== "Subscribed") return false;
         const before = state.remaining.messages!;
         const boundary = state.period.end;
         const close = decideAt(state, new ClosePeriod({ periodEnd: boundary }), boundary, "close");
+
         if (!isAccepted(close)) return false;
         const after = evolveAt(state, close, boundary, "close");
+
         if (after._tag !== "Subscribed") return false;
 
         const tied = periodTiedReset(allowance);
+
         if (after.usage.messages !== undefined && tied && after.usage.messages !== 0) return false;
+
         if (!tied) {
           if (recordedAmount(tracked) !== 0 && after.usage.messages !== recordedAmount(tracked)) {
             return false;
           }
+
           if (after.remaining.messages !== before) return false;
+
           return same(after.resetAt?.messages, state.resetAt?.messages);
         }
 
         const cap = carryCapOf(allowance);
         const carried = allowance.carryOver === true ? Math.min(Math.max(before, 0), cap ?? 10) : 0;
+
         return after.remaining.messages === 10 + carried;
       },
       { runs: 100, size: 30 },

@@ -83,6 +83,7 @@ const testCatalog = Effect.runSync(
     tiers: [plan, plain, pack, smallPack],
   }),
 );
+
 const terms = allowancesOf(testCatalog, "plan")!;
 const rates = creditRatesOf(testCatalog);
 const account = Subscription.ref("acct_auto_top_up");
@@ -170,6 +171,7 @@ const storyWith = (
     Layer.provide(MemoryBillingReadStore),
     Layer.provideMerge(paymentsRouter(player)),
   );
+
   return Story.make(PaykitModel, {
     layer:
       options === null
@@ -188,6 +190,7 @@ const storyWith = (
 
 it.effect("buys the pack when a spend takes the pool across the threshold", () => {
   const commandId = topUpCommandId(account.id, 2);
+
   return storyWith(PaymentsMemory(), { pack: "pack" })(
     ...subscribed,
     // 2,000 credits spend down to 500: from above the threshold to below it.
@@ -232,6 +235,7 @@ it.effect("buys the pack when a spend takes the pool across the threshold", () =
 
 it.effect("buys once per crossing, not once per spend below the threshold", () => {
   const commandId = topUpCommandId(account.id, 2);
+
   return storyWith(PaymentsMemory(), { pack: "pack_small" })(
     ...subscribed,
     // 2,000 -> 900 crosses the line once.
@@ -481,6 +485,7 @@ it.effect("falls back to the invoice when the saved method is declined", () => {
     code: "card_declined",
     message: "the card was declined",
   });
+
   const processor = PaymentsStripe({
     bindings: {
       createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
@@ -489,6 +494,7 @@ it.effect("falls back to the invoice when the saved method is declined", () => {
       createInvoice: () => Effect.succeed({ invoiceId: "in_fallback" }),
     },
   });
+
   return storyWith(processor, { pack: "pack" })(
     ...subscribed,
     Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
@@ -671,6 +677,7 @@ it.effect("does nothing for a pool with no standing to read a line from", () =>
 
 it.effect("does nothing when the deployment never opted in", () => {
   const story = storyWith(PaymentsMemory(), null);
+
   return story(
     ...subscribed,
     Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
@@ -699,7 +706,9 @@ it.effect("refuses to grant credits when the provider cannot open an invoice", (
         createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
       },
     });
+
     const story = storyWith(checkoutOnly, { pack: "pack" });
+
     // The failure is the policy's defect, not a story expectation: the pack is
     // never recorded, because the invoice that would price it cannot be opened.
     const reason = yield* story(
@@ -722,6 +731,7 @@ it.effect("refuses to grant credits when the provider cannot open an invoice", (
         onSuccess: () => "settled",
       }),
     );
+
     expect(reason).toContain("ProviderCapabilityMissing");
   }),
 );

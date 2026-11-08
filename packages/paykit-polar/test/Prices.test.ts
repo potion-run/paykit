@@ -72,6 +72,7 @@ describe("product declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.seats).toEqual([
       { feature: "seats", unitPrice: { amount: 1_000, currency: "usd" } },
     ]);
@@ -90,6 +91,7 @@ describe("product declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.usage).toEqual([
       {
         feature: "messages",
@@ -116,6 +118,7 @@ describe("product declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.usage[0]?.unitPrice).toEqual({
       amount: 500,
       currency: "usd",
@@ -146,6 +149,7 @@ describe("product declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.usage[0]?.unitPrice).toBe(undefined);
     expect(declaration?.usage[0]?.pricing?._tag).toBe("volume");
   });
@@ -163,6 +167,7 @@ describe("product declarations", () => {
 
 describe("the provider join", () => {
   const product = Output.literal("prod_pro");
+
   const sold = {
     products: { pro: product },
     meters: { messages: "paykit_prod_messages" },
@@ -179,6 +184,7 @@ describe("the provider join", () => {
 
   it("carries every metered and seat price the catalog states", () => {
     const unitPrice = { amount: 2, currency: "usd" };
+
     const mapped = soldTiers(
       {
         pro: {
@@ -189,6 +195,7 @@ describe("the provider join", () => {
       },
       sold,
     ).pro;
+
     expect(mapped?.usage).toEqual({ messages: unitPrice });
     expect(mapped?.seats).toEqual({ seats: { amount: 1_000, currency: "usd" } });
   });
@@ -205,6 +212,7 @@ describe("the provider join", () => {
       },
       sold,
     ).pro;
+
     expect(mapped?.usage).toBe(undefined);
     expect(mapped?.seats).toBe(undefined);
   });
@@ -229,6 +237,7 @@ describe("the archive sweep", () => {
       ],
       stage,
     );
+
     expect(retired.map((found) => found.id)).toEqual(["prod_scale"]);
   });
 
@@ -238,6 +247,7 @@ describe("the archive sweep", () => {
       [product({ id: "prod_preview", name: "paykit:preview:pro", tier: "pro" })],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 
@@ -245,6 +255,7 @@ describe("the archive sweep", () => {
     const found = [
       product({ id: "prod_scale", name: "paykit:prod:scale", tier: "scale", archived: true }),
     ];
+
     expect(retiredProducts(declared, found, stage)).toEqual([]);
   });
 
@@ -254,6 +265,7 @@ describe("the archive sweep", () => {
       [product({ id: "prod_manual", name: "paykit:prod:manual", tier: null })],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 
@@ -263,6 +275,7 @@ describe("the archive sweep", () => {
       [product({ id: "prod_other", name: "paykit:production:pro", tier: "pro" })],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 

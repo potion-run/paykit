@@ -48,15 +48,18 @@ const cappedTier = tier({
   price,
   grants: [allowance(messages, { included: 100, overage: "bill", cap: 20 })],
 });
+
 // The same allowance without a ceiling, to prove the old behaviour is intact.
 const openTier = tier({
   id: "open",
   price,
   grants: [allowance(messages, { included: 100, overage: "bill" })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [cappedTier, openTier] }),
 );
+
 const account = Subscription.ref("acct_cap");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -68,6 +71,7 @@ const story = Story.make(PaykitModel, {
 
 const subscribed = (tierId: string) => {
   const allowances = allowancesOf(testCatalog, tierId)!;
+
   return [
     Story.provide(Actor, system("test")),
     Story.clock(start),
@@ -128,14 +132,18 @@ it("refuses a cap where nothing is billed", () => {
     // `unlimited` defaults to "allow", so a cap beside it is the same mistake.
     allowance(messages, { included: "unlimited", cap: 20 }),
   ];
+
   for (const grant of cases) {
     const result = defineCatalog({
       features: [messages],
       tiers: [tier({ id: "capped", grants: [grant] })],
     });
+
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(Schema.is(CatalogCapWithoutBilling)(result.failure)).toBe(true);
+
       if (!Schema.is(CatalogCapWithoutBilling)(result.failure)) return;
       expect(result.failure.tier).toBe("capped");
       expect(result.failure.feature).toBe("messages");
@@ -317,6 +325,7 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
     const entitlements = yield* Entitlements;
     const store = yield* BillingReadStore;
     const ref = Subscription.ref(account.id);
+
     const receipt = yield* subscription.send(
       ref,
       new Subscribe({
@@ -328,6 +337,7 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
         rates: {},
       }),
     );
+
     yield* entitlements.query(ref, { atLeast: receipt });
 
     const check = yield* checkBinding(account.id);
@@ -358,6 +368,7 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
       account.id,
       Option.getOrNull(yield* entitlements.query(ref)),
     );
+
     expect(row?.features.messages?.cap).toBe(20);
     expect(row?.features.messages?.used).toBe(120);
 
@@ -369,6 +380,7 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
         dedupeKey: "cap-hold-over",
       }),
     );
+
     expect(refused._tag).toBe("Failure");
     expect(String(refused)).toContain("SpendCapExceeded");
 

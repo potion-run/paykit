@@ -58,9 +58,12 @@ export const bindingsWorld = <R = never>(
       bindings: "tenant",
     }) as Layer.Layer<any, never, R>;
   }
+
   const catalog = catalogLayer(options.catalog);
+
   const services =
     options.payments === undefined ? options.base : Layer.mergeAll(options.base, options.payments);
+
   return Layer.mergeAll(
     services,
     catalog,

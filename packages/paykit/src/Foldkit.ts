@@ -46,6 +46,7 @@ export type BillingAdminClient = Domain.Api.ClientKey<"BillingAdminApi">;
 
 /** A stale read response carries the request it answers; drop it if it is old. */
 export const QueryIds = Schema.Struct({ sent: Schema.Int });
+
 export type QueryIds = typeof QueryIds.Type;
 
 export const AdminQueryMessage = defineMessageUnion({
@@ -64,6 +65,7 @@ export const AdminQueryMessage = defineMessageUnion({
   SucceededOverview: { requestId: Schema.Int, overview: BillingOverview },
   FailedOverview: { requestId: Schema.Int, error: AdminReadError },
 });
+
 export type AdminQueryMessage = typeof AdminQueryMessage.Type;
 
 const withResult = <A>(
@@ -82,6 +84,7 @@ export const ListAccounts = Command.define("ListAccounts", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId, query }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.list(query),
       (page) => AdminQueryMessage.SucceededListAccounts({ requestId, page }),
@@ -96,6 +99,7 @@ export const PreviewCommand = Command.define("PreviewCommand", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId, input }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.preview(input),
       (answer) => AdminQueryMessage.SucceededPreview({ requestId, answer }),
@@ -110,6 +114,7 @@ export const VerifyAccount = Command.define("VerifyAccount", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId, account }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.verify({ account }),
       (mismatches) => AdminQueryMessage.SucceededVerify({ requestId, mismatches }),
@@ -128,6 +133,7 @@ export const GetHolds = Command.define("GetHolds", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId, account }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.holds(account),
       (answer) => AdminQueryMessage.SucceededHolds({ requestId, answer }),
@@ -146,6 +152,7 @@ export const GetProviderRefs = Command.define("GetProviderRefs", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId, account }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.providerRefs(account),
       (answer) => AdminQueryMessage.SucceededProviderRefs({ requestId, answer }),
@@ -160,6 +167,7 @@ export const GetOverview = Command.define("GetOverview", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.overview(),
       (overview) => AdminQueryMessage.SucceededOverview({ requestId, overview }),
@@ -174,6 +182,7 @@ export const GetCatalog = Command.define("GetCatalog", {
   messages: [AdminQueryMessage],
   execute: Effect.fn(function* ({ requestId }) {
     const reads = yield* AdminReads;
+
     return yield* withResult(
       reads.catalog(),
       (catalog) => AdminQueryMessage.SucceededGetCatalog({ requestId, catalog }),
@@ -186,6 +195,7 @@ export const AdminChangeMessage = defineMessageUnion({
   SucceededChangeTier: { requestId: Schema.Int, answer: ChangeTierAnswer },
   FailedChangeTier: { requestId: Schema.Int, error: AdminReadError },
 });
+
 export type AdminChangeMessage = typeof AdminChangeMessage.Type;
 
 /**
@@ -198,6 +208,7 @@ export const ApplyChangeTier = Command.define("ApplyChangeTier", {
   messages: [AdminChangeMessage],
   execute: Effect.fn(function* ({ requestId, input }) {
     const change = yield* AdminChangeTier;
+
     return yield* change.change(input).pipe(
       Effect.match({
         onSuccess: (answer) => AdminChangeMessage.SucceededChangeTier({ requestId, answer }),
@@ -217,6 +228,7 @@ export const AdminRefundMessage = defineMessageUnion({
   SucceededRefund: { commandId: Schema.String, answer: RefundAnswer },
   FailedRefund: { commandId: Schema.String, error: AdminReadError },
 });
+
 export type AdminRefundMessage = typeof AdminRefundMessage.Type;
 
 /**
@@ -229,6 +241,7 @@ export const ApplyRefund = Command.define("ApplyRefund", {
   messages: [AdminRefundMessage],
   execute: Effect.fn(function* ({ commandId, input }) {
     const refund = yield* AdminRefund;
+
     return yield* refund.refund({ ...input, commandId }).pipe(
       Effect.match({
         onSuccess: (answer) => AdminRefundMessage.SucceededRefund({ commandId, answer }),
@@ -257,6 +270,9 @@ export const AdminQueries = {
 };
 
 export { CommandHeaders, CommandIds, next } from "@alchemy.run/domain/Foldkit";
+
 export type { Failure, Snapshot } from "@alchemy.run/domain/Foldkit";
+
 export { AdminAction, actionsFor } from "./AdminActions.ts";
+
 export type { AdminActionDescriptor } from "./AdminActions.ts";

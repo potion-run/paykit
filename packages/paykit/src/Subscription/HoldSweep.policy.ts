@@ -17,6 +17,7 @@ export class HoldSweep extends Domain.Policy("HoldSweep", {
 export const HoldSweepLive = HoldSweep.toLayer(
   Effect.gen(function* () {
     const subscriptions = yield* Subscription;
+
     return Effect.fn("Paykit.HoldSweep.react")(function* ({ key, event }) {
       yield* subscriptions
         .schedule(key, new HoldElapsed({ holdId: event.holdId }), {

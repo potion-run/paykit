@@ -34,11 +34,13 @@ const proTier = tier({
 const proCatalog = { features: [messages], tiers: [proTier] };
 
 const unitPrice = { amount: 2, currency: "usd" } as const;
+
 const postpaidTier = tier({
   id: "postpaid",
   price: proPrice,
   grants: [allowance(messages, { included: 100, overage: "bill", unitPrice })],
 });
+
 const postpaidCatalog = { features: [messages], tiers: [postpaidTier] };
 
 describe("Stack", () => {
@@ -49,6 +51,7 @@ describe("Stack", () => {
         providers: [PaymentsMemory()],
         store: MemoryStore(),
       });
+
       expect(billing.catalog.features.length).toBe(1);
       expect(billing.catalog.tiers.length).toBe(1);
       expect(billing.providers.length).toBe(1);
@@ -61,7 +64,9 @@ describe("Stack", () => {
       const exit = yield* Effect.exit(
         validateStack("Billing", { catalog: { features: [messages], tiers: [proTier, proTier] } }),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogDuplicateTier");
     }),
   );
@@ -72,10 +77,13 @@ describe("Stack", () => {
         id: "haunted",
         grants: [allowance(feature({ id: "ghost" }), { included: 1 })],
       });
+
       const exit = yield* Effect.exit(
         validateStack("Billing", { catalog: { features: [messages], tiers: [haunted] } }),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogUnknownFeature");
     }),
   );
@@ -86,18 +94,23 @@ describe("Stack", () => {
         ...PaymentsMemory(),
         prices: { pro: { amount: 2000, currency: "usd", interval: "month" as const } },
       };
+
       const exit = yield* Effect.exit(
         validateStack("Billing", { catalog: proCatalog, providers: [provider] }),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) {
         expect(String(exit.cause)).toContain("CatalogPriceMismatch");
+
         const mismatch = new CatalogPriceMismatch({
           tier: "pro",
           field: "amount",
           expected: "1900",
           actual: "2000",
         });
+
         expect(mismatch._tag).toBe("CatalogPriceMismatch");
       }
     }),
@@ -110,10 +123,12 @@ describe("Stack", () => {
         prices: { postpaid: proPrice },
         unitPrices: { postpaid: { messages: unitPrice } },
       };
+
       const billing = yield* validateStack("Billing", {
         catalog: postpaidCatalog,
         providers: [provider],
       });
+
       expect(billing.providers[0]?.unitPrices).toEqual({
         postpaid: { messages: unitPrice },
       });
@@ -127,10 +142,13 @@ describe("Stack", () => {
         prices: { postpaid: proPrice },
         unitPrices: { postpaid: { messages: { amount: 3, currency: "usd" } } },
       };
+
       const error = yield* Effect.flip(
         validateStack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
       );
+
       expect(error._tag).toBe("CatalogPriceMismatch");
+
       if (error._tag === "CatalogPriceMismatch") {
         expect(error.field).toBe("unitPrice.messages");
         expect(error.expected).toBe("2 usd");
@@ -146,10 +164,13 @@ describe("Stack", () => {
         prices: { pro: proPrice },
         unitPrices: { pro: { messages: unitPrice } },
       };
+
       const error = yield* Effect.flip(
         validateStack("Billing", { catalog: proCatalog, providers: [provider] }),
       );
+
       expect(error._tag).toBe("CatalogPriceMismatch");
+
       if (error._tag === "CatalogPriceMismatch") expect(error.field).toBe("unitPrice.messages");
     }),
   );
@@ -160,10 +181,13 @@ describe("Stack", () => {
         ...PaymentsMemory(),
         prices: { postpaid: proPrice },
       };
+
       const error = yield* Effect.flip(
         validateStack("Billing", { catalog: postpaidCatalog, providers: [provider] }),
       );
+
       expect(error._tag).toBe("CatalogPriceMismatch");
+
       if (error._tag === "CatalogPriceMismatch") {
         expect(error.field).toBe("unitPrice.messages");
         expect(error.actual).toBe("missing");
@@ -191,6 +215,7 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const ladderPricing = {
         _tag: "graduated" as const,
         currency: "usd",
@@ -199,13 +224,16 @@ describe("Stack", () => {
           { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
         ] as const,
       };
+
       const ladderMissing = yield* Effect.flip(
         validateStack("Billing", {
           catalog: { features: [messages], tiers: [ladder] },
           providers: [{ ...PaymentsMemory(), prices: { ladder: proPrice } }],
         }),
       );
+
       expect(ladderMissing._tag).toBe("CatalogPriceMismatch");
+
       if (ladderMissing._tag === "CatalogPriceMismatch") {
         expect(ladderMissing.field).toBe("pricing.messages");
       }
@@ -220,6 +248,7 @@ describe("Stack", () => {
           },
         ],
       });
+
       expect(ladderBilling.id).toBe("Billing");
 
       const packagePrice = tier({
@@ -233,6 +262,7 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const packageBilling = yield* validateStack("Billing", {
         catalog: { features: [messages], tiers: [packagePrice] },
         providers: [
@@ -243,6 +273,7 @@ describe("Stack", () => {
           },
         ],
       });
+
       expect(packageBilling.id).toBe("Billing");
 
       const packageError = yield* Effect.flip(
@@ -257,7 +288,9 @@ describe("Stack", () => {
           ],
         }),
       );
+
       expect(packageError._tag).toBe("CatalogPriceMismatch");
+
       if (packageError._tag === "CatalogPriceMismatch") {
         expect(packageError.expected).toBe("500 usd per 1000 units");
       }
@@ -277,6 +310,7 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const billing = yield* validateStack("Billing", {
         catalog: { features: [messages], tiers: [packageTier] },
         providers: [
@@ -294,6 +328,7 @@ describe("Stack", () => {
           },
         ],
       });
+
       expect(billing.id).toBe("Billing");
     }),
   );
@@ -318,6 +353,7 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const error = yield* Effect.flip(
         validateStack("Billing", {
           catalog: { features: [messages], tiers: [ladder] },
@@ -341,7 +377,9 @@ describe("Stack", () => {
           ],
         }),
       );
+
       expect(error._tag).toBe("CatalogPriceMismatch");
+
       if (error._tag === "CatalogPriceMismatch") {
         expect(error.field).toBe("pricing.messages");
         expect(error.expected).toContain("inf=usd:2");
@@ -359,11 +397,13 @@ describe("Stack", () => {
         { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
       ] as const,
     };
+
     const descriptor = providerDescriptor({
       ...PaymentsMemory(),
       prices: { postpaid: proPrice },
       usagePrices: { postpaid: { messages: ladder } },
     });
+
     expect(descriptor.usagePrices).toEqual({ postpaid: { messages: ladder } });
     expect(descriptor.unitPrices).toBe(undefined);
   });
@@ -371,6 +411,7 @@ describe("Stack", () => {
   it.effect("requires a seat price from a provider that owns the subscription quantity", () =>
     Effect.gen(function* () {
       const seats = feature({ id: "seats", kind: "non_consumable" });
+
       const seatTier = tier({
         id: "team",
         price: proPrice,
@@ -383,7 +424,9 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const seatCatalog = { features: [seats], tiers: [seatTier] };
+
       const missing = yield* Effect.flip(
         validateStack("Billing", {
           catalog: seatCatalog,
@@ -391,7 +434,9 @@ describe("Stack", () => {
           store: MemoryStore(),
         }),
       );
+
       expect(missing._tag).toBe("CatalogPriceMismatch");
+
       if (missing._tag === "CatalogPriceMismatch") {
         expect(missing.field).toBe("seatPrice.seats");
         expect(missing.actual).toBe("missing");
@@ -408,6 +453,7 @@ describe("Stack", () => {
         ],
         store: MemoryStore(),
       });
+
       expect(billing.id).toBe("Billing");
     }),
   );
@@ -416,6 +462,7 @@ describe("Stack", () => {
     Effect.gen(function* () {
       const seats = feature({ id: "seats", kind: "non_consumable" });
       const workspaces = feature({ id: "workspaces", kind: "non_consumable" });
+
       const seatTier = tier({
         id: "team",
         price: proPrice,
@@ -434,13 +481,16 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const seatCatalog = { features: [seats, workspaces], tiers: [seatTier] };
+
       const seatPrices = {
         team: {
           seats: { amount: 1_000, currency: "usd" },
           workspaces: { amount: 2_000, currency: "usd" },
         },
       };
+
       const error = yield* Effect.flip(
         validateStack("Billing", {
           catalog: seatCatalog,
@@ -455,7 +505,9 @@ describe("Stack", () => {
           store: MemoryStore(),
         }),
       );
+
       expect(error._tag).toBe("CatalogPriceMismatch");
+
       if (error._tag === "CatalogPriceMismatch") {
         expect(error.field).toBe("seatPrices");
         expect(error.actual).toBe("2");
@@ -475,6 +527,7 @@ describe("Stack", () => {
         ],
         store: MemoryStore(),
       });
+
       expect(billing.id).toBe("Billing");
     }),
   );
@@ -492,6 +545,7 @@ describe("Stack", () => {
           }),
         ],
       });
+
       const billing = yield* validateStack("Billing", {
         catalog: { features: [messages], tiers: [oneRate] },
         providers: [
@@ -503,6 +557,7 @@ describe("Stack", () => {
         ],
         store: MemoryStore(),
       });
+
       expect(billing.id).toBe("Billing");
     }),
   );
@@ -510,10 +565,13 @@ describe("Stack", () => {
   it.effect("refuses a priced tier with no purchase path", () =>
     Effect.gen(function* () {
       const manual = { ...PaymentsManual(), capabilities: new Set(["refund"] as const) };
+
       const exit = yield* Effect.exit(
         validateStack("Billing", { catalog: proCatalog, providers: [manual] }),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("NoPurchasePath");
       expect(new NoPurchasePath({ tier: "pro" })._tag).toBe("NoPurchasePath");
     }),
@@ -529,7 +587,9 @@ describe("Stack", () => {
           schema: "billing",
         }),
       });
+
       expect(billing.store._tag).toBe("PostgresStore");
+
       if (billing.store._tag === "PostgresStore") {
         expect(Redacted.isRedacted(billing.store.url)).toBe(true);
       }
@@ -542,6 +602,7 @@ describe("Stack", () => {
         catalog: proCatalog,
         providers: [PaymentsMemory(), PaymentsManual()],
       });
+
       expect(billing.providers.map((provider) => provider.name)).toEqual(["memory", "manual"]);
     }),
   );
@@ -554,7 +615,9 @@ describe("Stack", () => {
           providers: [PaymentsMemory(), PaymentsMemory()],
         }),
       );
+
       expect(error._tag).toBe("ProviderDuplicate");
+
       if (error._tag === "ProviderDuplicate") expect(error.provider).toBe("memory");
     }),
   );
@@ -562,10 +625,12 @@ describe("Stack", () => {
   it("a provider descriptor records whether the provider can report a payment", () => {
     const bare = providerDescriptor(PaymentsMemory());
     expect(bare.webhook).toBe(false);
+
     const wired = providerDescriptor({
       ...PaymentsMemory(),
       webhook: { provider: "memory", decode: () => Effect.succeedNone },
     });
+
     expect(wired.webhook).toBe(true);
   });
 
@@ -575,6 +640,7 @@ describe("Stack", () => {
       prices: { postpaid: proPrice },
       unitPrices: { postpaid: { messages: unitPrice } },
     });
+
     expect(descriptor.kind).toBe("memory");
     expect(descriptor.capabilities).toContain("checkout");
     expect(descriptor.unitPrices).toEqual({ postpaid: { messages: unitPrice } });
@@ -586,6 +652,7 @@ describe("Stack", () => {
     const parsed = Effect.runSync(
       validateStack("Billing", { catalog: proCatalog, providers: [PaymentsMemory()] }),
     );
+
     expect(validateProviderMappings(parsed.catalog, [providerDescriptor(PaymentsMemory())])).toBe(
       null,
     );
@@ -615,6 +682,7 @@ describe("Stack", () => {
 
   it.effect("accepts exactly the catalog's prices, and names the field that disagrees", () => {
     const parsed = Effect.runSync(catalog(proCatalog));
+
     const base = {
       name: "p",
       kind: "memory",
@@ -622,6 +690,7 @@ describe("Stack", () => {
       capabilities: ["checkout"] as const,
       prices: { pro: proPrice },
     };
+
     const Mutation = Schema.Literals([
       "exact",
       "amount",
@@ -660,10 +729,14 @@ describe("Stack", () => {
                   ]);
 
         if (mutation === "exact") return result === null;
+
         if (mutation === "duplicateName") return result?._tag === "ProviderDuplicate";
+
         if (mutation === "noPurchase") return result?._tag === "NoPurchasePath";
+
         if (result?._tag !== "CatalogPriceMismatch") return false;
         const field = mutation === "missingTier" ? "tier" : mutation;
+
         return result.field === field;
       },
       { runs: 20, size: 8 },
@@ -672,12 +745,14 @@ describe("Stack", () => {
 
   it("the BillingStack resource declares serializable attributes", () => {
     expect(BillingStack.Aliases).toBe(undefined);
+
     const attrs = Schema.encodeSync(BillingStackAttrs)({
       catalog: proCatalog,
       tiers: ["pro"],
       providers: [{ name: "memory", kind: "memory", webhook: false, capabilities: ["checkout"] }],
       store: { _tag: "MemoryStore" },
     });
+
     expect(attrs.tiers).toEqual(["pro"]);
   });
 });

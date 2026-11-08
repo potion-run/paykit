@@ -29,13 +29,16 @@ import { AccountFilter, ConsoleRoute } from "./Route.ts";
 export { AccountFilter } from "./Route.ts";
 
 export const LoadState = Schema.Literals(["Idle", "Loading", "Loaded", "Failed"]);
+
 export type LoadState = typeof LoadState.Type;
 
 /** A one-shot question: asked, answered, or failed. */
 export const AnswerState = Schema.Literals(["Loading", "Answered", "Failed"]);
+
 export type AnswerState = typeof AnswerState.Type;
 
 export const FeedState = Schema.Literals(["CatchingUp", "Live", "Failed"]);
+
 export type FeedState = typeof FeedState.Type;
 
 export const EventRow = Schema.Struct({
@@ -45,6 +48,7 @@ export const EventRow = Schema.Struct({
   tag: Schema.String,
   body: Schema.String,
 });
+
 export type EventRow = typeof EventRow.Type;
 
 export { ActionDraft, AdminIntent };
@@ -73,6 +77,7 @@ export const ChangeTierQuote = Schema.Union([
   ChangeTierQuoted,
   ChangeTierApplying,
 ]);
+
 export type ChangeTierQuote = typeof ChangeTierQuote.Type;
 
 export const PendingStatus = Schema.Literals([
@@ -82,6 +87,7 @@ export const PendingStatus = Schema.Literals([
   "Rejected",
   "Denied",
 ]);
+
 export type PendingStatus = typeof PendingStatus.Type;
 
 /** The typed evidence a command failed with, kept for the operator to read. */
@@ -111,6 +117,7 @@ export const AdminFailure = Schema.Union([
   AdminUnknown,
   AdminRpcRejected,
 ]);
+
 export type AdminFailure = typeof AdminFailure.Type;
 
 export const Pending = Schema.Struct({
@@ -120,6 +127,7 @@ export const Pending = Schema.Struct({
   reason: Schema.Option(Schema.String),
   failure: Schema.Option(AdminFailure),
 });
+
 export type Pending = typeof Pending.Type;
 
 /**
@@ -135,6 +143,7 @@ export const HoldsState = Schema.Struct({
   holds: Schema.Array(HoldRecord),
   error: Schema.Option(Schema.String),
 });
+
 export type HoldsState = typeof HoldsState.Type;
 
 /**
@@ -149,6 +158,7 @@ export const ProviderRefsState = Schema.Struct({
   refs: Refs,
   error: Schema.Option(Schema.String),
 });
+
 export type ProviderRefsState = typeof ProviderRefsState.Type;
 
 /** A cross-account dashboard read, with the request that asked for it. */
@@ -159,6 +169,7 @@ export const OverviewState = Schema.Struct({
   overview: Schema.Option(BillingOverview),
   error: Schema.Option(Schema.String),
 });
+
 export type OverviewState = typeof OverviewState.Type;
 
 /** What `decide` would do with a command, asked without recording it. */
@@ -170,6 +181,7 @@ export const PreviewState = Schema.Struct({
   answer: Schema.Option(PreviewAnswer),
   error: Schema.Option(Schema.String),
 });
+
 export type PreviewState = typeof PreviewState.Type;
 
 /** One account judged against the deploy's catalog and provider. */
@@ -180,6 +192,7 @@ export const VerifyState = Schema.Struct({
   mismatches: Schema.Array(VerifyMismatch),
   error: Schema.Option(Schema.String),
 });
+
 export type VerifyState = typeof VerifyState.Type;
 
 export const AccountState = Schema.Struct({
@@ -211,6 +224,7 @@ export const AccountState = Schema.Struct({
   /** Drift between this account and the deploy. */
   verify: Schema.Option(VerifyState),
 });
+
 export type AccountState = typeof AccountState.Type;
 
 export const AccountsState = Schema.Struct({
@@ -227,6 +241,7 @@ export const AccountsState = Schema.Struct({
    */
   asOf: Schema.Option(Schema.DateTimeUtc),
 });
+
 export type AccountsState = typeof AccountsState.Type;
 
 export const Model = Schema.Struct({
@@ -245,6 +260,7 @@ export const Model = Schema.Struct({
   /** The cross-account dashboard read; loaded when the overview page opens. */
   overview: Schema.Option(OverviewState),
 });
+
 export type Model = typeof Model.Type;
 
 /** The state of an account nothing has been read for yet. */

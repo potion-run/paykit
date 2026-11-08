@@ -15,6 +15,7 @@ type Log = ReturnType<typeof SqlEventLog>;
 const store = Effect.gen(function* () {
   const sql = sqliteExecutor();
   yield* migrate(sql);
+
   return { sql, log: SqlEventLog(sql, { now: () => 1_000 }) };
 });
 
@@ -109,6 +110,7 @@ describe("SqlEventLog", () => {
     Effect.gen(function* () {
       const base = sqliteExecutor();
       yield* migrate(base);
+
       const failing: SqlExecutor = {
         ...base,
         write: (statement, params) =>
@@ -116,6 +118,7 @@ describe("SqlEventLog", () => {
             ? Effect.fail(new SqlError({ message: "disk full", statement }))
             : base.write!(statement, params),
       };
+
       const log = SqlEventLog(failing, { now: () => 1_000 });
       const exit = yield* Effect.exit(append(log));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -162,6 +165,7 @@ describe("SqlEventLog", () => {
       expect(pending.map((delivery) => delivery.seq)).toEqual([1, 2, 3, 4]);
       expect(pending.map((delivery) => delivery.eventSeq)).toEqual([1, 1, 2, 2]);
       expect((yield* log.pendingDeliveries(2)).map((delivery) => delivery.seq)).toEqual([1, 2]);
+
       for (const delivery of pending) yield* log.markDelivered(delivery.seq);
       expect((yield* log.pendingDeliveries()).length).toBe(0);
     }),
@@ -196,6 +200,7 @@ describe("SqlEventLog", () => {
   it.effect("re-scheduling a delivered command makes it due again", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const command = {
         aggregate: "Subscription",
         account: "acct_1",
@@ -203,6 +208,7 @@ describe("SqlEventLog", () => {
         dueAt: 10,
         command: "{}",
       };
+
       yield* log.schedule(command);
       yield* log.markScheduledDelivered(command.aggregate, command.account, command.commandId);
       expect(yield* log.due(30)).toEqual([]);
@@ -232,6 +238,7 @@ describe("SqlEventLog", () => {
   it.effect("round-trips an unlimited feature's absent count through the JSON column", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const unlimited = {
         ...readModelRow,
         features: {
@@ -248,6 +255,7 @@ describe("SqlEventLog", () => {
           },
         },
       };
+
       yield* log.upsertReadModel(unlimited);
       const read = yield* log.readModel("acct_1");
       // `null` is the absence of a count; a store that turned it into 0 would
@@ -262,6 +270,7 @@ describe("SqlEventLog", () => {
   it.effect("round-trips a flag's judgement, and no counter, through the JSON column", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const flagged = {
         ...readModelRow,
         features: {
@@ -278,6 +287,7 @@ describe("SqlEventLog", () => {
           },
         },
       };
+
       yield* log.upsertReadModel(flagged);
       const read = yield* log.readModel("acct_1");
       // The read model carries the judgement (`allowed`), not a counter it
@@ -292,6 +302,7 @@ describe("SqlEventLog", () => {
   it.effect("round-trips a carried amount through the JSON column", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const rolled = {
         ...readModelRow,
         features: {
@@ -308,6 +319,7 @@ describe("SqlEventLog", () => {
           },
         },
       };
+
       yield* log.upsertReadModel(rolled);
       const read = yield* log.readModel("acct_1");
       // The carry is visible on the row, not folded into `remaining` alone.
@@ -320,6 +332,7 @@ describe("SqlEventLog", () => {
   it.effect("round-trips a credit-priced feature's pool through the JSON column", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const metered = {
         ...readModelRow,
         credits: 49_000,
@@ -338,6 +351,7 @@ describe("SqlEventLog", () => {
           },
         },
       };
+
       yield* log.upsertReadModel(metered);
       const read = yield* log.readModel("acct_1");
       // The card, the credits this feature spent, and the shared pool it
@@ -358,6 +372,7 @@ describe("SqlEventLog", () => {
   it.effect("round-trips the money a postpaid feature billed through the JSON column", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       const postpaid = {
         ...readModelRow,
         features: {
@@ -383,6 +398,7 @@ describe("SqlEventLog", () => {
           },
         },
       };
+
       yield* log.upsertReadModel(postpaid);
       const read = yield* log.readModel("acct_1");
       // The counters, the ceilings and the per-price split all survive the
@@ -411,6 +427,7 @@ describe("SqlEventLog", () => {
     Effect.gen(function* () {
       const { sql, log } = yield* store;
       yield* append(log);
+
       const numeric = new Set([
         "seq",
         "event_seq",
@@ -422,6 +439,7 @@ describe("SqlEventLog", () => {
         "cancel_at_period_end",
         "credits",
       ]);
+
       const asText = (row: Record<string, unknown>) =>
         Object.fromEntries(
           Object.entries(row).map(([key, value]) => [
@@ -429,14 +447,17 @@ describe("SqlEventLog", () => {
             numeric.has(key) && typeof value === "number" ? String(value) : value,
           ]),
         );
+
       // `pg` returns BIGINT columns as strings; the store must not hand those
       // to DateTime or arithmetic.
       const query = sql.query!;
+
       const stringy: SqlExecutor = {
         ...sql,
         query: (statement, params) =>
           Effect.map(query(statement, params), (rows) => rows.map(asText) as never),
       };
+
       const adapted = SqlEventLog(stringy, { now: () => 1_000 });
       expect((yield* adapted.events("Subscription", "acct_1")).map((row) => row.at)).toEqual([100]);
       expect((yield* adapted.pendingDeliveries()).map((row) => row.seq)).toEqual([1]);
@@ -453,9 +474,11 @@ describe("SqlEventLog", () => {
   it.effect("lists every account with events", () =>
     Effect.gen(function* () {
       const { log } = yield* store;
+
       for (const [index, account] of ["acct_b", "acct_a", "acct_a"].entries()) {
         yield* append(log, { account, commandId: `cmd_${account}_${index}` });
       }
+
       expect(yield* log.accounts("Subscription")).toEqual(["acct_a", "acct_b"]);
     }),
   );

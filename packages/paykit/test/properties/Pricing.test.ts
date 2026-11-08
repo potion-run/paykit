@@ -41,6 +41,7 @@ const PricingScript = Schema.Struct({
 
 const subscribed = (state: ReturnType<typeof evolveAt>): SubscribedState => {
   if (state._tag !== "Subscribed") throw new Error("the script never activated a standing");
+
   return state;
 };
 
@@ -57,6 +58,7 @@ describe("pricing", () => {
           start,
           "subscribe",
         );
+
         if (!isAccepted(opened)) return false;
 
         let state = evolveAt(initialSubscriptionState, opened, start, "subscribe");
@@ -66,11 +68,14 @@ describe("pricing", () => {
 
         for (const [index, step] of script.steps.entries()) {
           now = DateTime.add(now, { days: step.advanceDays });
+
           const plan =
             step.step._tag === "ChangeTier"
               ? ({ _tag: "ChangeTier", tier: step.step.tier } as const)
               : ({ _tag: "PeriodEnded" } as const);
+
           const decision = decideAt(state, commandOf(plan, state, now), now, `step-${index}`);
+
           if (!isAccepted(decision)) {
             // A rejected move changes nothing; the log stays a prefix of the walk.
             if (!same(canonical(state), canonical(foldAt(committed, now)))) return false;
@@ -78,6 +83,7 @@ describe("pricing", () => {
           }
 
           const before = subscribed(state);
+
           if (plan._tag === "ChangeTier") {
             const changed = decision.find((event) => event._tag === "TierChanged") as
               | {
@@ -85,8 +91,11 @@ describe("pricing", () => {
                   readonly priceAfter?: { readonly amount: number };
                 }
               | undefined;
+
             if (changed === undefined) return false;
+
             if (!same(changed.priceBefore, before.price)) return false;
+
             if (!same(changed.priceAfter, priceOf(plan.tier))) return false;
           } else {
             // A period boundary does not rewrite what the account pays.
@@ -96,13 +105,17 @@ describe("pricing", () => {
           committed.push(...decision);
           state = evolveAt(state, decision, now, `step-${index}`);
           const after = subscribed(state);
+
           if (plan._tag === "ChangeTier") expectedPrice = priceOf(plan.tier);
+
           if (!same(after.price, expectedPrice)) return false;
+
           if (plan._tag === "PeriodEnded" && !same(after.price, before.price)) return false;
         }
 
         // The state and the log agree, prices included.
         if (!same(canonical(state), canonical(foldAt(committed, now)))) return false;
+
         return same(subscribed(state).price, expectedPrice);
       },
       { runs: 60, size: 40 },
@@ -118,14 +131,17 @@ describe("pricing", () => {
       ),
       ({ priced }) => {
         const free = allowancesOf(testCatalog, "free")!;
+
         const opened = decideAt(
           initialSubscriptionState,
           commandOf({ _tag: "Subscribe", tier: "free" }, initialSubscriptionState, start),
           start,
           "free",
         );
+
         if (!isAccepted(opened)) return false;
         let state = evolveAt(initialSubscriptionState, opened, start, "free");
+
         if (subscribed(state).price !== undefined) return false;
 
         const changed = decideAt(
@@ -134,8 +150,10 @@ describe("pricing", () => {
           start,
           "upgrade",
         );
+
         if (!isAccepted(changed)) return false;
         state = evolveAt(state, changed, start, "upgrade");
+
         if (!same(subscribed(state).price, tierOf(testCatalog, priced)?.price)) return false;
 
         const downgraded = decideAt(
@@ -144,9 +162,12 @@ describe("pricing", () => {
           start,
           "downgrade",
         );
+
         if (!isAccepted(downgraded)) return false;
         state = evolveAt(state, downgraded, start, "downgrade");
+
         if (subscribed(state).price !== undefined) return false;
+
         return same(subscribed(state).allowances, free);
       },
       { runs: 20 },
@@ -155,13 +176,16 @@ describe("pricing", () => {
 
   it("an activation records the price it was sold at", () => {
     const pro = allowancesOf(testCatalog, "pro")!;
+
     const decision = decideAt(
       initialSubscriptionState,
       commandOf({ _tag: "Subscribe", tier: "pro" }, initialSubscriptionState, start),
       start,
       "subscribe",
     );
+
     expect(isAccepted(decision)).toBe(true);
+
     if (!isAccepted(decision)) return;
     const activated = decision[0] as { readonly _tag: string; readonly price?: { amount: number } };
     expect(activated._tag).toBe("SubscriptionActivated");

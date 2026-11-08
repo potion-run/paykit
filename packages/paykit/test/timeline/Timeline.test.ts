@@ -240,6 +240,7 @@ it("keeps a purchase made before any plan outside a period", () => {
     ),
     input(2, activated),
   ]);
+
   expect(timeline.periods.length).toBe(1);
   expect(timeline.entries[0]?.periodStart).toBeUndefined();
   expect(timeline.entries[1]?.periodStart).toEqual(start);
@@ -250,6 +251,7 @@ it("moves a trial's period end without inventing a billing entry", () => {
     input(1, activated),
     input(2, new TrialExtended({ trialEndsAt: monthAfterThat, periodEnd: monthAfterThat })),
   ]);
+
   expect(timeline.entries.map((entry) => entry.kind)).toEqual(["started"]);
   expect(timeline.periods[0]?.end).toEqual(monthAfterThat);
   expect(timeline.lastSeq).toBe(2);

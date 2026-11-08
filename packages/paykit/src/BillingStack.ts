@@ -105,13 +105,16 @@ export const BillingStack = Effect.fn("Paykit.BillingStack")(function* (
   const providers = props.providers ?? [];
   const descriptors = providers.map(providerDescriptor);
   const invalid = validateProviderMappings(parsed, descriptors);
+
   if (invalid !== null) return yield* invalid;
   const store = props.store ?? MemoryStore();
+
   const resource = yield* BillingStackResource(id, {
     catalog: parsed,
     providers: descriptors,
     store: storeKindOf(store),
   });
+
   return {
     resource,
     catalog: parsed,

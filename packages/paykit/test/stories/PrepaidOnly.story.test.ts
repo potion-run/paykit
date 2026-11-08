@@ -31,15 +31,18 @@ const packTier = tier({
   credits: 1_000,
   grants: [],
 });
+
 const planTier = tier({
   id: "pro",
   price,
   credits: 100,
   grants: [allowance(messages, { included: 100 })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages, ai], tiers: [planTier, packTier] }),
 );
+
 const rates = creditRatesOf(testCatalog);
 const plan = { allowances: { messages: planTier.grants[0]! }, credits: 100 };
 const account = Subscription.ref("acct_prepaid_only");

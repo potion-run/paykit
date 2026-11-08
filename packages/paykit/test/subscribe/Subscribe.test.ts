@@ -15,11 +15,13 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const packTier = tier({
   id: "credits_1k",
   kind: "one_off",
@@ -27,9 +29,11 @@ const packTier = tier({
   credits: 1_000,
   grants: [],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, packTier] }),
 );
+
 const account = "acct_checkout";
 
 const withMemory = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, never> =>
@@ -49,6 +53,7 @@ const withNoProvider = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<
 
 const state = Effect.gen(function* () {
   const subscription = yield* Subscription;
+
   return yield* subscription.state(Subscription.ref(account));
 });
 
@@ -90,6 +95,7 @@ describe("Subscribe purchase path", () => {
       expect("url" in started).toBe(true);
       const current = yield* state;
       expect(current._tag).toBe("Unsubscribed");
+
       if (current._tag === "Unsubscribed") {
         expect(current.refs.memory?.checkout).toContain("checkout");
       }
@@ -100,15 +106,18 @@ describe("Subscribe purchase path", () => {
     Effect.gen(function* () {
       const subscribe = yield* Subscribe(account);
       yield* subscribe({ tier: "pro" });
+
       const action = yield* completeCheckout({
         id: "evt_checkout_1",
         provider: "memory",
         account,
         tier: "pro",
       });
+
       expect(action).toBe("activated");
       const current = yield* state;
       expect(current._tag).toBe("Subscribed");
+
       if (current._tag === "Subscribed") {
         expect(current.status).toBe("active");
         expect(current.refs.memory?.checkout).toContain("checkout");
@@ -133,6 +142,7 @@ describe("Subscribe purchase path", () => {
         account,
         tier: "credits_1k",
       });
+
       expect(action).toBe("purchased");
       expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free", credits: 1_000 });
     }).pipe(withMemory),
@@ -151,6 +161,7 @@ describe("Subscribe purchase path", () => {
         account,
         tier: "credits_1k",
       });
+
       expect(action).toBe("purchased");
       expect(yield* state).toMatchObject({
         _tag: "Unsubscribed",
@@ -174,6 +185,7 @@ describe("Subscribe purchase path", () => {
       const started = yield* subscribe({ tier: "pro" });
       expect("invoiceId" in started).toBe(true);
       const current = yield* state;
+
       if (current._tag === "Unsubscribed") {
         expect(current.refs.manual?.checkout).toContain("invoice");
       }
@@ -185,6 +197,7 @@ describe("Subscribe purchase path", () => {
       const subscribe = yield* Subscribe(account);
       const exit = yield* Effect.exit(subscribe({ tier: "pro" }));
       expect(exit._tag).toBe("Failure");
+
       if (exit._tag === "Failure") {
         expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
       }

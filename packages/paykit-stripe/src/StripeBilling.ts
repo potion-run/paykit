@@ -59,10 +59,14 @@ export const StripeBilling = Effect.fn("Stripe.Billing")(function* (
   props: StripeBillingProps,
 ) {
   const sold = yield* StripePrices(id, { tiers: props.tiers });
+
   const provider = Stripe({
     ...props,
     tiers: soldTiers(props.tiers, sold),
     meters: sold.meters,
   });
-  return Object.assign(provider, { sold }) as StripeBillingProvider;
+
+  const billing: StripeBillingProvider = Object.assign(provider, { sold });
+
+  return billing;
 });

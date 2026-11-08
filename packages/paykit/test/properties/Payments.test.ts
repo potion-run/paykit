@@ -16,6 +16,7 @@ const Binds = Schema.Struct({
   refund: Schema.Boolean,
   usage: Schema.Boolean,
 });
+
 type Binds = typeof Binds.Type;
 
 const providerOf = (binds: Binds) => {
@@ -25,6 +26,7 @@ const providerOf = (binds: Binds) => {
     ...(binds.refund ? { createRefund: () => Effect.succeed({ refundId: "re_test" }) } : {}),
     ...(binds.usage ? { reportUsage: () => Effect.succeed({}) } : {}),
   };
+
   return PaymentsStripe({
     bindings: {
       createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
@@ -58,7 +60,9 @@ describe("the Payments port", () => {
         const declared = providerOf(binds).capabilities;
         // Every provider can sell and open a portal; the rest are optional.
         const required: ReadonlyArray<PaymentCapability> = ["checkout", "portal"];
+
         if (required.some((capability) => !declared.has(capability))) return false;
+
         return Object.entries(optionalOf(binds)).every(
           ([capability, bound]) => declared.has(capability as PaymentCapability) === bound,
         );
@@ -77,6 +81,7 @@ describe("the Payments port", () => {
       Arbitrary.schema(Binds),
       (binds) => {
         const provider = providerOf(binds);
+
         const ask = (
           capability: PaymentCapability,
           call: (payments: PaymentsService) => Effect.Effect<unknown, unknown>,
@@ -86,11 +91,13 @@ describe("the Payments port", () => {
             : Effect.gen(function* () {
                 const payments = yield* Payments;
                 const exit = yield* Effect.exit(call(payments));
+
                 // A refusal is the declared tag, never a defect.
                 return (
                   Exit.isFailure(exit) && String(exit.cause).includes("ProviderCapabilityMissing")
                 );
               }).pipe(Effect.provide(provider.payments));
+
         return Effect.all(
           [
             ask("invoice", (payments) =>

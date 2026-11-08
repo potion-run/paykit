@@ -98,6 +98,7 @@ const icon = (h: HtmlBuilder<Message>, path: string, className = "pk-icon"): Htm
 
 const initialsOf = (value: string): string => {
   const trimmed = value.replace(/^acct[_-]?/i, "");
+
   return (trimmed === "" ? value : trimmed).slice(0, 2).toUpperCase();
 };
 
@@ -425,33 +426,55 @@ const pageHeadView = (model: Model, h: HtmlBuilder<Message>): Html => {
 
 const badgeVariantOf = (kind: string, value: string): BadgeVariant => {
   if (kind === "standing") {
-    return value === "good" ? "success" : value === "grace" ? "warning" : "destructive";
+    return Match.value(value).pipe(
+      Match.withReturnType<BadgeVariant>(),
+      Match.when("good", () => "success"),
+      Match.when("grace", () => "warning"),
+      Match.orElse(() => "destructive"),
+    );
   }
+
   if (kind === "status") {
-    return value === "active" || value === "trialing"
-      ? "success"
-      : value === "grace"
-        ? "warning"
-        : "destructive";
+    return Match.value(value).pipe(
+      Match.withReturnType<BadgeVariant>(),
+      Match.whenOr("active", "trialing", () => "success"),
+      Match.when("grace", () => "warning"),
+      Match.orElse(() => "destructive"),
+    );
   }
+
   if (kind === "feed") {
-    return value === "Live" ? "success" : value === "CatchingUp" ? "warning" : "destructive";
+    return Match.value(value).pipe(
+      Match.withReturnType<BadgeVariant>(),
+      Match.when("Live", () => "success"),
+      Match.when("CatchingUp", () => "warning"),
+      Match.orElse(() => "destructive"),
+    );
   }
+
   if (kind === "pending") {
-    return value === "Accepted"
-      ? "success"
-      : value === "Sending"
-        ? "info"
-        : value === "Unknown"
-          ? "warning"
-          : "destructive";
+    return Match.value(value).pipe(
+      Match.withReturnType<BadgeVariant>(),
+      Match.when("Accepted", () => "success"),
+      Match.when("Sending", () => "info"),
+      Match.when("Unknown", () => "warning"),
+      Match.orElse(() => "destructive"),
+    );
   }
+
   if (kind === "holds") {
     return Number(value) === 0 ? "secondary" : "info";
   }
+
   if (kind === "hold") {
-    return value === "open" ? "info" : value === "settled" ? "success" : "secondary";
+    return Match.value(value).pipe(
+      Match.withReturnType<BadgeVariant>(),
+      Match.when("open", () => "info"),
+      Match.when("settled", () => "success"),
+      Match.orElse(() => "secondary"),
+    );
   }
+
   return "secondary";
 };
 
@@ -521,8 +544,10 @@ const filterOptions = (
 
 const accountsSummaryView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const rows = model.accounts.rows;
+
   const countOf = (standing: string): number =>
     rows.filter((row) => row.standing === standing).length;
+
   return h.div(
     [
       h.Class("pk-stats"),
@@ -543,16 +568,20 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const standing = Option.getOrElse(filter.standing, () => "");
   const status = Option.getOrElse(filter.status, () => "");
   const tier = Option.getOrElse(filter.tier, () => "");
+
   const hasFilter =
     Option.isSome(filter.standing) || Option.isSome(filter.status) || Option.isSome(filter.tier);
+
   // A list is a point-in-time read, never a live view: say when it was read,
   // or say the read time is unknown. The panel never presents the rows as
   // current, because the account it opens is live and this is not.
   const asOf = Option.getOrUndefined(model.accounts.asOf);
+
   const asOfText =
     asOf === undefined
       ? `Snapshot · read time unknown${model.accounts.state === "Loading" ? " · refreshing…" : ""}`
       : `Read ${formatDateTime(asOf)} · not live${model.accounts.state === "Loading" ? " · refreshing…" : ""}`;
+
   const tierOptions = Option.match(model.catalog, {
     onNone: () => [{ value: "", label: "All tiers" }],
     onSome: (catalog: Catalog) =>
@@ -751,6 +780,7 @@ const catalogBadge = (label: string, variant: BadgeVariant, h: HtmlBuilder<Messa
 
 const catalogFeature = (catalog: Catalog, id: string, h: HtmlBuilder<Message>): Html => {
   const feature = catalog.features.find((candidate) => candidate.id === id);
+
   return h.div(
     [h.Class("pk-catalog-feature")],
     [
@@ -780,12 +810,17 @@ const includedLabel = (allowance: Allowance): string =>
 const allowanceTerms = (allowance: Allowance): string => {
   if (allowance.kind === "flag") return "—";
   const terms: string[] = [];
+
   if (allowance.carryOver === true) terms.push("carry over");
+
   if (allowance.cap !== undefined) terms.push(`${allowance.cap} unit cap`);
+
   if (allowance.unitPrice !== undefined)
     terms.push(`${formatMoney(allowance.unitPrice.amount, allowance.unitPrice.currency)} / unit`);
+
   if (allowance.moneyCap !== undefined)
     terms.push(`${formatMoney(allowance.moneyCap, allowance.unitPrice?.currency)} money cap`);
+
   return terms.length === 0 ? "—" : terms.join(" · ");
 };
 
@@ -836,11 +871,14 @@ const planGrants = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html
 
 const planCard = (catalog: Catalog, tier: Tier, h: HtmlBuilder<Message>): Html => {
   const kind = tierKindOf(tier);
+
   const price =
     tier.price === undefined
       ? "Free"
       : `${formatMoney(tier.price.amount, tier.price.currency)} / ${tier.price.interval}`;
+
   const creditsExpire = tier.creditsExpire ?? (kind === "one_off" ? "never" : "period");
+
   return card(
     h,
     [
@@ -932,11 +970,13 @@ const catalogUnavailableView = (model: Model, h: HtmlBuilder<Message>): Html =>
 
 const plansView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const catalog = Option.getOrNull(model.catalog);
+
   if (catalog === null) return catalogUnavailableView(model, h);
   const tiers = catalog.tiers;
   const subscriptions = tiers.filter((tier) => tierKindOf(tier) === "subscription").length;
   const oneOff = tiers.length - subscriptions;
   const priced = tiers.filter((tier) => tier.price !== undefined).length;
+
   return h.div(
     [h.Class("pk-catalog-page"), h.DataAttribute("paykit-catalog", "plans")],
     [
@@ -973,6 +1013,7 @@ const grantedBy = (catalog: Catalog, feature: Feature, h: HtmlBuilder<Message>):
   const tiers = catalog.tiers.filter((tier) =>
     tier.grants.some((allowance) => allowance.feature === feature.id),
   );
+
   return tiers.length === 0
     ? h.span([h.Class("pk-muted")], ["Not granted"])
     : h.div(
@@ -988,11 +1029,13 @@ const grantedBy = (catalog: Catalog, feature: Feature, h: HtmlBuilder<Message>):
 
 const featuresView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const catalog = Option.getOrNull(model.catalog);
+
   if (catalog === null) return catalogUnavailableView(model, h);
   const features = catalog.features;
   const flags = features.filter((feature) => feature.kind === "flag").length;
   const metered = features.length - flags;
   const creditPriced = features.filter((feature) => feature.creditRates !== undefined).length;
+
   return h.div(
     [h.Class("pk-catalog-page"), h.DataAttribute("paykit-catalog", "features")],
     [
@@ -1073,6 +1116,7 @@ const featuresView = (model: Model, h: HtmlBuilder<Message>): Html => {
 /** Money a billing page sums per currency, as one readable line. */
 const moneyByCurrency = (amounts: Readonly<Record<string, number>> | undefined): string => {
   const entries = Object.entries(amounts ?? {});
+
   return entries.length === 0
     ? "Nothing"
     : entries.map(([currency, amount]) => formatMoney(amount, currency)).join(", ");
@@ -1166,6 +1210,7 @@ const adjustmentsView = (
   const pending = billing.pendingTier;
   const proration = billing.proration;
   const catalogValue = Option.getOrNull(catalog);
+
   return card(
     h,
     [
@@ -1308,7 +1353,9 @@ const entitlementTerms = (
 ): string => {
   if (feature.kind === "flag") return "—";
   const terms = [`overage ${feature.overage}`];
+
   if (feature.carried > 0) terms.push(`${feature.carried} carried`);
+
   if (feature.creditRates !== undefined) {
     const card = feature.creditRates;
     terms.push(
@@ -1321,11 +1368,15 @@ const entitlementTerms = (
       ].join(" · ")}`,
     );
   }
+
   if (feature.cap !== undefined) terms.push(`${feature.cap} unit cap`);
+
   if (feature.unitPrice !== undefined)
     terms.push(`${formatMoney(feature.unitPrice.amount, feature.unitPrice.currency)} / unit`);
+
   if (feature.moneyCap !== undefined)
     terms.push(`${formatMoney(feature.moneyCap, entitlements.currency)} money cap`);
+
   return terms.join(" · ");
 };
 
@@ -1335,6 +1386,7 @@ const featureTable = (
   h: HtmlBuilder<Message>,
 ): Html => {
   const entries = Object.entries(entitlements.features);
+
   return card(
     h,
     [
@@ -1373,6 +1425,7 @@ const featureTable = (
                 h,
                 entries.map(([name, feature]) => {
                   const kind = feature.kind ?? "metered";
+
                   return tableRow(
                     h,
                     [
@@ -1439,7 +1492,9 @@ const featureTable = (
 const readLabel = (asOf: Option.Option<DateTime.Utc>, loading: boolean, live = false): string => {
   if (loading) return "Refreshing…";
   const value = Option.getOrUndefined(asOf);
+
   if (value === undefined) return "Snapshot · read time unknown";
+
   return `Read ${formatDateTime(value)} · ${live ? "live reads follow" : "not live"}`;
 };
 
@@ -1455,6 +1510,7 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   const closed = holds.holds.filter((hold) => hold.status !== "open");
   const rows = [...open, ...closed];
   const asOf = Option.getOrUndefined(holds.asOf);
+
   return card(
     h,
     [
@@ -1569,9 +1625,11 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
  */
 const providerRefsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   const current = Option.getOrNull(account.providerRefs);
+
   if (current === null) return h.empty;
   const entries = Object.entries(current.refs);
   const asOf = Option.getOrUndefined(current.asOf);
+
   return card(
     h,
     [
@@ -1654,9 +1712,12 @@ const providerRefsView = (account: AccountState, h: HtmlBuilder<Message>): Html 
 const usageView = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Html => {
   const rows = Object.entries(entitlements.features).flatMap(([feature, entry]) => {
     const priced = Object.values(entry.priced ?? {});
+
     return priced.length === 0 && entry.billed === undefined ? [] : [{ feature, entry, priced }];
   });
+
   if (rows.length === 0) return h.empty;
+
   return card(
     h,
     [
@@ -1727,12 +1788,15 @@ const usageView = (entitlements: EntitlementsState, h: HtmlBuilder<Message>): Ht
 
 const previewAnswerView = (preview: PreviewState, h: HtmlBuilder<Message>): Html => {
   if (preview.state === "Loading") return h.p([h.Class("pk-muted")], ["Asking the model…"]);
+
   if (Option.isSome(preview.error)) {
     return alert(h, { variant: "destructive" }, [
       alertDescription(h, [`Preview failed: ${preview.error.value}`]),
     ]);
   }
+
   if (Option.isNone(preview.answer)) return h.empty;
+
   return Match.value(preview.answer.value).pipe(
     Match.withReturnType<Html>(),
     Match.tag("accepted", ({ state, events, proration }) =>
@@ -1778,15 +1842,19 @@ const previewAnswerView = (preview: PreviewState, h: HtmlBuilder<Message>): Html
  */
 const previewView = (model: Model, account: AccountState, h: HtmlBuilder<Message>): Html => {
   const tiers = Option.match(model.catalog, {
-    onNone: () => [] as ReadonlyArray<string>,
+    onNone: (): ReadonlyArray<string> => [],
     onSome: (catalog) => catalog.tiers.map((entry) => entry.id),
   });
+
   const tier = Option.getOrElse(account.previewTier, () => "");
+
   const options = [
     { value: "", label: "Choose a tier" },
     ...tiers.map((value) => ({ value, label: value })),
   ];
+
   const preview = Option.getOrUndefined(account.preview);
+
   return card(
     h,
     [
@@ -1912,10 +1980,12 @@ const actionButtons = (
 ): Html => {
   if (Option.isNone(account.billing))
     return h.p([h.Class("pk-muted")], ["Waiting for the billing snapshot."]);
+
   const descriptors = actionsFor(account.billing.value, {
     catalog: Option.getOrUndefined(catalog),
     entitlements: Option.getOrUndefined(account.entitlements),
   });
+
   const enabled = descriptors.filter((descriptor) => ConsoleAction.includes(descriptor.action));
 
   return card(h, [
@@ -1971,6 +2041,7 @@ const draftView = (
   const updated = (field: string) => (value: string) => Message.UpdatedDraftField({ field, value });
   const fields = OperatorActions[draft.kind].fields;
   const tier = draft.values.tier ?? "";
+
   const changeQuote =
     draft.kind === "ChangeTier"
       ? Option.match(account.change, {
@@ -1979,10 +2050,12 @@ const draftView = (
             value.tier === tier && value._tag !== "Quoting" ? Option.some(value) : Option.none(),
         })
       : Option.none();
+
   const isQuoted = Option.match(changeQuote, {
     onNone: () => false,
     onSome: (value) => value._tag === "Quoted",
   });
+
   const isApplying = Option.match(changeQuote, {
     onNone: () => false,
     onSome: (value) => value._tag === "Applying",
@@ -1993,6 +2066,7 @@ const draftView = (
       onNone: () => undefined,
       onSome: (billing) => billing.tier,
     });
+
     return Option.match(model.catalog, {
       onNone: () => [],
       onSome: (catalog) =>
@@ -2010,9 +2084,11 @@ const draftView = (
     if (fields.length === 0) {
       return [h.p([h.Class("pk-muted")], [`Send ${draft.kind} for this account?`])];
     }
+
     const rendered = fields.map((field): Html => {
       const value = draft.values[field.name] ?? "";
       const id = `draft-${field.name}`;
+
       switch (field.control) {
         case "tier":
           return selectField(id, field.label, value, tierOptions(), updated(field.name), h);
@@ -2024,6 +2100,7 @@ const draftView = (
           return textField(id, field.label, value, updated(field.name), h);
       }
     });
+
     const quote =
       draft.kind === "ChangeTier"
         ? Option.match(changeQuote, {
@@ -2031,6 +2108,7 @@ const draftView = (
             onSome: (value) => [prorationPanel(value.proration, h)],
           })
         : [];
+
     return [...rendered, ...quote];
   };
 
@@ -2109,13 +2187,16 @@ const eventVolumeView = (events: AccountState["events"], h: HtmlBuilder<Message>
   const newest = events.reduce((max, event) => Math.max(max, event.at.epochMilliseconds), 0);
   const start = newest - 24 * hour;
   const counts = Array.from({ length: 24 }, () => 0);
+
   for (const event of events) {
     const index = Math.min(
       23,
       Math.max(0, Math.floor((event.at.epochMilliseconds - start) / hour)),
     );
+
     counts[index] = (counts[index] ?? 0) + 1;
   }
+
   return h.div(
     [h.Class("pk-event-volume")],
     [
@@ -2190,15 +2271,25 @@ const eventsView = (account: AccountState, h: HtmlBuilder<Message>): Html =>
 
 const timelineDetail = (entry: TimelineEntry, currency: string | undefined): string => {
   const parts: string[] = [];
+
   if (entry.feature !== undefined) parts.push(entry.feature);
+
   if (entry.tier !== undefined) parts.push(`tier ${entry.tier}`);
+
   if (entry.holdId !== undefined) parts.push(`hold ${entry.holdId}`);
+
   if (entry.amount !== undefined) parts.push(`${entry.amount} units`);
+
   if (entry.credits !== undefined) parts.push(`${entry.credits} credits`);
+
   if (entry.charge !== undefined) parts.push(formatMoney(entry.charge, entry.currency ?? currency));
+
   if (entry.creditsAfter !== undefined) parts.push(`${entry.creditsAfter} left`);
+
   if (entry.invoiceId !== undefined) parts.push(`invoice ${entry.invoiceId}`);
+
   if (entry.reason !== undefined) parts.push(entry.reason);
+
   return parts.join(" · ");
 };
 
@@ -2209,10 +2300,12 @@ const timelineDetail = (entry: TimelineEntry, currency: string | undefined): str
  */
 const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   const timeline = account.timeline;
+
   const currency = Option.match(account.entitlements, {
     onNone: () => undefined,
     onSome: (value) => value.currency,
   });
+
   const recent = timeline.entries.toReversed().slice(0, 50);
 
   return card(
@@ -2322,6 +2415,7 @@ const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
 
 const accountSummaryView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   const billing = Option.getOrNull(account.billing);
+
   if (billing === null) {
     return h.div(
       [
@@ -2337,26 +2431,31 @@ const accountSummaryView = (account: AccountState, h: HtmlBuilder<Message>): Htm
       ],
     );
   }
+
   const statusTone: Tone =
     billing.status === "grace"
       ? "warning"
       : standingValueOf(billing.status) === "good"
         ? "success"
         : "destructive";
+
   const price =
     billing.price === undefined
       ? "Free plan"
       : `${formatMoney(billing.price.amount, billing.price.currency)} / ${billing.price.interval}`;
+
   // The holds read carries the timestamp the page was last proven current;
   // using it as the phase clock says "overdue as of the read", never "overdue
   // as of whenever this render happened".
   const holds = Option.getOrNull(account.holds);
   const readAt = holds === null ? null : Option.getOrNull(holds.asOf);
   const phase = readAt === null ? null : standingPhaseOfView(billing, readAt);
+
   const statusDetail =
     phase === null
       ? `Standing: ${standingValueOf(billing.status)}`
       : `Phase: ${phase._tag}${"overdue" in phase && phase.overdue ? " · overdue" : ""}`;
+
   return h.div(
     [
       h.Class("pk-stats"),
@@ -2543,6 +2642,7 @@ const devToolsEventsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                 [],
                 devToolsEvents.map((event) => {
                   const isSelected = event.tag === model.devTools.eventTag;
+
                   return h.keyed("tr")(
                     event.tag,
                     [
@@ -2607,12 +2707,14 @@ const devToolsEventsView = (model: Model, h: HtmlBuilder<Message>): Html => {
 const devToolsReadsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const account = Option.getOrNull(model.account);
   const isAccountOpen = account !== null;
+
   const status =
     account === null
       ? `No account open · ${model.devTools.labRows.length} lab accounts`
       : `${account.id} · ${account.feed} · ${account.events.length} events · ${
           Option.isSome(account.billing) ? "standing seeded" : "no standing"
         } · ${model.devTools.labRows.length} lab accounts`;
+
   const tierOptions = Option.match(model.catalog, {
     onNone: () => [{ value: model.devTools.seedTier, label: model.devTools.seedTier }],
     onSome: (catalog) =>
@@ -2621,6 +2723,7 @@ const devToolsReadsView = (model: Model, h: HtmlBuilder<Message>): Html => {
         label: tier.name === undefined ? String(tier.id) : `${tier.name} (${tier.id})`,
       })),
   });
+
   const statusOptions = ["trialing", "active", "grace", "canceled", "expired"].map((value) => ({
     value,
     label: value,
@@ -2707,6 +2810,7 @@ const devToolsFeedView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const account = Option.getOrNull(model.account);
   const isAccountOpen = account !== null;
   const cursor = account === null ? "—" : String(Option.getOrElse(account.cursor, () => "—"));
+
   return h.div(
     [h.Class("pk-devtools-body")],
     [
@@ -2820,13 +2924,13 @@ const PIE_COLORS = [
   "var(--pk-muted-foreground)",
 ] as const;
 
-const STATUS_COLORS: Readonly<Record<string, string>> = {
-  trialing: "var(--pk-info)",
-  active: "var(--pk-success)",
-  grace: "var(--pk-warning)",
-  canceled: "var(--pk-destructive)",
-  expired: "var(--pk-muted-foreground)",
-};
+const STATUS_COLORS = new Map<string, string>([
+  ["trialing", "var(--pk-info)"],
+  ["active", "var(--pk-success)"],
+  ["grace", "var(--pk-warning)"],
+  ["canceled", "var(--pk-destructive)"],
+  ["expired", "var(--pk-muted-foreground)"],
+]);
 
 const capitalise = (value: string): string =>
   value === "" ? value : `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`;
@@ -2946,6 +3050,7 @@ const attentionView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const rows = model.accounts.rows.filter(
     (row) => row.standing !== "good" || row.cancelAtPeriodEnd,
   );
+
   return card(
     h,
     [
@@ -3021,6 +3126,7 @@ const mergeOverview = (
   const standing = new Map(base.byStanding.map((entry) => [entry.standing, entry.count]));
   const tiers = new Map(base.byTier.map((entry) => [entry.tier, entry.count]));
   const revenue = new Map(base.revenue.map((entry) => [entry.currency, { ...entry }]));
+
   const priceOf = (row: BillingReadRow, currency: string | undefined) =>
     Option.match(catalog, {
       onNone: () => ({
@@ -3029,6 +3135,7 @@ const mergeOverview = (
       }),
       onSome: (value) => {
         const price = value.tiers.find((tier) => String(tier.id) === row.tier)?.price;
+
         return price === undefined
           ? { currency, monthly: 0 }
           : {
@@ -3037,12 +3144,15 @@ const mergeOverview = (
             };
       },
     });
+
   for (const row of labRows) {
     status.set(row.status, (status.get(row.status) ?? 0) + 1);
     standing.set(row.standing, (standing.get(row.standing) ?? 0) + 1);
     tiers.set(row.tier, (tiers.get(row.tier) ?? 0) + 1);
     const { currency, monthly } = priceOf(row, row.currency);
+
     if (currency === undefined || monthly === 0) continue;
+
     const entry = revenue.get(currency) ?? {
       currency,
       mrr: 0,
@@ -3051,17 +3161,21 @@ const mergeOverview = (
       atRisk: 0,
       churned: 0,
     };
+
     if (row.status === "active" || row.status === "grace") {
       entry.mrr += monthly;
+
       if (row.status === "grace") entry.atRisk += monthly;
     } else if (row.status === "trialing") {
       entry.trialPipeline += monthly;
     } else {
       entry.churned += monthly;
     }
+
     entry.arr = entry.mrr * 12;
     revenue.set(currency, entry);
   }
+
   return BillingOverview.make({
     asOf: base.asOf,
     accounts: base.accounts + labRows.length,
@@ -3082,24 +3196,29 @@ const mergeOverview = (
 
 const overviewView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const state = Option.getOrNull(model.overview);
+
   if (state === null) {
     return empty(h, {
       title: "Loading the overview…",
       description: "The dashboard aggregates every account when it opens.",
     });
   }
+
   if (Option.isSome(state.error)) {
     return alert(h, { variant: "destructive" }, [
       alertDescription(h, [`Could not load the overview: ${state.error.value}`]),
     ]);
   }
+
   const serverOverview = Option.getOrNull(state.overview);
+
   if (serverOverview === null) {
     return empty(h, {
       title: "Loading the overview…",
       description: "The dashboard aggregates every account when it opens.",
     });
   }
+
   const labRows = model.devTools.isEnabled ? model.devTools.labRows : [];
   const overview = mergeOverview(serverOverview, labRows, model.catalog);
   const primary = overview.revenue[0];
@@ -3111,6 +3230,7 @@ const overviewView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const currency = primary?.currency;
   const growth = Array.from({ length: 12 }, (_, index) => Math.round(mrr * 1.1 ** (index + 1)));
   const projected = growth[growth.length - 1] ?? 0;
+
   const tierSegments: ReadonlyArray<PieSegment> = overview.byTier
     .filter((entry) => entry.count > 0)
     .map((entry, index) => ({
@@ -3118,13 +3238,15 @@ const overviewView = (model: Model, h: HtmlBuilder<Message>): Html => {
       value: entry.count,
       color: PIE_COLORS[index % PIE_COLORS.length] ?? "var(--pk-primary)",
     }));
+
   const statusSegments: ReadonlyArray<PieSegment> = overview.byStatus
     .filter((entry) => entry.count > 0)
     .map((entry) => ({
       label: capitalise(entry.status),
       value: entry.count,
-      color: STATUS_COLORS[entry.status] ?? "var(--pk-muted-foreground)",
+      color: STATUS_COLORS.get(entry.status) ?? "var(--pk-muted-foreground)",
     }));
+
   return h.div(
     [h.Class("pk-overview-page"), h.DataAttribute("paykit-overview", "dashboard")],
     [

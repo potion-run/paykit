@@ -63,10 +63,14 @@ export const PolarBilling = Effect.fn("Polar.Billing")(function* (
   props: PolarBillingProps,
 ) {
   const sold = yield* PolarPrices(id, { tiers: props.tiers });
+
   const provider = Polar({
     ...props,
     tiers: soldTiers(props.tiers, sold),
     meters: sold.meters,
   });
-  return Object.assign(provider, { sold }) as PolarBillingProvider;
+
+  const billing: PolarBillingProvider = Object.assign(provider, { sold });
+
+  return billing;
 });

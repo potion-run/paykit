@@ -38,6 +38,7 @@ export const RefundRequest = Schema.Struct({
    */
   commandId: Schema.optionalKey(Schema.String),
 });
+
 export type RefundRequest = typeof RefundRequest.Type;
 
 /** Every typed refusal a refund can return as data. */
@@ -46,6 +47,7 @@ export const RefundRejection = Schema.Union([
   ProviderCapabilityMissing,
   PaymentDeclined,
 ]);
+
 export type RefundRejection = typeof RefundRejection.Type;
 
 /** The provider took the money and the log recorded it. */
@@ -71,6 +73,7 @@ export const RefundFailed = Schema.TaggedStruct("failed", {
 });
 
 export const RefundAnswer = Schema.Union([RefundApplied, RefundRejected, RefundFailed]);
+
 export type RefundAnswer = typeof RefundAnswer.Type;
 
 /** The server-side refund: the in-process binding, with the answer as data. */
@@ -115,7 +118,9 @@ export const makeAdminRefund = Effect.gen(function* () {
       Effect.gen(function* () {
         const commandId =
           input.commandId ?? (yield* Effect.sync(() => globalThis.crypto.randomUUID()));
+
         const verb = yield* refund(input.account);
+
         const result = yield* Effect.result(
           verb({
             chargeId: input.chargeId,
@@ -138,6 +143,7 @@ export const makeAdminRefund = Effect.gen(function* () {
         if (Schema.is(RefundRejection)(result.failure)) {
           return RefundRejected.make({ commandId, rejection: result.failure });
         }
+
         // A transport failure is not a refusal: the money may have moved, so
         // the console keeps the command id and offers the retry.
         return RefundFailed.make({
@@ -193,6 +199,7 @@ export const AdminRefundClient = (
     AdminRefund,
     Effect.gen(function* () {
       const client = yield* RpcClient.make(AdminRefundRpcs);
+
       const call = <A>(
         effect: Effect.Effect<A, AdminReadError | RpcClientError.RpcClientError>,
       ): Effect.Effect<A, AdminReadError> =>

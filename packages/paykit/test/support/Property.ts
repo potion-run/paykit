@@ -25,7 +25,9 @@ export const assertProperty = <A, E = never, R = never>(
       maxDiscards: 1_000,
       ...options,
     });
+
     const failure = Arbitrary.formatCheckFailure(result);
+
     if (failure !== undefined) {
       return yield* Effect.die(new Error(failure));
     }

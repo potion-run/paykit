@@ -41,6 +41,7 @@ const PricingSpec = Schema.Union([
     bands: Schema.Array(BandSpec).pipe(Schema.check(Schema.isMaxLength(3))),
   }),
 ]);
+
 type PricingSpec = typeof PricingSpec.Type;
 
 const price = { amount: 1_900, currency: "usd", interval: "month" as const };
@@ -55,6 +56,7 @@ const ladderOf = (
   const seen = new Set<number>();
   const amounts = kind === "volume" ? bands.map((band) => band.amount).sort((a, b) => b - a) : null;
   const ladder: Array<PriceBandInput> = [];
+
   for (const [index, band] of sorted.entries()) {
     if (seen.has(band.upTo)) continue;
     seen.add(band.upTo);
@@ -67,8 +69,10 @@ const ladderOf = (
       ...(band.units === undefined || kind === "volume" ? {} : { units: band.units }),
     });
   }
+
   if (ladder.length === 0) ladder.push({ upTo: "inf", amount: 1, currency: "usd" });
   ladder[ladder.length - 1] = { ...ladder[ladder.length - 1]!, upTo: "inf" };
+
   return ladder;
 };
 
@@ -116,7 +120,9 @@ const withAmount = (built: Pricing): Pricing => {
       unitPrice: { ...built.unitPrice, amount: built.unitPrice.amount + 1 },
     };
   }
+
   const [first, ...rest] = built.bands;
+
   return {
     ...built,
     bands: [
@@ -159,14 +165,17 @@ describe("a provider that holds the full usage pricing", () => {
       ),
       ({ pricing: spec, mapping }) => {
         const catalog = catalogOf(inputOf(spec));
+
         if (Result.isFailure(catalog)) return false;
         const built = pricing(inputOf(spec));
+
         const mapped =
           mapping === "amount"
             ? withAmount(built)
             : mapping === "tag"
               ? withOtherTag(built)
               : built;
+
         const usagePrices: Record<string, Record<string, Pricing>> = mapping === "extra"
           ? {
               metered: {
@@ -175,11 +184,14 @@ describe("a provider that holds the full usage pricing", () => {
               },
             }
           : { metered: { messages: mapped } };
+
         const result = validateProviderMappings(catalog.success, [providerOf({ usagePrices })]);
 
         if (mapping === "correct") return result === null;
         const mismatch = mismatchOf(result);
+
         if (mismatch === null) return false;
+
         if (mapping === "extra") {
           return (
             mismatch.field === "pricing.ghost" &&
@@ -187,6 +199,7 @@ describe("a provider that holds the full usage pricing", () => {
             mismatch.actual === pricingKey({ _tag: "unit", unitPrice: ghostPrice })
           );
         }
+
         return (
           mismatch.field === "pricing.messages" &&
           mismatch.expected === pricingKey(built) &&
@@ -218,15 +231,19 @@ describe("a provider that holds the full usage pricing", () => {
         ({ amount, units, mapping, full }) => {
           const input = { kind: "unit" as const, amount, units, currency: "usd" };
           const catalog = catalogOf(input);
+
           if (Result.isFailure(catalog)) return false;
           const built = pricing(input);
+
           const mapped: UnitPrice = {
             amount: mapping === "amount" ? amount + 1 : amount,
             currency: "usd",
             units: mapping === "units" ? units + 1 : units,
           };
+
           const shorthand =
             mapping === "absent" ? {} : { unitPrices: { metered: { messages: mapped } } };
+
           const result = validateProviderMappings(catalog.success, [
             providerOf({
               ...(full ? { usagePrices: { metered: { messages: built } } } : {}),
@@ -236,7 +253,9 @@ describe("a provider that holds the full usage pricing", () => {
 
           if (full || mapping === "correct") return result === null;
           const mismatch = mismatchOf(result);
+
           if (mismatch === null) return false;
+
           return (
             mismatch.field === "unitPrice.messages" &&
             mismatch.expected === textOf({ amount, currency: "usd", units }) &&
@@ -268,19 +287,25 @@ describe("a provider that holds the full usage pricing", () => {
             { upTo: "inf" as const, amount: secondAmount, currency: "usd" },
           ],
         };
+
         const catalog = catalogOf(input);
+
         if (Result.isFailure(catalog)) return false;
         const built = pricing(input);
         const first = built._tag === "unit" ? built.unitPrice : built.bands[0]!.unitPrice;
+
         const result = validateProviderMappings(catalog.success, [
           providerOf({
             ...(mapping === "full" ? { usagePrices: { metered: { messages: built } } } : {}),
             ...(mapping === "shorthand" ? { unitPrices: { metered: { messages: first } } } : {}),
           }),
         ]);
+
         if (mapping === "full") return result === null;
         const mismatch = mismatchOf(result);
+
         if (mismatch === null) return false;
+
         if (mapping === "shorthand") {
           return (
             mismatch.field === "unitPrice.messages" &&
@@ -288,6 +313,7 @@ describe("a provider that holds the full usage pricing", () => {
             mismatch.actual === textOf(first)
           );
         }
+
         return (
           mismatch.field === "pricing.messages" &&
           mismatch.expected === "a pricing the provider can meter" &&
@@ -300,6 +326,7 @@ describe("a provider that holds the full usage pricing", () => {
 
   it("refuses a usage pricing for a tier the catalog never declares", () => {
     const catalog = Result.getOrThrow(catalogOf({ kind: "unit", amount: 1, currency: "usd" }));
+
     const result = validateProviderMappings(catalog, [
       {
         ...providerOf({
@@ -310,7 +337,9 @@ describe("a provider that holds the full usage pricing", () => {
         prices: { metered: price },
       },
     ]);
+
     expect(result?._tag).toBe("CatalogPriceMismatch");
+
     if (result?._tag === "CatalogPriceMismatch") {
       expect(result.field).toBe("usagePrices");
       expect(result.actual).toBe("missing");

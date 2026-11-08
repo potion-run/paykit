@@ -14,6 +14,7 @@ export class AccountEventsProjection extends Domain.Projection("AccountEventsPro
 export const AccountEventsLive = AccountEventsProjection.toLayer(
   Effect.gen(function* () {
     const stream = yield* AccountEvents;
+
     return Effect.fn("Paykit.AccountEvents.project")(function* (batch) {
       for (const input of batch) {
         yield* stream.append(input, input.event);

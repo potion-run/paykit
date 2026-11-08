@@ -29,16 +29,20 @@ const testCatalog = Effect.runSync(
 const provided = <A extends { readonly key: string }>(tag: A) =>
   Effect.gen(function* () {
     const held = yield* Effect.serviceOption(tag as never);
+
     return Option.isSome(held);
   });
 
 type IsAny<T> = 0 extends 1 & T ? true : false;
+
 type Provides<L extends Layer.Any, S> = [Extract<Layer.Success<L>, S>] extends [never]
   ? false
   : true;
 
 type TenantWorld = ReturnType<typeof world<never, never, "tenant">>;
+
 type BothWorld = ReturnType<typeof world<never, never, "both">>;
+
 type TenantSuccess = Layer.Success<TenantWorld>;
 
 const _typed: IsAny<TenantSuccess> = false;
@@ -105,7 +109,9 @@ describe("world", () => {
           ),
         ),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogDuplicateFeature");
     }),
   );

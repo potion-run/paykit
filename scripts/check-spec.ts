@@ -40,9 +40,12 @@ const renderStep = (step: TraceStep, index: number, previous: TraceStep | undefi
         previous === undefined ||
         formatValue(previous.state[name]!) !== formatValue(step.state[name]!),
     );
+
   const variables = changed.map((name) => `      ${name} = ${formatValue(step.state[name]!)}`);
   const action = step.action ?? "init";
+
   if (variables.length === 0) return `    ${index}. ${action}`;
+
   return [`    ${index}. ${action}`, ...variables].join("\n");
 };
 
@@ -51,19 +54,25 @@ const detailOf = (result: CheckResult): string => {
   if (result.failure !== undefined) {
     return `evaluation failed: ${result.failure.message}`;
   }
+
   const violation = result.violation;
+
   if (violation === undefined) return `status ${result.status} with no violation`;
+
   const header = `${violation.name} is false${
     violation.message === undefined ? "" : `: ${violation.message}`
   }`;
+
   const steps = violation.trace.map((step, index) =>
     renderStep(step, index, index === 0 ? undefined : violation.trace[index - 1]),
   );
+
   return [header, ...steps].join("\n");
 };
 
 const specDirectory = Effect.gen(function* () {
   const path = yield* Path.Path;
+
   return path.join(path.resolve(import.meta.dirname, ".."), "spec");
 });
 
@@ -75,9 +84,11 @@ const models = Effect.gen(function* () {
   const entries = yield* fs.readDirectory(directory);
   const configs = entries.filter((entry) => entry.endsWith(".cfg")).sort();
   const found: Array<{ name: string; module: string; config: string }> = [];
+
   for (const config of configs) {
     const name = config.slice(0, -".cfg".length);
     const module = path.join(directory, `${name}.tla`);
+
     if (!(yield* fs.exists(module))) continue;
     found.push({
       name,
@@ -85,6 +96,7 @@ const models = Effect.gen(function* () {
       config: yield* fs.readFileString(path.join(directory, config)),
     });
   }
+
   return found;
 });
 
@@ -98,6 +110,7 @@ const checkModel = Effect.fn("Spec.checkModel")(function* (model: {
     catch: (cause) =>
       new SpecViolation({ module: model.name, status: "error", detail: String(cause) }),
   });
+
   if (result.status !== "success") {
     return yield* new SpecViolation({
       module: model.name,
@@ -105,6 +118,7 @@ const checkModel = Effect.fn("Spec.checkModel")(function* (model: {
       detail: detailOf(result),
     });
   }
+
   yield* Console.log(
     `${model.name}: ${result.distinctStates} distinct states, ${result.depth} deep.`,
   );
@@ -112,14 +126,17 @@ const checkModel = Effect.fn("Spec.checkModel")(function* (model: {
 
 const checkAll = Effect.fn("Spec.checkAll")(function* () {
   const found = yield* models;
+
   if (found.length === 0) {
     yield* Console.error("  spec/: no <Name>.cfg with a matching <Name>.tla");
+
     return yield* new SpecViolation({
       module: "spec",
       status: "error",
       detail: "nothing to check",
     });
   }
+
   yield* Effect.forEach(found, checkModel, { discard: true });
   yield* Console.log(`Checked ${found.length} model(s): every invariant holds in its scope.`);
 });

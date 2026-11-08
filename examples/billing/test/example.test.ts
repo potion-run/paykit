@@ -52,6 +52,7 @@ const caughtUp = (receipt: { readonly stream: string; readonly version: number }
 const listed = (id: string) =>
   Effect.gen(function* () {
     const list = yield* Paykit.List();
+
     return yield* list({ take: 10 }).pipe(
       Effect.repeat({
         schedule: Schedule.spaced("10 millis"),
@@ -95,6 +96,7 @@ describe("the example billing app", () => {
       const refused = yield* Effect.exit(
         track({ dedupeKey: "ex10", feature: "messages", amount: 41 }),
       );
+
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("AllowanceExceeded");
     }).pipe(run),
@@ -116,6 +118,7 @@ describe("the example billing app", () => {
         amount: 30,
         dedupeKey: "turn-1",
       });
+
       // The held units are out of `remaining`, and none of them is billed yet.
       expect((yield* check({ feature: "messages" })).remaining).toBe(70);
 
@@ -230,11 +233,13 @@ describe("the example billing app", () => {
       yield* track({ dedupeKey: "ex3", feature: "ai", amount: 100, dimension: "gpt-large" });
 
       const check = yield* Paykit.Check(account.id);
+
       const answer = yield* check({
         feature: "ai",
         amount: 1,
         dimension: "gpt-large",
       });
+
       expect(answer.allowed).toBe(true);
       // 50,000 granted, 1,000 spent: `remaining` is the pool, not a counter.
       expect(answer.remaining).toBe(49_000);
@@ -245,6 +250,7 @@ describe("the example billing app", () => {
         amount: 5_000,
         dimension: "gpt-large",
       });
+
       expect(tooMuch.allowed).toBe(false);
       // The same 5,000 units at the default rate cost 5,000, which it can.
       expect((yield* check({ feature: "ai", amount: 5_000 })).allowed).toBe(true);
@@ -271,6 +277,7 @@ describe("the example billing app", () => {
       const refused = yield* Effect.exit(
         track({ dedupeKey: "ex1", feature: "messages", amount: 1 }),
       );
+
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("SpendCapExceeded");
     }).pipe(run),
@@ -283,10 +290,13 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
 
       const preview = yield* Paykit.Preview(account.id);
+
       const result = yield* preview({
         command: { kind: "changeTier", tier: "scale" },
       });
+
       expect(result._tag).toBe("accepted");
+
       if (result._tag !== "accepted") return;
       expect(result.proration?.due).toBe(8000);
       expect(result.events.map((event) => event._tag)).toEqual(["TierChanged"]);
@@ -306,6 +316,7 @@ describe("the example billing app", () => {
       const refused = yield* Effect.exit(
         admin.GrantCredits(account.id, { amount: 250 }, asAccount),
       );
+
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("Forbidden");
     }).pipe(run),

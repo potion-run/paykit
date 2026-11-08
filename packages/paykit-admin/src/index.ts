@@ -61,7 +61,9 @@ export const Console: ConsoleProgram = {
 };
 
 export { Flags, init, Model, Message, subscriptions, update, view };
+
 export { formatDateTime, formatMoney } from "./format.ts";
+
 export {
   AccountFilter,
   accountRoute,
@@ -75,7 +77,9 @@ export {
   withAfter,
   withFilter,
 } from "./Route.ts";
+
 export { AccountSnapshot, decodeSnapshotFlags } from "./Snapshot.ts";
+
 export {
   DevToolsEvent,
   DevToolsState,
@@ -85,6 +89,7 @@ export {
   initialDevToolsState,
   subscriptionEventTags,
 } from "./DevTools.ts";
+
 export type {
   AccountState,
   ActionDraft,

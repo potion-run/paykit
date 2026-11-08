@@ -32,6 +32,7 @@ export const AccountSnapshot = Schema.Struct({
    */
   cursor: Schema.optionalKey(Schema.Int),
 });
+
 export type AccountSnapshot = typeof AccountSnapshot.Type;
 
 /** The snapshots a host may seed, decoded. */
@@ -40,6 +41,7 @@ export const SnapshotFlags = Schema.Struct({
   accounts: Schema.Option(BillingReadPage),
   account: Schema.Option(AccountSnapshot),
 });
+
 export type SnapshotFlags = typeof SnapshotFlags.Type;
 
 /**

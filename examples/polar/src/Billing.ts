@@ -98,21 +98,26 @@ export const moneyRoutes = (
       purchase: (account: string, tier: string) =>
         Effect.gen(function* () {
           const subscribe = yield* Paykit.Subscribe(account);
+
           return yield* subscribe({ tier });
         }),
 
       deliver: (request: WebhookRequest) =>
         Effect.gen(function* () {
           const webhook = provider.webhook;
+
           if (webhook === undefined) {
             return yield* new ProviderCapabilityMissing({
               provider: provider.name,
               op: "webhook",
             });
           }
+
           const decoded = yield* webhook.decode(request);
+
           if (Option.isNone(decoded)) return { action: "ignored" as const, eventId: null };
           const action = yield* applyWebhook(decoded.value);
+
           return { action, eventId: decoded.value.id };
         }),
     };

@@ -46,6 +46,7 @@ const SpendCase = Schema.Struct({
   /** A counted feature records usage without spending credits. */
   counted: Schema.Boolean,
 });
+
 type SpendCase = typeof SpendCase.Type;
 
 /** The two spend shapes the policy listens to, with the balance before them. */
@@ -59,7 +60,9 @@ const spendOf = (input: SpendCase): { readonly before: number; readonly event: C
       }),
     };
   }
+
   const cost = input.counted ? 0 : input.amount * input.rate;
+
   return {
     before: input.before,
     event: new UsageRecorded({
@@ -90,6 +93,7 @@ describe("auto top-up crossing", () => {
         // A counted feature spends nothing, so it cannot move the pool.
         const moved = event._tag === "UsageRecorded" && event.cost <= 0 ? before : after;
         const expected = before > input.threshold && moved <= input.threshold;
+
         return crossedThreshold(event, input.threshold) === expected;
       },
       { runs: 200, size: 40 },
@@ -101,8 +105,10 @@ describe("auto top-up crossing", () => {
       Arbitrary.schema(SpendCase),
       (input) => {
         const { event } = spendOf(input);
+
         if (!crossedThreshold(event, input.threshold)) return true;
         const after = event._tag === "UsageRecorded" ? event.creditsAfter : event.balanceAfter;
+
         // The next spend starts exactly where this one finished: already at
         // or below the line, so it cannot cross it again.
         const next =
@@ -116,6 +122,7 @@ describe("auto top-up crossing", () => {
                 remainingAfter: after - 1,
               })
             : new CreditsConsumed({ amount: 1, balanceAfter: after - 1 });
+
         return !crossedThreshold(next, input.threshold);
       },
       { runs: 100, size: 30 },
@@ -151,7 +158,9 @@ describe("the auto top-up command id", () => {
         const first = topUpCommandId(account, seq);
         const second = topUpCommandId(otherAccount, otherSeq);
         const sameCrossing = account === otherAccount && seq === otherSeq;
+
         if ((first === second) !== sameCrossing) return false;
+
         // The id is stable for the same crossing, which is what makes a
         // redelivery the same invoice.
         return topUpCommandId(account, seq) === first;
@@ -181,8 +190,10 @@ describe("the top-up cooldown deadline", () => {
         const state = { ...subscribedAt("pro"), topUpCooldownUntil: until };
         const now = DateTime.addDuration(start, Duration.minutes(elapsedMinutes));
         const decision = decideAt(state, new TopUpCooldownElapsed(), now, "deadline");
+
         if (!isAccepted(decision)) return false;
         const cleared = decision.length === 1 && decision[0]!._tag === "TopUpCooldownCleared";
+
         // At or after the deadline is cleared; a fire one minute early (or
         // more) records nothing, so a platform that runs schedules eagerly
         // cannot end a cooldown the deployment asked for.
@@ -198,12 +209,14 @@ describe("the top-up cooldown deadline", () => {
       ({ elapsedMinutes }) => {
         const now = DateTime.addDuration(start, Duration.minutes(elapsedMinutes));
         const cleared = decideAt(subscribedAt("pro"), new TopUpCooldownElapsed(), now, "deadline");
+
         const unopened = decideAt(
           initialSubscriptionState,
           new TopUpCooldownElapsed(),
           now,
           "deadline",
         );
+
         return (
           isAccepted(cleared) &&
           cleared.length === 0 &&
@@ -230,6 +243,7 @@ const CooldownOp = Schema.Union([
   }),
   Schema.TaggedStruct("Clear", {}),
 ]);
+
 const CooldownScript = Schema.Struct({
   ops: Schema.Array(CooldownOp).pipe(Schema.check(Schema.isMaxLength(12))),
 });
@@ -241,16 +255,19 @@ describe("the cooldown as a fold", () => {
       ({ ops }) => {
         let expected: DateTime.Utc | undefined;
         const events: Array<CreditsPurchased | TopUpCooldownCleared> = [];
+
         for (const op of ops) {
           if (op._tag === "Clear") {
             expected = undefined;
             events.push(new TopUpCooldownCleared());
             continue;
           }
+
           const until =
             op.cooldownMinutes === undefined
               ? undefined
               : DateTime.addDuration(start, Duration.minutes(op.cooldownMinutes));
+
           if (until !== undefined) expected = until;
           events.push(
             new CreditsPurchased({
@@ -262,8 +279,10 @@ describe("the cooldown as a fold", () => {
             }),
           );
         }
+
         const state = evolveAt(subscribedAt("pro"), events, start, "fold");
         const observed = topUpCooldownOf(state);
+
         return (
           (observed === null ? undefined : DateTime.toEpochMillis(observed)) ===
           (expected === undefined ? undefined : DateTime.toEpochMillis(expected))
@@ -292,8 +311,11 @@ describe("the cooldown command id", () => {
       Arbitrary.schema(CrossingId),
       ({ account, seq, otherSeq }) => {
         const deadline = topUpCooldownCommandId(account, seq);
+
         if (deadline === topUpCommandId(account, seq)) return false;
+
         if (topUpCooldownCommandId(account, seq) !== deadline) return false;
+
         return (deadline === topUpCooldownCommandId(account, otherSeq)) === (seq === otherSeq);
       },
       { runs: 100, size: 20 },
@@ -326,10 +348,12 @@ describe("the purchase records the money it was given", () => {
       Arbitrary.schema(PurchaseCase),
       ({ amount, before, cooldownMinutes, money }) => {
         const state = { ...subscribedAt("pro"), credits: before };
+
         const until =
           cooldownMinutes === undefined
             ? undefined
             : DateTime.addDuration(start, Duration.minutes(cooldownMinutes));
+
         const command = new PurchaseCredits({
           tier: "pack",
           amount,
@@ -337,15 +361,21 @@ describe("the purchase records the money it was given", () => {
           ...(money._tag === "Charge" ? { chargeId: money.id } : {}),
           ...(until === undefined ? {} : { cooldownUntil: until }),
         });
+
         const decision = decideAt(state, command, start, "crossing");
+
         if (!isAccepted(decision) || decision.length !== 1) return false;
         const event = decision[0] as CreditsPurchased;
+
         if (event._tag !== "CreditsPurchased") return false;
         const invoice = money._tag === "Invoice" ? money.id : undefined;
         const charge = money._tag === "Charge" ? money.id : undefined;
+
         if (event.invoiceId !== invoice || event.chargeId !== charge) return false;
+
         if (event.balanceAfter !== before + amount) return false;
         const opened = event.cooldownUntil;
+
         return (
           (opened === undefined ? undefined : DateTime.toEpochMillis(opened)) ===
           (until === undefined ? undefined : DateTime.toEpochMillis(until))

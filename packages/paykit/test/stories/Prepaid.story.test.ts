@@ -34,6 +34,7 @@ const proTier = tier({
   credits: 100,
   grants: [allowance(messages, { included: 100 })],
 });
+
 const packTier = tier({
   id: "credits_1k",
   kind: "one_off",
@@ -41,15 +42,18 @@ const packTier = tier({
   credits: 1_000,
   grants: [],
 });
+
 const nextTier = tier({
   id: "next",
   price,
   credits: 0,
   grants: [allowance(messages, { included: 200 })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [proTier, nextTier, packTier] }),
 );
+
 const pro = allowancesOf(testCatalog, "pro")!;
 const next = allowancesOf(testCatalog, "next")!;
 const account = Subscription.ref("acct_prepaid");

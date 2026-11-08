@@ -21,6 +21,7 @@ export const ChargeProrationResult = Schema.Struct({
   amount: Schema.optionalKey(Schema.Int),
   currency: Schema.optionalKey(Schema.String),
 });
+
 export type ChargeProrationResult = typeof ChargeProrationResult.Type;
 
 /**
@@ -62,16 +63,21 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
   return Effect.fn("Paykit.ChargeProration.account")(function* (input: ChargeProrationInput) {
     const ref = Subscription.ref(input.account);
     const state = yield* subscription.state(ref);
+
     if (state._tag !== "Subscribed") {
       return yield* new NoProrationDue({ account: input.account, reason: "none" });
     }
+
     const proration = state.proration;
+
     if (proration === undefined || proration.due <= 0) {
       return yield* new NoProrationDue({ account: input.account, reason: "none" });
     }
+
     if (state.prorationInvoice !== undefined) {
       return yield* new NoProrationDue({ account: input.account, reason: "billed" });
     }
+
     // The change itself is the idempotency key. `TierChanged` gives every
     // prorated change a sequence number, so two identical changes in one period
     // are two charges, while a retry of either is the same one. State recorded
@@ -80,25 +86,30 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
       state.prorationId === undefined
         ? `${input.account}:${state.tier}:${state.period.start.epochMilliseconds}:${proration.due}:${proration.currency}`
         : `${input.account}:${state.period.start.epochMilliseconds}:${state.prorationId}`;
+
     // The invoice is collected by the provider the standing already belongs to.
     const chosen = Option.match(router, {
       onNone: () => null,
       onSome: (set) => providerFor(set, state.refs),
     });
+
     const attempt = Effect.gen(function* () {
       const payments = yield* Effect.serviceOption(Payments);
+
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
           provider: chosen?.name ?? "none",
           op: "createInvoice",
         });
       }
+
       const { invoiceId } = yield* Option.getOrThrow(payments).createInvoice({
         account: input.account,
         amount: proration.due,
         currency: proration.currency,
         commandId: changeId,
       });
+
       // The receipt is keyed by the change, not the invoice it happened to
       // open, so a retry records the same charge rather than a second one.
       yield* asSystem(
@@ -112,6 +123,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
           { commandId: `proration:${changeId}` },
         ),
       );
+
       return {
         outcome: "charged",
         invoiceId,
@@ -119,6 +131,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
         currency: proration.currency,
       } as const satisfies ChargeProrationResult;
     });
+
     return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
   });
 });

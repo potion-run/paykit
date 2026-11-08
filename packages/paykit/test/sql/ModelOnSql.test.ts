@@ -38,10 +38,12 @@ const world = Effect.gen(function* () {
   const sql = sqliteExecutor(database);
   yield* migrate(sql);
   const log = SqlEventLog(sql, { now: () => clock.now });
+
   const { platform } = SqlPlatform(sql, log, {
     now: () => clock.now,
     pollMillis: 5,
   });
+
   return { database, sql, log, clock, platform };
 });
 
@@ -108,6 +110,7 @@ describe("the model hosted on SQL", () => {
       const { platform, sql } = yield* world;
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
+
         const receipt = yield* subscription.send(
           account,
           new Subscribe({
@@ -119,6 +122,7 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         const entitlements = yield* Entitlements;
         yield* entitlements.query(account, { atLeast: receipt });
       }).pipe(Effect.provide(hosted(platform)));
@@ -129,12 +133,15 @@ describe("the model hosted on SQL", () => {
         "SELECT state, version FROM billing_rm_view_state WHERE view = ? AND key = ?",
         ["Entitlements", account.id],
       );
+
       expect(row).toBeDefined();
+
       const state = JSON.parse(row!.state) as {
         tier: string;
         standing: string;
         features: Record<string, { included: number; remaining: number; allowed: boolean }>;
       };
+
       expect(state.tier).toBe("free");
       expect(state.standing).toBe("good");
       expect(state.features.messages).toMatchObject({
@@ -150,6 +157,7 @@ describe("the model hosted on SQL", () => {
       const { platform, log } = yield* world;
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
+
         const first = yield* subscription.send(
           account,
           new Subscribe({
@@ -161,6 +169,7 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         const again = yield* subscription.send(
           account,
           new Subscribe({
@@ -172,6 +181,7 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         expect(again.version).toBe(first.version);
       }).pipe(Effect.provide(hosted(platform)));
       expect((yield* log.events("Subscription", account.id)).length).toBe(1);
@@ -184,6 +194,7 @@ describe("the model hosted on SQL", () => {
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
         const entitlements = yield* Entitlements;
+
         const receipt = yield* subscription.send(
           account,
           new Subscribe({
@@ -195,12 +206,15 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: receipt });
+
         const tracked = yield* subscription.send(
           account,
           new TrackUsage({ feature: "messages", amount: 30 }),
           { commandId: "track-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(hosted(platform)));
 
@@ -208,9 +222,11 @@ describe("the model hosted on SQL", () => {
         "SELECT state FROM billing_rm_view_state WHERE view = ? AND key = ?",
         ["Entitlements", account.id],
       );
+
       const state = JSON.parse(row!.state) as {
         features: Record<string, { used: number; remaining: number; allowed: boolean }>;
       };
+
       expect(state.features.messages).toMatchObject({
         used: 30,
         remaining: 70,
@@ -225,6 +241,7 @@ describe("the model hosted on SQL", () => {
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
         const entitlements = yield* Entitlements;
+
         const subscribed = yield* subscription.send(
           account,
           new Subscribe({
@@ -236,12 +253,15 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: subscribed });
+
         const tracked = yield* subscription.send(
           account,
           new TrackUsage({ feature: "messages", amount: 10 }),
           { commandId: "track-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(hosted(platform)));
 
@@ -249,6 +269,7 @@ describe("the model hosted on SQL", () => {
         "SELECT version, state FROM billing_rm_view_state WHERE view = ? AND key = ?",
         ["Entitlements", account.id],
       )!;
+
       // Feed the view the same delivery again, as an at-least-once transport
       // would. The input log by (source, seq) is what makes it a no-op.
       const delivery = JSON.parse(
@@ -256,7 +277,9 @@ describe("the model hosted on SQL", () => {
           "SELECT delivery FROM billing_outbox ORDER BY seq DESC LIMIT 1",
         )[0]!.delivery,
       ) as never;
+
       const view = yield* SqlViewStore(sql, { name: "Entitlements", now: () => 1 });
+
       const bound = view.bind({
         generation: 1,
         apply: () =>
@@ -267,11 +290,14 @@ describe("the model hosted on SQL", () => {
             downstream: [],
           }),
       } as never);
+
       yield* bound.receive(account.id, [delivery]);
+
       const after = sql.get<{ version: number | string; state: string }>(
         "SELECT version, state FROM billing_rm_view_state WHERE view = ? AND key = ?",
         ["Entitlements", account.id],
       )!;
+
       expect(after.version).toBe(before.version);
       expect(after.state).toBe(before.state);
       expect(JSON.parse(after.state).features.messages.used).toBe(10);
@@ -284,6 +310,7 @@ describe("the model hosted on SQL", () => {
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
         const entitlements = yield* Entitlements;
+
         const receipt = yield* subscription.send(
           account,
           new Subscribe({
@@ -295,24 +322,29 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: receipt });
+
         const tracked = yield* subscription.send(
           account,
           new TrackUsage({ feature: "messages", amount: 12 }),
           { commandId: "track-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(hosted(platform)));
 
       // A consumer is only a fold, so dropping every consumer row and
       // rebuilding the model must reproduce the same answers from the log.
       wipeConsumers(sql);
+
       const rebuilt = yield* Effect.gen(function* () {
         const entitlements = yield* Entitlements;
         const view = Option.getOrNull(yield* entitlements.query(account));
         const history = yield* entitlements.history;
         const store = yield* BillingReadStore;
         const row = yield* store.get(account.id);
+
         return { view, history, row };
       }).pipe(Effect.provide(hosted(platform)));
 
@@ -349,6 +381,7 @@ describe("the model hosted on SQL", () => {
       }).pipe(Effect.provide(hosted(platform)));
 
       wipeConsumers(sql);
+
       // Entitlements is not backfilled by the deploy: its key reads its own
       // source before answering. BillingRead reads it, so the projection's
       // backfill is what forces the catch-up.
@@ -357,6 +390,7 @@ describe("the model hosted on SQL", () => {
         const view = Option.getOrNull(yield* entitlements.query(account));
         const store = yield* BillingReadStore;
         const row = yield* store.get(account.id);
+
         return { view, row };
       }).pipe(Effect.provide(hosted(platform, { lazy: ["Entitlements"] })));
 
@@ -376,6 +410,7 @@ describe("the model hosted on SQL", () => {
       yield* Effect.gen(function* () {
         const subscription = yield* Subscription;
         const entitlements = yield* Entitlements;
+
         const receipt = yield* subscription.send(
           account,
           new Subscribe({
@@ -387,12 +422,15 @@ describe("the model hosted on SQL", () => {
           }),
           { commandId: "subscribe-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: receipt });
+
         const tracked = yield* subscription.send(
           account,
           new TrackUsage({ feature: "messages", amount: 12 }),
           { commandId: "track-1" } as never,
         );
+
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(hosted(platform)));
 
@@ -403,15 +441,19 @@ describe("the model hosted on SQL", () => {
       sql.exec(
         "DELETE FROM billing_rm_projection_input; DELETE FROM billing_rm_projection_cursor;",
       );
+
       const stored = sql.get<{ state: string }>(
         "SELECT state FROM billing_rm_view_state WHERE view = ? AND key = ?",
         ["Entitlements", account.id],
       )!;
+
       const entry = sql.get<{ seq: number; event: string; envelope: string }>(
         "SELECT seq, event, envelope FROM billing_rm_view_entry WHERE view = ? AND key = ? ORDER BY seq DESC LIMIT 1",
         ["Entitlements", account.id],
       )!;
+
       const event = JSON.parse(entry.event) as { readonly _tag: string };
+
       const delivery = {
         target: { kind: "projection", name: "BillingRead" },
         key: account.id,
@@ -423,6 +465,7 @@ describe("the model hosted on SQL", () => {
         envelope: JSON.parse(entry.envelope) as unknown,
         state: JSON.parse(stored.state) as unknown,
       };
+
       sql.run(
         "INSERT INTO billing_rm_view_outbox (view, key, entry_seq, delivery) VALUES (?, ?, ?, ?)",
         ["Entitlements", account.id, entry.seq, JSON.stringify(delivery)],
@@ -431,6 +474,7 @@ describe("the model hosted on SQL", () => {
       const row = yield* Effect.gen(function* () {
         // A read drains what the crash left behind before it answers.
         yield* (yield* Entitlements).query(account);
+
         return yield* (yield* BillingReadStore).get(account.id);
       }).pipe(Effect.provide(hosted(platform)));
 

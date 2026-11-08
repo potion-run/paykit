@@ -47,10 +47,12 @@ describe("an atomic unit", () => {
         async.atomic(
           Effect.gen(function* () {
             yield* async.batch(["INSERT INTO t (n) VALUES (1)"]);
+
             return yield* Effect.fail("no");
           }),
         ),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
       // Nothing survived: a failure is not a partial commit.
       expect(yield* async.query("SELECT n FROM t")).toEqual([]);
@@ -87,6 +89,7 @@ describe("an atomic unit", () => {
 
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
+
       // A unit that holds the writer and then fails. A batch started meanwhile
       // belongs to its caller, not to this transaction: with a shared
       // connection and a plain depth counter it would join the unit and roll
@@ -98,11 +101,13 @@ describe("an atomic unit", () => {
               yield* async.batch(["INSERT INTO t (n) VALUES (1)"]);
               yield* Deferred.succeed(started, void 0);
               yield* Deferred.await(release);
+
               return yield* Effect.fail("rollback");
             }),
           ),
         ),
       );
+
       yield* Deferred.await(started);
       const outside = yield* Effect.forkChild(async.batch(["INSERT INTO t (n) VALUES (2)"]));
       yield* Deferred.succeed(release, void 0);
@@ -119,6 +124,7 @@ describe("an atomic unit", () => {
   it.effect("D1 collects a unit's writes and commits them in one batch", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<string>> = [];
+
       const d1: D1Like = {
         prepare: (sql: string) => ({
           sql,
@@ -129,6 +135,7 @@ describe("an atomic unit", () => {
           batches.push(statements.map((statement) => String(statement.sql)));
         },
       };
+
       const async = asyncOf(d1Executor(d1));
       expect(async.isolation).toBe("deferred");
 
@@ -148,6 +155,7 @@ describe("an atomic unit", () => {
   it.effect("D1 commits a write from another fiber outside the open unit", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<string>> = [];
+
       const d1: D1Like = {
         prepare: (sql: string) => ({
           sql,
@@ -156,9 +164,11 @@ describe("an atomic unit", () => {
         }),
         batch: (statements) => {
           batches.push(statements.map((statement) => String(statement.sql)));
+
           return Promise.resolve();
         },
       };
+
       const async = asyncOf(d1Executor(d1));
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -172,6 +182,7 @@ describe("an atomic unit", () => {
           }),
         ),
       );
+
       yield* Deferred.await(started);
       // Another request's write must not join this unit's batch: it commits on
       // its own, before the unit does.
@@ -186,6 +197,7 @@ describe("an atomic unit", () => {
   it.effect("D1 drops a failed unit's writes instead of committing them", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<string>> = [];
+
       const d1: D1Like = {
         prepare: (sql: string) => ({
           sql,
@@ -196,15 +208,19 @@ describe("an atomic unit", () => {
           batches.push(statements.map((statement) => String(statement.sql)));
         },
       };
+
       const async = asyncOf(d1Executor(d1));
+
       const exit = yield* Effect.exit(
         async.atomic(
           Effect.gen(function* () {
             yield* async.batch(["INSERT INTO t (n) VALUES (1)"]);
+
             return yield* Effect.fail("no");
           }),
         ),
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
       expect(batches).toEqual([]);
     }),
@@ -213,6 +229,7 @@ describe("an atomic unit", () => {
   it.effect("D1 commits a batch immediately when it is not in a unit", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<string>> = [];
+
       const d1: D1Like = {
         prepare: (sql: string) => ({
           sql,
@@ -223,6 +240,7 @@ describe("an atomic unit", () => {
           batches.push(statements.map((statement) => String(statement.sql)));
         },
       };
+
       yield* asyncOf(d1Executor(d1)).batch(["CREATE TABLE t (n INTEGER)"]);
       expect(batches.length).toBe(1);
     }),
@@ -234,15 +252,19 @@ describe("an atomic unit", () => {
         prepare: () => ({ bind: () => ({ all: async () => ({}) }), all: async () => ({}) }),
         batch: async () => ({}),
       };
+
       const sql = d1Executor(d1);
+
       const exit = yield* Effect.sync(() => {
         try {
           sql.all("SELECT 1");
+
           return "ran";
         } catch (error) {
           return String(error);
         }
       });
+
       expect(exit).toContain("no synchronous all");
     }),
   );

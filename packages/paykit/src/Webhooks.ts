@@ -24,6 +24,7 @@ export const WebhookKind = Schema.Literals([
   "payment_failed",
   "subscription_canceled",
 ]);
+
 export type WebhookKind = typeof WebhookKind.Type;
 
 /**
@@ -43,6 +44,7 @@ export const WebhookEvent = Schema.Struct({
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
   anchorTz: Schema.optionalKey(Schema.String),
 });
+
 export type WebhookEvent = typeof WebhookEvent.Type;
 
 /** A webhook was missing data its kind needs. */
@@ -93,6 +95,7 @@ export const WebhookAction = Schema.Literals([
   "canceled",
   "ignored",
 ]);
+
 export type WebhookAction = typeof WebhookAction.Type;
 
 /** Every phase a delivery can find a standing in. */
@@ -167,6 +170,7 @@ export const WEBHOOK_TRANSITIONS: Record<WebhookKind, Record<StandingPhaseTag, W
 export const webhookActionOf = (kind: WebhookKind, state: SubscriptionState): WebhookAction => {
   const phase =
     state._tag === "Unsubscribed" ? "Unsubscribed" : standingPhaseTagOfStatus(state.status);
+
   return WEBHOOK_TRANSITIONS[kind][phase];
 };
 
@@ -205,13 +209,17 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (sold === null) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
+
         const purchase = purchaseCreditsInputOf(catalog, sold.id);
+
         if (purchase === null) {
           return yield* new TierNotInCatalog({ tier: sold.id });
         }
+
         yield* asSystem(
           subscription.send(ref, new PurchaseCredits(purchase), { commandId: event.id }),
         );
+
         return "purchased" as const satisfies WebhookAction;
       });
 
@@ -219,14 +227,17 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (event.tier === undefined) {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
+
         const activation = subscribeInputOf(
           catalog,
           event.tier,
           event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz },
         );
+
         if (activation === null) {
           return yield* new TierNotInCatalog({ tier: event.tier });
         }
+
         // A delivery that raced a newer activation is a replay, not a failed
         // hook: the command refuses to reset an open standing, and the provider
         // does not need to retry it.
@@ -244,6 +255,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
       if (oneOff && (event.kind === "checkout_completed" || event.kind === "payment_succeeded")) {
         return yield* purchase;
       }
+
       // The amount and currency are evidence a payment path needs before the
       // table can say "recovered" or "activated"; an ignored delivery still
       // fails the same validation it always did.
@@ -251,6 +263,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         if (event.amount === undefined) {
           return yield* new WebhookInvalid({ event: event.id, field: "amount" });
         }
+
         if (event.currency === undefined) {
           return yield* new WebhookInvalid({ event: event.id, field: "currency" });
         }
@@ -265,6 +278,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           if (event.amount === undefined || event.currency === undefined) {
             return yield* new WebhookInvalid({ event: event.id, field: "amount" });
           }
+
           yield* asSystem(
             subscription.send(
               ref,
@@ -272,8 +286,10 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
               { commandId: event.id },
             ),
           );
+
           return "recovered" as const satisfies WebhookAction;
         }
+
         case "failed": {
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
           yield* asSystem(
@@ -286,8 +302,10 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
               { commandId: event.id },
             ),
           );
+
           return "failed" as const satisfies WebhookAction;
         }
+
         case "canceled":
           // A cancellation is a standing change, not only an active-account
           // one: a customer may cancel while in grace or on a trial. Allowing

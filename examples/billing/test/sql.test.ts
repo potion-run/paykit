@@ -57,11 +57,13 @@ const d1Over = (database: Database): D1Like => ({
   prepare: (sql: string) => statementOver(database, sql, []),
   batch: async (statements) => {
     database.exec("BEGIN IMMEDIATE");
+
     try {
       for (const statement of statements) {
         if (!isFake(statement)) throw new Error("a statement this fake did not prepare");
         database.query(statement.sql).run(...statement.params);
       }
+
       database.exec("COMMIT");
     } catch (error) {
       database.exec("ROLLBACK");
@@ -77,6 +79,7 @@ const d1Over = (database: Database): D1Like => ({
 const migrated = () => {
   const database = new Database(":memory:");
   const directory = new URL("../migrations/", import.meta.url);
+
   // Apply what a deploy applies, in the order D1 walks the directory: a stale
   // or missing file fails here instead of in a release.
   for (const file of readdirSync(directory)
@@ -84,6 +87,7 @@ const migrated = () => {
     .sort()) {
     database.exec(readFileSync(new URL(file, directory), "utf8"));
   }
+
   return database;
 };
 
@@ -98,6 +102,7 @@ describe("the example on a SQL database", () => {
         const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
         const entitlements = yield* Entitlements;
         yield* entitlements.query(account, { atLeast: receipt });
+
         return receipt;
       }).pipe(Effect.provide(world));
 
@@ -110,10 +115,13 @@ describe("the example on a SQL database", () => {
       const event = database
         .query('SELECT COUNT(*) AS n FROM "billing_event" WHERE aggregate = ?')
         .get("Subscription") as { n: number };
+
       expect(event.n).toBe(1);
+
       const view = database
         .query('SELECT state FROM "billing_rm_view_state" WHERE view = ? AND key = ?')
         .get("Entitlements", account.id) as { state: string };
+
       expect(JSON.parse(view.state).features.messages.remaining).toBe(100);
       expect(subscribed.version).toBe(1);
     }),
@@ -125,11 +133,13 @@ describe("the example on a SQL database", () => {
       yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
         yield* tenant.Subscribe(account.id, free, asAccount);
+
         const tracked = yield* tenant.TrackUsage(
           account.id,
           { feature: "messages", amount: 30 },
           asAccount,
         );
+
         const entitlements = yield* Entitlements;
         yield* entitlements.query(account, { atLeast: tracked });
       }).pipe(Effect.provide(world));
@@ -160,10 +170,13 @@ describe("the example on a SQL database", () => {
   it.live("a guard refusal is the Api's, not the store's", () =>
     Effect.gen(function* () {
       const { world } = billingOnSql(d1Over(migrated()));
+
       const refused = yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
+
         return yield* Effect.exit(tenant.Subscribe(account.id, free));
       }).pipe(Effect.provide(world));
+
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("Unauthenticated");
     }),
@@ -172,12 +185,14 @@ describe("the example on a SQL database", () => {
   it.live("the migration file creates every table paykit expects", () =>
     Effect.gen(function* () {
       const database = migrated();
+
       const names = database
         .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'billing_%'",
         )
         .all()
         .map((row) => row.name);
+
       expect(names).toContain("billing_event");
       expect(names).toContain("billing_receipt");
       expect(names).toContain("billing_rm_view_state");

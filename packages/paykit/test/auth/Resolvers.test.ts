@@ -36,6 +36,7 @@ const adminGuard = (layer: Layer.Layer<Admin, never, never>): Guard =>
 /** Both guards out of one layer, built once. */
 const bothGuards = (layer: Layer.Layer<Session | Admin, never, never>) => {
   const context = Effect.runSync(Effect.scoped(Layer.build(layer)));
+
   return {
     session: Context.get(context, Session) as unknown as Guard,
     admin: Context.get(context, Admin) as unknown as Guard,
@@ -51,10 +52,13 @@ const guarded = (
   Effect.runSync(
     Effect.gen(function* () {
       const outcome = yield* Effect.exit(guard(Actor, { headers, payload }));
+
       if (Exit.isSuccess(outcome)) return { actor: outcome.value };
+
       const failure = Option.getOrNull(Cause.findErrorOption(outcome.cause)) as {
         readonly _tag: string;
       } | null;
+
       return { error: failure?._tag ?? "Defect" };
     }),
   );
@@ -120,8 +124,10 @@ describe("a resolver with a dependency", () => {
       Effect.gen(function* () {
         const sessions = yield* Sessions;
         const token = Headers.get(Headers.fromInput(headers), "authorization");
+
         return sessions.actorOf(Option.getOrNull(token));
       });
+
     const layer = SessionFrom(resolve).pipe(
       Layer.provide(
         Layer.succeed(Sessions, {
@@ -129,6 +135,7 @@ describe("a resolver with a dependency", () => {
         }),
       ),
     );
+
     expect(guarded(sessionGuard(layer), { authorization: "Bearer ops" }, {})).toEqual({
       actor: operator,
     });
@@ -137,6 +144,7 @@ describe("a resolver with a dependency", () => {
 
   it("turns a broken session store into a defect, not an anonymous caller", () => {
     class SessionsDown extends Data.TaggedError("SessionsDown")<{}> {}
+
     const resolve: ActorResolver<SessionsDown> = () => Effect.fail(new SessionsDown());
     // The resolver's typed failure is not part of the guard's error channel, so
     // a caller cannot mistake it for a refusal.
@@ -154,12 +162,15 @@ describe("the caller outside an Api", () => {
         authenticate(answers(null), { source: "cookie" })({ headers: {}, payload: null }),
       ),
     );
+
     expect(Exit.isFailure(anonymous)).toBe(true);
+
     if (Exit.isFailure(anonymous)) {
       const error = Option.getOrNull(Cause.findErrorOption(anonymous.cause)) as {
         readonly _tag: string;
         readonly source?: string;
       };
+
       expect(error._tag).toBe("Unauthenticated");
       expect(error.source).toBe("cookie");
     }
@@ -169,7 +180,9 @@ describe("the caller outside an Api", () => {
 describe("the boundary a refusal names", () => {
   const failureOf = (effect: Effect.Effect<unknown, unknown, never>) => {
     const exit = Effect.runSync(Effect.exit(effect));
+
     if (Exit.isSuccess(exit)) return null;
+
     return Option.getOrNull(Cause.findErrorOption(exit.cause)) as {
       readonly _tag: string;
       readonly scope?: string;

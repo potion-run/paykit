@@ -26,6 +26,7 @@ export { creditRateOf } from "../Feature.ts";
  * billed in another (ADR 0019).
  */
 export const MoneyByCurrency = Schema.Record(Schema.String, Schema.Int);
+
 export type MoneyByCurrency = typeof MoneyByCurrency.Type;
 
 /**
@@ -40,10 +41,12 @@ export const RefundRecord = Schema.Struct({
   /** The currency's refunded total after this refund. */
   refundedAfter: Schema.Int,
 });
+
 export type RefundRecord = typeof RefundRecord.Type;
 
 /** An account is the key of a Subscription. */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"));
+
 export type AccountId = typeof AccountId.Type;
 
 /** Where a subscription is in its life. `none` only exists before activation. */
@@ -54,10 +57,12 @@ export const SubscriptionStatus = Schema.Literals([
   "canceled",
   "expired",
 ]);
+
 export type SubscriptionStatus = typeof SubscriptionStatus.Type;
 
 /** How a reader should treat the account right now. */
 export const Standing = Schema.Literals(["good", "grace", "blocked"]);
+
 export type Standing = typeof Standing.Type;
 
 /** `[start, end)` from the account's anchor and time zone. */
@@ -66,6 +71,7 @@ export const Period = Schema.Struct({
   end: Schema.DateTimeUtc,
   anchorTz: Schema.String,
 });
+
 export type Period = typeof Period.Type;
 
 /** A vendor's opaque ids for one account. Never read by `decide`. */
@@ -74,14 +80,17 @@ export const ProviderRefs = Schema.Struct({
   subscription: Schema.optional(Schema.String),
   checkout: Schema.optional(Schema.String),
 });
+
 export type ProviderRefs = typeof ProviderRefs.Type;
 
 /** Vendor identifiers, keyed by provider, so a second provider is additive. */
 export const Refs = Schema.Record(Schema.String, ProviderRefs);
+
 export type Refs = typeof Refs.Type;
 
 /** Per-feature usage, always a fold of `UsageRecorded`. */
 export const UsageCounts = Schema.Record(Schema.String, Schema.Int);
+
 export type UsageCounts = typeof UsageCounts.Type;
 
 /**
@@ -90,6 +99,7 @@ export type UsageCounts = typeof UsageCounts.Type;
  * close resets.
  */
 export const QuantityCounts = Schema.Record(Schema.String, Schema.Int);
+
 export type QuantityCounts = typeof QuantityCounts.Type;
 
 /** A quantity change's money, keyed by the command that recorded it. */
@@ -99,6 +109,7 @@ export const QuantityProration = Schema.Struct({
   /** The provider invoice that collected a positive `due`. */
   invoiceId: Schema.optionalKey(Schema.String),
 });
+
 export type QuantityProration = typeof QuantityProration.Type;
 
 /**
@@ -107,6 +118,7 @@ export type QuantityProration = typeof QuantityProration.Type;
  * flag reports the absence of a number rather than one it never spends.
  */
 export const Remaining = Schema.Record(Schema.String, Schema.NullOr(Schema.Int));
+
 export type Remaining = typeof Remaining.Type;
 
 /**
@@ -115,6 +127,7 @@ export type Remaining = typeof Remaining.Type;
  * entry; a daily or quarterly one has a boundary the period does not own.
  */
 export const ResetWindows = Schema.Record(Schema.String, Schema.DateTimeUtc);
+
 export type ResetWindows = typeof ResetWindows.Type;
 
 /**
@@ -123,6 +136,7 @@ export type ResetWindows = typeof ResetWindows.Type;
  * a period close returning the units.
  */
 export const HoldStatus = Schema.Literals(["open", "settled", "released", "expired"]);
+
 export type HoldStatus = typeof HoldStatus.Type;
 
 /**
@@ -143,6 +157,7 @@ export const HoldRecord = Schema.Struct({
   expiresAt: Schema.DateTimeUtc,
   status: HoldStatus,
 });
+
 export type HoldRecord = typeof HoldRecord.Type;
 
 /**
@@ -164,10 +179,12 @@ export const PendingTier = Schema.Struct({
   currency: Schema.optionalKey(Schema.String),
   interval: Schema.optionalKey(Interval),
 });
+
 export type PendingTier = typeof PendingTier.Type;
 
 /** Every hold this standing has taken, keyed by id. */
 export const Holds = Schema.Record(Schema.String, HoldRecord);
+
 export type Holds = typeof Holds.Type;
 
 /**
@@ -214,6 +231,7 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   /** Every refund, keyed by the operator command that recorded it. */
   refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
 });
+
 export type UnsubscribedState = typeof UnsubscribedState.Type;
 
 /** What an account that has ever had a tier looks like. */
@@ -331,10 +349,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   dunningStartedAt: Schema.optionalKey(Schema.DateTimeUtc),
   lastClosedPeriodStart: Schema.optional(Schema.DateTimeUtc),
 });
+
 export type SubscribedState = typeof SubscribedState.Type;
 
 /** One aggregate, keyed by account, that decides every billing command. */
 export const SubscriptionState = Schema.Union([UnsubscribedState, SubscribedState]);
+
 export type SubscriptionState = typeof SubscriptionState.Type;
 
 /** The state an account starts in: no tier, no standing. */
@@ -392,6 +412,7 @@ export const nextResetAt = (
   allowance: { readonly resets: Resets; readonly resetEvery?: number },
 ): DateTime.Utc | null => {
   const every = allowance.resetEvery ?? 1;
+
   switch (allowance.resets) {
     case "never":
       return null;
@@ -520,6 +541,7 @@ export const billableUnitsOf = (
   if (typeof included !== "number") return 0;
   const before = Math.max(0, used - included);
   const after = Math.max(0, used + amount - included);
+
   return after - before;
 };
 
@@ -538,6 +560,7 @@ export const chargeOf = (
   if (pricing === null || pricing === undefined) return 0;
   const before = typeof included === "number" ? Math.max(0, used - included) : 0;
   const after = typeof included === "number" ? Math.max(0, used + amount - included) : 0;
+
   return chargeOfPricing(pricing, before, after);
 };
 
@@ -551,6 +574,7 @@ export const pricedOf = (
   if (pricing === null || pricing === undefined) return [];
   const before = typeof included === "number" ? Math.max(0, used - included) : 0;
   const after = typeof included === "number" ? Math.max(0, used + amount - included) : 0;
+
   return pricedLines(pricing, before, after);
 };
 
@@ -596,10 +620,18 @@ export const remainingAfterRelease = (remaining: number | null, amount: number):
  */
 export const remainingOf = (state: SubscribedState, feature: string): number | null => {
   const remaining = recordedCount(state.remaining, feature);
+
   if (remaining !== undefined) return remaining;
   const allowance = state.allowances[feature];
+
   return allowance === undefined ? 0 : includedRemainingOf(allowance);
 };
+
+/** The count an allowance window starts with, and how much of it carried. */
+export interface AllowanceWindowReset {
+  readonly remaining: number | null;
+  readonly carried: number;
+}
 
 /**
  * What one allowance starts a window with when its own boundary fires. The
@@ -610,12 +642,15 @@ export const resetOfFeature = (
   state: SubscribedState,
   feature: string,
   allowance: Allowance,
-): { readonly remaining: number | null; readonly carried: number } => {
+): AllowanceWindowReset => {
   const start = includedRemainingOf(allowance);
+
   if (start === null) return { remaining: null, carried: 0 };
+
   if (allowance.carryOver !== true) return { remaining: start, carried: 0 };
   const cap = carryCapOf(allowance) ?? start;
   const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), cap);
+
   return { remaining: start + carried, carried };
 };
 
@@ -648,19 +683,27 @@ export const quantityAfterTierChange = (held: number, included: number): number 
  * A monthly or annual reset both happen at the standing's period boundary,
  * because that is the only boundary the aggregate owns.
  */
+export interface AllowancePeriodReset extends AllowanceWindowReset {
+  readonly kept: boolean;
+}
+
 export const resetOf = (
   state: SubscribedState,
   feature: string,
   allowance: Allowance,
-): { readonly remaining: number | null; readonly carried: number; readonly kept: boolean } => {
+): AllowancePeriodReset => {
   const start = includedRemainingOf(allowance);
+
   if (start === null) return { remaining: null, carried: 0, kept: false };
+
   if (isQuantityGrant(allowance) || allowance.resets === "never" || !periodTiedReset(allowance)) {
     return { remaining: remainingOf(state, feature), carried: 0, kept: true };
   }
+
   if (allowance.carryOver !== true) return { remaining: start, carried: 0, kept: false };
   const cap = carryCapOf(allowance);
   const carried = Math.min(Math.max(remainingOf(state, feature) ?? 0, 0), cap ?? start);
+
   return { remaining: start + carried, carried, kept: false };
 };
 
@@ -756,6 +799,7 @@ export const Money = Schema.Struct({
   amount: Schema.Int,
   currency: Schema.String,
 });
+
 export type Money = typeof Money.Type;
 
 /** Every event tag the Subscription aggregate can record. */

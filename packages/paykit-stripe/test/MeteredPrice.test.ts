@@ -29,6 +29,7 @@ describe("a metered price that is not one rate", () => {
         { upTo: "inf", amount: 500, currency: "usd", units: 1_000 },
       ],
     });
+
     expect(stripeTransformOf(value)).toBe(undefined);
     expect(stripeTiersOf(value)).toEqual([
       { up_to: 100, unit_amount: 1 },
@@ -45,6 +46,7 @@ describe("a metered price that is not one rate", () => {
         { upTo: "inf", amount: 2, currency: "usd" },
       ],
     });
+
     expect(stripeTiersOf(value)).toEqual([
       { up_to: 100, unit_amount: 1 },
       { up_to: "inf", unit_amount: 2 },

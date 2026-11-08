@@ -75,11 +75,13 @@ describe("migrations", () => {
       const records = yield* readMigrationFiles({ dialect: "sqlite" });
       expect(records.length).toBe(2);
       expect(records.map((record) => record.name)).toEqual(["0001_init", "0002_consumer_backfill"]);
+
       for (const record of records) {
         expect(record.hash).toMatch(/^[0-9a-f]{64}$/);
         expect(record.statements.length).toBeGreaterThan(0);
         expect(record.statements.every((statement) => !statement.trim().endsWith(";"))).toBe(true);
       }
+
       expect(records[0]!.statements.length).toBeGreaterThan(5);
       expect(records[0]!.statements[0]).toContain("CREATE TABLE IF NOT EXISTS");
       expect(records[0]!.statements.join(";\n")).toContain("billing_rm_billing_read");
@@ -99,23 +101,31 @@ describe("migrations", () => {
       Arbitrary.schema(Scope),
       ({ dialect, schema, table }) => {
         const files = migrationFiles({ dialect, schema, table });
+
         if (files.length === 0) return false;
 
         const ids = files.map((file) => file.id);
+
         if (new Set(ids).size !== ids.length) return false;
+
         if ([...ids].sort().join() !== ids.join()) return false;
 
         for (const file of files) {
           if (file.statements.length === 0) return false;
+
           if (file.statements.some((statement) => statement.trim().endsWith(";"))) return false;
+
           if (file.sql !== `${file.statements.join(";\n")};`) return false;
+
           if (file.sql.includes('"public"')) return false;
+
           if (!file.statements.every((statement) => statement.includes("billing_"))) return false;
 
           const ddl = file.statements.filter(
             (statement) =>
               statement.startsWith("CREATE TABLE") || statement.startsWith("CREATE INDEX"),
           );
+
           if (dialect === "postgres") {
             // Every table and index is qualified with the chosen schema.
             if (!ddl.every((statement) => statement.includes(`"${schema}".`))) return false;
@@ -125,6 +135,7 @@ describe("migrations", () => {
         }
 
         const created = schemaStatements({ dialect, schema, table });
+
         if (dialect === "postgres") {
           if (created.length !== 1 || !created[0]!.includes(`"${schema}"`)) return false;
         } else if (created.length !== 0) {
@@ -132,8 +143,11 @@ describe("migrations", () => {
         }
 
         const dry = migrateDryRun({ dialect, schema, table });
+
         if (!ids.every((id) => dry.includes(`-- ${id}`))) return false;
+
         if (!dry.includes(table)) return false;
+
         return dry === migrateDryRun({ dialect, schema, table });
       },
       { runs: 24, size: 8 },
@@ -152,9 +166,12 @@ describe("migrations", () => {
         Effect.gen(function* () {
           const files = migrationFiles({ dialect, schema });
           const records = yield* readMigrationFiles({ dialect, schema });
+
           if (records.length !== files.length) return false;
+
           return records.every((record, index) => {
             const file = files[index]!;
+
             return (
               record.name === file.id &&
               record.sql === file.sql &&
@@ -246,6 +263,7 @@ describe("migrations", () => {
         },
         lock: () => {},
       } satisfies SqlExecutor;
+
       const error = yield* Effect.flip(migrate(sql, { schema: "public" }));
       expect(error).toBeInstanceOf(MigrationError);
       expect(error.message).toContain("public");
@@ -255,9 +273,11 @@ describe("migrations", () => {
   it.effect("refuses an unsafe bookkeeping table name", () =>
     Effect.gen(function* () {
       const sql = store();
+
       const error = yield* Effect.flip(
         migrate(sql, { table: "billing; DROP TABLE billing_event" }),
       );
+
       expect(error).toBeInstanceOf(MigrationError);
       expect(error.message).toContain("safe");
     }),
@@ -266,13 +286,16 @@ describe("migrations", () => {
   it.effect("refuses to read an unreadable registry as a fresh database", () =>
     Effect.gen(function* () {
       const base = store();
+
       const denied: SqlExecutor = {
         ...base,
         all: (statement: string, params?: ReadonlyArray<SqlValue>) => {
           if (statement.includes("billing_schema_version")) throw new Error("permission denied");
+
           return base.all(statement, params);
         },
       };
+
       // A permission failure is not "no table yet": swallowing it would replay
       // every migration over a database whose history nobody can read.
       expect(Exit.isFailure(yield* Effect.exit(migrate(denied)))).toBe(true);
@@ -290,6 +313,7 @@ describe("migrations", () => {
       const error = yield* Effect.flip(migrate(sql));
       expect(error).toBeInstanceOf(RewrittenMigrationHistoryError);
       expect(error._tag).toBe("RewrittenMigrationHistoryError");
+
       if (error._tag !== "RewrittenMigrationHistoryError") throw error;
       expect(error.changed).toEqual(["0001_init"]);
       expect(migrationRows(sql).length).toBe(shipped.length);
@@ -308,6 +332,7 @@ describe("migrations", () => {
       const error = yield* Effect.flip(migrate(sql));
       expect(error).toBeInstanceOf(RewrittenMigrationHistoryError);
       expect(error._tag).toBe("RewrittenMigrationHistoryError");
+
       if (error._tag !== "RewrittenMigrationHistoryError") throw error;
       expect(error.removed).toEqual(["0003_gone"]);
     }),
@@ -316,6 +341,7 @@ describe("migrations", () => {
   it.effect("fails a non-transient batch failure without resending it", () =>
     Effect.gen(function* () {
       const base = store();
+
       const failing: SqlExecutor = {
         ...base,
         exec: (statement: string) => {
@@ -323,6 +349,7 @@ describe("migrations", () => {
           base.exec(statement);
         },
       };
+
       const error = yield* Effect.flip(migrate(failing));
       expect(error).toBeInstanceOf(MigrationError);
       expect(error.message).toContain("0001_init");
@@ -344,6 +371,7 @@ describe("migrations", () => {
   it.effect("applies the Postgres path with a schema-qualified registry", () =>
     Effect.gen(function* () {
       const db = sqliteExecutor();
+
       // SQLite stands in for Postgres here: schema-qualified identifiers are
       // stripped, schema/search_path statements are accepted as no-ops, and
       // the catalog introspection answers "no foreign history". Everything
@@ -356,6 +384,7 @@ describe("migrations", () => {
           // two constructs it cannot parse rewritten (SERIAL, now() default).
           .replace("id SERIAL PRIMARY KEY", "id INTEGER PRIMARY KEY AUTOINCREMENT")
           .replace("applied_at timestamp with time zone DEFAULT now()", "applied_at TEXT");
+
       const fakePostgres: SqlExecutor = {
         dialect: "postgres",
         run: (statement, params) => {
@@ -375,6 +404,7 @@ describe("migrations", () => {
         transaction: db.transaction,
         lock: db.lock,
       };
+
       expect(yield* migrate(fakePostgres, { schema: "billing" })).toEqual([...shipped]);
       expect(migrationRows(db).map((row) => row.name)).toEqual([...shipped]);
       expect(tables(db)).toContain("billing_event");
@@ -385,19 +415,23 @@ describe("migrations", () => {
     Effect.gen(function* () {
       const base = store();
       let lost = false;
+
       const flaky: SqlExecutor = {
         ...base,
         // The migration commits, then its reply is lost. The registry checks
         // its history before resending, so the statements do not run twice.
         transaction: <A>(f: () => A): A => {
           const result = base.transaction(f);
+
           if (!lost) {
             lost = true;
             throw new Error("connection reset after commit");
           }
+
           return result;
         },
       };
+
       // A reply lost after the DDL committed is surfaced, not swallowed: the
       // caller retries, and because the DDL is `IF NOT EXISTS` the retry
       // converges on exactly one history row.

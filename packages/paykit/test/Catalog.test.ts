@@ -143,8 +143,10 @@ describe("catalog", () => {
       id: "carrying",
       grants: [allowance(messages, { included: 2_000, carryOver: true })],
     });
+
     const accepted = defineCatalog({ features: [messages], tiers: [carrying] });
     expect(Result.isSuccess(accepted)).toBe(true);
+
     if (Result.isSuccess(accepted)) {
       expect(allowancesOf(accepted.success, "carrying")?.messages?.carryOver).toBe(true);
     }
@@ -152,8 +154,10 @@ describe("catalog", () => {
     const onFlag = tier({ id: "on_flag", grants: [{ ...grant(sso), carryOver: true }] });
     const refusedFlag = defineCatalog({ features: [messages, sso], tiers: [onFlag] });
     expect(Result.isFailure(refusedFlag)).toBe(true);
+
     if (Result.isFailure(refusedFlag)) {
       expect(Schema.is(CatalogCarryOverOnFlag)(refusedFlag.failure)).toBe(true);
+
       if (!Schema.is(CatalogCarryOverOnFlag)(refusedFlag.failure)) return;
       // Every refusal names the tier and the feature that caused it.
       expect(refusedFlag.failure.tier).toBe("on_flag");
@@ -164,10 +168,13 @@ describe("catalog", () => {
       id: "never_resets",
       grants: [allowance(messages, { included: 10, resets: "never", carryOver: true })],
     });
+
     const refusedNever = defineCatalog({ features: [messages], tiers: [never] });
     expect(Result.isFailure(refusedNever)).toBe(true);
+
     if (Result.isFailure(refusedNever)) {
       expect(Schema.is(CatalogCarryOverNeverResets)(refusedNever.failure)).toBe(true);
+
       if (!Schema.is(CatalogCarryOverNeverResets)(refusedNever.failure)) return;
       expect(refusedNever.failure.tier).toBe("never_resets");
       expect(refusedNever.failure.feature).toBe("messages");
@@ -186,8 +193,10 @@ describe("catalog", () => {
       price: { amount: 49_900, currency: "usd", interval: "month" },
       grants: [grant(sso), allowance(messages, { included: 50_000 })],
     });
+
     const accepted = defineCatalog({ features: [sso, messages], tiers: [enterprise] });
     expect(Result.isSuccess(accepted)).toBe(true);
+
     if (Result.isSuccess(accepted)) {
       expect(allowancesOf(accepted.success, "enterprise")?.sso).toEqual({
         feature: "sso",
@@ -209,9 +218,12 @@ describe("catalog", () => {
         features: [sso],
         tiers: [{ id: "sso_tier" as TierId, grants: [counted] }],
       });
+
       expect(Result.isFailure(refused)).toBe(true);
+
       if (Result.isFailure(refused)) {
         expect(refused.failure).toBeInstanceOf(CatalogFlagNotGranted);
+
         if (refused.failure._tag !== "CatalogFlagNotGranted") return;
         // The refusal names the tier and the feature, so an operator can find it.
         expect(refused.failure.tier).toBe("sso_tier");
@@ -229,12 +241,15 @@ describe("catalog", () => {
       resets: "month",
       carryOver: false,
     });
+
     const unlimited = tier({
       id: "unlimited",
       grants: [allowance(messages, { included: "unlimited" })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [unlimited] });
     expect(Result.isSuccess(result)).toBe(true);
+
     if (Result.isSuccess(result)) {
       expect(allowancesOf(result.success, "unlimited")?.messages?.included).toBe("unlimited");
     }
@@ -246,10 +261,13 @@ describe("catalog", () => {
         id: "contradictory",
         grants: [allowance(messages, { included: "unlimited", overage })],
       });
+
       const result = defineCatalog({ features: [messages], tiers: [contradictory] });
       expect(Result.isFailure(result)).toBe(true);
+
       if (Result.isFailure(result)) {
         expect(result.failure).toBeInstanceOf(CatalogUnlimitedOverage);
+
         if (result.failure._tag !== "CatalogUnlimitedOverage") return;
         // The refusal names the feature, so an operator can find the grant.
         expect(result.failure.feature).toBe("messages");
@@ -265,8 +283,10 @@ describe("catalog", () => {
       credits: 50_000,
       grants: [allowance(messages, { included: 100 })],
     });
+
     const result = defineCatalog({ features: [messages, ai], tiers: [creditsTier] });
     expect(Result.isSuccess(result)).toBe(true);
+
     if (Result.isSuccess(result)) {
       expect(featureOf(result.success, "ai")?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
       expect(tierOf(result.success, "credits")?.credits).toBe(50_000);
@@ -278,9 +298,12 @@ describe("catalog", () => {
       features: [feature({ id: "ai", creditRates: { "gpt-large": 10 } })],
       tiers: [],
     });
+
     expect(Result.isFailure(missing)).toBe(true);
+
     if (Result.isFailure(missing)) {
       expect(Schema.is(CatalogCreditRateMissing)(missing.failure)).toBe(true);
+
       if (!Schema.is(CatalogCreditRateMissing)(missing.failure)) return;
       expect(missing.failure.feature).toBe("ai");
     }
@@ -290,9 +313,12 @@ describe("catalog", () => {
         features: [feature({ id: "ai", creditRates: { default: 1, "gpt-large": rate } })],
         tiers: [],
       });
+
       expect(Result.isFailure(invalid)).toBe(true);
+
       if (Result.isFailure(invalid)) {
         expect(Schema.is(CatalogCreditRateInvalid)(invalid.failure)).toBe(true);
+
         if (!Schema.is(CatalogCreditRateInvalid)(invalid.failure)) return;
         expect(invalid.failure.feature).toBe("ai");
         expect(invalid.failure.dimension).toBe("gpt-large");
@@ -304,21 +330,27 @@ describe("catalog", () => {
     const counted = tier({ id: "counted", grants: [allowance(ai, { included: 100 })] });
     const withAllowance = defineCatalog({ features: [ai], tiers: [counted] });
     expect(Result.isFailure(withAllowance)).toBe(true);
+
     if (Result.isFailure(withAllowance)) {
       expect(Schema.is(CatalogCreditFeatureHasAllowance)(withAllowance.failure)).toBe(true);
+
       if (!Schema.is(CatalogCreditFeatureHasAllowance)(withAllowance.failure)) return;
       expect(withAllowance.failure.tier).toBe("counted");
       expect(withAllowance.failure.feature).toBe("ai");
     }
 
     const flagged = feature({ id: "sso", kind: "flag", creditRates: { default: 1 } });
+
     const onFlag = defineCatalog({
       features: [flagged],
       tiers: [tier({ id: "flagged", grants: [grant(flagged)] })],
     });
+
     expect(Result.isFailure(onFlag)).toBe(true);
+
     if (Result.isFailure(onFlag)) {
       expect(Schema.is(CatalogCreditRatesOnFlag)(onFlag.failure)).toBe(true);
+
       if (!Schema.is(CatalogCreditRatesOnFlag)(onFlag.failure)) return;
       expect(onFlag.failure.feature).toBe("sso");
     }
@@ -331,8 +363,10 @@ describe("catalog", () => {
     ]) {
       const result = defineCatalog({ features: [messages], tiers: [bad] });
       expect(Result.isFailure(result)).toBe(true);
+
       if (Result.isFailure(result)) {
         expect(Schema.is(CatalogCreditGrantInvalid)(result.failure)).toBe(true);
+
         if (!Schema.is(CatalogCreditGrantInvalid)(result.failure)) return;
         expect(result.failure.tier).toBe(bad.id);
       }
@@ -347,8 +381,10 @@ describe("catalog", () => {
       credits: 1_000_000,
       grants: [],
     });
+
     const accepted = defineCatalog({ features: [messages], tiers: [pack] });
     expect(Result.isSuccess(accepted)).toBe(true);
+
     if (Result.isSuccess(accepted)) {
       const declared = tierOf(accepted.success, "credits_1m");
       expect(declared?.kind).toBe("one_off");
@@ -358,6 +394,7 @@ describe("catalog", () => {
 
     const refusal = (candidate: ReturnType<typeof tier>) => {
       const result = defineCatalog({ features: [messages], tiers: [candidate] });
+
       return Result.isFailure(result) ? result.failure : null;
     };
 
@@ -410,8 +447,10 @@ describe("catalog", () => {
       topUp: { threshold: 500 },
       grants: [allowance(messages, { included: 100 })],
     });
+
     const accepted = defineCatalog({ features: [messages], tiers: [plan] });
     expect(Result.isSuccess(accepted)).toBe(true);
+
     if (Result.isSuccess(accepted)) {
       expect(creditTermsOf(accepted.success, "plan")?.topUp).toEqual({ threshold: 500 });
     }
@@ -425,10 +464,13 @@ describe("catalog", () => {
       topUp: { threshold: 5 },
       grants: [],
     });
+
     const refused = defineCatalog({ features: [messages], tiers: [pack] });
     expect(Result.isFailure(refused)).toBe(true);
+
     if (Result.isFailure(refused)) {
       expect(refused.failure).toBeInstanceOf(CatalogTopUpOnPack);
+
       if (refused.failure._tag !== "CatalogTopUpOnPack") return;
       expect(refused.failure.tier).toBe("pack_with_line");
     }
@@ -447,10 +489,12 @@ describe("catalog", () => {
         }),
       ],
     });
+
     expect(Result.isSuccess(defineCatalog({ features: [messages], tiers: [metered] }))).toBe(true);
 
     const refusal = (candidate: ReturnType<typeof tier>) => {
       const result = defineCatalog({ features: [messages], tiers: [candidate] });
+
       return Result.isFailure(result) ? result.failure : null;
     };
 
@@ -497,6 +541,7 @@ describe("catalog", () => {
   it("rejects a feature declared twice", () => {
     const result = defineCatalog({ features: [messages, messages], tiers: [free] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogDuplicateFeature);
     }
@@ -505,6 +550,7 @@ describe("catalog", () => {
   it("rejects a tier declared twice", () => {
     const result = defineCatalog({ features: [messages], tiers: [free, free] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogDuplicateTier);
     }
@@ -515,8 +561,10 @@ describe("catalog", () => {
       id: "twice",
       grants: [allowance(messages, { included: 1 }), allowance(messages, { included: 2 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [twice] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogDuplicateAllowance);
     }
@@ -524,12 +572,15 @@ describe("catalog", () => {
 
   it("rejects a grant for a feature the catalog never declared", () => {
     const ghost = feature({ id: "ghost" });
+
     const haunted = tier({
       id: "haunted",
       grants: [allowance(ghost, { included: 1 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [haunted] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogUnknownFeature);
     }
@@ -539,6 +590,7 @@ describe("catalog", () => {
     const empty = { id: "empty" as TierId, grants: [] };
     const result = defineCatalog({ features: [messages], tiers: [empty] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogEmptyTier);
     }
@@ -549,8 +601,10 @@ describe("catalog", () => {
       id: "negative",
       grants: [allowance(messages, { included: -1 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [negative] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogInvalid);
     }
@@ -562,8 +616,10 @@ describe("catalog", () => {
       price: { amount: 0, currency: "usd", interval: "month" },
       grants: [allowance(messages, { included: 1 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [freebie] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogInvalid);
     }
@@ -573,6 +629,7 @@ describe("catalog", () => {
     const unnamed = feature({ id: "" });
     const result = defineCatalog({ features: [unnamed], tiers: [] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogInvalid);
     }

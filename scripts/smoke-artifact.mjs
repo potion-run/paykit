@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [entry, ...expected] = process.argv.slice(2);
+
 if (entry === undefined) {
   console.error("usage: smoke-artifact.mjs <lib/index.js> [exportName…]");
   process.exit(1);
@@ -24,6 +25,7 @@ if (names.length === 0) {
 }
 
 const missing = expected.filter((name) => !(name in module));
+
 if (missing.length > 0) {
   console.error(`${entry} is missing: ${missing.join(", ")}`);
   process.exit(1);

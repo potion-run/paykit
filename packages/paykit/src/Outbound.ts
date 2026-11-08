@@ -88,11 +88,14 @@ export const outboundSignature = (input: {
 }): Effect.Effect<string> =>
   Effect.gen(function* () {
     const mac = yield* Mac.Mac;
+
     const key = yield* Mac.key(
       Mac.hmacSha256,
       new TextEncoder().encode(Redacted.value(input.secret)),
     );
+
     const tag = yield* mac.sign(key, new TextEncoder().encode(`${input.timestamp}.${input.body}`));
+
     return `t=${input.timestamp},v1=${Hex.encode(tag)}`;
   }).pipe(Effect.provide(HMAC), Effect.orDie);
 
@@ -115,8 +118,10 @@ export const OutboundEventsLive = OutboundEvents.toLayer(
       // Resolved per event, not while the layer is built: the `Outbound`
       // service is provided beside the model, in the host's runtime context.
       const outbound = yield* Effect.serviceOption(Outbound);
+
       if (Option.isNone(outbound)) return;
       const { endpoints, deliver } = outbound.value;
+
       if (endpoints.length === 0) return;
 
       const body = JSON.stringify({
@@ -130,6 +135,7 @@ export const OutboundEventsLive = OutboundEvents.toLayer(
           correlationId: envelope.correlationId,
         },
       });
+
       const timestamp = yield* Clock.currentTimeMillis;
       const idempotencyKey = `${key.id}:${envelope.seq}`;
 
@@ -139,6 +145,7 @@ export const OutboundEventsLive = OutboundEvents.toLayer(
           timestamp,
           body,
         });
+
         yield* deliver({
           endpoint,
           body,

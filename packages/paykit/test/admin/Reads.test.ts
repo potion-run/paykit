@@ -22,19 +22,23 @@ import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000, overage: "bill" })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: { amount: 9900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 5000, overage: "block" })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
+
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_admin_reads";
@@ -119,9 +123,11 @@ describe("the admin read port", () => {
       expect(usd?.arr).toBe(45_600);
       expect(usd?.atRisk).toBe(1_900);
       expect(usd?.trialPipeline).toBe(9_900);
+
       const status = Object.fromEntries(
         overview.byStatus.map((entry) => [entry.status, entry.count]),
       );
+
       expect(status).toEqual({
         trialing: 1,
         active: 2,
@@ -138,11 +144,14 @@ describe("the admin read port", () => {
     Effect.gen(function* () {
       yield* subscribeToPro;
       const reads = yield* AdminReads;
+
       const answer = yield* reads.preview({
         account,
         command: { kind: "changeTier", tier: "scale" },
       });
+
       expect(answer._tag).toBe("accepted");
+
       if (answer._tag !== "accepted") return;
       expect(answer.events.map((event) => event._tag)).toEqual(["TierChanged"]);
       expect(answer.proration?.due).toBe(8000);
@@ -188,11 +197,14 @@ describe("the admin read port", () => {
   it.live("returns a rejection as data, not a transport failure", () =>
     Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       const answer = yield* reads.preview({
         account,
         command: { kind: "changeTier", tier: "scale" },
       });
+
       expect(answer._tag).toBe("rejected");
+
       if (answer._tag !== "rejected") return;
       expect(answer.rejection._tag).toBe("NotSubscribed");
     }).pipe(run),
@@ -201,11 +213,14 @@ describe("the admin read port", () => {
   it.live("turns a tier the catalog lacks into a typed rejection", () =>
     Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       const answer = yield* reads.preview({
         account,
         command: { kind: "subscribe", tier: "enterprise" },
       });
+
       expect(answer._tag).toBe("rejected");
+
       if (answer._tag !== "rejected") return;
       expect(answer.rejection._tag).toBe("TierNotInCatalog");
     }).pipe(run),

@@ -39,7 +39,9 @@ export interface PolarProvidersProps {
 export const polarProviders = (props: PolarProvidersProps) => {
   const accessToken =
     typeof props.accessToken === "string" ? Redacted.make(props.accessToken) : props.accessToken;
+
   const apiBaseUrl = props.baseUrl ?? POLAR_BASE_URL[props.server ?? "production"];
+
   return Layer.effect(Providers, Provider.collection([Meter, Product])).pipe(
     Layer.provide(MeterProvider()),
     Layer.provide(ProductProvider()),

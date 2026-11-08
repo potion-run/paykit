@@ -53,6 +53,7 @@ describe("a postpaid read", () => {
         },
       },
     };
+
     // 100 more units cross the 100 included by 50: 50 × 2 = 100, under the cap.
     expect(evaluateCheck(below, { account, feature: "messages", amount: 100 }).allowed).toBe(true);
     // 200 more cross by 150: 300, still under. 250 more cross by 200: 400.

@@ -40,8 +40,10 @@ import {
 export const unitPriceCurrencyOf = (allowances: Allowances): string | undefined => {
   for (const allowance of Object.values(allowances)) {
     const pricing = pricingOf(allowance);
+
     if (pricing !== null) return currencyOfPricing(pricing);
   }
+
   return undefined;
 };
 
@@ -75,11 +77,13 @@ export const startingRemaining = (
       if (isQuantityGrant(allowance)) {
         const included = typeof allowance.included === "number" ? allowance.included : 0;
         const quantity = quantityAfterTierChange(quantities[feature] ?? included, included);
+
         return [
           feature,
           allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
         ];
       }
+
       return [feature, includedRemainingOf(allowance)];
     }),
   );
@@ -93,6 +97,7 @@ export const carriedPrepaidOf = (
   credits: number,
 ): { readonly prepaidCredits?: number } => {
   const prepaid = Math.min(prepaidCreditsOf(state), credits);
+
   return prepaid === 0 ? {} : { prepaidCredits: prepaid };
 };
 
@@ -131,6 +136,7 @@ export const resetWindowsOf = (
     Object.entries(allowances).flatMap(([feature, allowance]) => {
       if (allowance.resets === "never" || periodTiedReset(allowance)) return [];
       const at = nextResetAt(from, allowance);
+
       return at === null ? [] : [[feature, at]];
     }),
   );
@@ -185,9 +191,12 @@ export const activationOf = <S extends SubscriptionStatus>(
   input: ActivationInput<S>,
 ): ActivationGrant<S> => {
   const prepaid = Math.min(input.prepaidCredits ?? 0, input.credits);
+
   const currency =
     input.price?.currency ?? unitPriceCurrencyOf(input.allowances) ?? input.previousCurrency;
+
   const resetAt = resetWindowsOf(input.allowances, input.period.start);
+
   return {
     tier: input.tier,
     allowances: input.allowances,

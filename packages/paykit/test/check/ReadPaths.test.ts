@@ -24,11 +24,13 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
 const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
@@ -50,6 +52,7 @@ const subscribeFree = Effect.gen(function* () {
   const subscription = yield* Subscription;
   const entitlements = yield* Entitlements;
   const store = yield* BillingReadStore;
+
   const receipt = yield* subscription.send(
     Subscription.ref(account),
     new Subscribe({
@@ -60,11 +63,14 @@ const subscribeFree = Effect.gen(function* () {
       allowances: free,
     }),
   );
+
   const view = Option.getOrNull(
     yield* entitlements.query(Subscription.ref(account), { atLeast: receipt }),
   );
+
   yield* BillingRead.caughtUp(receipt);
   yield* waitForProjection(store, account, view);
+
   return receipt;
 });
 
@@ -74,10 +80,13 @@ describe("Check read paths", () => {
       yield* subscribeFree;
       const inProcess = yield* Check(account);
       const first = yield* inProcess({ feature: "messages", amount: 1 });
+
       const second = yield* Effect.gen(function* () {
         const readModel = yield* Check(account);
+
         return yield* readModel({ feature: "messages", amount: 1 });
       }).pipe(Effect.provide(CheckReadModel));
+
       expect(second).toEqual(first);
       expect(first.allowed).toBe(true);
       expect(first.remaining).toBe(100);
@@ -99,10 +108,13 @@ describe("Check read paths", () => {
         Option.getOrNull(yield* entitlements.query(Subscription.ref(account))),
       );
       const inProcess = yield* Check(account);
+
       const readModel = yield* Effect.gen(function* () {
         const read = yield* Check(account);
+
         return yield* read({ feature: "messages", amount: 1 });
       }).pipe(Effect.provide(CheckReadModel));
+
       expect(readModel).toEqual(yield* inProcess({ feature: "messages", amount: 1 }));
       expect(readModel.remaining).toBe(60);
     }).pipe(run),
@@ -112,8 +124,10 @@ describe("Check read paths", () => {
     Effect.gen(function* () {
       const answer = yield* Effect.gen(function* () {
         const read = yield* Check("acct_missing");
+
         return yield* read({ feature: "messages" });
       }).pipe(Effect.provide(CheckReadModel));
+
       expect(answer).toEqual({
         allowed: false,
         remaining: 0,
@@ -130,14 +144,18 @@ describe("Check read paths", () => {
       resetsAt: null,
       standing: "good",
     };
+
     let calls = 0;
+
     const transport = Layer.succeed(CheckTransport, {
       check: (input) =>
         Effect.sync(() => {
           calls++;
+
           return { ...expected, remaining: input.amount === undefined ? 7 : expected.remaining };
         }),
     });
+
     return Effect.gen(function* () {
       const http = yield* Check(account);
       expect(yield* http({ feature: "messages", amount: 1 })).toEqual(expected);
@@ -197,6 +215,7 @@ describe("the read model answers what check() answers", () => {
       const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
       const check = yield* Check(account);
+
       const receipt = yield* subscription.send(
         Subscription.ref(account),
         new Subscribe({
@@ -207,6 +226,7 @@ describe("the read model answers what check() answers", () => {
           allowances: pro,
         }),
       );
+
       yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
       yield* (yield* TrackUsage(account))({
         feature: "messages",

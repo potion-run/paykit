@@ -14,8 +14,10 @@ const dialect = args.includes("postgres") ? "postgres" : "sqlite";
 const only = args.find((arg) => arg.startsWith("--file="))?.slice("--file=".length);
 const files = migrationFiles({ dialect });
 const selected = only === undefined ? files : files.filter((file) => file.id === only);
+
 if (selected.length === 0) {
   console.error(`no migration named "${only}" (have: ${files.map((file) => file.id).join(", ")})`);
   process.exit(1);
 }
+
 process.stdout.write(`${selected.map((file) => file.sql).join("\n")}\n`);

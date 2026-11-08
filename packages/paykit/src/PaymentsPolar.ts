@@ -130,20 +130,26 @@ export const resolvePolarProductId = (productId: PolarProductId): Effect.Effect<
         if (!Output.isOutput(productId)) {
           return yield* Effect.die("a Polar productId must be a string or an Output");
         }
+
         // The accessor reads the applied product from the ambient runtime
         // context. Asking for the context optionally keeps the `Payments` port
         // free of a requirement; a provider created by `PolarBilling` is used
         // in the deployment, where that context exists.
         const context = yield* Effect.serviceOption(RuntimeContext);
+
         if (Option.isNone(context)) {
           return yield* Effect.die("a deferred Polar productId needs a runtime context");
         }
+
         // Yielding an Output binds it to the context and hands back the
         // accessor that reads the applied resource's attribute. Alchemy leaves
         // an Output's `Req` as `any`, so name the context it actually needs.
+        // SAFETY: Alchemy leaves an Output's requirement as `any`; this names the runtime context the output needs.
         const deferred = productId as Output.Output<string, RuntimeContext>;
+
         return yield* Effect.gen(function* () {
           const read = yield* deferred;
+
           return yield* read;
         }).pipe(Effect.provideService(RuntimeContext, context.value));
       });
@@ -162,6 +168,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
     ...(props.bindings.setQuantity === undefined ? [] : (["quantity"] as const)),
   ]);
+
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "polar", op }));
 
@@ -177,6 +184,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
         kind: TierKind;
       }) => {
         const mapped = props.tiers?.[tier];
+
         if (mapped === undefined) {
           return Effect.fail(
             new PaymentDeclined({
@@ -186,6 +194,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
             }),
           );
         }
+
         return Effect.gen(function* () {
           return yield* props.bindings.createCheckoutSession({
             account,
@@ -268,6 +277,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
           : props.bindings.reportUsage(args),
     }),
   );
+
   const payments = Layer.merge(
     service,
     Layer.succeed(PaymentsProvider, { name: "polar", capabilities }),
@@ -276,17 +286,22 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
   const prices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [tier, mapped.price]),
   );
+
   const usagePrices: Record<string, Record<string, Pricing>> = {};
   const unitPrices: Record<string, Record<string, UnitPrice>> = {};
+
   for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
     if (mapped.usage === undefined) continue;
+
     for (const [feature, usage] of Object.entries(mapped.usage)) {
       const pricing = asPricing(usage);
       (usagePrices[tier] ??= {})[feature] = pricing;
       const sole = soleUnitPriceOf(pricing);
+
       if (sole !== null) (unitPrices[tier] ??= {})[feature] = sole;
     }
   }
+
   const seatPrices = Object.fromEntries(
     Object.entries(props.tiers ?? {}).flatMap(([tier, mapped]) =>
       mapped.seats === undefined ? [] : [[tier, { ...mapped.seats }] as const],

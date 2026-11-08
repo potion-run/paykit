@@ -24,6 +24,7 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
 const free = allowancesOf(testCatalog, "free")!;
 const account = Subscription.ref("acct_read");
@@ -114,6 +115,7 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
     const store = yield* BillingReadStore;
     const state = yield* Entitlements;
     const ref = Subscription.ref("acct_read_live");
+
     const receipt = yield* subscription.send(
       ref,
       new Subscribe({
@@ -124,6 +126,7 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
         allowances: free,
       }),
     );
+
     // BillingRead consumes Entitlements, so wait for the view before the projection.
     const view = Option.getOrNull(yield* state.query(ref, { atLeast: receipt }));
     yield* BillingRead.caughtUp(receipt);

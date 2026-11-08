@@ -41,6 +41,7 @@ export const createInternalMetadata = Effect.fn(function* (id: string) {
 
 export const hasAlchemyMetadata = Effect.fn(function* (id: string, metadata: Tags | undefined) {
   const expected = yield* createInternalMetadata(id);
+
   return hasTags(expected, metadata);
 });
 

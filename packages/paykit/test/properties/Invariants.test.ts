@@ -36,23 +36,30 @@ const updateBases = (
       case "TierChanged": {
         const allowances = (event as unknown as { readonly allowances: Record<string, Allowance> })
           .allowances;
+
         for (const [feature, allowance] of Object.entries(allowances)) {
           bases.set(feature, includedRemainingOf(allowance));
         }
+
         break;
       }
+
       case "UsageReset": {
         const reset = event as unknown as {
           readonly remaining: Record<string, number | null>;
           readonly carried: Record<string, number>;
         };
+
         if (state._tag !== "Subscribed") break;
+
         for (const feature of Object.keys(reset.remaining)) {
           const allowance = state.allowances[feature];
+
           if (allowance === undefined) continue;
           const included = includedRemainingOf(allowance);
           bases.set(feature, included === null ? null : included + (reset.carried[feature] ?? 0));
         }
+
         break;
       }
     }
@@ -73,28 +80,34 @@ const invariantsHold = (
   if (state._tag !== "Subscribed") {
     const credits = state.credits ?? 0;
     const prepaid = state.prepaidCredits ?? 0;
+
     if (credits < 0 || prepaid < 0 || prepaid > credits) return false;
+
     return Object.values(state.usage ?? {}).every((used) => used >= 0);
   }
 
   // The pool covers every open hold. A spend that ignores reservations would
   // otherwise leave settle with credits it cannot bill.
   if (state.credits < 0) return false;
+
   if (state.credits < reservedCreditsOf(state)) return false;
   // A one-off pack is a part of the pool, never more than the pool and never
   // negative, so a period close can subtract the plan's credits and leave it.
   const prepaid = prepaidCreditsOf(state);
+
   if (prepaid < 0 || prepaid > state.credits) return false;
 
   for (const [feature, allowance] of Object.entries(state.allowances)) {
     const used = usedOf(state, feature);
     const reserved = reservedOf(state, feature);
     const remaining = remainingOf(state, feature);
+
     if (used < 0 || reserved < 0) return false;
 
     if (isFlagGrant(allowance)) {
       // A flag is granted, not counted: no usage, no reservation, no count.
       if (remaining !== null) return false;
+
       if (used !== 0 || reserved !== 0) return false;
       continue;
     }
@@ -106,8 +119,10 @@ const invariantsHold = (
     }
 
     if (remaining === null) return false;
+
     // A blocking allowance never spends past zero.
     if (allowance.overage === "block" && remaining < 0) return false;
+
     // A cap is a ceiling on the units a period may bill, holds included. Every
     // command that could cross one refuses — usage and holds in the transaction
     // that would record them, and `ChangeTier` when the move itself would land
@@ -115,15 +130,18 @@ const invariantsHold = (
     if (allowance.cap !== undefined && used + reserved > allowance.included + allowance.cap) {
       return false;
     }
+
     // The same, in money. `billed` is kept across a tier change, so a change
     // under a smaller money cap is a ceiling already passed; `ChangeTier`
     // refuses it (`DowngradeBelowSpend`) for exactly that reason.
     if (allowance.moneyCap !== undefined && billedOf(state, feature) > allowance.moneyCap) {
       return false;
     }
+
     // Use, reservations and the remainder are one count: none of them may
     // drift from what the period began with.
     const base = bases.get(feature);
+
     if (base !== undefined && base !== null && used + reserved + remaining !== base) return false;
   }
 
@@ -142,15 +160,18 @@ describe("cross-family invariants", () => {
         let state: SubscriptionState = initialSubscriptionState;
         let now = start;
         const bases = new Map<string, number | null>();
+
         if (!invariantsHold(state, bases)) return false;
 
         for (const [index, step] of script.steps.entries()) {
           now = DateTime.add(now, { days: step.advanceDays });
           const command = commandOf(step.command, state, now);
           const decision = decideAt(state, command, now, `invariant-${index}`);
+
           if (!isAccepted(decision)) continue;
           state = evolveAt(state, decision, now, `invariant-${index}`);
           updateBases(bases, decision, state);
+
           if (!invariantsHold(state, bases)) return false;
         }
 
@@ -168,6 +189,7 @@ const MoneyStep = Schema.Union([
   }),
   Schema.TaggedStruct("ClosePeriod", {}),
 ]);
+
 type MoneyStep = typeof MoneyStep.Type;
 
 /**
@@ -181,6 +203,7 @@ const MoneyHistory = Schema.Struct({
   tier: Schema.Literals(["metered", "capped", "cheap", "recurring"]),
   steps: Schema.Array(MoneyStep).pipe(Schema.check(Schema.isMaxLength(40))),
 });
+
 type MoneyHistory = typeof MoneyHistory.Type;
 
 describe("cross-family invariants on the money plane", () => {
@@ -199,9 +222,11 @@ describe("cross-family invariants on the money plane", () => {
           now = DateTime.add(now, { days: step.advanceDays });
           const command = commandOf(step.command, state, now);
           const decision = decideAt(state, command, now, "money-invariant");
+
           if (!isAccepted(decision)) return true;
           state = evolveAt(state, decision, now, "money-invariant");
           updateBases(bases, decision, state);
+
           return invariantsHold(state, bases);
         };
 
@@ -212,9 +237,11 @@ describe("cross-family invariants on the money plane", () => {
           { command: { _tag: "Subscribe", tier: history.tier }, advanceDays: 0 },
           ...history.steps.map((step) => ({ command: step, advanceDays: 0 })),
         ];
+
         for (const step of steps) {
           if (!run(step)) return false;
         }
+
         return true;
       },
       { runs: 120, size: 40 },

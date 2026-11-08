@@ -25,10 +25,12 @@ export const BillingReadRow = Schema.Struct({
   currency: Schema.optionalKey(Schema.String),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
+
 export type BillingReadRow = typeof BillingReadRow.Type;
 
 /** The order a page walks accounts in. `asc` is the default. */
 export const AccountOrder = Schema.Literals(["asc", "desc"]);
+
 export type AccountOrder = typeof AccountOrder.Type;
 
 /** The default page size, and the most one page may carry. */
@@ -50,6 +52,7 @@ export const BillingReadQuery = Schema.Struct({
   /** The cursor from a previous page's `next`. */
   after: Schema.optionalKey(Schema.String),
 });
+
 export type BillingReadQuery = typeof BillingReadQuery.Type;
 
 /** One page of accounts, and the cursor for the next one. */
@@ -66,6 +69,7 @@ export const BillingReadPage = Schema.Struct({
    */
   asOf: Schema.optionalKey(Schema.DateTimeUtc),
 });
+
 export type BillingReadPage = typeof BillingReadPage.Type;
 
 const pageSizeOf = (query: BillingReadQuery): number =>
@@ -86,6 +90,7 @@ export const queryRows = (
   query: BillingReadQuery = {},
 ): BillingReadPage => {
   const order = query.order ?? "asc";
+
   const selected = rows
     .filter(
       (row) =>
@@ -98,15 +103,18 @@ export const queryRows = (
         ? compareAccounts(left.account, right.account)
         : compareAccounts(right.account, left.account),
     );
+
   const after =
     query.after === undefined
       ? selected
       : selected.filter((row) =>
           order === "asc" ? row.account > query.after! : row.account < query.after!,
         );
+
   const take = pageSizeOf(query);
   const page = after.slice(0, take);
   const last = page[page.length - 1];
+
   return {
     rows: page,
     next: after.length > take && last !== undefined ? last.account : null,
@@ -132,6 +140,7 @@ export class BillingReadStore extends Context.Service<
 /** A memory `BillingReadStore`, rebuildable from the event log at any time. */
 export const MemoryBillingReadStore = Layer.sync(BillingReadStore, () => {
   const rows = new Map<string, BillingReadRow>();
+
   return {
     upsert: (row) =>
       Effect.sync(() => {

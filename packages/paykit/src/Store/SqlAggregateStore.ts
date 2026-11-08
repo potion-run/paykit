@@ -94,6 +94,7 @@ export const SqlAggregateStore = (
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
 
     /** The stored state and version, or the empty state of a new instance. */
+    // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
     const read = (id: string) =>
       Effect.map(log.state(aggregate, id), (row) =>
         row === undefined
@@ -105,10 +106,13 @@ export const SqlAggregateStore = (
     const drain = (id: string) =>
       Effect.gen(function* () {
         const bound = kit;
+
         if (bound === undefined) return;
         const waiting = yield* log.pendingDeliveries();
         const pending = waiting.filter((row) => row.aggregate === aggregate && row.account === id);
+
         if (pending.length === 0) return;
+        // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
         yield* Effect.forEach(
           pending,
           (row) =>
@@ -140,11 +144,15 @@ export const SqlAggregateStore = (
       Effect.gen(function* () {
         // A receipt for this command id means the command already ran.
         const stored = yield* log.receipt(aggregate, id, meta.commandId);
+
         if (stored !== undefined) {
+          // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
           return { _tag: "Accepted" as const, receipt: parse(stored) as never };
         }
 
         const before = yield* read(id);
+
+        // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
         const handled = yield* bound.handle({
           id,
           state: before.state as never,
@@ -157,6 +165,7 @@ export const SqlAggregateStore = (
           ...(meta.trace === undefined ? {} : { trace: meta.trace }),
           ...(meta.link === undefined ? {} : { link: meta.link }),
         });
+
         if (handled._tag === "Rejected") {
           return { _tag: "Rejected" as const, rejection: handled.rejection };
         }
@@ -167,6 +176,7 @@ export const SqlAggregateStore = (
           events: handled.events.map((event) => event.event),
           reply: handled.reply,
         };
+
         const appended = yield* log.append({
           aggregate,
           account: id,
@@ -181,18 +191,25 @@ export const SqlAggregateStore = (
           // again instead.
           expectedVersion: before.version,
         });
+
         if (appended.conflict) return { _tag: "Conflict" as const };
+
         // Another writer committed this command id in between; the log deduped
         // it, so its stored receipt is the answer, not ours.
         if (appended.duplicate) {
           const raced = yield* log.receipt(aggregate, id, meta.commandId);
+
           if (raced === undefined) {
             return yield* Effect.die("a duplicate append left no receipt");
           }
+
+          // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
           return { _tag: "Accepted" as const, receipt: parse(raced) as never };
         }
 
         yield* drain(id);
+
+        // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
         return { _tag: "Accepted" as const, receipt: receipt as never };
       });
 
@@ -210,22 +227,28 @@ export const SqlAggregateStore = (
     ): Effect.Effect<SendResult, SqlError> =>
       Effect.gen(function* () {
         const outcome = yield* attemptSend(bound, id, command, meta);
+
         if (outcome._tag !== "Conflict") return outcome;
+
         if (remaining === 0) {
           return yield* Effect.die(
             `${aggregate}/${id}: ${MAX_SEND_ATTEMPTS} writers kept moving the instance under ${meta.commandId}`,
           );
         }
+
         return yield* send(bound, id, command, meta, remaining - 1);
       });
 
+    // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
     const store: AggregateStore = {
       send: ((id: string, command: unknown, meta: SendMeta) =>
         Effect.gen(function* () {
           const bound = kit;
+
           if (bound === undefined) {
             return yield* Effect.die("aggregate store used before it was built");
           }
+
           return yield* send(bound, id, command, meta, MAX_SEND_ATTEMPTS);
         }).pipe(Effect.orDie)) as AggregateStore["send"],
 
@@ -234,6 +257,7 @@ export const SqlAggregateStore = (
           if ((yield* log.receipt(aggregate, id, meta.commandId)) !== undefined) {
             return yield* new AlreadyExecuted({ aggregate, id, commandId: meta.commandId });
           }
+
           const at = "at" in due ? due.at : options.now() + due.afterMillis;
           yield* log.schedule({
             aggregate,
@@ -242,6 +266,7 @@ export const SqlAggregateStore = (
             dueAt: at,
             command: JSON.stringify({ command, meta }),
           });
+
           return at;
         }).pipe(Effect.orDie)) as AggregateStore["schedule"],
 
@@ -250,9 +275,11 @@ export const SqlAggregateStore = (
           if ((yield* log.receipt(aggregate, id, commandId)) !== undefined) {
             return yield* new AlreadyExecuted({ aggregate, id, commandId });
           }
+
           if ((yield* log.pendingFor(aggregate, id, commandId)) === undefined) {
             return yield* new NotScheduled({ aggregate, id, commandId });
           }
+
           yield* log.unschedule(aggregate, id, commandId);
         }).pipe(Effect.orDie)) as AggregateStore["unschedule"],
 
@@ -266,7 +293,7 @@ export const SqlAggregateStore = (
 
       events: ((id: string) =>
         Effect.map(log.events(aggregate, id), (rows) =>
-          rows.map((row) => storedEvent(id, row)),
+          rows.map((row) => storedEvent(aggregate, id, row)),
         ).pipe(Effect.orDie)) as AggregateStore["events"],
 
       // A poll is the correct mechanism here: another process may commit, so
@@ -283,15 +310,17 @@ export const SqlAggregateStore = (
 
       tail: ((id: string, after: number) => {
         let seen = after;
+
         return Stream.tick(Duration.millis(pollMillis)).pipe(
           Stream.mapEffect(() =>
             Effect.map(log.events(aggregate, id, seen), (rows) => {
               if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
+
               return rows;
             }),
           ),
           Stream.flatMap((rows) => Stream.fromIterable(rows)),
-          Stream.map((row) => storedEvent(id, row)),
+          Stream.map((row) => storedEvent(aggregate, id, row)),
           Stream.orDie,
         );
       }) as AggregateStore["tail"],
@@ -299,15 +328,18 @@ export const SqlAggregateStore = (
 
     // The kernel binds the store to its kit once the model is built; `store`
     // is the same object, so a caller that already holds it sees the binding.
+    // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
     return Object.assign(store, {
       bind: (built: AggregateKit) => {
         kit = built;
+
         return store;
       },
     }) as BindableAggregateStore;
   });
 
 const storedEvent = (
+  aggregate: string,
   id: string,
   row: {
     readonly seq: number;
@@ -315,8 +347,13 @@ const storedEvent = (
     readonly commandId: string;
     readonly event: string;
   },
-): StoredEvent =>
-  ({
-    event: parse(row.event),
-    envelope: { id, seq: row.seq, at: row.at, commandId: row.commandId },
-  }) as unknown as StoredEvent;
+): StoredEvent => ({
+  event: parse(row.event),
+  envelope: {
+    id,
+    stream: `${aggregate}/${id}`,
+    seq: row.seq,
+    at: row.at,
+    commandId: row.commandId,
+  },
+});

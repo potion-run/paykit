@@ -30,6 +30,7 @@ const TierSpec = Schema.Struct({
   /** How the provider's seat price compares with the catalog's. */
   mapping: Schema.Literals(["correct", "missing", "amount", "currency"]),
 });
+
 type TierSpec = typeof TierSpec.Type;
 
 const Case = Schema.Struct({
@@ -42,6 +43,7 @@ const Case = Schema.Struct({
   /** Whether it declares any seat price map; absent is the same as empty. */
   hasSeatPrices: Schema.Boolean,
 });
+
 type Case = typeof Case.Type;
 
 const other = (currency: "usd" | "eur"): "usd" | "eur" => (currency === "usd" ? "eur" : "usd");
@@ -71,12 +73,14 @@ const catalogOf = (input: Case) => {
       ],
     }),
   );
+
   return defineCatalog({ features: [seats, messages], tiers });
 };
 
 /** The catalog's seat price for a tier, when the tier bills a seat. */
 const seatUnitPriceOf = (input: Case, index: number) => {
   const spec = input.tiers[index]!;
+
   return spec.overage === "bill" ? { amount: spec.seatPrice, currency: spec.currency } : null;
 };
 
@@ -93,10 +97,13 @@ const providerOf = (input: Case): ProviderDescriptor => {
         : [],
     ),
   );
+
   const seatPrices = Object.fromEntries(
     input.tiers.flatMap((spec, index) => {
       if (!spec.sold || seatUnitPriceOf(input, index) === null) return [];
+
       if (spec.mapping === "missing") return [];
+
       return [
         [
           tierId(index),
@@ -110,6 +117,7 @@ const providerOf = (input: Case): ProviderDescriptor => {
       ];
     }),
   );
+
   return {
     name: "memory",
     kind: "memory",
@@ -134,15 +142,18 @@ type ExpectedMismatch = {
  */
 const expectedMismatchOf = (input: Case): ExpectedMismatch | null => {
   if (!input.quantity) return null;
+
   for (const [index, spec] of input.tiers.entries()) {
     if (!spec.sold || spec.overage !== "bill") continue;
     const built = { amount: spec.seatPrice, currency: spec.currency };
+
     const actual =
       spec.mapping === "missing" || !input.hasSeatPrices
         ? "missing"
         : `${spec.mapping === "amount" ? spec.seatPrice + 1 : spec.seatPrice} ${
             spec.mapping === "currency" ? other(spec.currency) : spec.currency
           }`;
+
     if (actual === "missing" || actual !== `${built.amount} ${built.currency}`) {
       return {
         tier: tierId(index),
@@ -151,6 +162,7 @@ const expectedMismatchOf = (input: Case): ExpectedMismatch | null => {
       };
     }
   }
+
   return null;
 };
 
@@ -187,18 +199,22 @@ describe("a provider that owns the subscription quantity", () => {
       Arbitrary.schema(Case),
       (input) => {
         const catalog = catalogOf(input);
+
         if (Result.isFailure(catalog)) return false;
         const expected = expectedMismatchOf(input);
         const result = validateProviderMappings(catalog.success, [providerOf(input)]);
 
         if (expected === null) return result === null;
+
         if (result === null || errorTagOf(result) !== "CatalogPriceMismatch") return false;
+
         const mismatch = result as {
           readonly tier: string;
           readonly field: string;
           readonly expected: string;
           readonly actual: string;
         };
+
         return (
           mismatch.tier === expected.tier &&
           mismatch.field === "seatPrice.seats" &&
@@ -215,14 +231,17 @@ describe("a provider that owns the subscription quantity", () => {
       Result.getOrThrow(catalogOf(single({ sold: true, mapping: "missing", quantity: false }))),
       [providerOf(single({ sold: true, mapping: "missing", quantity: false }))],
     );
+
     expect(result).toBe(null);
   });
 
   it("does not ask for a seat price on a tier the provider does not sell", () => {
     const input = single({ sold: false, mapping: "missing", quantity: true });
+
     const result = validateProviderMappings(Result.getOrThrow(catalogOf(input)), [
       providerOf(input),
     ]);
+
     // No `prices` entry means the provider does not sell the tier here, so the
     // billable seat is not its price to map — exactly as the usage rule reads.
     expect(result).toBe(null);
@@ -231,10 +250,13 @@ describe("a provider that owns the subscription quantity", () => {
   it("refuses a seat price that disagrees by amount or currency", () => {
     for (const mapping of ["amount", "currency"] as const) {
       const input = single({ sold: true, mapping, quantity: true });
+
       const result = validateProviderMappings(Result.getOrThrow(catalogOf(input)), [
         providerOf(input),
       ]);
+
       expect(result?._tag).toBe("CatalogPriceMismatch");
+
       if (result?._tag === "CatalogPriceMismatch") {
         expect(result.field).toBe("seatPrice.seats");
         expect(result.actual).not.toBe(result.expected);
@@ -249,6 +271,7 @@ const SeatSpec = Schema.Struct({
   seatPrice: Amount,
   capExtra: Schema.optionalKey(CapExtra),
 });
+
 type SeatSpec = typeof SeatSpec.Type;
 
 /** A tier that grants one or more non-consumable features. */
@@ -260,6 +283,7 @@ const ScopeTier = Schema.Struct({
     Schema.check(Schema.isMaxLength(3)),
   ),
 });
+
 type ScopeTier = typeof ScopeTier.Type;
 
 const ScopeCase = Schema.Struct({
@@ -270,6 +294,7 @@ const ScopeCase = Schema.Struct({
   scope: Schema.Literals(["feature", "subscription"]),
   quantity: Schema.Boolean,
 });
+
 type ScopeCase = typeof ScopeCase.Type;
 
 /** The seat features a scope case may grant, declared once for the catalog. */
@@ -302,6 +327,7 @@ const scopeCatalogOf = (input: ScopeCase) => {
       ) as [Allowance, ...Allowance[]],
     }),
   );
+
   return defineCatalog({ features: seatFeatures, tiers });
 };
 
@@ -339,10 +365,13 @@ const scopeProviderOf = (input: ScopeCase): ProviderDescriptor => ({
  */
 const expectedScopeMismatchOf = (input: ScopeCase) => {
   if (!input.quantity || input.scope !== "subscription") return null;
+
   for (const [index, spec] of input.tiers.entries()) {
     const billable = spec.seats.filter((seat) => seat.billable).length;
+
     if (billable > 1) return { tier: tierId(index), actual: String(billable) };
   }
+
   return null;
 };
 
@@ -352,17 +381,22 @@ describe("a subscription-wide seat count", () => {
       Arbitrary.schema(ScopeCase),
       (input) => {
         const catalog = scopeCatalogOf(input);
+
         if (Result.isFailure(catalog)) return false;
         const expected = expectedScopeMismatchOf(input);
         const result = validateProviderMappings(catalog.success, [scopeProviderOf(input)]);
+
         if (expected === null) return result === null;
+
         if (result === null || errorTagOf(result) !== "CatalogPriceMismatch") return false;
+
         const mismatch = result as {
           readonly tier: string;
           readonly field: string;
           readonly expected: string;
           readonly actual: string;
         };
+
         return (
           mismatch.tier === expected.tier &&
           mismatch.field === "seatPrices" &&
@@ -389,6 +423,7 @@ describe("a subscription-wide seat count", () => {
       },
       seatScope: scope,
     });
+
     const input: ScopeCase = {
       quantity: true,
       scope: "subscription",
@@ -403,13 +438,16 @@ describe("a subscription-wide seat count", () => {
         },
       ],
     };
+
     const catalog = Result.getOrThrow(scopeCatalogOf(input));
     const subscription = validateProviderMappings(catalog, [twoSeats("subscription")]);
     expect(subscription?._tag).toBe("CatalogPriceMismatch");
+
     if (subscription?._tag === "CatalogPriceMismatch") {
       expect(subscription.field).toBe("seatPrices");
       expect(subscription.actual).toBe("2");
     }
+
     expect(validateProviderMappings(catalog, [twoSeats("feature")])).toBe(null);
   });
 });

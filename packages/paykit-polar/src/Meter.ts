@@ -106,6 +106,7 @@ const featureOf = (meter: Polar.Meter): string => metadataOf(meter)[PAYKIT_FEATU
 
 const attrsOf = (meter: Polar.Meter): Meter["Attributes"] => {
   const clause = meter.filter.clauses[0];
+
   return {
     id: meter.id,
     name: meter.name,
@@ -134,21 +135,27 @@ const LIST_MAX_PAGES = 100;
 
 const listAll = Effect.fn(function* () {
   const meters: Polar.Meter[] = [];
+
   for (let page = 1; page <= LIST_MAX_PAGES; page++) {
     const listed = yield* Polar.metersList({ limit: LIST_PAGE_SIZE, page });
     meters.push(...listed.items);
+
     if (page >= listed.pagination.max_page || listed.items.length === 0) break;
   }
+
   return meters;
 });
 
 /** Every generation of one feature's meter, newest first. */
 const generationsOf = Effect.fn(function* (stage: string, feature: string) {
   const name = meterNameOf(stage, feature);
+
   const matches = (yield* listAll()).filter(
     (meter) => meter.name === name && featureOf(meter) === feature,
   );
+
   matches.sort((left, right) => right.created_at.localeCompare(left.created_at));
+
   return matches;
 });
 
@@ -162,8 +169,10 @@ const getById = (id: string) =>
 const observe = Effect.fn(function* (input: { id?: string; stage: string; feature: string }) {
   if (input.id !== undefined) {
     const byId = yield* getById(input.id);
+
     if (byId !== undefined) return byId;
   }
+
   return yield* findByFeature(input.stage, input.feature);
 });
 
@@ -184,6 +193,7 @@ export const MeterProvider = () =>
 
     diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
+
       // Polar cannot rename a meter's event, so an explicit change is a
       // replacement. An omitted eventName keeps the stage-derived one.
       if (
@@ -193,23 +203,28 @@ export const MeterProvider = () =>
       ) {
         return { action: "replace" } as const;
       }
+
       return undefined;
     }),
 
     read: Effect.fn(function* ({ id, olds, output }) {
       const stage = yield* Stage;
+
       const existing = yield* observe({
         id: output?.id,
         stage,
         feature: output?.feature ?? olds.feature,
       });
+
       if (existing === undefined) return undefined;
       const attrs = attrsOf(existing);
+
       return (yield* hasAlchemyMetadata(id, metadataOf(existing))) ? attrs : Unowned(attrs);
     }),
 
     list: Effect.fn(function* () {
       const meters = (yield* listAll()).filter((meter) => meter.archived_at == null);
+
       return meters
         .filter((meter) => metadataOf(meter)[alchemyMetadataKeys.stack] !== undefined)
         .map(attrsOf);
@@ -255,6 +270,7 @@ export const MeterProvider = () =>
         ...(aggregationChanged ? { aggregation } : {}),
         ...(metadataChanged ? { metadata } : {}),
       });
+
       return attrsOf(updated);
     }),
 
@@ -262,6 +278,7 @@ export const MeterProvider = () =>
     // its own decision; `PolarPrices` retains the meter like the product.
     delete: Effect.fn(function* ({ output }) {
       const existing = yield* getById(output.id);
+
       if (existing === undefined || existing.archived_at != null) return;
       yield* Polar.metersUpdate({ id: existing.id, is_archived: true });
     }),

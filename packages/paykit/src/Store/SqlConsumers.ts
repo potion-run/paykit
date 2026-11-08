@@ -71,8 +71,7 @@ const insertIgnore = (dialect: SqlDialect, table: string, names: ReadonlyArray<s
 const upsert = (table: string, names: ReadonlyArray<string>, key: ReadonlyArray<string>): string =>
   `INSERT INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})
    ON CONFLICT (${key.join(", ")}) DO UPDATE SET ${names
-     .filter((name) => !key.includes(name))
-     .map((name) => `${name} = excluded.${name}`)
+     .flatMap((name) => (key.includes(name) ? [] : [`${name} = excluded.${name}`]))
      .join(", ")}`;
 
 const scopeOf = (options: SqlConsumerOptions, dialect: SqlDialect): TableScope => ({
@@ -111,13 +110,17 @@ export const SqlViewStore = (
     // source: both would read the same snapshot and the later write would drop
     // the other's events.
     const locks = new Map<string, Semaphore.Semaphore>();
+
     const lockFor = (key: string): Semaphore.Semaphore => {
       const found = locks.get(key);
+
       if (found !== undefined) return found;
       const made = Semaphore.makeUnsafe(1);
       locks.set(key, made);
+
       return made;
     };
+
     const withKey = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
       lockFor(key).withPermits(1)(effect);
 
@@ -151,6 +154,8 @@ export const SqlViewStore = (
           if (row === undefined || Number(row.generation) !== generation) {
             return { state: null, version: 0, checkpoints: {}, seq: 0, generation };
           }
+
+          // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
           return {
             state: parse(row.state) as never,
             version: Number(row.version),
@@ -197,12 +202,14 @@ export const SqlViewStore = (
             key,
             generation,
           ]);
+
           if (previous !== undefined && previous !== generation) {
             // A pending downstream delivery from the old fold would describe an
             // entry the new generation no longer has. Drop it; the rebuild
             // emits its own.
             yield* sql.write(`DELETE FROM ${outbox} WHERE view = ? AND key = ?`, [view, key]);
           }
+
           for (const delivery of applied) {
             yield* sql.write(
               insertIgnore(executor.dialect, input, [
@@ -215,6 +222,7 @@ export const SqlViewStore = (
               [view, key, delivery.source, delivery.seq, generation],
             );
           }
+
           yield* sql.write(
             upsert(
               state,
@@ -231,6 +239,7 @@ export const SqlViewStore = (
               before.state === null && after.state === null ? null : JSON.stringify(after.state),
             ],
           );
+
           for (const emitted of entries) {
             yield* sql.write(
               upsert(
@@ -249,6 +258,7 @@ export const SqlViewStore = (
               ],
             );
           }
+
           // The deliveries this commit emits are in the same unit as the
           // entries that produced them. A retry of the *input* delivery will
           // not produce them again, so they must survive the process.
@@ -263,6 +273,7 @@ export const SqlViewStore = (
 
     let kit: ViewKit | undefined;
 
+    // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
     const entries = (key: string, generation: number, after?: number) =>
       Effect.map(
         sql.query<{
@@ -289,8 +300,10 @@ export const SqlViewStore = (
     const applyBatch = (key: string, deliveries: ReadonlyArray<Delivery>) =>
       Effect.gen(function* () {
         const bound = kit;
+
         if (bound === undefined) return yield* Effect.die("view store used before it was built");
         const generation = bound.generation;
+
         // A delivery routed to an earlier generation belongs to a rebuild that
         // no longer exists. Absent means generation 0, not "any generation":
         // a stale row committed before a version bump carries no suffix and
@@ -298,6 +311,7 @@ export const SqlViewStore = (
         const matching = deliveries.filter(
           (delivery) => (delivery.target.generation ?? 0) === generation,
         );
+
         if (matching.length === 0) return;
         const snapshot = yield* readSnapshot(key, generation);
         // Dedupe before applying: at-least-once delivery means the same event
@@ -306,20 +320,27 @@ export const SqlViewStore = (
         // carry the same delivery twice, which no row has recorded yet.
         const fresh: Array<Delivery> = [];
         const seen = new Set<string>();
+
         for (const delivery of matching) {
           const identity = `${delivery.source}:${delivery.seq}`;
+
           if (seen.has(identity)) continue;
+
           if (yield* alreadyApplied(key, delivery, generation)) continue;
           seen.add(identity);
           fresh.push(delivery);
         }
+
         if (fresh.length === 0) {
           // The input was already applied, but its downstream deliveries may
           // still be pending from a crash after the commit. Finish them.
           yield* drainOutbox(key);
+
           return;
         }
+
         const applied = yield* bound.apply(key, snapshot, fresh);
+
         if (applied.changed) {
           yield* write(
             key,
@@ -331,6 +352,7 @@ export const SqlViewStore = (
             generation,
           );
         }
+
         yield* drainOutbox(key);
       }).pipe(Effect.orDie);
 
@@ -338,15 +360,20 @@ export const SqlViewStore = (
     const drainOutbox = (key: string) =>
       Effect.gen(function* () {
         const bound = kit;
+
         if (bound === undefined) return yield* Effect.die("view store used before it was built");
+
         while (true) {
           const pending = yield* sql.query<{ seq: number | string; delivery: string }>(
             `SELECT seq, delivery FROM ${outbox}
              WHERE view = ? AND key = ? AND delivered_at IS NULL ORDER BY seq ASC LIMIT 100`,
             [view, key],
           );
+
           if (pending.length === 0) return;
+
           for (const row of pending) {
+            // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
             yield* bound.deliver(JSON.parse(row.delivery) as Delivery);
             // After the target accepted it. A crash before this line redelivers
             // a delivery the target dedupes by `(source, seq)`.
@@ -364,22 +391,30 @@ export const SqlViewStore = (
     const ensureCaughtUp = (key: string) =>
       Effect.gen(function* () {
         const bound = kit;
+
         if (bound === undefined) return yield* Effect.die("view store used before it was built");
         const catchUp = bound.catchUp;
+
         if (catchUp === undefined) return;
         const marker = `${bound.generation}:${key}`;
+
         if (caughtUp.has(marker)) return;
 
         const generation = bound.generation;
+
         if ((yield* storedGeneration(key)) === generation) {
           const snapshot = yield* readSnapshot(key, generation);
+
           if (snapshot.version > 0) {
             caughtUp.add(marker);
+
             return;
           }
         }
+
         const rows =
           options.history === undefined ? [] : yield* options.history(catchUp.source, key);
+
         if (rows.length > 0) {
           const routed = yield* bound.history(bound.target, catchUp.source, key, rows);
           yield* applyBatch(
@@ -387,6 +422,7 @@ export const SqlViewStore = (
             routed.flatMap((row) => row.deliveries),
           );
         }
+
         caughtUp.add(marker);
       }).pipe(Effect.orDie);
 
@@ -405,12 +441,14 @@ export const SqlViewStore = (
           key,
           Effect.gen(function* () {
             const bound = kit;
+
             if (bound === undefined)
               return yield* Effect.die("view store used before it was built");
             yield* ensureCaughtUp(key);
             // A read makes progress on anything a crash left in the outbox,
             // so a key nobody writes to again is not stuck waiting for a send.
             yield* drainOutbox(key);
+
             return yield* readSnapshot(key, bound.generation);
           }),
         ).pipe(Effect.orDie),
@@ -422,9 +460,11 @@ export const SqlViewStore = (
               key,
               Effect.gen(function* () {
                 const bound = kit;
+
                 if (bound === undefined)
                   return yield* Effect.die("view store used before it was built");
                 yield* ensureCaughtUp(key);
+
                 return yield* readSnapshot(key, bound.generation);
               }),
             ),
@@ -438,21 +478,25 @@ export const SqlViewStore = (
           key,
           Effect.gen(function* () {
             const bound = kit;
+
             if (bound === undefined)
               return yield* Effect.die("view store used before it was built");
             yield* ensureCaughtUp(key);
             yield* drainOutbox(key);
+
             return yield* entries(key, bound.generation);
           }),
         ).pipe(Effect.orDie),
 
       tail: (key, after) => {
         let seen = after;
+
         return Stream.fromEffect(
           withKey(
             key,
             Effect.gen(function* () {
               const bound = kit;
+
               if (bound === undefined)
                 return yield* Effect.die("view store used before it was built");
               yield* ensureCaughtUp(key);
@@ -464,10 +508,13 @@ export const SqlViewStore = (
               Stream.mapEffect(() =>
                 Effect.gen(function* () {
                   const bound = kit;
+
                   if (bound === undefined)
                     return yield* Effect.die("view store used before it was built");
                   const rows = yield* entries(key, bound.generation, seen);
+
                   if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
+
                   return rows;
                 }),
               ),
@@ -483,6 +530,7 @@ export const SqlViewStore = (
       store,
       bind: (built: ViewKit) => {
         kit = built;
+
         return store;
       },
     };
@@ -504,9 +552,12 @@ export const SqlProjectionStore = (
     const drain = (key: string) =>
       Effect.gen(function* () {
         const bound = kit;
+
         if (bound === undefined) {
           return yield* Effect.die("projection store used before it was built");
         }
+
+        // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
         const pending = yield* Effect.map(
           sql.query<{
             position: number | string;
@@ -524,6 +575,7 @@ export const SqlProjectionStore = (
               delivery: parse(row.delivery) as never,
             })),
         );
+
         if (pending.length === 0) return;
         yield* bound.run(key, pending);
         const last = pending[pending.length - 1]!.position;
@@ -545,15 +597,18 @@ export const SqlProjectionStore = (
       receive: (delivery) =>
         Effect.gen(function* () {
           const bound = kit;
+
           if (bound === undefined) {
             return yield* Effect.die("projection store used before it was built");
           }
+
           // A delivery for another generation's rebuild does not belong here.
           // Absent is generation 0, so a stale delivery from before a version
           // bump is dropped rather than appended to the new log.
           if ((delivery.target.generation ?? 0) !== bound.generation) {
             return;
           }
+
           yield* sql.atomic(
             Effect.gen(function* () {
               // A rebuilt projection starts a new input log. The old rows and
@@ -564,6 +619,7 @@ export const SqlProjectionStore = (
                 `SELECT generation FROM ${input} WHERE projection = ? AND key = ? LIMIT 1`,
                 [projection, delivery.key],
               );
+
               if (existing !== undefined && Number(existing.generation) !== bound.generation) {
                 yield* sql.write(`DELETE FROM ${input} WHERE projection = ? AND key = ?`, [
                   projection,
@@ -574,11 +630,14 @@ export const SqlProjectionStore = (
                   delivery.key,
                 ]);
               }
+
               const last = yield* sql.get<{ position: number | string }>(
                 `SELECT COALESCE(MAX(position), 0) AS position FROM ${input} WHERE projection = ? AND key = ?`,
                 [projection, delivery.key],
               );
+
               const next = Number(last?.position ?? 0) + 1;
+              // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
               yield* sql.write(
                 insertIgnore(executor.dialect, input, [
                   "projection",
@@ -611,14 +670,18 @@ export const SqlProjectionStore = (
       checkpoints: (key) =>
         Effect.gen(function* () {
           const bound = kit;
+
           if (bound === undefined) {
             return yield* Effect.die("projection store used before it was built");
           }
+
           const rows = yield* sql.query<{ source: string; seq: number | string }>(
             `SELECT source, MAX(source_seq) AS seq FROM ${input}
              WHERE projection = ? AND key = ? AND generation = ? AND processed_at IS NOT NULL GROUP BY source`,
             [projection, key, bound.generation],
           );
+
+          // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
           return Object.fromEntries(rows.map((row) => [row.source, Number(row.seq)])) as never;
         }).pipe(Effect.orDie),
     };
@@ -627,6 +690,7 @@ export const SqlProjectionStore = (
       store,
       bind: (built: ProjectionKit) => {
         kit = built;
+
         return store;
       },
     };
@@ -658,12 +722,15 @@ export const SqlPolicyStore = (
       receive: (delivery) =>
         Effect.gen(function* () {
           const bound = kit;
+
           if (bound === undefined)
             return yield* Effect.die("policy store used before it was built");
+
           const already = yield* sql.get<{ one: number }>(
             `SELECT 1 AS one FROM ${seen} WHERE policy = ? AND key = ? AND source = ? AND source_seq = ?`,
             [policy, delivery.key, delivery.source, delivery.seq],
           );
+
           if (already !== undefined) return;
           yield* bound.run(delivery);
           yield* sql.write(
@@ -677,20 +744,20 @@ export const SqlPolicyStore = (
       store,
       bind: (built: PolicyKit) => {
         kit = built;
+
         return store;
       },
     };
   });
 
-const envelopeOf = (write: StreamWrite): EnvelopeJson =>
-  ({
-    id: write.commandId,
-    stream: write.source,
-    seq: write.sourceSeq,
-    at: new Date(write.at),
-    commandId: write.commandId,
-    correlationId: write.commandId,
-  }) as unknown as EnvelopeJson;
+const envelopeOf = (write: StreamWrite): EnvelopeJson => ({
+  id: write.commandId,
+  stream: write.source,
+  seq: write.sourceSeq,
+  at: write.at,
+  commandId: write.commandId,
+  correlationId: write.commandId,
+});
 
 /**
  * A keyed, append-only stream. A write whose `origin` is not after the last
@@ -711,6 +778,7 @@ export const SqlStreamStore = (
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
     const stream = options.name;
 
+    // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
     const read = (key: string) =>
       Effect.map(
         sql.get<{
@@ -745,6 +813,7 @@ export const SqlStreamStore = (
     const after = (origin: readonly [number, number], last: readonly [number, number]): boolean =>
       origin[0] > last[0] || (origin[0] === last[0] && origin[1] > last[1]);
 
+    // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
     const entries = (key: string, after?: number) =>
       Effect.map(
         sql.query<{ seq: number | string; event: string; envelope: string }>(
@@ -767,8 +836,10 @@ export const SqlStreamStore = (
           .atomic(
             Effect.gen(function* () {
               const current = yield* read(key);
+
               if (!after(write.origin, current.origin)) return;
               let seq = current.seq;
+
               for (const event of write.events) {
                 seq += 1;
                 yield* sql.write(
@@ -780,6 +851,7 @@ export const SqlStreamStore = (
                   [stream, key, seq, JSON.stringify(event), JSON.stringify(envelopeOf(write))],
                 );
               }
+
               yield* writeMeta(key, {
                 seq,
                 checkpoints: current.checkpoints,
@@ -793,9 +865,11 @@ export const SqlStreamStore = (
         Effect.gen(function* () {
           const current = yield* read(key);
           const merged = { ...current.checkpoints };
+
           for (const [source, seq] of Object.entries(checkpoints)) {
             merged[source] = Math.max(merged[source] ?? 0, seq);
           }
+
           yield* writeMeta(key, { ...current, checkpoints: merged });
         }).pipe(Effect.orDie),
 
@@ -812,10 +886,12 @@ export const SqlStreamStore = (
 
       tail: (key, after) => {
         let seen = after;
+
         return poll(pollMillis).pipe(
           Stream.mapEffect(() =>
             Effect.map(entries(key, seen), (rows) => {
               if (rows.length > 0) seen = rows[rows.length - 1]!.seq;
+
               return rows;
             }),
           ),

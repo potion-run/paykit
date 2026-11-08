@@ -50,6 +50,7 @@ const PricingSpec = Schema.Union([
     bands: Schema.Array(BandSpec).pipe(Schema.check(Schema.isMaxLength(3))),
   }),
 ]);
+
 type PricingSpec = typeof PricingSpec.Type;
 
 const ladderOf = (
@@ -59,6 +60,7 @@ const ladderOf = (
   const sorted = [...bands].sort((left, right) => left.upTo - right.upTo);
   const seen = new Set<number>();
   const ladder: Array<PriceBandInput> = [];
+
   for (const entry of sorted) {
     if (seen.has(entry.upTo)) continue;
     seen.add(entry.upTo);
@@ -69,9 +71,11 @@ const ladderOf = (
       ...(entry.units === undefined ? {} : { units: entry.units }),
     });
   }
+
   if (ladder.length === 0) ladder.push({ upTo: "inf", amount: 1, currency });
   // The last band is unbounded, whatever ceiling the author stated for it.
   ladder[ladder.length - 1] = { ...ladder[ladder.length - 1]!, upTo: "inf" };
+
   return ladder;
 };
 
@@ -114,10 +118,12 @@ describe("the price is a function of the billable count", () => {
         const price = build(spec);
         let billed = 0;
         let count = 0;
+
         for (const amount of events) {
           billed += chargeOfPricing(price, count, count + amount);
           count += amount;
         }
+
         return billed === priceOf(price, count);
       },
       { runs: 120, size: 30 },
@@ -148,7 +154,9 @@ describe("the price is a function of the billable count", () => {
         const kind = kindOf(spec);
 
         if (sum(lines.map((line) => line.amount)) !== charge) return false;
+
         if (!lines.every((line) => line.quantity > 0)) return false;
+
         if (!lines.every((line) => line.key === priceKey(line.unitPrice))) return false;
 
         if (kind === "unit") {
@@ -163,7 +171,9 @@ describe("the price is a function of the billable count", () => {
         // cumulative price, so an event's charge cannot be negative. A volume
         // ladder can reprice the whole total downward when it crosses a band.
         if (kind !== "volume" && charge < 0) return false;
+
         if (amount === 0 && (charge !== 0 || lines.length !== 0)) return false;
+
         return true;
       },
       { runs: 120, size: 30 },
@@ -183,6 +193,7 @@ describe("the price is a function of the billable count", () => {
         if (kindOf(spec) === "volume") return true;
         const price = build(spec);
         const [before, after] = first <= second ? [first, second] : [second, first];
+
         return priceOf(price, before) <= priceOf(price, after);
       },
       { runs: 120, size: 30 },
@@ -215,8 +226,11 @@ describe("the price is a function of the billable count", () => {
           const lines = pricedOf(price, included, used, amount);
 
           if (charge !== chargeOfPricing(price, billableBefore, billableAfter)) return false;
+
           if (sum(lines.map((line) => line.amount)) !== charge) return false;
+
           if (used + amount <= included) return charge === 0 && lines.length === 0;
+
           return true;
         },
         { runs: 120, size: 30 },
@@ -237,9 +251,13 @@ describe("a package price buys whole packages", () => {
       Arbitrary.schema(Package),
       ({ amount, units, count, packages }) => {
         const price = { amount, currency: "usd" as const, units };
+
         if (unitsOf(price) !== units) return false;
+
         if (priceOfUnits(price, count) !== Math.ceil(count / units) * amount) return false;
+
         if (priceOfUnits(price, packages * units) !== packages * amount) return false;
+
         return priceOfUnits(price, 0) === 0;
       },
       { runs: 100 },
@@ -263,6 +281,7 @@ describe("the price identity", () => {
           left.amount === right.amount &&
           left.currency === right.currency &&
           unitsOf(left) === unitsOf(right);
+
         return (priceKey(left) === priceKey(right)) === samePrice;
       },
       { runs: 100 },
@@ -275,7 +294,9 @@ describe("the price identity", () => {
       (spec) => {
         const price = build(spec);
         const sole = soleUnitPriceOf(price);
+
         if ((sole !== null) !== (pricesOf(price).length === 1)) return false;
+
         return (
           spec._tag !== "unit" || (sole !== null && priceKey(sole) === priceKey(spec.unitPrice))
         );
@@ -293,6 +314,7 @@ describe("the price identity", () => {
         { upTo: "inf", amount: 5, currency: "usd" },
       ],
     });
+
     expect(priceOf(volume, 100)).toBe(1_000);
     expect(priceOf(volume, 101)).toBe(505);
     // The signed delta is the ADR's volume semantics, not a lost unit.
@@ -308,6 +330,7 @@ describe("the price identity", () => {
         { upTo: "inf", amount: 1, currency: "usd" },
       ],
     });
+
     expect(priceOf(graduated, 10)).toBe(20);
     expect(priceOf(graduated, 12)).toBe(22);
     expect(pricedLines(graduated, 9, 12).map((line) => line.amount)).toEqual([2, 2]);
@@ -338,13 +361,18 @@ describe("a pricing written in any of the forms the deploy accepts", () => {
                 currency: spec.currency,
                 bands: ladderOf(spec.bands, spec.currency),
               };
+
         const built = pricing(input);
 
         if (!same(asPricing(input), built)) return false;
+
         if (!same(asPricing(built), built)) return false;
+
         if (!same(asPricing(asPricing(input)), built)) return false;
         const wrapped = asPricing(unitPrice);
+
         if (wrapped._tag !== "unit" || !same(wrapped.unitPrice, unitPrice)) return false;
+
         return pricingKey(asPricing(input)) === pricingKey(built);
       },
       { runs: 100, size: 30 },
@@ -367,17 +395,23 @@ describe("a pricing written in any of the forms the deploy accepts", () => {
       ),
       ({ amount, units }) => {
         const decimal = unitAmountDecimalOf({ amount, currency: "usd", units });
+
         if (units === 1) return decimal === String(amount);
 
         const [whole, fraction = ""] = decimal.split(".");
+
         if (!/^\d+$/.test(whole)) return false;
+
         if (fraction !== "" && !/^\d+$/.test(fraction)) return false;
+
         if (fraction.length > 12) return false;
+
         if (fraction.endsWith("0")) return false;
 
         const scale = 10n ** 12n;
         const scaled = BigInt(whole) * scale + BigInt((fraction + "0".repeat(12)).slice(0, 12));
         const expected = (BigInt(amount) * scale + BigInt(units) / 2n) / BigInt(units);
+
         return scaled === expected;
       },
       { runs: 120, size: 30 },

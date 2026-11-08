@@ -101,10 +101,12 @@ export interface SqlEventLogOptions {
  */
 export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) => {
   const sql = asyncOf(executor);
+
   const scope: TableScope = {
     dialect: executor.dialect,
     schema: options.schema ?? DEFAULT_SCHEMA,
   };
+
   const event = tableName(BILLING_TABLES.event, scope);
   const receipt = tableName(BILLING_TABLES.receipt, scope);
   const state = tableName(BILLING_TABLES.state, scope);
@@ -123,12 +125,16 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 
   /** A write lost a primary-key race: another writer claimed the same row. */
   const uniqueViolation = (error: SqlError): boolean => {
+    // SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
     const cause = error.cause as
       | { readonly code?: unknown; readonly message?: unknown }
       | undefined;
+
     const asText = (value: unknown): string =>
       typeof value === "string" ? value : value === undefined ? "" : (JSON.stringify(value) ?? "");
+
     const text = `${error.message} ${asText(cause?.code)} ${asText(cause?.message)}`.toLowerCase();
+
     return (
       text.includes("unique constraint") ||
       text.includes("duplicate key") ||
@@ -156,6 +162,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
             `SELECT version FROM ${receipt} WHERE aggregate = ? AND account = ? AND command_id = ?`,
             [input.aggregate, input.account, input.commandId],
           );
+
           if (seen !== undefined) {
             return { version: numberFrom(seen.version), duplicate: true, conflict: false };
           }
@@ -170,7 +177,9 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
             `SELECT COALESCE(MAX(seq), 0) AS version FROM ${event} WHERE aggregate = ? AND account = ?`,
             [input.aggregate, input.account],
           );
+
           let version = numberFrom(current?.version ?? 0);
+
           if (input.expectedVersion !== undefined && version !== input.expectedVersion) {
             return { version, duplicate: false, conflict: true };
           }
@@ -188,6 +197,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
                 JSON.stringify(record),
               ],
             );
+
             for (const delivery of input.deliveries) {
               // `seq` is allocated by the database (see migration 0003), so two
               // accounts committing at once never share a maximum.
@@ -213,6 +223,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
               JSON.stringify(input.receipt),
             ],
           );
+
           return { version, duplicate: false, conflict: false };
         }),
       )
@@ -340,23 +351,29 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
       const take = Math.min(MAX_PAGE, Math.max(1, query.take ?? DEFAULT_PAGE));
       const where: Array<string> = [];
       const params: Array<SqlValue> = [];
+
       if (query.standing !== undefined) {
         where.push("standing = ?");
         params.push(query.standing);
       }
+
       if (query.tier !== undefined) {
         where.push("tier = ?");
         params.push(query.tier);
       }
+
       if (query.status !== undefined) {
         where.push("status = ?");
         params.push(query.status);
       }
+
       if (query.after !== undefined) {
         where.push(order === "asc" ? "account > ?" : "account < ?");
         params.push(query.after);
       }
+
       const clause = where.length === 0 ? "" : ` WHERE ${where.join(" AND ")}`;
+
       return Effect.flatMap(
         sql.query<ReadModelColumns>(
           `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels}${clause} ORDER BY account ${order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
@@ -365,6 +382,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         (found) =>
           Effect.map(Effect.forEach(found.slice(0, take), rowToReadModel), (rows) => {
             const last = rows[rows.length - 1];
+
             return {
               rows,
               next: found.length > take && last !== undefined ? last.account : null,
@@ -443,6 +461,7 @@ interface ReadModelColumns {
   readonly features: string;
 }
 
+// SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
 const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
   Effect.suspend(() =>
     Schema.decodeUnknownEffect(BillingReadRowSchema)({
@@ -484,6 +503,7 @@ const featuresJson = (features: BillingReadRow["features"]): string =>
     ),
   );
 
+// SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
 const decodeFeatures = (json: string): BillingReadRow["features"] =>
   Object.fromEntries(
     Object.entries(

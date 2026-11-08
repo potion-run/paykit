@@ -16,8 +16,10 @@ describe("a capped allowance that carries over", () => {
   it("spends the cap with the carried units instead of extending it", () => {
     // `carry-cap` includes 100, bills 20 more, and carries at most 100.
     let state: SubscriptionState = subscribedAt("carry-cap");
+
     const periodEnd = (current: SubscriptionState): DateTime.Utc => {
       if (current._tag !== "Subscribed") throw new Error("the standing was lost");
+
       return current.period.end;
     };
 
@@ -27,6 +29,7 @@ describe("a capped allowance that carries over", () => {
       start,
       "first",
     );
+
     if (!isAccepted(first)) throw new Error("the first usage was refused");
     state = evolveAt(state, first, start, "first");
 
@@ -38,10 +41,12 @@ describe("a capped allowance that carries over", () => {
       periodEnd(state),
       "close",
     );
+
     if (!isAccepted(close)) throw new Error("the period did not close");
     const reset = close.find(Schema.is(UsageReset));
     expect(reset?.carried.messages).toBe(10);
     state = evolveAt(state, close, periodEnd(state), "close");
+
     if (state._tag !== "Subscribed") throw new Error("the close lost the standing");
     expect(availableOf(state, "messages")).toBe(110);
 
@@ -51,6 +56,7 @@ describe("a capped allowance that carries over", () => {
       periodEnd(state),
       "all",
     );
+
     if (!isAccepted(all)) throw new Error("120 units should fit the 120-unit ceiling");
     state = evolveAt(state, all, periodEnd(state), "all");
 
@@ -62,6 +68,7 @@ describe("a capped allowance that carries over", () => {
       periodEnd(state),
       "past",
     );
+
     if (isAccepted(past)) throw new Error("the 121st unit was accepted");
     expect(past._tag).toBe("SpendCapExceeded");
   });

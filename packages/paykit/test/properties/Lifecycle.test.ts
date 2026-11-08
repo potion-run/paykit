@@ -43,6 +43,7 @@ const Step = Schema.Union([
   Schema.TaggedStruct("ExtendTrial", { trialDays: TrialDays }),
   Schema.TaggedStruct("PeriodEnded", {}),
 ]);
+
 type Step = typeof Step.Type;
 
 const LifecycleScript = Schema.Struct({
@@ -109,10 +110,14 @@ const opened = (script: typeof LifecycleScript.Type): SubscribedState => {
           start,
         )
       : commandOf({ _tag: "Subscribe", tier: script.tier }, initialSubscriptionState, start);
+
   const decision = decideAt(initialSubscriptionState, command, start, "open");
+
   if (!isAccepted(decision)) throw new Error("the fixture catalog could not open a standing");
   const state = evolveAt(initialSubscriptionState, decision, start, "open");
+
   if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
+
   return state;
 };
 
@@ -131,15 +136,18 @@ describe("lifecycle", () => {
 
           if (!isAccepted(decision)) {
             if (!expectedRejections[step._tag].includes(decision._tag)) return false;
+
             // A refused extension is one that would not move the deadline
             // forward, so the requested day is at or before the one in force.
             if (step._tag === "ExtendTrial" && decision._tag === "TrialDeadlineNotLater") {
               if (before.trialEndsAt === undefined) return false;
               const requested = DateTime.add(now, { days: step.trialDays });
+
               if (DateTime.toEpochMillis(requested) > DateTime.toEpochMillis(before.trialEndsAt)) {
                 return false;
               }
             }
+
             // A rejection changes nothing.
             if (state !== before) return false;
             continue;
@@ -153,10 +161,12 @@ describe("lifecycle", () => {
             } else if (expectedRejections[step._tag].length > 0) {
               return false;
             }
+
             continue;
           }
 
           const evolved = evolveAt(state, decision, now, `step-${index}`);
+
           if (evolved._tag !== "Subscribed") return false;
           const after = evolved;
 
@@ -167,16 +177,21 @@ describe("lifecycle", () => {
               break;
             case "RecordPaymentFailure":
               if (before.status === "expired" || before.status === "canceled") return false;
+
               if (after.status !== "grace") return false;
+
               if (after.dunningAttempts !== before.dunningAttempts + 1) return false;
+
               if (after.graceUntil === undefined) return false;
               break;
             case "ScheduleCancellation":
               if (!after.cancelAtPeriodEnd) return false;
+
               if (after.status !== before.status) return false;
               break;
             case "Resume":
               if (after.cancelAtPeriodEnd) return false;
+
               if (after.status !== before.status) return false;
               break;
             case "Expire":
@@ -187,44 +202,58 @@ describe("lifecycle", () => {
                 before.status === "grace" &&
                 before.graceUntil !== undefined &&
                 DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(before.graceUntil);
+
               if (due !== (after.status === "expired")) return false;
               break;
             }
+
             case "DunningRetry": {
               // A rung records only while it is still the current run, and it
               // never moves the standing out of grace by itself.
               if (after.status !== "grace") return false;
+
               if (decision[0]?._tag !== "DunningRetryDue") return false;
               break;
             }
+
             case "ExtendTrial": {
               if (before.status !== "trialing" || after.status !== "trialing") return false;
               const expected = DateTime.add(now, { days: step.trialDays });
+
               if (after.trialEndsAt === undefined) return false;
+
               if (DateTime.toEpochMillis(after.trialEndsAt) !== DateTime.toEpochMillis(expected)) {
                 return false;
               }
+
               if (DateTime.toEpochMillis(after.period.end) !== DateTime.toEpochMillis(expected)) {
                 return false;
               }
+
               break;
             }
+
             case "PeriodEnded": {
               if (decision[0]?._tag !== "PeriodClosed") return false;
+
               if (
                 DateTime.toEpochMillis(after.period.start) !==
                 DateTime.toEpochMillis(before.period.end)
               ) {
                 return false;
               }
+
               if (after.usage.messages !== undefined) return false;
+
               const expectedStatus = before.cancelAtPeriodEnd
                 ? "canceled"
                 : before.status === "trialing"
                   ? "active"
                   : before.status;
+
               if (after.status !== expectedStatus) return false;
               const expectedCredits = before.creditsExpire === "period" ? 0 : before.credits;
+
               if (after.credits !== expectedCredits) return false;
               break;
             }
@@ -238,8 +267,10 @@ describe("lifecycle", () => {
               now,
               "terminal-usage",
             );
+
             if (isAccepted(usage) || usage._tag !== "StandingBlocksUsage") return false;
             const recovery = decideAt(after, new Recover(), now, "terminal-recover");
+
             if (isAccepted(recovery) || recovery._tag !== "NotInGrace") return false;
           }
 
@@ -277,6 +308,7 @@ describe("trial deadlines", () => {
       ),
       ({ tier, openDays, extendDays }) => {
         const terms = tierTermsOf(testCatalog, tier);
+
         if (terms === null) return false;
         const now = start;
         const trialEndsAt = DateTime.add(now, { days: openDays });
@@ -287,16 +319,21 @@ describe("trial deadlines", () => {
           now,
           "open",
         );
+
         // A deadline that is not in the future may be refused. What it may not
         // do is open a period whose end is already behind it.
         if (!isAccepted(opened)) {
           return DateTime.toEpochMillis(trialEndsAt) <= DateTime.toEpochMillis(now);
         }
+
         const state = evolveAt(initialSubscriptionState, opened, now, "open");
+
         if (state._tag !== "Subscribed") return false;
+
         if (DateTime.toEpochMillis(state.period.end) !== DateTime.toEpochMillis(trialEndsAt)) {
           return false;
         }
+
         if (
           DateTime.toEpochMillis(state.period.end) <= DateTime.toEpochMillis(state.period.start)
         ) {
@@ -304,23 +341,29 @@ describe("trial deadlines", () => {
         }
 
         const requested = DateTime.add(now, { days: extendDays });
+
         const extended = decideAt(
           state,
           new ExtendTrial({ trialEndsAt: requested }),
           now,
           "extend",
         );
+
         if (!isAccepted(extended)) {
           return DateTime.toEpochMillis(requested) <= DateTime.toEpochMillis(trialEndsAt);
         }
+
         const after = evolveAt(state, extended, now, "extend");
+
         if (after._tag !== "Subscribed") return false;
+
         // An extension reschedules the period, and never to an earlier end.
         if (
           DateTime.toEpochMillis(after.period.end) <= DateTime.toEpochMillis(after.period.start)
         ) {
           return false;
         }
+
         return DateTime.toEpochMillis(after.period.end) >= DateTime.toEpochMillis(state.period.end);
       },
       { runs: 120, size: 30 },

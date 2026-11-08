@@ -70,7 +70,9 @@ export const subscribeInputOf = (
   options: { readonly anchorTz?: string; readonly currency?: string } = {},
 ): (TierGrantInput & { readonly anchorTz?: string }) | null => {
   const terms = tierTermsOf(catalog, tierId, options.currency);
+
   if (terms === null || terms.kind === "one_off") return null;
+
   return {
     ...grantOf(tierId, terms),
     ...(options.anchorTz === undefined ? {} : { anchorTz: options.anchorTz }),
@@ -97,7 +99,9 @@ export const scheduleTierChangeInputOf = (
   currency?: string,
 ): TierGrantInput | null => {
   const terms = tierTermsOf(catalog, tierId, currency);
+
   if (terms === null || terms.kind === "one_off") return null;
+
   return grantOf(tierId, terms);
 };
 
@@ -127,7 +131,9 @@ export const purchaseCreditsInputOf = (
   readonly rates: CreditRateCards;
 } | null => {
   const terms = tierTermsOf(catalog, tierId);
+
   if (terms === null || terms.kind !== "one_off") return null;
+
   return {
     tier: tierId,
     amount: terms.credits,
@@ -179,7 +185,9 @@ export const planChangeTier = (
     tierId,
     state._tag === "Subscribed" ? state.currency : undefined,
   );
+
   if (terms === null || terms.kind === "one_off") return null;
+
   const proration =
     state._tag === "Subscribed"
       ? prorate({
@@ -189,6 +197,7 @@ export const planChangeTier = (
           at,
         })
       : null;
+
   return {
     input: {
       ...grantOf(tierId, terms),

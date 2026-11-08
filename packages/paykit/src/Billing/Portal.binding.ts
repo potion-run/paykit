@@ -19,6 +19,7 @@ const portalRefusals = [
 
 /** Every refusal a portal can answer. */
 export type PortalRefusal = InstanceType<(typeof portalRefusals)[number]>;
+
 export type PortalError = BindingError<PortalRefusal>;
 
 /** Whether a failure is the provider refusing to open a portal. */
@@ -48,6 +49,7 @@ const chargeRefusals = [ProviderCapabilityMissing, PaymentDeclined] as const;
  * write a catch for the common case.
  */
 export type ChargeProrationRefusal = InstanceType<(typeof chargeRefusals)[number]>;
+
 export type ChargeProrationError = BindingError<ChargeProrationRefusal | PaymentError>;
 
 /** Whether a failure is the account having nothing to collect. */

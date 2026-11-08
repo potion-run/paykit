@@ -37,4 +37,5 @@ export const Flags = Schema.Struct({
    */
   account: Schema.optional(Schema.Unknown),
 });
+
 export type Flags = typeof Flags.Type;

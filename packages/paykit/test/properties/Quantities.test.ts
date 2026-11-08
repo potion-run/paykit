@@ -102,13 +102,16 @@ const seatsCatalog = Effect.runSync(
 
 /** A tier that grants seats and the terms a command carries for it. */
 const Stock = Schema.Literals(["team", "enterprise", "blocked", "deferred", "free"]);
+
 type Stock = typeof Stock.Type;
 
 const Quantity = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 32 })));
 
 const termsOf = (tier: Stock) => {
   const terms = tierTermsOf(seatsCatalog, tier);
+
   if (terms === null) throw new Error(`the seat catalog is missing ${tier}`);
+
   return terms;
 };
 
@@ -141,11 +144,14 @@ const prorationFor = (
   at: DateTime.Utc,
 ) => {
   const pricing = pricingOf(allowance);
+
   const unitPrice =
     pricing === null || pricing._tag !== "unit"
       ? null
       : { amount: pricing.unitPrice.amount, currency: pricing.unitPrice.currency };
+
   if (allowance.prorate === "period_end" || unitPrice === null) return null;
+
   return prorateQuantity({
     from: quantityOf(state, "seats", allowance),
     to: quantity,
@@ -186,12 +192,14 @@ describe("a seat is a quantity that is set", () => {
           key: string,
         ): { readonly state: SubscribedState; readonly accepted: boolean } | false => {
           const before = quantityOf(state, "seats", allowance);
+
           const decision = decideAt(
             state,
             new SetQuantity({ feature: "seats", quantity, dedupeKey: key }),
             at,
             key,
           );
+
           const overCap = cap !== undefined && quantity > cap;
           const overBlock = allowance.overage === "block" && quantity > included;
 
@@ -203,39 +211,52 @@ describe("a seat is a quantity that is set", () => {
             } else {
               return false;
             }
+
             // A refusal writes nothing; the account still holds what it held.
             return { state, accepted: false };
           }
+
           // Setting the quantity the account already holds records nothing.
           if (decision.length === 0) {
             return before === quantity ? { state, accepted: true } : false;
           }
+
           if (overCap || overBlock) return false;
 
           const changed = changedOf(decision);
+
           if (changed === undefined) return false;
+
           if (changed.quantityBefore !== before || changed.quantityAfter !== quantity) return false;
+
           if (changed.proration !== undefined && changed.prorationId !== key) return false;
 
           const expected = prorationFor(state, allowance, quantity, at);
+
           if (expected === null) {
             if (changed.proration !== undefined) return false;
           } else if (!same(changed.proration, expected)) {
             return false;
           }
+
           if (changed.proration !== undefined) {
             const billableBefore = Math.max(0, before - included);
             const billableAfter = Math.max(0, quantity - included);
             const grew = billableAfter > billableBefore;
             const shrank = billableAfter < billableBefore;
+
             if (grew && changed.proration.due <= 0) return false;
+
             if (shrank && changed.proration.due >= 0) return false;
           }
 
           const next = evolveAt(state, decision, at, key);
+
           if (next._tag !== "Subscribed") return false;
+
           if (next.quantities?.seats !== quantity) return false;
           const remaining = cap === undefined ? null : Math.max(0, cap - quantity);
+
           if (next.remaining.seats !== remaining) return false;
 
           // Setting the quantity the account already holds records nothing.
@@ -245,15 +266,21 @@ describe("a seat is a quantity that is set", () => {
             at,
             `${key}-replay`,
           );
+
           if (!isAccepted(replay) || replay.length !== 0) return false;
+
           return { state: next, accepted: true };
         };
 
         const firstAttempt = attempt(opened, first, "seats:first");
+
         if (firstAttempt === false) return false;
         const secondAttempt = attempt(firstAttempt.state, second, "seats:second");
+
         if (secondAttempt === false) return false;
+
         if (secondAttempt.accepted) return secondAttempt.state.quantities?.seats === second;
+
         return secondAttempt.state.quantities?.seats === firstAttempt.state.quantities?.seats;
       },
       { runs: 100, size: 30 },
@@ -262,12 +289,14 @@ describe("a seat is a quantity that is set", () => {
 
   it("refuses a quantity on a metered feature, and a use of a seat", () => {
     const state = subscribedIn(seatsCatalog, "team");
+
     const onMessages = decideAt(
       state,
       new SetQuantity({ feature: "messages", quantity: 10, dedupeKey: "messages:1" }),
       start,
       "messages",
     );
+
     expect(isAccepted(onMessages)).toBe(false);
     expect(tagOf(onMessages)).toBe("FeatureNotConsumable");
 
@@ -286,6 +315,7 @@ describe("a seat is a quantity that is set", () => {
       start,
       "hold",
     );
+
     expect(isAccepted(held)).toBe(false);
     expect(tagOf(held)).toBe("FeatureNotConsumable");
   });
@@ -322,11 +352,14 @@ describe("a seat is a quantity that is set", () => {
           },
           ask: { amount },
         });
+
         if (cap === undefined) return verdict._tag === "Allowed";
         const headroom = cap - quantity;
+
         if (amount > headroom) {
           return verdict._tag === "Ceiling" && verdict.cap === cap && verdict.headroom === headroom;
         }
+
         return verdict._tag === "Allowed";
       },
       { runs: 100 },
@@ -353,13 +386,16 @@ describe("a seat is a quantity that is set", () => {
       ({ startTier, nextTier, quantity, advanceDays, scheduled }) => {
         const opened = subscribedIn(seatsCatalog, startTier);
         const at = DateTime.add(start, { days: advanceDays });
+
         const set = decideAt(
           opened,
           new SetQuantity({ feature: "seats", quantity, dedupeKey: "seats:set" }),
           at,
           "seats:set",
         );
+
         const state = isAccepted(set) ? evolveAt(opened, set, at, "seats:set") : opened;
+
         if (state._tag !== "Subscribed") return false;
         const before = quantityOf(state, "seats", seatsAllowance(state));
         const target = termsOf(nextTier);
@@ -368,8 +404,10 @@ describe("a seat is a quantity that is set", () => {
           before,
           includedOf(target.allowances.seats!),
         );
+
         const remainingFor = (next: SubscribedState) => {
           const stock = seatsAllowance(next);
+
           return stock.cap === undefined
             ? null
             : Math.max(0, stock.cap - quantityOf(next, "seats", stock));
@@ -382,23 +420,32 @@ describe("a seat is a quantity that is set", () => {
             at,
             "schedule",
           );
+
           // A scheduled change to the tier already held records nothing.
           if (!isAccepted(schedule)) return true;
           const pending = evolveAt(state, schedule, at, "schedule");
+
           if (pending._tag !== "Subscribed") return false;
           const boundary = pending.period.end;
+
           const close = decideAt(
             pending,
             new ClosePeriod({ periodEnd: boundary }),
             boundary,
             "close",
           );
+
           if (!isAccepted(close)) return false;
           const next = evolveAt(pending, close, boundary, "close");
+
           if (next._tag !== "Subscribed") return false;
+
           if (next.tier !== nextTier) return false;
+
           if (quantityOf(next, "seats", seatsAllowance(next)) !== expectedQuantity) return false;
+
           if (next.remaining.seats !== remainingFor(next)) return false;
+
           return quantityOf(next, "seats", seatsAllowance(next)) >= before;
         }
 
@@ -409,6 +456,7 @@ describe("a seat is a quantity that is set", () => {
             period: state.period,
             at,
           }) ?? undefined;
+
         const change = decideAt(
           state,
           new ChangeTier({
@@ -419,15 +467,22 @@ describe("a seat is a quantity that is set", () => {
           at,
           "change",
         );
+
         // A downgrade below what is held is a refusal, not a seat removal.
         if (!isAccepted(change)) {
           return tagOf(change)?.startsWith("Downgrade") === true;
         }
+
         const next = evolveAt(state, change, at, "change");
+
         if (next._tag !== "Subscribed") return false;
+
         if (next.tier !== nextTier) return false;
+
         if (quantityOf(next, "seats", seatsAllowance(next)) !== expectedQuantity) return false;
+
         if (next.remaining.seats !== remainingFor(next)) return false;
+
         return quantityOf(next, "seats", seatsAllowance(next)) >= before;
       },
       { runs: 100, size: 30 },
@@ -453,25 +508,33 @@ describe("a seat is a quantity that is set", () => {
       ({ tier: stock, quantity, next: quantityAfter, advanceDays }) => {
         const opened = subscribedIn(seatsCatalog, stock);
         const at = DateTime.add(start, { days: advanceDays });
+
         const first = decideAt(
           opened,
           new SetQuantity({ feature: "seats", quantity, dedupeKey: "seats:one" }),
           at,
           "seats:one",
         );
+
         const state = isAccepted(first) ? evolveAt(opened, first, at, "seats:one") : opened;
+
         if (state._tag !== "Subscribed") return false;
+
         const changed = decideAt(
           state,
           new SetQuantity({ feature: "seats", quantity: quantityAfter, dedupeKey: "seats:two" }),
           at,
           "seats:two",
         );
+
         if (isAccepted(changed) && changed.length === 0) return true;
+
         if (!isAccepted(changed)) return tagOf(changed)?.startsWith("Quantity") === true;
         const nextState = evolveAt(state, changed, at, "seats:two");
+
         if (nextState._tag !== "Subscribed") return false;
         const entry = nextState.quantityProrations?.["seats:two"];
+
         if (entry === undefined) return true;
 
         const invoice = decideAt(
@@ -485,9 +548,12 @@ describe("a seat is a quantity that is set", () => {
           at,
           "invoice",
         );
+
         if (!isAccepted(invoice)) return false;
         const invoiced = evolveAt(nextState, invoice, at, "invoice");
+
         if (invoiced._tag !== "Subscribed") return false;
+
         if (invoiced.quantityProrations?.["seats:two"]?.invoiceId !== "in_quantity") return false;
 
         const retry = decideAt(
@@ -501,8 +567,11 @@ describe("a seat is a quantity that is set", () => {
           at,
           "invoice-again",
         );
+
         if (isAccepted(retry)) return false;
+
         if (tagOf(retry) !== "NoQuantityProrationDue") return false;
+
         if ((retry as InstanceType<typeof NoQuantityProrationDue>).reason !== "billed")
           return false;
 
@@ -517,7 +586,9 @@ describe("a seat is a quantity that is set", () => {
           at,
           "invoice-unknown",
         );
+
         if (isAccepted(unknown)) return false;
+
         return (unknown as InstanceType<typeof NoQuantityProrationDue>).reason === "none";
       },
       { runs: 100, size: 30 },

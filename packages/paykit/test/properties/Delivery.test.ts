@@ -38,6 +38,7 @@ describe("delivery dedupe", () => {
           yield* migrate(sql);
           const view = yield* SqlViewStore(sql, { name: "Entitlements", now: () => 1 });
           const seen: Array<number> = [];
+
           const bound = view.bind({
             name: "Entitlements",
             generation: 1,
@@ -47,6 +48,7 @@ describe("delivery dedupe", () => {
             apply: (_key: string, snapshot: ViewSnapshot, deliveries: ReadonlyArray<Delivery>) =>
               Effect.sync(() => {
                 seen.push(...deliveries.map((delivery) => delivery.seq));
+
                 return {
                   snapshot: {
                     ...snapshot,
@@ -70,7 +72,9 @@ describe("delivery dedupe", () => {
           // dropped before the view sees it. The second delivery of a seq must
           // not become a second event.
           const unique = new Set(seqs);
+
           if (seen.length !== unique.size) return false;
+
           return new Set(seen).size === unique.size;
         }),
       { runs: 40, size: 20 },

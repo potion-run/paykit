@@ -40,10 +40,13 @@ const activePrices = (
               },
             ],
       );
+
       const next = result.data[result.data.length - 1]?.id;
       const seen = [...found, ...rows];
+
       return result.has_more && next !== undefined ? collect(next, seen) : Effect.succeed(seen);
     });
+
   return collect(undefined, []);
 };
 

@@ -126,15 +126,18 @@ it.effect("a catalog built through the public helpers is the same one Stack vali
       id: "free",
       grants: [Paykit.allowance(Paykit.messages, { included: 100 })],
     });
+
     const pro = Paykit.tier({
       id: "pro",
       price: { amount: 1900, currency: "usd", interval: "month" },
       grants: [Paykit.allowance(Paykit.messages, { included: 2000, overage: "bill" })],
     });
+
     const billing = yield* Paykit.validateStack("Billing", {
       catalog: { features: [Paykit.messages], tiers: [free, pro] },
       providers: [Paykit.Memory()],
     });
+
     expect(billing.catalog.features.map((feature) => feature.id)).toEqual(["messages"]);
     expect(billing.catalog.tiers.map((tier) => tier.id)).toEqual(["free", "pro"]);
     expect(billing.providers[0]?.kind).toBe("memory");

@@ -35,6 +35,7 @@ const buildersCatalog = Effect.runSync(
 );
 
 const BuildTier = Schema.Union([TierName, Schema.Literal("pack"), Schema.Literal("missing")]);
+
 type BuildTier = typeof BuildTier.Type;
 
 const Case = Schema.Struct({
@@ -46,6 +47,7 @@ const Case = Schema.Struct({
   /** Days from the period start; past-the-end and outside instants are legal. */
   offsetDays: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 90 }))),
 });
+
 type Case = typeof Case.Type;
 
 const same = (left: unknown, right: unknown): boolean =>
@@ -67,8 +69,10 @@ describe("tier command builders", () => {
         const terms = tierTermsOf(buildersCatalog, input.tier);
         const sellable = terms !== null && terms.kind !== "one_off";
         const packable = terms !== null && terms.kind === "one_off";
+
         const state =
           input.stateTier === "none" ? initialSubscriptionState : subscribedAt(input.stateTier);
+
         const at = DateTime.add(start, { days: input.offsetDays });
 
         const subscribe = subscribeInputOf(
@@ -76,8 +80,10 @@ describe("tier command builders", () => {
           input.tier,
           input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz },
         );
+
         const schedule = scheduleTierChangeInputOf(buildersCatalog, input.tier);
         const plan = planChangeTier(buildersCatalog, input.tier, state, at);
+
         const purchase = purchaseCreditsInputOf(
           buildersCatalog,
           input.tier,
@@ -88,30 +94,52 @@ describe("tier command builders", () => {
           if (subscribe !== null || schedule !== null || plan !== null) return false;
         } else {
           if (subscribe === null || schedule === null || plan === null) return false;
+
           if (subscribe.tier !== input.tier || schedule.tier !== input.tier) return false;
+
           if (plan.input.tier !== input.tier) return false;
+
           // Every grant field is the catalog's, not a caller's copy.
           if (!same(subscribe.allowances, terms.allowances)) return false;
+
           if (!same(schedule.allowances, terms.allowances)) return false;
+
           if (!same(plan.input.allowances, terms.allowances)) return false;
+
           if (subscribe.credits !== terms.credits || schedule.credits !== terms.credits) {
             return false;
           }
+
           if (plan.input.credits !== terms.credits) return false;
+
           if (subscribe.creditsExpire !== terms.creditsExpire) return false;
+
           if (schedule.creditsExpire !== terms.creditsExpire) return false;
+
           if (plan.input.creditsExpire !== terms.creditsExpire) return false;
+
           if (!same(subscribe.rates, terms.rates)) return false;
+
           if (!same(schedule.rates, terms.rates)) return false;
+
           if (!same(plan.input.rates, terms.rates)) return false;
+
           if (subscribe.topUp !== terms.topUp || schedule.topUp !== terms.topUp) return false;
+
           if (plan.input.topUp !== terms.topUp) return false;
+
           if (!same(subscribe.price, terms.price)) return false;
+
           if (!same(schedule.price, terms.price)) return false;
+
           if (!same(plan.input.price, terms.price)) return false;
+
           if (subscribe.anchorTz !== input.anchorTz) return false;
+
           if (catalogMismatchOf(buildersCatalog, subscribe) !== null) return false;
+
           if (catalogMismatchOf(buildersCatalog, schedule) !== null) return false;
+
           if (catalogMismatchOf(buildersCatalog, plan.input) !== null) return false;
 
           // The plan quotes exactly what the same prices and period charge, and
@@ -125,18 +153,26 @@ describe("tier command builders", () => {
                   at,
                 })
               : null;
+
           if (!same(plan.proration, quote)) return false;
+
           if ("proration" in plan.input !== (quote !== null)) return false;
         }
 
         if (!packable) {
           return purchase === null;
         }
+
         if (purchase === null) return false;
+
         if (purchase.tier !== input.tier) return false;
+
         if (purchase.amount !== terms.credits) return false;
+
         if (!same(purchase.rates, terms.rates)) return false;
+
         if (!same(purchase.price, terms.price)) return false;
+
         return purchase.invoiceId === input.invoiceId;
       },
       { runs: 200, size: 30 },

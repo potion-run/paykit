@@ -20,10 +20,12 @@ export class PeriodRollover extends Domain.Policy("PeriodRollover", {
 export const PeriodRolloverLive = PeriodRollover.toLayer(
   Effect.gen(function* () {
     const subscriptions = yield* Subscription;
+
     return Effect.fn("Paykit.PeriodRollover.react")(function* ({ key, event }) {
       // A close that ended the standing opens no next period. The timer is the
       // chain, so stopping here is what makes `canceled`/`expired` terminal.
       if (event._tag === "PeriodClosed" && isTerminalStatus(event.statusAfter)) return;
+
       const periodEnd =
         event._tag === "PeriodClosed"
           ? event.nextPeriodEnd
@@ -32,6 +34,7 @@ export const PeriodRolloverLive = PeriodRollover.toLayer(
               event._tag === "TrialExtended"
             ? event.periodEnd
             : undefined;
+
       if (periodEnd === undefined) return;
       yield* subscriptions
         .schedule(key, new PeriodEnded({ periodEnd }), {

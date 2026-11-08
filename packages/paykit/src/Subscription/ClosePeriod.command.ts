@@ -5,7 +5,12 @@ import { TierChanged } from "./ChangeTier.command.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { UsageReleased } from "./ReleaseHold.command.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { Standing, SubscriptionStatus, rollsPeriod } from "./Subscription.state.ts";
+import {
+  Standing,
+  SubscriptionStatus,
+  type SubscribedState,
+  rollsPeriod,
+} from "./Subscription.state.ts";
 
 /** The period is not over yet, it was already closed, or the standing has ended. */
 export class PeriodNotClosed extends Domain.Rejection("PeriodNotClosed", {
@@ -46,26 +51,16 @@ export class CreditsExpired extends Domain.Event("CreditsExpired", {
 
 /** Whether this is the open period and its end has been reached. */
 export const canClosePeriod = (
-  state: { readonly _tag: string },
+  state: SubscribedState,
   periodEnd: DateTime.Utc,
   now: DateTime.Utc,
-): boolean => {
-  if (state._tag !== "Subscribed") return false;
-  const current = state as unknown as {
-    readonly _tag: "Subscribed";
-    readonly status: SubscriptionStatus;
-    readonly period: { readonly start: DateTime.Utc; readonly end: DateTime.Utc };
-    readonly lastClosedPeriodStart?: DateTime.Utc;
-  };
-  return (
-    rollsPeriod(current.status) &&
-    DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(periodEnd) &&
-    DateTime.toEpochMillis(periodEnd) === DateTime.toEpochMillis(current.period.end) &&
-    (current.lastClosedPeriodStart === undefined ||
-      DateTime.toEpochMillis(current.lastClosedPeriodStart) !==
-        DateTime.toEpochMillis(current.period.start))
-  );
-};
+): boolean =>
+  rollsPeriod(state.status) &&
+  DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(periodEnd) &&
+  DateTime.toEpochMillis(periodEnd) === DateTime.toEpochMillis(state.period.end) &&
+  (state.lastClosedPeriodStart === undefined ||
+    DateTime.toEpochMillis(state.lastClosedPeriodStart) !==
+      DateTime.toEpochMillis(state.period.start));
 
 /**
  * Close the period that ended at `periodEnd`, reset usage and expire credits.

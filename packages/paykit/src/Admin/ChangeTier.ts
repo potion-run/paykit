@@ -47,6 +47,7 @@ export const ChangeTierRequest = Schema.Struct({
   /** The idempotency key for an apply. The server allocates one when absent. */
   commandId: Schema.optionalKey(Schema.String),
 });
+
 export type ChangeTierRequest = typeof ChangeTierRequest.Type;
 
 /** Every typed refusal a tier change can return as data. */
@@ -61,6 +62,7 @@ export const ChangeTierRejection = Schema.Union([
   ProrationMismatch,
   CatalogMismatch,
 ]);
+
 export type ChangeTierRejection = typeof ChangeTierRejection.Type;
 
 /** The current quote. No command was sent. */
@@ -103,6 +105,7 @@ export const ChangeTierAnswer = Schema.Union([
   ChangeTierRejected,
   ChangeTierFailed,
 ]);
+
 export type ChangeTierAnswer = typeof ChangeTierAnswer.Type;
 
 /** The server-side tier change: quote first, apply the amount that was shown. */
@@ -133,11 +136,13 @@ export const makeAdminChangeTier = Effect.gen(function* () {
       Effect.gen(function* () {
         const ref = Subscription.ref(input.account);
         const state = yield* subscription.state(ref);
+
         const terms = tierTermsOf(
           catalog,
           input.tier,
           state._tag === "Subscribed" ? state.currency : undefined,
         );
+
         if (terms === null || terms.kind === "one_off") {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
@@ -154,33 +159,40 @@ export const makeAdminChangeTier = Effect.gen(function* () {
 
         const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
         const plan = planChangeTier(catalog, input.tier, state, now);
+
         if (plan === null) {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
             rejection: new TierNotInCatalog({ tier: input.tier }),
           });
         }
+
         const proration = plan.proration;
 
         if (input.expected === undefined) {
           return ChangeTierQuoted.make({ tier: input.tier, proration });
         }
+
         if (!sameProration(input.expected, proration)) {
           return ChangeTierRequote.make({ tier: input.tier, proration });
         }
 
         const commandId =
           input.commandId ?? (yield* Effect.sync(() => globalThis.crypto.randomUUID()));
+
         const result = yield* Effect.result(
           asSystem(subscription.send(ref, new ChangeTier(plan.input), { commandId })),
         );
 
         if (Result.isFailure(result)) {
           const failure = result.failure;
+
           if (failure._tag === "ProrationMismatch") {
             return ChangeTierRequote.make({ tier: input.tier, proration: failure.expected });
           }
+
           const rejection = Schema.decodeOption(ChangeTierRejection)(failure);
+
           return Option.isSome(rejection)
             ? ChangeTierRejected.make({ commandId, rejection: rejection.value })
             : ChangeTierFailed.make({
@@ -244,6 +256,7 @@ export const AdminChangeTierClient = (
     AdminChangeTier,
     Effect.gen(function* () {
       const client = yield* RpcClient.make(AdminChangeTierRpcs);
+
       const call = <A>(
         effect: Effect.Effect<A, AdminReadError | RpcClientError.RpcClientError>,
       ): Effect.Effect<A, AdminReadError> =>

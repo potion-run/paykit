@@ -47,11 +47,13 @@ import { AccountSnapshot } from "../src/Snapshot.ts";
 import { update } from "../src/update.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const pro = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const account = AccountId.make("acct_a");
@@ -99,6 +101,7 @@ const seeded = (): Model =>
 
 const opened = (): Model => {
   const model = seeded();
+
   return update(model, Message.ClickedAccount({ account })).model;
 };
 
@@ -150,18 +153,21 @@ const withBilling = (overrides: Partial<typeof billing> = {}): Model =>
 const withDraft = (amount: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "GrantCredits" })).model;
+
   return update(openedDraft, Message.UpdatedDraftField({ field: "amount", value: amount })).model;
 };
 
 const withChangeDraft = (tier: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "ChangeTier" })).model;
+
   return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
 };
 
 const withScheduleDraft = (tier: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "ScheduleTierChange" })).model;
+
   return update(openedDraft, Message.UpdatedDraftField({ field: "tier", value: tier })).model;
 };
 
@@ -169,6 +175,7 @@ const withScheduleDraft = (tier: string): Model => {
 const withRefundDraft = (amount: string): Model => {
   const model = withBilling({ charged: { usd: 4_900 }, refunded: { usd: 900 } });
   const openedDraft = update(model, Message.ClickedAction({ action: "Refund" })).model;
+
   return update(
     update(openedDraft, Message.UpdatedDraftField({ field: "chargeId", value: "ch_1" })).model,
     Message.UpdatedDraftField({ field: "amount", value: amount }),
@@ -184,6 +191,7 @@ describe("the console model", () => {
       }),
       url(),
     );
+
     expect(result.commands).toBeUndefined();
     expect(Option.isSome(result.model.catalog)).toBe(true);
     expect(result.model.accounts.rows.length).toBe(1);
@@ -199,12 +207,14 @@ describe("the console model", () => {
   it("applies a list page only for the request it answers", () => {
     const model = init(flags(), url()).model;
     const requestId = Option.getOrThrow(model.accounts.requestId);
+
     const accepted = update(
       model,
       Message.ReceivedAdminQuery({
         message: AdminQueries.Message.SucceededListAccounts({ requestId, page }),
       }),
     ).model;
+
     expect(accepted.accounts.rows.length).toBe(1);
 
     const stale = update(
@@ -216,12 +226,14 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(stale.accounts.rows.length).toBe(1);
   });
 
   it("opens an account and applies its billing snapshot", () => {
     const model = withBilling();
     expect(Option.isSome(model.account)).toBe(true);
+
     if (Option.isNone(model.account)) return;
     expect(model.account.value.id).toBe(account);
     expect(Option.isSome(model.account.value.billing)).toBe(true);
@@ -231,6 +243,7 @@ describe("the console model", () => {
     const model = withDraft("250");
     const result = update(model, Message.ClickedSubmitAction());
     expect(result.commands?.map((command) => command.name)).toEqual(["GrantCredits"]);
+
     if (Option.isNone(result.model.account)) return;
     expect(result.model.account.value.pending.length).toBe(1);
     expect(result.model.account.value.pending[0]?.status).toBe("Sending");
@@ -241,6 +254,7 @@ describe("the console model", () => {
     const model = withDraft("0");
     const result = update(model, Message.ClickedSubmitAction());
     expect(result.commands).toBeUndefined();
+
     if (Option.isNone(result.model.account)) return;
     expect(Option.isSome(result.model.account.value.notice)).toBe(true);
     expect(Option.isSome(result.model.account.value.draft)).toBe(true);
@@ -249,8 +263,10 @@ describe("the console model", () => {
 
   it("keeps the typed rejection as evidence when a command is refused", () => {
     const submitted = update(withDraft("250"), Message.ClickedSubmitAction());
+
     if (Option.isNone(submitted.model.account)) return;
     const pending = submitted.model.account.value.pending[0];
+
     if (pending === undefined) return;
 
     const refused = update(
@@ -265,12 +281,15 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(refused.account)) return;
     const settled = refused.account.value.pending[0];
     expect(settled?.status).toBe("Rejected");
     expect(Option.isSome(settled?.failure ?? Option.none())).toBe(true);
+
     if (settled !== undefined && Option.isSome(settled.failure)) {
       expect(settled.failure.value._tag).toBe("Rejected");
+
       if (settled.failure.value._tag === "Rejected") {
         expect(settled.failure.value.rejection._tag).toBe("NotSubscribed");
       }
@@ -280,10 +299,12 @@ describe("the console model", () => {
   it("settles a pending command from the Api reply", () => {
     const model = withDraft("250");
     const submitted = update(model, Message.ClickedSubmitAction());
+
     const commandId = submitted.model.account.pipe(
       Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
       Option.getOrThrow,
     );
+
     const settled = update(
       submitted.model,
       Message.ReceivedAdminResult({
@@ -294,6 +315,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(
       settled.account.pipe(
         Option.flatMap((value) => Option.fromNullishOr(value.pending[0])),
@@ -306,10 +328,12 @@ describe("the console model", () => {
   it("confirms a pending command from the event feed and records the event", () => {
     const model = withDraft("250");
     const submitted = update(model, Message.ClickedSubmitAction());
+
     const commandId = submitted.model.account.pipe(
       Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
       Option.getOrThrow,
     );
+
     const received = update(
       submitted.model,
       Message.ReceivedEvent({
@@ -321,6 +345,7 @@ describe("the console model", () => {
         event: new CreditsGranted({ amount: 250, balanceAfter: 250 }),
       }),
     ).model;
+
     if (Option.isNone(received.account)) return;
     expect(received.account.value.events[0]?.tag).toBe("CreditsGranted");
     expect(received.account.value.cursor).toEqual(Option.some(1));
@@ -330,10 +355,12 @@ describe("the console model", () => {
   it("retries an unknown outcome with the same command id", () => {
     const model = withDraft("250");
     const submitted = update(model, Message.ClickedSubmitAction());
+
     const commandId = submitted.model.account.pipe(
       Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
       Option.getOrThrow,
     );
+
     const unknown = update(
       submitted.model,
       Message.ReceivedAdminResult({
@@ -343,6 +370,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     const retried = update(unknown, Message.ClickedRetryPending({ commandId }));
     expect(retried.commands?.map((command) => command.name)).toEqual(["GrantCredits"]);
     expect(retried.commands?.[0]?.args?.commandId).toBe(commandId);
@@ -358,6 +386,7 @@ describe("the console model", () => {
   it("sends a refund through the console RPC with one pending id", () => {
     const result = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
     expect(result.commands?.map((command) => command.name)).toEqual(["ApplyRefund"]);
+
     if (Option.isNone(result.model.account)) return;
     const pending = result.model.account.value.pending[0];
     expect(pending?.intent.kind).toBe("Refund");
@@ -367,8 +396,10 @@ describe("the console model", () => {
 
   it("keeps a refused refund typed as evidence", () => {
     const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+
     if (Option.isNone(submitted.model.account)) return;
     const pending = submitted.model.account.value.pending[0];
+
     if (pending === undefined) return;
 
     const refused = update(
@@ -388,11 +419,14 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(refused.account)) return;
     const settled = refused.account.value.pending[0];
     expect(settled?.status).toBe("Rejected");
+
     if (settled !== undefined && Option.isSome(settled.failure)) {
       expect(settled.failure.value._tag).toBe("RpcRejected");
+
       if (settled.failure.value._tag === "RpcRejected") {
         expect(settled.failure.value.rejection._tag).toBe("RefundExceedsCharged");
       }
@@ -401,8 +435,10 @@ describe("the console model", () => {
 
   it("settles an applied refund and re-reads the list", () => {
     const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+
     if (Option.isNone(submitted.model.account)) return;
     const pending = submitted.model.account.value.pending[0];
+
     if (pending === undefined) return;
 
     const applied = update(
@@ -419,7 +455,9 @@ describe("the console model", () => {
         }),
       }),
     );
+
     expect(applied.commands?.map((command) => command.name)).toEqual(["ListAccounts"]);
+
     if (Option.isNone(applied.model.account)) return;
     expect(applied.model.account.value.pending[0]?.status).toBe("Accepted");
     expect(
@@ -432,8 +470,10 @@ describe("the console model", () => {
 
   it("retries a refund with the same command id after an unknown outcome", () => {
     const submitted = update(withRefundDraft("1000"), Message.ClickedSubmitAction());
+
     if (Option.isNone(submitted.model.account)) return;
     const pending = submitted.model.account.value.pending[0];
+
     if (pending === undefined) return;
 
     const unknown = update(
@@ -445,6 +485,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(unknown.account)) return;
     expect(unknown.account.value.pending[0]?.status).toBe("Unknown");
 
@@ -464,11 +505,14 @@ describe("the console model", () => {
   it("quotes a tier change, then applies only the confirmed amount", () => {
     const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
     expect(quotedRequest.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+
     if (Option.isNone(quotedRequest.model.account)) return;
     const quoting = quotedRequest.model.account.value.change;
     expect(Option.isSome(quoting)).toBe(true);
+
     if (Option.isNone(quoting)) return;
     expect(quoting.value._tag).toBe("Quoting");
+
     if (quoting.value._tag !== "Quoting") return;
     const requestId = quoting.value.requestId;
 
@@ -484,17 +528,21 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(quoted.account)) return;
     expect(Option.isSome(quoted.account.value.change)).toBe(true);
+
     if (Option.isSome(quoted.account.value.change)) {
       expect(quoted.account.value.change.value._tag).toBe("Quoted");
     }
 
     const confirmed = update(quoted, Message.ClickedConfirmChangeTier());
     expect(confirmed.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+
     if (Option.isNone(confirmed.model.account)) return;
     const pending = confirmed.model.account.value.pending[0];
     expect(pending?.status).toBe("Sending");
+
     if (pending === undefined) return;
 
     const applied = update(
@@ -512,6 +560,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(applied.account)) return;
     expect(Option.isNone(applied.account.value.change)).toBe(true);
     expect(Option.isNone(applied.account.value.draft)).toBe(true);
@@ -520,8 +569,10 @@ describe("the console model", () => {
 
   it("keeps an unknown tier-change outcome retryable with the same id", () => {
     const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
+
     if (Option.isNone(quotedRequest.model.account)) return;
     const quoting = quotedRequest.model.account.value.change;
+
     if (Option.isNone(quoting) || quoting.value._tag !== "Quoting") return;
     const requestId = quoting.value.requestId;
 
@@ -537,9 +588,12 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     const confirmed = update(quoted, Message.ClickedConfirmChangeTier());
+
     if (Option.isNone(confirmed.model.account)) return;
     const pending = confirmed.model.account.value.pending[0];
+
     if (pending === undefined) return;
 
     const unknown = update(
@@ -551,12 +605,14 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(unknown.account)) return;
     expect(unknown.account.value.pending[0]?.status).toBe("Unknown");
     expect(Option.isSome(unknown.account.value.change)).toBe(true);
 
     const retried = update(unknown, Message.ClickedRetryPending({ commandId: pending.commandId }));
     expect(retried.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
+
     if (Option.isNone(retried.model.account)) return;
     expect(retried.model.account.value.pending[0]?.status).toBe("Sending");
   });
@@ -585,6 +641,7 @@ describe("the console model", () => {
       }),
       url("/overview"),
     );
+
     expect(result.model.route).toEqual(ConsoleRoute.Overview());
     expect(result.commands?.map((command) => command.name)).toEqual(["GetOverview"]);
   });
@@ -621,6 +678,7 @@ describe("the console model", () => {
       entitlements: entitlementsState,
       cursor: 4,
     });
+
     const result = init(
       flags({
         catalog: Schema.encodeSync(Catalog)(testCatalog),
@@ -629,12 +687,14 @@ describe("the console model", () => {
       }),
       url(`/accounts/${account}`),
     );
+
     // The snapshots seed the views; holds are an entity and are read once.
     expect(result.commands?.map((command) => command.name)).toEqual([
       "GetHolds",
       "GetProviderRefs",
     ]);
     expect(result.model.route._tag).toBe("Account");
+
     if (Option.isNone(result.model.account)) return;
     const opened = result.model.account.value;
     expect(opened.id).toBe(account);
@@ -651,7 +711,9 @@ describe("the console model", () => {
       flags({ account: { account, billing: { tier: "pro", nope: true } } }),
       url(`/accounts/${account}`),
     );
+
     expect(result.model.route._tag).toBe("Account");
+
     if (Option.isNone(result.model.account)) return;
     const opened = result.model.account.value;
     expect(opened.id).toBe(account);
@@ -663,6 +725,7 @@ describe("the console model", () => {
     const result = init(flags(), url(`/accounts/${account}`, "standing=grace"));
     expect(result.model.route._tag).toBe("Account");
     expect(Option.getOrNull(result.model.accounts.filter.standing)).toBe("grace");
+
     if (Option.isNone(result.model.account)) return;
     expect(result.model.account.value.id).toBe(account);
     // The list and catalog are still asked for, with the URL's filter, and the
@@ -685,8 +748,10 @@ describe("the console model", () => {
       "GetProviderRefs",
       "ReflectRoute",
     ]);
+
     const reflected = navigated.commands?.find((command) => command.name === "ReflectRoute")?.args
       ?.url;
+
     expect(reflected).toBe(`/accounts/${account}`);
 
     const refreshed = init(
@@ -696,6 +761,7 @@ describe("the console model", () => {
       }),
       url(String(reflected)),
     ).model;
+
     expect(refreshed.route).toEqual(navigated.model.route);
     expect(Option.map(refreshed.account, (open) => open.id)).toEqual(Option.some(account));
   });
@@ -733,17 +799,21 @@ describe("the console model", () => {
 
   it("says when the list was read, and re-reads it after a write", () => {
     const stamped = BillingReadPage.make({ rows: [row], next: null, asOf: at });
+
     const model = init(
       flags({ accounts: Schema.encodeSync(BillingReadPage)(stamped) }),
       url(),
     ).model;
+
     expect(model.accounts.asOf).toEqual(Option.some(at));
 
     const submitted = update(withDraft("250"), Message.ClickedSubmitAction());
+
     const commandId = submitted.model.account.pipe(
       Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
       Option.getOrThrow,
     );
+
     const settled = update(
       submitted.model,
       Message.ReceivedAdminResult({
@@ -754,6 +824,7 @@ describe("the console model", () => {
         }),
       }),
     );
+
     expect(settled.commands?.map((command) => command.name)).toEqual(["ListAccounts"]);
     // The rows stay while the re-read is in flight; the panel says the list is
     // refreshing rather than blanking what the operator was reading.
@@ -761,6 +832,7 @@ describe("the console model", () => {
     expect(settled.model.accounts.state).toBe("Loading");
 
     const requestId = Option.getOrThrow(settled.model.accounts.requestId);
+
     const reread = update(
       settled.model,
       Message.ReceivedAdminQuery({
@@ -770,21 +842,25 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(reread.accounts.state).toBe("Loaded");
     expect(reread.accounts.asOf).toEqual(Option.some(at));
   });
 
   it("never claims a read time the page does not carry", () => {
     const unstamped = BillingReadPage.make({ rows: [row], next: null });
+
     const model = init(
       flags({ accounts: Schema.encodeSync(BillingReadPage)(unstamped) }),
       url(),
     ).model;
+
     expect(Option.isNone(model.accounts.asOf)).toBe(true);
   });
 
   it("keeps the page cursor in the URL, and re-reads the page it names", () => {
     const paged = BillingReadPage.make({ rows: [row], next: "acct_b" });
+
     const model = init(
       flags({
         catalog: Schema.encodeSync(Catalog)(testCatalog),
@@ -814,15 +890,19 @@ describe("the console model", () => {
     const model = init(flags(), url("/", "after=acct_b")).model;
     const openedAccount = update(model, Message.ClickedAccount({ account })).model;
     const draft = update(openedAccount, Message.ClickedAction({ action: "GrantCredits" })).model;
+
     const filled = update(
       draft,
       Message.UpdatedDraftField({ field: "amount", value: "250" }),
     ).model;
+
     const submitted = update(filled, Message.ClickedSubmitAction());
+
     const commandId = submitted.model.account.pipe(
       Option.flatMap((value) => Option.fromNullishOr(value.pending[0]?.commandId)),
       Option.getOrThrow,
     );
+
     const settled = update(
       submitted.model,
       Message.ReceivedAdminResult({
@@ -833,16 +913,19 @@ describe("the console model", () => {
         }),
       }),
     );
+
     const list = settled.commands?.find((command) => command.name === "ListAccounts");
     expect(list?.args?.query).toEqual({ after: "acct_b" });
   });
 
   it("reads the open account's holds and applies only the current request", () => {
     const model = update(withBilling(), Message.ClickedRefresh()).model;
+
     const current = model.account.pipe(
       Option.flatMap((value) => value.holds),
       Option.getOrThrow,
     );
+
     const answer = HoldsAnswer.make({
       account,
       holds: [
@@ -866,6 +949,7 @@ describe("the console model", () => {
         message: AdminQueries.Message.SucceededHolds({ requestId: current.requestId, answer }),
       }),
     ).model;
+
     expect(
       applied.account.pipe(
         Option.flatMap((value) => value.holds),
@@ -883,6 +967,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(
       stale.account.pipe(
         Option.flatMap((value) => value.holds),
@@ -901,6 +986,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(
       foreign.account.pipe(
         Option.flatMap((value) => value.holds),
@@ -912,10 +998,12 @@ describe("the console model", () => {
 
   it("reads provider refs and applies only the current answer", () => {
     const opened = update(seeded(), Message.ClickedAccount({ account })).model;
+
     const state = opened.account.pipe(
       Option.flatMap((value) => value.providerRefs),
       Option.getOrThrow,
     );
+
     const applied = update(
       opened,
       Message.ReceivedAdminQuery({
@@ -929,10 +1017,12 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     const refs = applied.account.pipe(
       Option.flatMap((value) => value.providerRefs),
       Option.getOrThrow,
     );
+
     expect(refs.state).toBe("Loaded");
     expect(refs.refs.manual?.customer).toBe("cus_1");
 
@@ -951,11 +1041,13 @@ describe("the console model", () => {
         } as never,
       }),
     );
+
     expect(event.commands?.map((command) => command.name)).toEqual(["GetProviderRefs"]);
   });
 
   it("re-reads holds when the event feed says one moved", () => {
     const model = update(withBilling(), Message.ClickedRefresh()).model;
+
     const reserved = update(
       model,
       Message.ReceivedEvent({
@@ -976,6 +1068,7 @@ describe("the console model", () => {
         }),
       }),
     );
+
     expect(reserved.commands?.map((command) => command.name)).toEqual(["GetHolds"]);
 
     const unrelated = update(
@@ -989,11 +1082,13 @@ describe("the console model", () => {
         event: new CreditsGranted({ amount: 1, balanceAfter: 1 }),
       }),
     );
+
     expect(unrelated.commands).toBeUndefined();
   });
 
   it("folds the event feed into a usage timeline, once, in order", () => {
     const periodEnd = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
+
     const sequence = [
       Message.ReceivedEvent({
         seq: 1,
@@ -1048,8 +1143,10 @@ describe("the console model", () => {
       (current, message) => update(current, message).model,
       withBilling(),
     );
+
     // A redelivered event is the same sequence number: the fold ignores it.
     const replayed = update(received, sequence[1]!).model;
+
     if (Option.isNone(replayed.account)) return;
     const timeline = replayed.account.value.timeline;
 
@@ -1077,10 +1174,12 @@ describe("the console model", () => {
 
   it("asks the model what a command would do, and records nothing", () => {
     const model = update(withBilling(), Message.UpdatedPreviewTier({ value: "free" })).model;
+
     const asked = update(
       model,
       Message.ClickedPreview({ command: { kind: "changeTier", tier: "free" } }),
     );
+
     expect(asked.commands?.map((command) => command.name)).toEqual(["PreviewCommand"]);
     expect(asked.commands?.[0]?.args?.input).toEqual({
       account,
@@ -1094,6 +1193,7 @@ describe("the console model", () => {
       Option.map((preview) => preview.requestId),
       Option.getOrThrow,
     );
+
     const rejected = update(
       asked.model,
       Message.ReceivedAdminQuery({
@@ -1103,6 +1203,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(
       rejected.account.pipe(
         Option.flatMap((value) => value.preview),
@@ -1121,6 +1222,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     expect(
       stale.account.pipe(
         Option.flatMap((value) => value.preview),
@@ -1133,11 +1235,13 @@ describe("the console model", () => {
 
   it("applies an accepted preview without turning it into a write", () => {
     const asked = update(withBilling(), Message.ClickedPreview({ command: { kind: "cancel" } }));
+
     const requestId = asked.model.account.pipe(
       Option.flatMap((value) => value.preview),
       Option.map((preview) => preview.requestId),
       Option.getOrThrow,
     );
+
     const answered = update(
       asked.model,
       Message.ReceivedAdminQuery({
@@ -1150,6 +1254,7 @@ describe("the console model", () => {
         }),
       }),
     ).model;
+
     if (Option.isNone(answered.account)) return;
     expect(answered.account.value.pending).toEqual([]);
     expect(answered.commandIds.sent).toBe(0);
@@ -1158,17 +1263,20 @@ describe("the console model", () => {
   it("verifies the open account against the deploy", () => {
     const asked = update(withBilling(), Message.ClickedVerify());
     expect(asked.commands?.map((command) => command.name)).toEqual(["VerifyAccount"]);
+
     const requestId = asked.model.account.pipe(
       Option.flatMap((value) => value.verify),
       Option.map((verify) => verify.requestId),
       Option.getOrThrow,
     );
+
     const answered = update(
       asked.model,
       Message.ReceivedAdminQuery({
         message: AdminQueries.Message.SucceededVerify({ requestId, mismatches: [] }),
       }),
     ).model;
+
     expect(
       answered.account.pipe(
         Option.flatMap((value) => value.verify),
@@ -1211,7 +1319,9 @@ describe("a change at the period end", () => {
       },
       grants: [allowance(messages, { included: 2_000 })],
     });
+
     const multi = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, bilingual] }));
+
     const seeded = init(
       flags({
         catalog: Schema.encodeSync(Catalog)(multi),
@@ -1219,14 +1329,18 @@ describe("a change at the period end", () => {
       }),
       url(),
     ).model;
+
     const opened = update(seeded, Message.ClickedAccount({ account })).model;
+
     const inEuros = update(
       opened,
       Message.ReceivedBilling({
         state: Option.some({ ...billing, currency: "eur" }),
       }),
     ).model;
+
     const draft = update(inEuros, Message.ClickedAction({ action: "ScheduleTierChange" })).model;
+
     const filled = update(
       draft,
       Message.UpdatedDraftField({ field: "tier", value: "bilingual" }),

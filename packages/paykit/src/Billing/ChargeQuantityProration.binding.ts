@@ -36,6 +36,7 @@ const refusals = [ProviderCapabilityMissing, PaymentDeclined, Unauthenticated, F
 
 /** Every refusal collecting a quantity proration can answer. */
 export type ChargeQuantityProrationRefusal = InstanceType<(typeof refusals)[number]>;
+
 export type ChargeQuantityProrationError = BindingError<
   ChargeQuantityProrationRefusal | PaymentError
 >;
@@ -108,33 +109,42 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
     ) {
       const ref = Subscription.ref(account);
       const state = yield* subscription.state(ref);
+
       if (state._tag !== "Subscribed") return { outcome: "nothing" } as const;
       const entry = state.quantityProrations?.[request.prorationId];
+
       if (entry === undefined || entry.invoiceId !== undefined) {
         return { outcome: "nothing" } as const;
       }
+
       const proration = entry.proration;
+
       if (proration.due <= 0) return { outcome: "nothing" } as const;
 
       const chosen = Option.match(router, {
         onNone: () => null,
         onSome: (set) => providerFor(set, state.refs),
       });
+
       const attempt = Effect.gen(function* () {
         const payments = yield* Effect.serviceOption(Payments);
+
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
             provider: chosen?.name ?? "none",
             op: "createInvoice",
           });
         }
+
         const commandId = `${account}:${request.prorationId}`;
+
         const { invoiceId } = yield* Option.getOrThrow(payments).createInvoice({
           account,
           amount: proration.due,
           currency: proration.currency,
           commandId,
         });
+
         yield* asSystem(
           subscription.send(
             ref,
@@ -147,6 +157,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
             { commandId: `quantity-proration:${commandId}` },
           ),
         );
+
         return {
           outcome: "charged",
           invoiceId,
@@ -154,6 +165,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
           currency: proration.currency,
         } as const;
       });
+
       return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
     });
   },

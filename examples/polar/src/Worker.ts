@@ -17,6 +17,7 @@ const accountOf = (request: Request): string | null => request.headers.get(ACTOR
  */
 const handle = (request: Request, env: PolarEnv) => {
   const provider = providerOf(env);
+
   return Effect.gen(function* () {
     const routes = yield* moneyRoutes(provider);
     const url = new URL(request.url);
@@ -30,34 +31,43 @@ const handle = (request: Request, env: PolarEnv) => {
 
     if (url.pathname === "/checkout") {
       const account = accountOf(request);
+
       if (account === null) {
         return new Response(`${ACTOR_HEADER} is required`, { status: 401 });
       }
+
       const tier = url.searchParams.get("tier");
+
       if (tier === null) {
         return new Response("?tier= is required", { status: 400 });
       }
+
       const purchase = yield* Effect.result(routes.purchase(account, tier));
+
       if (Result.isFailure(purchase)) {
         return Response.json(
           { error: purchase.failure._tag },
           { status: Paykit.httpStatus(purchase.failure) },
         );
       }
+
       return Response.json(purchase.success, { status: 200 });
     }
 
     if (url.pathname === "/webhooks/polar") {
       const body = yield* Effect.promise(() => request.text());
+
       const applied = yield* Effect.result(
         routes.deliver({ headers: Object.fromEntries(request.headers), body }),
       );
+
       if (Result.isFailure(applied)) {
         return Response.json(
           { error: applied.failure._tag },
           { status: Paykit.httpStatus(applied.failure) },
         );
       }
+
       return Response.json(applied.success, { status: 202 });
     }
 

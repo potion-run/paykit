@@ -13,6 +13,8 @@ export const Catalog = Effect.runSync(catalog(billing.catalog));
 export const tierCommand = (tierId: string) =>
   Effect.gen(function* () {
     const input = subscribeInputOf(Catalog, tierId);
+
     if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
+
     return input;
   });

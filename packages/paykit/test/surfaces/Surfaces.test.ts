@@ -78,5 +78,6 @@ it("the tools need the model and the guards, nothing more", () =>
     const requirements = BillingToolkit.layer as unknown as {
       readonly _: unknown;
     };
+
     expect(requirements).toBeDefined();
   }).pipe(Effect.asVoid));

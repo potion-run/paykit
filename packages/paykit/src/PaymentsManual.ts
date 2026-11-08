@@ -19,6 +19,7 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
   let sequence = 0;
   const invoiceFor = new Map<string, string>();
   const refundFor = new Map<string, string>();
+
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "manual", op }));
 
@@ -30,9 +31,12 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
           // A manual invoice is inferred from a transfer: the same command id
           // must resolve to the invoice it already produced.
           const previous = commandId === undefined ? undefined : invoiceFor.get(commandId);
+
           if (previous !== undefined) return { invoiceId: previous };
           const invoiceId = `manual_invoice_${++sequence}`;
+
           if (commandId !== undefined) invoiceFor.set(commandId, invoiceId);
+
           return { invoiceId };
         }),
       refund: ({ commandId }: { commandId?: string }) =>
@@ -40,9 +44,12 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
           // A manual refund is a transfer back: the same dedupe key must answer
           // the refund it already recorded.
           const previous = commandId === undefined ? undefined : refundFor.get(commandId);
+
           if (previous !== undefined) return { refundId: previous };
           const refundId = `manual_refund_${++sequence}`;
+
           if (commandId !== undefined) refundFor.set(commandId, refundId);
+
           return { refundId };
         }),
       createPortal: () => missing("createPortal"),
@@ -58,6 +65,7 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
       setQuantity: () => missing("setQuantity"),
     }),
   );
+
   const payments = Layer.merge(
     service,
     Layer.succeed(PaymentsProvider, { name: "manual", capabilities }),

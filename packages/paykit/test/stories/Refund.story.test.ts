@@ -33,6 +33,7 @@ const proTier = tier({
   credits: 100,
   grants: [allowance(messages, { included: 100 })],
 });
+
 const packTier = tier({
   id: "credits_5k",
   kind: "one_off",
@@ -40,6 +41,7 @@ const packTier = tier({
   credits: 5_000,
   grants: [],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, packTier] }));
 const pro = allowancesOf(testCatalog, "pro")!;
 const account = Subscription.ref("acct_refund");

@@ -1,5 +1,7 @@
 export { Console, routing } from "./index.ts";
+
 export { Flags, init, Model, Message, subscriptions, update, view } from "./index.ts";
+
 export {
   DevToolsEvent,
   DevToolsState,
@@ -9,7 +11,9 @@ export {
   initialDevToolsState,
   subscriptionEventTags,
 } from "./index.ts";
+
 export { formatDateTime, formatMoney } from "./format.ts";
+
 export {
   AccountFilter,
   accountRoute,
@@ -23,7 +27,9 @@ export {
   withAfter,
   withFilter,
 } from "./Route.ts";
+
 export { AccountSnapshot, decodeSnapshotFlags } from "./Snapshot.ts";
+
 export type {
   AccountState,
   ActionDraft,

@@ -33,6 +33,7 @@ export const AdminAction = Schema.Literals([
    */
   "Refund",
 ]);
+
 export type AdminAction = typeof AdminAction.Type;
 
 /** One action the console may offer, and the tiers a tier change may choose. */
@@ -87,6 +88,7 @@ const changeTiers = (
   entitlements: EntitlementsState | undefined,
 ): ReadonlyArray<string> => {
   if (catalog === undefined) return [];
+
   return catalog.tiers
     .filter(sellableTier)
     .filter((tier) => tier.id !== state.tier)
@@ -99,7 +101,9 @@ const changeTiers = (
     .filter((tier) => {
       if (entitlements === undefined) return true;
       const allowances = allowancesOf(catalog, tier.id);
+
       if (allowances === null) return false;
+
       // Mirror every ceiling `ChangeTier` refuses, so the offered list can never
       // include a move the model refuses. Units an open hold reserves are owed
       // exactly like used ones, so they count against each ceiling.
@@ -114,6 +118,7 @@ const changeTiers = (
       // `Hold` refuses until the period resets.
       return Object.values(allowances).every((allowance) => {
         const feature = entitlements.features[allowance.feature];
+
         return (
           downgradeOf(allowance, {
             used: feature?.used ?? 0,
@@ -137,6 +142,7 @@ const scheduleTiers = (
   catalog: Catalog | undefined,
 ): ReadonlyArray<string> => {
   if (catalog === undefined) return [];
+
   return catalog.tiers
     .filter(sellableTier)
     .filter((tier) => tier.id !== state.tier)
@@ -188,6 +194,7 @@ export const actionsFor = (
 ): ReadonlyArray<AdminActionDescriptor> => {
   const phase = standingPhaseTagOfStatus(state.status);
   const refundable = refundableCurrencies(state.charged, state.refunded);
+
   const offerRefund: ReadonlyArray<AdminActionDescriptor> =
     refundable.length === 0 ? [] : [{ action: "Refund", tiers: [] }];
 
@@ -229,11 +236,13 @@ export const actionsFor = (
 
   const tiersFor = (action: Exclude<AdminAction, "Refund">): ReadonlyArray<string> => {
     if (action === "ChangeTier") return tiers;
+
     return action === "ScheduleTierChange" ? scheduled : [];
   };
 
   const standing = actionOrder.flatMap((action) =>
     isOffered(action) ? [{ action, tiers: tiersFor(action) }] : [],
   );
+
   return refundable.length === 0 ? standing : [...standing, ...offerRefund];
 };

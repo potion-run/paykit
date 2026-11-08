@@ -18,6 +18,7 @@ import { decideAt, evolveAt, isAccepted, start, subscribedAt } from "./Arbitrari
 
 const Currency = Schema.Literals(["usd", "eur"]);
 const Money = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 100_000 })));
+
 /** A price: `Price.amount` is positive, so a generated charge has to be too. */
 const PositiveMoney = Schema.Int.pipe(
   Schema.check(Schema.isBetween({ minimum: 1, maximum: 100_000 })),
@@ -38,9 +39,11 @@ const Op = Schema.Union([
   // rather than approached: a rule that refuses `<=` instead of `<` has to fail.
   Schema.TaggedStruct("RefundRest", { currency: Currency }),
 ]);
+
 const Script = Schema.Struct({
   ops: Schema.Array(Op).pipe(Schema.check(Schema.isMaxLength(10))),
 });
+
 type Script = typeof Script.Type;
 
 const priceOf = (currency: string, amount: number) =>
@@ -58,6 +61,7 @@ describe("the refund ceiling", () => {
       Arbitrary.schema(Script),
       ({ ops }) => {
         let state: SubscriptionState = subscribedAt("pro");
+
         for (const [index, op] of ops.entries()) {
           if (op._tag === "Charge") {
             const event = new CreditsPurchased({
@@ -67,10 +71,12 @@ describe("the refund ceiling", () => {
               balanceAfter: 0,
               prepaidAfter: 0,
             });
+
             state = evolveAt(state, [event], start, `charge-${index}`);
           } else {
             const before = refundableOf(state, op.currency);
             const amount = op._tag === "RefundRest" ? before : op.amount;
+
             const decision = decideAt(
               state,
               new Refund({
@@ -82,36 +88,46 @@ describe("the refund ceiling", () => {
               start,
               `refund-${index}`,
             );
+
             // A non-positive refund is an accepted command that records nothing;
             // a refund past the ceiling is a typed refusal. Only a refund that
             // fits records an event, which is the dispose the property pins.
             const fits = amount > 0 && amount <= before;
             const recorded = isAccepted(decision) && decision.length > 0;
+
             if (recorded !== fits) return false;
+
             if (recorded) {
               const event = decision[0] as RefundRecorded;
+
               if (event._tag !== "RefundRecorded") return false;
+
               // The event is the evidence: the refund's own numbers, and the
               // currency's total after it.
               if (event.amount !== amount || event.currency !== op.currency) return false;
+
               if (event.refundedAfter !== (refundedOf(state)[op.currency] ?? 0) + amount) {
                 return false;
               }
+
               state = evolveAt(state, decision, start, `refund-${index}`);
             } else if (amount > 0) {
               if (!Schema.is(RefundExceedsCharged)(decision)) return false;
+
               // A refusal changes nothing.
               if (decision.requested !== amount) return false;
             } else if (!isAccepted(decision)) {
               return false;
             }
           }
+
           // The invariant, after every step: money back never exceeds money in.
           for (const currency of ["usd", "eur"] as const) {
             if ((refundedOf(state)[currency] ?? 0) > (chargedOf(state)[currency] ?? 0))
               return false;
           }
         }
+
         return true;
       },
       { runs: 150, size: 40 },
@@ -138,12 +154,14 @@ describe("the refund ceiling", () => {
           charged: { usd: charged },
           refunded: { usd: refunded },
         };
+
         const decision = decideAt(
           state,
           new Refund({ chargeId: "ch_1", refundId: "re_1", amount: 1, currency: "eur" }),
           start,
           "euro-refund",
         );
+
         // One euro cent is still more than the zero euros charged.
         return !isAccepted(decision) && Schema.is(RefundExceedsCharged)(decision);
       },

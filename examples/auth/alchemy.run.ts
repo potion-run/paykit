@@ -24,6 +24,7 @@ const Example = Alchemy.Stack(
     const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
     const worker = yield* AuthWorker;
+
     return {
       url: worker.url.as<string>(),
       tiers: recorded.tiers,
@@ -31,4 +32,5 @@ const Example = Alchemy.Stack(
     };
   }),
 );
+
 export default Example;

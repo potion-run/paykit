@@ -41,6 +41,7 @@ describe("provider adapters", () => {
         bindings: stripeFixture,
         tiers: { pro: { price, priceId: "price_1" } },
       });
+
       const url = yield* withProvider(
         provider,
         Effect.gen(function* () {
@@ -49,9 +50,11 @@ describe("provider adapters", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       );
+
       expect(url).toBe("https://stripe.test/checkout/price_1");
       expect(provider.prices).toEqual({ pro: price });
     }),
@@ -60,16 +63,19 @@ describe("provider adapters", () => {
   it.effect("Stripe and Polar pass a one-off kind through to the purchase", () =>
     Effect.gen(function* () {
       const asked: Array<{ readonly kind: string }> = [];
+
       const stripe = PaymentsStripe({
         bindings: {
           ...stripeFixture,
           createCheckoutSession: ({ priceIds, kind }) => {
             asked.push({ kind });
+
             return Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` });
           },
         },
         tiers: { credits: { price, priceId: "price_pack" } },
       });
+
       yield* withProvider(
         stripe,
         Effect.gen(function* () {
@@ -87,6 +93,7 @@ describe("provider adapters", () => {
   it.effect("Stripe refuses a tier with no configured price", () =>
     Effect.gen(function* () {
       const provider = PaymentsStripe({ bindings: stripeFixture });
+
       const error = yield* Effect.flip(
         withProvider(
           provider,
@@ -99,7 +106,9 @@ describe("provider adapters", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
+
       if (error._tag === "PaymentDeclined") {
         expect(error.code).toBe("price_not_configured");
       }
@@ -112,6 +121,7 @@ describe("provider adapters", () => {
         bindings: polarBindings,
         tiers: { pro: { price, productId: "prod_1" } },
       });
+
       const url = yield* withProvider(
         provider,
         Effect.gen(function* () {
@@ -120,9 +130,11 @@ describe("provider adapters", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       );
+
       expect(url).toBe("https://polar.test/checkout/prod_1");
       expect(provider.kind).toBe("merchant_of_record");
       expect(provider.prices).toEqual({ pro: price });
@@ -139,6 +151,7 @@ describe("provider adapters", () => {
           }),
         ),
       );
+
       expect(missing).toBeInstanceOf(PaymentDeclined);
     }),
   );
@@ -154,10 +167,12 @@ describe("provider adapters", () => {
         set: (key) => Effect.succeed(key),
         get: <T>() => Effect.succeed("prod_deferred" as T),
       };
+
       const provider = PaymentsPolar({
         bindings: polarBindings,
         tiers: { pro: { price, productId: Output.literal("prod_1") } },
       });
+
       const url = yield* withProvider(
         provider,
         Effect.gen(function* () {
@@ -166,9 +181,11 @@ describe("provider adapters", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       ).pipe(Effect.provideService(RuntimeContext, context));
+
       expect(url).toBe("https://polar.test/checkout/prod_deferred");
     }),
   );
@@ -176,29 +193,36 @@ describe("provider adapters", () => {
   it.effect("Manual sells an invoice and refuses every op it does not own", () =>
     Effect.gen(function* () {
       const manual = PaymentsManual();
+
       const result = yield* Effect.gen(function* () {
         const payments = yield* Payments;
+
         const first = yield* payments.createInvoice({
           account: "acct_1",
           amount: 1900,
           currency: "usd",
         });
+
         const second = yield* payments.createInvoice({
           account: "acct_1",
           amount: 1900,
           currency: "usd",
         });
+
         return [first.invoiceId, second.invoiceId] as const;
       }).pipe(Effect.provide(manual.payments)) as Effect.Effect<
         readonly [string, string],
         never,
         never
       >;
+
       expect(result).toEqual(["manual_invoice_1", "manual_invoice_2"]);
+
       for (const op of ["createCheckout", "createPortal"] as const) {
         const error = yield* Effect.flip(
           Effect.gen(function* () {
             const payments = yield* Payments;
+
             if (op === "createCheckout") {
               return yield* payments.createCheckout({
                 account: "acct_1",
@@ -206,9 +230,11 @@ describe("provider adapters", () => {
                 kind: "subscription",
               });
             }
+
             return yield* payments.createPortal({ account: "acct_1" });
           }).pipe(Effect.provide(manual.payments)) as Effect.Effect<never, unknown, never>,
         );
+
         expect(error).toBeInstanceOf(ProviderCapabilityMissing);
       }
     }),
@@ -229,7 +255,9 @@ describe("provider adapters", () => {
           never
         >,
       );
+
       expect(Exit.isFailure(exit)).toBe(true);
+
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("PaymentDeclined");
     }),
   );
@@ -245,12 +273,14 @@ describe("the usage adapter", () => {
         lines: ReadonlyArray<{ feature: string; quantity: number }>;
         commandId: string;
       }> = [];
+
       const provider = PaymentsStripe({
         bindings: {
           ...stripeFixture,
           reportUsage: (args) =>
             Effect.sync(() => {
               asked.push(args);
+
               return {};
             }),
         },
@@ -274,9 +304,11 @@ describe("the usage adapter", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       );
+
       // The base price and the metered price are line items on one subscription.
       expect(url).toBe("https://stripe.test/checkout/price_1,price_msg");
 
@@ -309,12 +341,14 @@ describe("the usage adapter", () => {
   it.effect("Polar maps a tier's usage prices, and reportUsage reaches the binding", () =>
     Effect.gen(function* () {
       const asked: Array<{ lines: ReadonlyArray<{ feature: string; quantity: number }> }> = [];
+
       const provider = PaymentsPolar({
         bindings: {
           ...polarBindings,
           reportUsage: (args) =>
             Effect.sync(() => {
               asked.push(args);
+
               return {};
             }),
         },
@@ -332,9 +366,11 @@ describe("the usage adapter", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       );
+
       expect(url).toBe("https://polar.test/checkout/prod_1");
 
       yield* withProvider(
@@ -365,6 +401,7 @@ describe("the usage adapter", () => {
           { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
         ] as const,
       };
+
       const provider = PaymentsStripe({
         bindings: stripeFixture,
         tiers: {
@@ -388,9 +425,11 @@ describe("the usage adapter", () => {
             tier: "pro",
             kind: "subscription",
           });
+
           return checkout.url;
         }),
       );
+
       expect(url).toBe("https://stripe.test/checkout/price_1,price_msg");
     }),
   );
@@ -401,6 +440,7 @@ describe("the usage adapter", () => {
         _tag: "unit" as const,
         unitPrice: { amount: 500, currency: "usd", units: 1_000 },
       };
+
       const provider = PaymentsPolar({
         bindings: polarBindings,
         tiers: { pro: { price, productId: "prod_1", usage: { messages: packagePricing } } },
@@ -419,6 +459,7 @@ describe("the usage adapter", () => {
         bindings: stripeFixture,
         tiers: { pro: { price, priceId: "price_1" } },
       });
+
       const error = yield* Effect.flip(
         withProvider(
           provider,
@@ -433,7 +474,9 @@ describe("the usage adapter", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(ProviderCapabilityMissing);
+
       if (error._tag === "ProviderCapabilityMissing") expect(error.op).toBe("reportUsage");
     }),
   );
@@ -445,18 +488,22 @@ describe("the Stripe adapter", () => {
   it.effect("an invoice binding is a capability, and the amount reaches the vendor", () =>
     Effect.gen(function* () {
       const asked: Array<{ account: string; amount: number; currency: string }> = [];
+
       const provider = PaymentsStripe({
         bindings: {
           ...stripeFixture,
           createInvoice: (args) =>
             Effect.sync(() => {
               asked.push(args);
+
               return { invoiceId: "in_proration" };
             }),
         },
         tiers: { pro: { price: proPrice, priceId: "price_1" } },
       });
+
       expect(provider.capabilities.has("invoice")).toBe(true);
+
       const invoice = yield* withProvider(
         provider,
         Effect.gen(function* () {
@@ -467,6 +514,7 @@ describe("the Stripe adapter", () => {
           });
         }),
       );
+
       expect(invoice.invoiceId).toBe("in_proration");
       expect(asked).toEqual([{ account: "acct_1", amount: 8_000, currency: "usd" }]);
     }),
@@ -478,6 +526,7 @@ describe("the Stripe adapter", () => {
         bindings: polarBindings,
         tiers: { pro: { price, productId: "prod_1" } },
       });
+
       expect(bare.capabilities.has("invoice")).toBe(false);
 
       const billing = PaymentsPolar({
@@ -487,7 +536,9 @@ describe("the Stripe adapter", () => {
         },
         tiers: { pro: { price, productId: "prod_1" } },
       });
+
       expect(billing.capabilities.has("invoice")).toBe(true);
+
       const invoice = yield* withProvider(
         billing,
         Effect.gen(function* () {
@@ -498,6 +549,7 @@ describe("the Stripe adapter", () => {
           });
         }),
       );
+
       expect(invoice.invoiceId).toBe("ord_1");
 
       const missing = yield* Effect.flip(
@@ -512,6 +564,7 @@ describe("the Stripe adapter", () => {
           }),
         ),
       );
+
       expect(missing).toBeInstanceOf(ProviderCapabilityMissing);
     }),
   );

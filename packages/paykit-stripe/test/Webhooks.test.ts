@@ -25,6 +25,7 @@ const sign = (body: string, timestamp: string): string => {
   const tag = new Bun.CryptoHasher("sha256", new TextEncoder().encode(secret))
     .update(`${timestamp}.${body}`)
     .digest("hex");
+
   return `t=${timestamp},v1=${tag}`;
 };
 
@@ -35,6 +36,7 @@ const request = (input: {
 }) => {
   const body = typeof input.body === "string" ? input.body : JSON.stringify(input.body);
   const timestamp = input.timestamp ?? String(Math.floor(nowSeconds()));
+
   return {
     headers: {
       "content-type": "application/json",
@@ -105,6 +107,7 @@ describe("Stripe webhooks", () => {
       const event = Option.getOrThrow(
         yield* webhook(request({ body: invoice("invoice.payment_failed") })),
       );
+
       expect(event.kind).toBe("payment_failed");
       expect(event.reason).toBe("invoice_payment_failed");
     }),
@@ -129,6 +132,7 @@ describe("Stripe webhooks", () => {
           }),
         ),
       );
+
       expect(event.kind).toBe("subscription_canceled");
       expect(event.tier).toBe("pro");
     }),
@@ -139,6 +143,7 @@ describe("Stripe webhooks", () => {
       const event = yield* webhook(
         request({ body: { id: "evt_4", type: "customer.created", data: { object: {} } } }),
       );
+
       expect(Option.isNone(event)).toBe(true);
     }),
   );
@@ -164,6 +169,7 @@ describe("Stripe webhooks", () => {
           }),
         ),
       );
+
       expect(event.tier).toBe(undefined);
       expect(event.amount).toBe(500);
     }),
@@ -172,6 +178,7 @@ describe("Stripe webhooks", () => {
   it.effect("refuses a signature that does not match", () =>
     Effect.gen(function* () {
       const body = JSON.stringify(session());
+
       const error = yield* Effect.flip(
         webhook(
           request({
@@ -180,6 +187,7 @@ describe("Stripe webhooks", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
@@ -216,11 +224,13 @@ describe("Stripe webhooks", () => {
           // The untampered request is the control: the generated fault must be
           // what fails, not the fixture.
           const valid = yield* Effect.result(webhook(request({ body, timestamp, signature })));
+
           if (Result.isFailure(valid) || Option.isNone(valid.success)) return false;
 
           const bodyTampered = yield* Effect.result(
             webhook(request({ body: body + suffix, timestamp, signature })),
           );
+
           if (
             !Result.isFailure(bodyTampered) ||
             bodyTampered.failure._tag !== "WebhookSignatureInvalid"
@@ -233,9 +243,11 @@ describe("Stripe webhooks", () => {
           const at = start + flip;
           const replacement = signature[at] === "a" ? "b" : "a";
           const flipped = `${signature.slice(0, at)}${replacement}${signature.slice(at + 1)}`;
+
           const signatureTampered = yield* Effect.result(
             webhook(request({ body, timestamp, signature: flipped })),
           );
+
           return (
             Result.isFailure(signatureTampered) &&
             signatureTampered.failure._tag === "WebhookSignatureInvalid"

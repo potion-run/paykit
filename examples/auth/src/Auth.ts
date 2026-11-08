@@ -27,6 +27,7 @@ import * as Option from "effect/Option";
  */
 export const makeAuth = Effect.gen(function* () {
   const baseURL = yield* Config.String("AUTH_BASE_URL").pipe(Config.option);
+
   return yield* BetterAuth({
     basePath: "/api/auth",
     emailAndPassword: { enabled: true },
@@ -78,15 +79,18 @@ export const actorOf = (
 ): ActorValue | null => {
   if (session === null) return null;
   const { id, email } = session.user;
+
   return admins.has(id) || admins.has(email) ? Paykit.actorAdmin(id) : Paykit.actorAccount(id);
 };
 
 /** The request's headers as the native `Headers` Better Auth reads. */
 const webHeaders = (input: Headers.Input): globalThis.Headers => {
   const headers = new globalThis.Headers();
+
   for (const [name, value] of Object.entries(Headers.fromInput(input))) {
     headers.set(name, value);
   }
+
   return headers;
 };
 
@@ -126,6 +130,7 @@ export const authGuards = (
   admins: ReadonlySet<string>,
 ): Layer.Layer<Session | Admin | SessionResolver, never, never> => {
   const resolve = authResolver(auth, admins);
+
   return Layer.mergeAll(Paykit.GuardsFrom(resolve), Layer.succeed(SessionResolver, resolve));
 };
 
@@ -151,6 +156,7 @@ export const AuthGuards: Layer.Layer<Session | Admin | SessionResolver, Config.C
     Effect.gen(function* () {
       const auth = yield* Auth;
       const admins = yield* AdminIds;
+
       return authGuards(auth, admins);
     }),
   );

@@ -73,20 +73,27 @@ const commandOf = (
   now: DateTime.Utc,
 ): Previewable | null => {
   if (input.kind === "cancel") return new ScheduleCancellation();
+
   if (input.kind === "withdrawTierChange") return new WithdrawTierChange();
+
   if (input.kind === "subscribe") {
     const subscribed = subscribeInputOf(catalog, input.tier);
+
     return subscribed === null ? null : new Subscribe(subscribed);
   }
+
   if (input.kind === "scheduleTierChange") {
     const scheduled = scheduleTierChangeInputOf(
       catalog,
       input.tier,
       state._tag === "Subscribed" ? state.currency : undefined,
     );
+
     return scheduled === null ? null : new ScheduleTierChange(scheduled);
   }
+
   const plan = planChangeTier(catalog, input.tier, state, now);
+
   return plan === null ? null : new ChangeTier(plan.input);
 };
 
@@ -125,31 +132,40 @@ export const previewOperation = Effect.fn("Paykit.Preview")(function* () {
     const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
     const state = yield* subscription.state(Subscription.ref(input.account));
     const command = commandOf(catalog, input.command, state, now);
+
     if (command === null) {
       return yield* new TierNotInCatalog({
         tier: "tier" in input.command ? input.command.tier : "*",
       });
     }
+
     // A preview runs the guarded command's own `decide`, which needs the
     // caller its middleware would have provided. `decide` never reads it, but
     // the prediction carries it the way a send would.
     const actor = Option.getOrElse(yield* Effect.serviceOption(Actor), () => system("preview"));
+
     const prediction = Subscription.predict(state, command, {
       id: Subscription.ref(input.account).id,
       now,
       context: Context.make(Actor, actor),
     });
+
     if (prediction._tag === "Rejected") {
       return {
         _tag: "rejected",
         rejection: prediction.rejection,
       } as const satisfies PreviewResult;
     }
+
     if (prediction._tag === "Unpredictable") {
       return { _tag: "unpredictable", cause: prediction.cause } as const satisfies PreviewResult;
     }
+
+    // SAFETY: the prediction is the kernel's decoded preview; this narrows it to the public read types.
     const events = prediction.events as ReadonlyArray<PreviewEvent>;
     const proration = prorationOf(events);
+
+    // SAFETY: the prediction is the kernel's decoded preview; this narrows it to the public read types.
     return {
       _tag: "accepted",
       state: prediction.state as SubscriptionState,

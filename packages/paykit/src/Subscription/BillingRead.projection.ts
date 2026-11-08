@@ -18,9 +18,11 @@ export class BillingRead extends Domain.Projection("BillingRead", {
 export const BillingReadLive = BillingRead.toLayer(
   Effect.gen(function* () {
     const store = yield* BillingReadStore;
+
     return Effect.fn("Paykit.BillingRead.project")(function* (batch) {
       for (const input of batch) {
         if (input.state === null) continue;
+
         const row: BillingReadRow = {
           account: input.key.id,
           tier: input.state.tier,
@@ -38,6 +40,7 @@ export const BillingReadLive = BillingRead.toLayer(
           ...(input.state.currency === undefined ? {} : { currency: input.state.currency }),
           features: input.state.features,
         };
+
         yield* store.upsert(row);
       }
     });

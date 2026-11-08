@@ -39,6 +39,7 @@ it.live("serves the catalog and an account page to the console", () =>
       account: "acct_admin",
       command: { kind: "cancel" },
     });
+
     expect(preview._tag).toBe("rejected");
 
     const mismatches = yield* reads.verify({ account: "acct_admin" });

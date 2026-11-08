@@ -35,15 +35,19 @@ import { bindingsWorld } from "../support/Bindings.ts";
 import { waitForProjection } from "../support/ReadModel.ts";
 
 const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
+
 const enterpriseTier = tier({
   id: "enterprise",
   price: { amount: 49_900, currency: "usd", interval: "month" },
   grants: [grant(sso), allowance(messages, { included: 50_000 })],
 });
+
 const basicTier = tier({ id: "basic", grants: [allowance(messages, { included: 10 })] });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [sso, messages], tiers: [basicTier, enterpriseTier] }),
 );
+
 const enterprise = allowancesOf(testCatalog, "enterprise")!;
 const basic = allowancesOf(testCatalog, "basic")!;
 const price = { amount: 49_900, currency: "usd", interval: "month" as const };
@@ -182,6 +186,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
       }),
       { commandId: "flags-basic" },
     );
+
     yield* entitlements.query(readAccount, { atLeast: basicReceipt });
     yield* BillingRead.caughtUp(basicReceipt);
     const ungranted = yield* inProcess({ feature: "sso" });
@@ -208,6 +213,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
       }),
       { commandId: "flags-enterprise" },
     );
+
     yield* entitlements.query(readAccount, { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);
 
@@ -215,6 +221,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
       feature: "sso",
       amount: 1_000_000,
     });
+
     expect(granted).toEqual({
       allowed: true,
       remaining: null,
@@ -229,17 +236,21 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
         readAccount.id,
         Option.getOrNull(yield* entitlements.query(readAccount)),
       );
+
       return yield* checkBinding(readAccount.id);
     }).pipe(Effect.provide(CheckReadModelLayer));
+
     expect(yield* readModel({ feature: "sso" })).toEqual(granted);
 
     // The row carries the flag's judgement, not a count it invented.
     const store = yield* BillingReadStore;
+
     const row = yield* waitForProjection(
       store,
       readAccount.id,
       Option.getOrNull(yield* entitlements.query(readAccount, { atLeast: receipt })),
     );
+
     expect(row?.features.sso?.allowed).toBe(true);
     expect(row?.features.sso?.remaining).toBeNull();
     expect(row?.features.sso?.used).toBe(0);
@@ -247,9 +258,11 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
 
     // And a Track still refuses it through the binding.
     const track = yield* trackUsageBinding(readAccount.id);
+
     const refused = yield* Effect.exit(
       track({ feature: "sso", amount: 1, dedupeKey: "flags-track" }),
     );
+
     expect(refused._tag).toBe("Failure");
     expect(String(refused)).toContain("FeatureNotMetered");
   }).pipe(Effect.provide(World)),

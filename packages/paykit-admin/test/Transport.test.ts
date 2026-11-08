@@ -59,6 +59,7 @@ const admin = {
   "x-paykit-actor": "ops_1",
   "x-paykit-kind": "admin",
 };
+
 const tenant = {
   "x-paykit-actor": "acct_1",
 };
@@ -98,6 +99,7 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;
     const refunds = yield* AdminRefundHandlers;
+
     const client = AdminReadsClient("", {
       headers: admin,
       transformClient: (httpClient) =>
@@ -109,6 +111,7 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
 
     const catalog = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       return yield* reads.catalog();
     }).pipe(Effect.provide(client));
 
@@ -116,6 +119,7 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
 
     const providerRefs = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       return yield* reads.providerRefs("acct_1");
     }).pipe(Effect.provide(client));
 
@@ -124,6 +128,7 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
 
     const overview = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       return yield* reads.overview();
     }).pipe(Effect.provide(client));
 
@@ -136,6 +141,7 @@ it.live("refuses a tenant session on the console reads", () =>
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;
     const refunds = yield* AdminRefundHandlers;
+
     const client = AdminReadsClient("", {
       headers: tenant,
       transformClient: (httpClient) =>
@@ -147,6 +153,7 @@ it.live("refuses a tenant session on the console reads", () =>
 
     const exit = yield* Effect.gen(function* () {
       const reads = yield* AdminReads;
+
       return yield* Effect.exit(reads.catalog());
     }).pipe(Effect.provide(client));
 
@@ -159,6 +166,7 @@ it.live("routes the tier-change RPC through the same server group", () =>
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;
     const refunds = yield* AdminRefundHandlers;
+
     const client = AdminChangeTierClient("", {
       headers: admin,
       transformClient: (httpClient) =>
@@ -170,10 +178,12 @@ it.live("routes the tier-change RPC through the same server group", () =>
 
     const answer = yield* Effect.gen(function* () {
       const change = yield* AdminChangeTier;
+
       return yield* change.change({ account: "acct_1", tier: "free" });
     }).pipe(Effect.provide(client));
 
     expect(answer._tag).toBe("rejected");
+
     if (answer._tag === "rejected") expect(answer.rejection._tag).toBe("NotSubscribed");
   }).pipe(Effect.provide(World)),
 );
@@ -183,6 +193,7 @@ it.live("routes the refund RPC through the same server group", () =>
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;
     const refunds = yield* AdminRefundHandlers;
+
     const client = AdminRefundClient("", {
       headers: admin,
       transformClient: (httpClient) =>
@@ -194,6 +205,7 @@ it.live("routes the refund RPC through the same server group", () =>
 
     const answer = yield* Effect.gen(function* () {
       const refund = yield* AdminRefund;
+
       return yield* refund.refund({
         account: "acct_1",
         chargeId: "ch_1",
@@ -205,6 +217,7 @@ it.live("routes the refund RPC through the same server group", () =>
 
     // Nothing was charged, so the binding refuses before it asks the provider.
     expect(answer._tag).toBe("rejected");
+
     if (answer._tag === "rejected") expect(answer.rejection._tag).toBe("RefundExceedsCharged");
   }).pipe(Effect.provide(World)),
 );
@@ -214,6 +227,7 @@ it.live("refuses a tenant session on the refund RPC", () =>
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;
     const refunds = yield* AdminRefundHandlers;
+
     const client = AdminRefundClient("", {
       headers: tenant,
       transformClient: (httpClient) =>
@@ -225,6 +239,7 @@ it.live("refuses a tenant session on the refund RPC", () =>
 
     const exit = yield* Effect.gen(function* () {
       const refund = yield* AdminRefund;
+
       return yield* Effect.exit(
         refund.refund({
           account: "acct_1",

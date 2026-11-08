@@ -42,9 +42,12 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
 
     if (path === "/mcp") {
       const web = yield* HttpServerRequest.toWeb(request).pipe(Effect.orDie);
+
       return HttpServerResponse.fromWeb(yield* Effect.promise(() => mcp.handler(web)));
     }
+
     if (path.startsWith("/api")) return yield* tenant.fetch;
+
     if (path.startsWith("/admin")) return yield* admin.fetch;
 
     // Ask the provider for a path to pay: `{ url }` on a processor or a
@@ -52,20 +55,26 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
     // when the tier is free.
     if (path === "/checkout") {
       const account = accountOf(request);
+
       if (account === null) {
         return HttpServerResponse.text(`${ACTOR_HEADER} is required`, { status: 401 });
       }
+
       const tier = url.searchParams.get("tier");
+
       if (tier === null) {
         return HttpServerResponse.text("?tier= is required", { status: 400 });
       }
+
       const purchase = yield* Effect.result(routes.purchase(account, tier));
+
       if (Result.isFailure(purchase)) {
         return HttpServerResponse.jsonUnsafe(
           { error: purchase.failure._tag },
           { status: Paykit.httpStatus(purchase.failure) },
         );
       }
+
       return HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
     }
 
@@ -76,9 +85,11 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
     if (path.startsWith("/webhooks/")) {
       const body = yield* request.text;
       const applied = yield* Effect.result(routes.deliver({ headers: request.headers, body }));
+
       if (Result.isSuccess(applied)) {
         return HttpServerResponse.jsonUnsafe(applied.success, { status: 202 });
       }
+
       return HttpServerResponse.jsonUnsafe(
         { error: applied.failure._tag },
         { status: Paykit.httpStatus(applied.failure) },
@@ -100,6 +111,7 @@ const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
     const request = yield* HttpServerRequest.HttpServerRequest;
     const billing = billingOnSql(yield* database.raw);
     const world = Layer.mergeAll(billing.world, Provider.payments);
+
     return yield* handle(request).pipe(Effect.provide(world), Effect.orDie);
   }),
 });
