@@ -12,6 +12,7 @@ import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { evaluateCheck } from "./Check.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
+import { handler, moneyRoutes } from "./Handler.ts";
 import { httpStatus } from "./HttpStatus.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { paymentsRouter } from "./Payments.ts";
@@ -112,6 +113,9 @@ export const Paykit = {
   Webhook: Billing.Webhook,
   evaluateCheck,
   httpStatus,
+  // the request handler, and the two money paths it mounts
+  handler,
+  moneyRoutes,
   timelineOf,
   appendTimeline,
   initialTimeline,

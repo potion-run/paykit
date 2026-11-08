@@ -3,6 +3,7 @@ import {
   Check,
   InsecureDevGuards,
   Paykit,
+  moneyRoutes,
   Subscription,
   type MoneyProvider,
 } from "@potion.run/paykit";
@@ -10,7 +11,7 @@ import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { billing } from "../src/billing.config.ts";
-import { moneyRoutes, Provider } from "../src/Billing.ts";
+import { Provider } from "../src/Billing.ts";
 
 const account = "acct_routes";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";

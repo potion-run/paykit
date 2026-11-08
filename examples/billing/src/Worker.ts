@@ -1,102 +1,51 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
-import { ACTOR_HEADER, BillingAdminApi, BillingApi, Paykit } from "@potion.run/paykit";
+import { ACTOR_HEADER, Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import * as Result from "effect/Result";
-import { moneyRoutes, Provider } from "./Billing.ts";
+import { Provider } from "./Billing.ts";
 import { BillingDatabase } from "./Database.ts";
 import { toMcpHandler } from "./Mcp.ts";
 import { billingOnSql } from "./SqlBilling.ts";
 
-/** The account a request acts for. A deployment reads its own session here. */
-const accountOf = (request: HttpServerRequest.HttpServerRequest): string | null =>
-  request.headers[ACTOR_HEADER] ?? null;
-
 /**
  * The five paths, served from one model hosted on one database.
  *
- * `/checkout` and `/webhooks/*` are thin on purpose: the account comes from the
- * request, the money moves through `moneyRoutes(provider)`, and the provider's
- * own decoder decides what a delivery means. Swapping `Manual()` for `Polar()`
- * or `Stripe()` in `Billing.ts` is the whole change.
+ * Four of them are `Paykit.handler`: the tenant Api, the console, `/checkout`
+ * and `/webhooks/*`. The fifth is `/mcp`, which is this example's own — it is a
+ * web handler rather than an Effect fetch, so it arrives as a route the handler
+ * tries before the built-ins (ADR 0028).
  *
  * Every service this reaches is resolved from the world `serve` provides, so a
  * route cannot answer from a second copy of the model.
  */
 const handle = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.gen(function* () {
-    const tenant = yield* BillingApi;
-    const admin = yield* BillingAdminApi;
-    const routes = yield* moneyRoutes(Provider);
     // The MCP server is a web handler, not an Effect fetch. `toMcpHandler`
     // captures *these* services — the ones the world provided — so the tools
     // reach the model the routes reach, not a second copy of it.
     const mcp = yield* toMcpHandler;
     yield* Effect.addFinalizer(() => Effect.promise(mcp.dispose));
 
-    const url = new URL(request.url, "http://localhost");
-    const path = url.pathname;
+    const serve = yield* Paykit.handler({
+      provider: Provider,
+      accountOf: (incoming) => incoming.headers[ACTOR_HEADER] ?? null,
+      routes: [
+        {
+          path: "/mcp",
+          handle: (incoming) =>
+            Effect.gen(function* () {
+              const web = yield* HttpServerRequest.toWeb(incoming).pipe(Effect.orDie);
 
-    if (path === "/mcp") {
-      const web = yield* HttpServerRequest.toWeb(request).pipe(Effect.orDie);
+              return HttpServerResponse.fromWeb(yield* Effect.promise(() => mcp.handler(web)));
+            }),
+        },
+      ],
+    });
 
-      return HttpServerResponse.fromWeb(yield* Effect.promise(() => mcp.handler(web)));
-    }
-
-    if (path.startsWith("/api")) return yield* tenant.fetch;
-
-    if (path.startsWith("/admin")) return yield* admin.fetch;
-
-    // Ask the provider for a path to pay: `{ url }` on a processor or a
-    // merchant of record, `{ invoiceId }` on the manual one, `{ activated }`
-    // when the tier is free.
-    if (path === "/checkout") {
-      const account = accountOf(request);
-
-      if (account === null) {
-        return HttpServerResponse.text(`${ACTOR_HEADER} is required`, { status: 401 });
-      }
-
-      const tier = url.searchParams.get("tier");
-
-      if (tier === null) {
-        return HttpServerResponse.text("?tier= is required", { status: 400 });
-      }
-
-      const purchase = yield* Effect.result(routes.purchase(account, tier));
-
-      if (Result.isFailure(purchase)) {
-        return HttpServerResponse.jsonUnsafe(
-          { error: purchase.failure._tag },
-          { status: Paykit.httpStatus(purchase.failure) },
-        );
-      }
-
-      return HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
-    }
-
-    // Apply one provider delivery. The decoder verifies the signature and
-    // translates the payload; `handleWebhook` owns what it means. A `none`
-    // from the decoder is a 202 — acknowledged, nothing to record — which is
-    // what stops a provider retrying an event we do not model.
-    if (path.startsWith("/webhooks/")) {
-      const body = yield* request.text;
-      const applied = yield* Effect.result(routes.deliver({ headers: request.headers, body }));
-
-      if (Result.isSuccess(applied)) {
-        return HttpServerResponse.jsonUnsafe(applied.success, { status: 202 });
-      }
-
-      return HttpServerResponse.jsonUnsafe(
-        { error: applied.failure._tag },
-        { status: Paykit.httpStatus(applied.failure) },
-      );
-    }
-
-    return HttpServerResponse.text("Not Found", { status: 404 });
+    return yield* serve(request);
   });
 
 /**

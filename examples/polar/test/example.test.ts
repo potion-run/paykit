@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { Check, Paykit } from "@potion.run/paykit";
+import { Check, moneyRoutes, Paykit } from "@potion.run/paykit";
 import type { PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
-import { moneyRoutes, providerOf, worldOptions, type PolarEnv } from "../src/Billing.ts";
+import { providerOf, worldOptions, type PolarEnv } from "../src/Billing.ts";
 import { proPrice } from "../src/catalog.ts";
 
 const account = "acct_polar_example";

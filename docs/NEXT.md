@@ -50,6 +50,11 @@ per account, every tenant verb is a command atom, and a successful command inval
 a TanStack Start app on Alchemy, with the purchase operation left in the Worker that owns the
 provider.
 
+A deployment serves itself with `Paykit.handler`, which mounts the four paths every deployment has
+and leaves the rest to `routes`. Two facts the log used to lose are recorded now: `TopUpFailed`,
+when a provider will not collect a refill, and `RefundReversed`, when a provider takes a refund back.
+Both move no counter — they are evidence — and both fold into the timeline.
+
 The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
 (credits are a unit of account, one pool per account), [0003](./adr/0003-the-deploy-provisions-the-vendor.md)
@@ -187,10 +192,17 @@ does the same for Polar: its product ids are `Output<string>`s, so the provider 
 resolves it at checkout or webhook time. The browser's catalog copy is gone: [ADR
 0028](./adr/0028-a-browser-reads-the-catalog-from-the-deploy.md) serves the deploy's own catalog over
 a guarded `Catalog` RPC, and `make` reads it once when the runtime is built, so a stale bundle can no
-longer join terms the server refuses with `CatalogMismatch`. What is left is the *join* itself — the
-Api taking a tier id and the server expanding it, which needs a tenant command surface because a
-model command's payload cannot be enriched between the RPC and `decide` — and `Paykit.handler`, which
-is where that surface and the catalog route both belong.
+longer join terms the server refuses with `CatalogMismatch`.
+
+`Paykit.handler` landed beside it ([ADR
+0029](./adr/0029-the-request-handler-is-a-primitive.md)): it mounts `/api`, `/admin`, `/checkout` and
+`/webhooks`, answers a refusal with `Paykit.httpStatus`, takes the deployment's own paths through
+`routes`, and builds no world — it requires the Api services, so one process stays one model.
+`Paykit.moneyRoutes(provider)` is promoted beside it, which is where the copy the billing and polar
+examples each carried went. What is left is the *join* itself — the Api taking a tier id and the
+server expanding it, which needs a tenant command surface because a model command's payload cannot be
+enriched between the RPC and `decide` — and moving the examples that still speak the Fetch API onto
+the handler.
 
 ### 4. Auth
 
@@ -273,5 +285,14 @@ continues.
   pack and a spend that is already below the line does not buy a second. The invoice id is on the
   event that records the purchase.
 - **A missing capability is a tag.** `ProviderCapabilityMissing`, never a silent no-op.
+- **A collection that failed is a fact, a missing capability is a defect.** A declined charge or
+  invoice writes `TopUpFailed` (or `PaymentFailed`) and the standing is untouched; a provider that
+  declares no way to collect is a deployment error and dies at boot. A failure does not retry by
+  itself: a pool already below its line cannot cross it again.
+- **A reversal is capped by the refund it names, not by the currency.** Two refunds of one charge are
+  two facts, so reversing the second is never refused because the first still stands. `refunded`
+  moves down by exactly what came back, and the credit pool is untouched either way.
+- **The handler builds no world.** `Paykit.handler` requires `BillingApi` and `BillingAdminApi` and
+  never constructs them, so a route cannot answer from a second copy of the model.
 - **Nothing is deleted that a bill references.** Prices and products are retained; the event log is
   the record.

@@ -1,7 +1,7 @@
-import { ACTOR_HEADER, Paykit } from "@potion.run/paykit";
+import { ACTOR_HEADER, moneyRoutes, Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { moneyRoutes, providerOf, worldOptions, type PolarEnv } from "./Billing.ts";
+import { providerOf, worldOptions, type PolarEnv } from "./Billing.ts";
 
 /** The account a request acts for. A deployment reads its own session here. */
 const accountOf = (request: Request): string | null => request.headers.get(ACTOR_HEADER);

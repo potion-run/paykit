@@ -392,6 +392,16 @@ export { CheckFailed, CheckStatus, CheckTransport, evaluateCheck, rowToState } f
 
 export { httpStatus } from "./HttpStatus.ts";
 
+export { handler, moneyRoutes } from "./Handler.ts";
+
+export type {
+  HandlerMount,
+  HandlerOptions,
+  HandlerRoute,
+  HandlerSurfaces,
+  MoneyRoutes,
+} from "./Handler.ts";
+
 export type { CheckInput, CheckResult } from "./Check.ts";
 
 export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
