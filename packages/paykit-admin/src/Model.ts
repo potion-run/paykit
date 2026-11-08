@@ -303,4 +303,5 @@ export const ConsoleAction: ReadonlyArray<AdminAction> = [
   "ScheduleTierChange",
   "WithdrawTierChange",
   "Refund",
+  "ReverseRefund",
 ];

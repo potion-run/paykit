@@ -97,7 +97,9 @@ export {
 export {
   BillingState,
   BillingStateView,
+  RefundView,
   initialBillingState,
+  outstandingRefundOf,
 } from "./Subscription/BillingState.view.ts";
 
 export {

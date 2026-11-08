@@ -58,21 +58,27 @@ ADR 0019's rule that a refund is money and not a move on the standing holds for 
 optional so a record written before this ADR still decodes, which is the same shape
 `dunningStartedAt` and `topUpCooldownUntil` use.
 
-**6. It carries the `Admin` guard, and it is not on the operator Api yet.** Unlike `Refund`, whose
-provider call is why the binding lives in the process that holds the provider, a reversal needs no
-provider: the money already moved. It is still a command with a wider blast radius than a tenant's,
-so it declares `Admin`.
+**6. It carries the `Admin` guard, and it is on the operator Api.** Unlike `Refund`, whose provider
+call is why the binding lives in the process that holds the provider, a reversal needs no provider:
+the money already moved. So `ReverseRefund` joins `BillingAdminApi.commands`, and any operator
+process can send it.
 
-Mounting it on `BillingAdminApi` is a separate decision, and the gate that decides it is already
-written: `paykit-admin`'s "covers every admin Api command" test asserts that every command the Api
-serves has a console action. `ReverseRefund` has no screen — the console shows a refund, not a
-reversal — so putting it on the Api today would either fail that test or force a busywork action.
-The order is the console's: an action, a binding, then the Api.
+Shipping the command required the screen, not the other way round: `paykit-admin`'s "covers every
+admin Api command" test refuses an Api command with no console action behind it, and a busywork
+action would satisfy the letter of that gate while breaking its point. So the console landed with
+it: `BillingState` carries the refunds themselves (`refunds`, keyed by the provider's id), the
+refunds panel renders one row per refund with `amount`, `reversed` and `outstanding`, and a row
+offers **Reverse** only while `amount - reversed` is positive. That button opens the same generated
+draft every other action uses, pre-filled with the refund and its outstanding amount, so an operator
+never copies an id to reverse a refund they can see.
 
 ## Consequences
 
 - A currency's refundable headroom is the truth again after a reversal, so a refund that is owed can
   be paid.
+- The console reads the refunds themselves, not only the per-currency total. `refunded` answers "how
+  much went back"; `refunds` answers "which refund can still come back", and only the second can
+  offer a button that names one.
 - The console can show a refund as reversed rather than settled. `BillingState` already folds the
   money; the fold now has a fact to subtract.
 - Two events describe one refund: what went back, and what came back. A reader that wants the net

@@ -119,9 +119,10 @@ standing no command could leave until the period reset.
   serves `AdminConsoleServer` must be the one provided `Paykit.Refund`. A refund the provider later
   reverses is its own fact ([ADR 0030](./adr/0030-a-reversed-refund-is-a-second-fact.md)):
   `ReverseRefund` writes `RefundReversed`, capped by the refund it names rather than by the currency,
-  and `refunded` moves down so the headroom comes back. What is left is a console action for it —
-  which is the gate `paykit-admin` already enforces, since its coverage test will not let the command
-  onto the operator Api without one — and a refund that revokes credits in the same call.
+  and `refunded` moves down so the headroom comes back. It is on the operator Api with the screen
+  behind it: `BillingState` carries `refunds`, the console's refunds panel shows what each one
+  returned, and a row with money left opens a pre-filled reversal. What is left is a refund that
+  revokes credits in the same call.
 - **Banded and package prices** are no longer local-only: [ADR
   0024](./adr/0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md) makes
   `usagePrices` the provider contract and maps a package to Stripe's

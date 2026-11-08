@@ -9,6 +9,7 @@ import {
   type Tier,
   type TimelineEntry,
   AccountId,
+  outstandingRefundOf,
   standingPhaseOfView,
 } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
@@ -1503,6 +1504,73 @@ const readLabel = (asOf: Option.Option<DateTime.Utc>, loading: boolean, live = f
  * entity with a deadline, and the operator's question is which ones are still
  * waiting.
  */
+const refundsView = (billing: BillingStateView, h: HtmlBuilder<Message>): Html => {
+  const refunds = Object.values(billing.refunds ?? {}).toSorted((left, right) =>
+    left.refundId.localeCompare(right.refundId),
+  );
+
+  if (refunds.length === 0) return h.empty;
+
+  return card(h, [
+    cardHeader(h, [
+      h.div(
+        [],
+        [
+          cardTitle(h, ["Refunds"]),
+          cardDescription(h, [
+            "Money that went back, and money a provider has since returned. Reversing one restores the headroom it spent.",
+          ]),
+        ],
+      ),
+    ]),
+    table(
+      h,
+      [
+        tableHeader(h, [
+          tableRow(h, [
+            tableHead(h, ["Refund"]),
+            tableHead(h, ["Amount"]),
+            tableHead(h, ["Returned"]),
+            tableHead(h, ["Outstanding"]),
+            tableHead(h, ["Reason"]),
+            tableHead(h, [""]),
+          ]),
+        ]),
+        tableBody(
+          h,
+          refunds.map((refund) => {
+            const outstanding = outstandingRefundOf(refund);
+
+            return tableRow(h, [
+              tableCell(h, [refund.refundId], { className: "pk-account-id" }),
+              tableCell(h, [formatMoney(refund.amount, refund.currency)]),
+              tableCell(h, [formatMoney(refund.reversed ?? 0, refund.currency)]),
+              tableCell(h, [formatMoney(outstanding, refund.currency)]),
+              tableCell(h, [refund.reason ?? "—"]),
+              // Offered only while the refund still has money to return: a
+              // button that could only be refused is not offered.
+              tableCell(h, [
+                outstanding === 0
+                  ? h.span([h.Class("pk-muted")], ["settled"])
+                  : button(
+                      "Reverse",
+                      Message.ClickedReverseRefund({
+                        refundId: refund.refundId,
+                        outstanding,
+                      }),
+                      h,
+                      { size: "sm" },
+                    ),
+              ]),
+            ]);
+          }),
+        ),
+      ],
+      { className: "pk-refunds" },
+    ),
+  ]);
+};
+
 const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   if (Option.isNone(account.holds)) return h.empty;
   const holds = account.holds.value;
@@ -2538,6 +2606,11 @@ const accountView = (model: Model, account: AccountState, h: HtmlBuilder<Message
     onSome: (value) => adjustmentsView(value, model.catalog, h),
   });
 
+  const refundsPanel = Option.match(account.billing, {
+    onNone: () => h.empty,
+    onSome: (value) => refundsView(value, h),
+  });
+
   const providerRefsPanel = providerRefsView(account, h);
 
   const usagePanel = Option.match(account.entitlements, {
@@ -2564,7 +2637,14 @@ const accountView = (model: Model, account: AccountState, h: HtmlBuilder<Message
           accountSummaryView(account, h),
           h.div(
             [h.Class("pk-overview-grid")],
-            [billingPanel, allowancesPanel, adjustmentsPanel, providerRefsPanel, usagePanel],
+            [
+              billingPanel,
+              allowancesPanel,
+              adjustmentsPanel,
+              refundsPanel,
+              providerRefsPanel,
+              usagePanel,
+            ],
           ),
         ],
         h,

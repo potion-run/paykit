@@ -3,7 +3,7 @@ import * as Arbitrary from "effect/Arbitrary";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { actionsFor, type AdminAction } from "../../src/AdminActions.ts";
+import { actionsFor, reversibleRefunds, type AdminAction } from "../../src/AdminActions.ts";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, admin } from "../../src/Auth/Actor.ts";
 import { catalog } from "../../src/Catalog.ts";
@@ -217,6 +217,35 @@ describe("admin actions", () => {
     expect(nothingLeft.map((entry) => entry.action)).not.toContain("Refund");
   });
 
+  it("offers a reversal while a refund still has money to return", () => {
+    const refunds = {
+      re_1: { refundId: "re_1", amount: 4_900, currency: "usd" },
+      re_2: { refundId: "re_2", amount: 1_000, currency: "usd", reversed: 1_000 },
+    };
+
+    const offered = actionsFor({ ...state("active"), charged: { usd: 5_900 }, refunds }).map(
+      (entry) => entry.action,
+    );
+
+    // `re_1` has nothing returned, so it can be reversed; `re_2` came back in
+    // full, so its button would only be a guaranteed `RefundReversalExceedsRefunded`.
+    expect(offered).toContain("ReverseRefund");
+    expect(reversibleRefunds(refunds).map((refund) => refund.refundId)).toEqual(["re_1"]);
+
+    // It is money, not a move on the standing, so a terminal phase keeps it.
+    const ended = actionsFor({ ...state("canceled"), refunds }).map((entry) => entry.action);
+
+    expect(ended).toContain("ReverseRefund");
+
+    // Every refund returned: nothing to offer.
+    const settled = actionsFor({
+      ...state("active"),
+      refunds: { re_1: { refundId: "re_1", amount: 4_900, currency: "usd", reversed: 4_900 } },
+    });
+
+    expect(settled.map((entry) => entry.action)).not.toContain("ReverseRefund");
+  });
+
   it("offers ChangeTier only with another compatible tier", () => {
     const descriptor = actionsFor(state("active"), { catalog: testCatalog }).find(
       (candidate) => candidate.action === "ChangeTier",
@@ -410,6 +439,12 @@ const commandFor = (
     case "Refund":
       // Money, not a standing command: the binding and its console RPC own the
       // ceiling, and `test/bindings/AdminBindings.test.ts` is its gate.
+      return null;
+
+    case "ReverseRefund":
+      // Money again, and capped by the refund rather than the standing: the
+      // refund id is the state's, and `test/stories/Refund.story.test.ts` is
+      // the gate on the ceiling this would apply.
       return null;
   }
 };

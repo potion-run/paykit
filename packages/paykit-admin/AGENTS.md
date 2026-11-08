@@ -71,6 +71,12 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
   standing. Its command id is the provider's idempotency key; a retry after an
   unknown outcome reuses it. Keep the typed rejection as `RpcRejected`, not a
   message string.
+- **A reversal is an Api command, because it needs no provider.** `ReverseRefund`
+  is the one money action the operator Api serves: the provider already returned
+  the money, so there is nothing to call. It is offered per refund row while
+  `amount - reversed` is positive — not per phase, and not from the per-currency
+  total — and the row passes the refund and its outstanding amount into
+  `draftWith`, so an operator never retypes an id the page is showing.
 - **A tier change is a quote, then an apply.** The server computes the
   proration and applies only the amount the operator confirmed. A mismatch is
   a requote, never a silently different charge. Do not send `BillingAdmin`'s

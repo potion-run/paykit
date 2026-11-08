@@ -100,6 +100,12 @@ export const AdminIntent = Schema.Union([
     currency: Schema.String,
     reason: Schema.optionalKey(Schema.String),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("ReverseRefund"),
+    refundId: Schema.String,
+    amount: Schema.Int,
+    reason: Schema.optionalKey(Schema.String),
+  }),
 ]);
 
 export type AdminIntent = typeof AdminIntent.Type;
@@ -296,6 +302,39 @@ export const OperatorActions = operatorActionTable({
         ),
       ),
   },
+  ReverseRefund: {
+    fields: [
+      { name: "refundId", label: "Refund id", control: "text" },
+      { name: "amount", label: "Amount (minor units)", control: "number" },
+      { name: "reason", label: "Reason (optional)", control: "text" },
+    ],
+    parse: (values) =>
+      Result.flatMap(nonEmpty(values.refundId ?? "", "refund id"), (refundId) =>
+        Result.map(positiveInt(values.amount ?? ""), (amount) => {
+          const reason = optionalText(values.reason);
+
+          return {
+            kind: "ReverseRefund" as const,
+            refundId,
+            amount,
+            ...(reason === undefined ? {} : { reason }),
+          };
+        }),
+      ),
+    send: ({ target, intent, commandId }) =>
+      Command.mapMessage(
+        BillingAdmin.ReverseRefund({
+          target,
+          input: {
+            refundId: intent.refundId,
+            amount: intent.amount,
+            ...(intent.reason === undefined ? {} : { reason: intent.reason }),
+          },
+          commandId,
+        }),
+        wrap,
+      ),
+  },
   ScheduleTierChange: {
     fields: [{ name: "tier", label: "New tier", control: "tier" }],
     parse: (values) =>
@@ -380,8 +419,20 @@ export const parseDraft = (draft: ActionDraft): Result.Result<AdminIntent, strin
       return OperatorActions.ScheduleTierChange.parse(draft.values);
     case "Refund":
       return OperatorActions.Refund.parse(draft.values);
+    case "ReverseRefund":
+      return OperatorActions.ReverseRefund.parse(draft.values);
   }
 };
+
+/**
+ * A draft with some values already filled. The refunds panel knows which refund
+ * the operator clicked and how much of it may still come back, so a reversal
+ * starts from that row rather than from an operator copying an id.
+ */
+export const draftWith = (
+  kind: AdminAction,
+  values: Readonly<Record<string, string>>,
+): ActionDraft => ({ kind, values: { ...draftFor(kind, Option.none()).values, ...values } });
 
 /** Set one field, ignoring a name the open action does not ask for. */
 export const updatedDraft = (draft: ActionDraft, field: string, value: string): ActionDraft => {

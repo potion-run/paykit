@@ -157,6 +157,25 @@ const withDraft = (amount: string): Model => {
   return update(openedDraft, Message.UpdatedDraftField({ field: "amount", value: amount })).model;
 };
 
+/**
+ * A reversal draft opened the way the refunds panel opens it: the row carries
+ * the refund and the amount still outstanding, so nothing is typed twice.
+ */
+const withReverseDraft = (refunds: BillingStateView["refunds"]): Model => {
+  const model = withBilling({ refunds });
+  const row = Object.values(refunds ?? {})[0];
+
+  if (row === undefined) return model;
+
+  return update(
+    model,
+    Message.ClickedReverseRefund({
+      refundId: row.refundId,
+      outstanding: row.amount - (row.reversed ?? 0),
+    }),
+  ).model;
+};
+
 const withChangeDraft = (tier: string): Model => {
   const model = withBilling();
   const openedDraft = update(model, Message.ClickedAction({ action: "ChangeTier" })).model;
@@ -492,6 +511,25 @@ describe("the console model", () => {
     const retried = update(unknown, Message.ClickedRetryPending({ commandId: pending.commandId }));
     expect(retried.commands?.map((command) => command.name)).toEqual(["ApplyRefund"]);
     expect(retried.commands?.[0]?.args?.commandId).toBe(pending.commandId);
+  });
+
+  it("opens a reversal from a refund row and sends it with the row's numbers", () => {
+    const model = withReverseDraft({
+      re_1: { refundId: "re_1", amount: 4_900, currency: "usd" },
+    });
+
+    if (Option.isNone(model.account)) return;
+    const draft = model.account.value.draft;
+
+    if (Option.isNone(draft)) return;
+    expect(draft.value.kind).toBe("ReverseRefund");
+    expect(draft.value.values).toEqual({ refundId: "re_1", amount: "4900", reason: "" });
+
+    const result = update(model, Message.ClickedSubmitAction());
+    expect(result.commands?.map((command) => command.name)).toEqual(["ReverseRefund"]);
+
+    if (Option.isNone(result.model.account)) return;
+    expect(result.model.account.value.pending.length).toBe(1);
   });
 
   it("covers every admin Api command", () => {

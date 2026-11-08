@@ -272,7 +272,15 @@ it.effect("a reversal puts the headroom back, so the money owed can still go bac
         commandId: "story:9",
       }),
     ),
-    Story.view(BillingState, account, { charged: { usd: 4_900 }, refunded: { usd: 0 } }),
+    Story.view(BillingState, account, {
+      charged: { usd: 4_900 },
+      refunded: { usd: 0 },
+      // The row keeps its place and records what came back, which is what a
+      // console reads to offer a reversal (ADR 0030).
+      refunds: {
+        re_1: { refundId: "re_1", amount: 4_900, currency: "usd", reversed: 4_900 },
+      },
+    }),
     // The ceiling is the truth again, so the same charge can go back properly.
     Story.when(
       account,

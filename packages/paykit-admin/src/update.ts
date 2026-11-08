@@ -21,7 +21,7 @@ import * as Schema from "effect/Schema";
 import { Command } from "foldkit";
 import { load, pushUrl, replaceUrl } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
-import { draftFor, OperatorActions, parseDraft, updatedDraft } from "./actions.ts";
+import { draftFor, draftWith, OperatorActions, parseDraft, updatedDraft } from "./actions.ts";
 import {
   devToolsBilling,
   devToolsEntitlements,
@@ -438,6 +438,8 @@ const send = (
       return OperatorActions.Resume.send({ ...args, intent });
     case "WithdrawTierChange":
       return OperatorActions.WithdrawTierChange.send({ ...args, intent });
+    case "ReverseRefund":
+      return OperatorActions.ReverseRefund.send({ ...args, intent });
     case "ScheduleTierChange":
       return OperatorActions.ScheduleTierChange.send({ ...args, intent });
   }
@@ -1639,6 +1641,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     FailedAccountWatch: ({ reason }) =>
       updateAccount(model, (account) =>
         modifyFields(account, { error: () => Option.some(reason) }),
+      ),
+
+    ClickedReverseRefund: ({ refundId, outstanding }) =>
+      updateAccount(model, (account) =>
+        modifyFields(account, {
+          draft: () =>
+            Option.some(draftWith("ReverseRefund", { refundId, amount: String(outstanding) })),
+          change: () => Option.none(),
+          notice: () => Option.none(),
+        }),
       ),
 
     ClickedAction: ({ action }) =>

@@ -56,6 +56,12 @@ export const Message = defineMessageUnion({
   FailedAccountWatch: { reason: Schema.String },
 
   ClickedAction: { action: AdminAction },
+  /**
+   * The operator clicked reverse on one refund. It carries the row's numbers so
+   * the draft starts on the refund and its outstanding amount, which is the cap
+   * `ReverseRefund` applies.
+   */
+  ClickedReverseRefund: { refundId: Schema.String, outstanding: Schema.Int },
   UpdatedDraftField: { field: Schema.String, value: Schema.String },
   ClickedSubmitAction: {},
   ClickedConfirmChangeTier: {},

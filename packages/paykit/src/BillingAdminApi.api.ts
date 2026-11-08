@@ -20,6 +20,7 @@ export class BillingAdminApi extends Domain.Api("BillingAdminApi", {
     "Expire",
     "RecordPayment",
     "RecordPaymentFailure",
+    "ReverseRefund",
     "ScheduleCancellation",
     "Resume",
     "ChangeTier",

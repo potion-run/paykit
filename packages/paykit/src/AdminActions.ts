@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { allowancesOf, type Catalog } from "./Catalog.ts";
 import { downgradeOf } from "./Subscription/Allowance.verdict.ts";
-import type { BillingStateView } from "./Subscription/BillingState.view.ts";
+import {
+  outstandingRefundOf,
+  type BillingStateView,
+  type RefundView,
+} from "./Subscription/BillingState.view.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { standingPhaseTagOfStatus } from "./Subscription/StandingPhase.ts";
 import { priceFor, type Tier } from "./Tier.ts";
@@ -32,6 +36,13 @@ export const AdminAction = Schema.Literals([
    * account was charged, not by its phase.
    */
   "Refund",
+  /**
+   * Money a provider already acknowledged as refunded came back, so the row
+   * stops counting against the ceiling. Offered while a refund still has an
+   * outstanding amount, not per phase: like `Refund` it is money, not a move on
+   * the standing (ADR 0030).
+   */
+  "ReverseRefund",
 ]);
 
 export type AdminAction = typeof AdminAction.Type;
@@ -46,7 +57,7 @@ export interface AdminActionDescriptor {
   readonly tiers: ReadonlyArray<string>;
 }
 
-const actionOrder: ReadonlyArray<Exclude<AdminAction, "Refund">> = [
+const actionOrder: ReadonlyArray<Exclude<AdminAction, "Refund" | "ReverseRefund">> = [
   "GrantCredits",
   "ExtendTrial",
   "ChangeTier",
@@ -74,6 +85,18 @@ export const refundableCurrencies = (
   Object.keys(charged ?? {})
     .filter((currency) => (charged?.[currency] ?? 0) - (refunded?.[currency] ?? 0) > 0)
     .sort();
+
+/**
+ * The refunds this account can still reverse: those a provider has not returned
+ * in full, keyed by the provider's id. `ReverseRefund` caps by the refund rather
+ * than the currency, so this is the same ceiling the command applies.
+ */
+export const reversibleRefunds = (
+  refunds: BillingStateView["refunds"],
+): ReadonlyArray<RefundView> =>
+  Object.values(refunds ?? {})
+    .filter((refund) => outstandingRefundOf(refund) > 0)
+    .sort((left, right) => left.refundId.localeCompare(right.refundId));
 
 /**
  * A pack is a purchase, not a tier: it grants credits, has no allowances, and
@@ -185,7 +208,14 @@ const scheduleTiers = (
 export const actionsFor = (
   state: Pick<
     BillingStateView,
-    "status" | "tier" | "currency" | "cancelAtPeriodEnd" | "pendingTier" | "charged" | "refunded"
+    | "status"
+    | "tier"
+    | "currency"
+    | "cancelAtPeriodEnd"
+    | "pendingTier"
+    | "charged"
+    | "refunded"
+    | "refunds"
   >,
   options: {
     readonly catalog?: Catalog;
@@ -198,7 +228,14 @@ export const actionsFor = (
   const offerRefund: ReadonlyArray<AdminActionDescriptor> =
     refundable.length === 0 ? [] : [{ action: "Refund", tiers: [] }];
 
-  if (phase === "Expired" || phase === "Canceled") return offerRefund;
+  // A reversal is offered by whether a refund still has money to return, not by
+  // the phase: it is money going back, available after a standing ends.
+  const offerReverse: ReadonlyArray<AdminActionDescriptor> =
+    reversibleRefunds(state.refunds).length === 0 ? [] : [{ action: "ReverseRefund", tiers: [] }];
+
+  const money: ReadonlyArray<AdminActionDescriptor> = [...offerRefund, ...offerReverse];
+
+  if (phase === "Expired" || phase === "Canceled") return money;
 
   const tiers = changeTiers(state, options.catalog, options.entitlements);
   const scheduled = scheduleTiers(state, options.catalog);
@@ -206,7 +243,7 @@ export const actionsFor = (
   const isActive = phase === "Active";
   const isGrace = phase === "Grace";
 
-  const isOffered = (action: Exclude<AdminAction, "Refund">): boolean => {
+  const isOffered = (action: Exclude<AdminAction, "Refund" | "ReverseRefund">): boolean => {
     switch (action) {
       case "GrantCredits":
         return true;
@@ -234,7 +271,9 @@ export const actionsFor = (
     }
   };
 
-  const tiersFor = (action: Exclude<AdminAction, "Refund">): ReadonlyArray<string> => {
+  const tiersFor = (
+    action: Exclude<AdminAction, "Refund" | "ReverseRefund">,
+  ): ReadonlyArray<string> => {
     if (action === "ChangeTier") return tiers;
 
     return action === "ScheduleTierChange" ? scheduled : [];
@@ -244,5 +283,5 @@ export const actionsFor = (
     isOffered(action) ? [{ action, tiers: tiersFor(action) }] : [],
   );
 
-  return refundable.length === 0 ? standing : [...standing, ...offerRefund];
+  return [...standing, ...money];
 };

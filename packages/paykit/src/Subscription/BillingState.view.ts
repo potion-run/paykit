@@ -17,6 +17,29 @@ import {
   TopUpFailureRecord,
 } from "./Subscription.state.ts";
 
+/**
+ * One refund on the page: what the provider acknowledged, and how much of it a
+ * provider has since returned. `amount - reversed` is what a reversal may still
+ * name, which is the cap `ReverseRefund` applies (ADR 0030).
+ */
+export const RefundView = Schema.Struct({
+  /** The provider's id for the refund. */
+  refundId: Schema.String,
+  /** Minor units the refund recorded. */
+  amount: Schema.Int,
+  currency: Schema.String,
+  /** Minor units of it a provider has since returned. Absent means none. */
+  reversed: Schema.optionalKey(Schema.Int),
+  /** Why the money went back, as an operator would tell a customer. */
+  reason: Schema.optionalKey(Schema.String),
+});
+
+export type RefundView = typeof RefundView.Type;
+
+/** What may still come back from one refund. */
+export const outstandingRefundOf = (refund: RefundView): number =>
+  Math.max(0, refund.amount - (refund.reversed ?? 0));
+
 /** What a billing page shows. */
 export const BillingStateView = Schema.Struct({
   account: Schema.String,
@@ -50,6 +73,12 @@ export const BillingStateView = Schema.Struct({
   charged: Schema.optionalKey(MoneyByCurrency),
   /** Money that went back, per currency. */
   refunded: Schema.optionalKey(MoneyByCurrency),
+  /**
+   * The refunds themselves, keyed by the provider's id for each. `refunded`
+   * answers "how much went back"; this answers "which refunds can still come
+   * back", which is what `ReverseRefund` names and a console offers.
+   */
+  refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundView)),
   /**
    * How many payment failures this standing has recorded, including a failed
    * retry the dunning policy made. The billing page is where an operator sees
@@ -254,16 +283,49 @@ export class BillingState extends Domain.View("BillingState", {
       ),
     RefundRecorded: (view, event, context): BillingStateView =>
       withAccount(
-        { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
+        {
+          ...view,
+          refunded: refundedWith(view, event.currency, event.refundedAfter),
+          // The refund is now a row the page can offer to reverse, keyed by the
+          // provider's id because that is what `ReverseRefund` names.
+          refunds: {
+            ...view.refunds,
+            [event.refundId]: {
+              refundId: event.refundId,
+              amount: event.amount,
+              currency: event.currency,
+              ...(event.reason === undefined ? {} : { reason: event.reason }),
+            },
+          },
+        },
         context,
       ),
     // A reversal lowers the same fold, so the page's "refunded" is the money
     // that is actually back rather than everything ever acknowledged.
-    RefundReversed: (view, event, context): BillingStateView =>
-      withAccount(
-        { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
+    RefundReversed: (view, event, context): BillingStateView => {
+      const refund = view.refunds?.[event.refundId];
+
+      return withAccount(
+        {
+          ...view,
+          refunded: refundedWith(view, event.currency, event.refundedAfter),
+          // The row keeps its place and records what came back, so "4,900
+          // refunded, 4,900 returned" is one row rather than none.
+          ...(refund === undefined
+            ? {}
+            : {
+                refunds: {
+                  ...view.refunds,
+                  [event.refundId]: {
+                    ...refund,
+                    reversed: (refund.reversed ?? 0) + event.amount,
+                  },
+                },
+              }),
+        },
         context,
-      ),
+      );
+    },
     PaymentFailed: (view, event, context): BillingStateView =>
       withAccount(
         {

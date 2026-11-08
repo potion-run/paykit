@@ -10,6 +10,7 @@ import {
 } from "@potion.run/paykit";
 import { BillingOverview } from "@potion.run/paykit/Admin";
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
+import type { BillingStateView } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -78,6 +79,28 @@ const model = (devTools: boolean, pathname = "/"): Model =>
 
 const render = (value: Model) => view(value, inertHtml as unknown as HtmlBuilder<Message>);
 
+/** A billing snapshot, in the shape `BillingState` folds. */
+const billing = {
+  account: account,
+  tier: "pro",
+  status: "active" as const,
+  periodStart: at,
+  periodEnd: at,
+  interval: "month" as const,
+  anchorTz: "UTC",
+  cancelAtPeriodEnd: false,
+  credits: 0,
+  dunningAttempts: 0,
+  currency: "usd",
+};
+
+/** The account page, with whatever billing snapshot the test supplied. */
+const accountPage = (billingState: BillingStateView): Model => {
+  const opened = update(model(false), Message.ClickedAccount({ account })).model;
+
+  return update(opened, Message.ReceivedBilling({ state: Option.some(billingState) })).model;
+};
+
 describe("the console view", () => {
   it("renders the page without the lab when dev tools are off", () => {
     expect(render(model(false)).title).toBe("Paykit admin");
@@ -90,6 +113,20 @@ describe("the console view", () => {
       const selected = update(opened, Message.SelectedDevToolsTab({ tab })).model;
       expect(render(selected).title).toBe("Paykit admin");
     }
+  });
+
+  it("renders the refunds panel, and offers a reversal only while one is outstanding", () => {
+    // Both rows render; only the one with money left carries a reverse action,
+    // which is the same condition `actionsFor` offers the action under.
+    const settled = accountPage({
+      ...billing,
+      refunds: {
+        re_1: { refundId: "re_1", amount: 4_900, currency: "usd", reversed: 4_900 },
+        re_2: { refundId: "re_2", amount: 1_000, currency: "usd" },
+      },
+    });
+
+    expect(render(settled).title).toBe("Paykit admin");
   });
 
   it("renders the overview page", () => {
