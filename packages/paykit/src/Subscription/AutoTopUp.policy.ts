@@ -151,11 +151,14 @@ export const autoTopUp = (options: {
       // catalog this layer was given; it still reports the pack it refused if
       // the two ever disagree.
       const packs = new Map<string, AutoTopUpPack>([[fallback.tier, fallback]]);
+
       for (const tier of options.catalog.tiers) {
         const named = tier.topUp?.pack;
+
         if (named === undefined || packs.has(named)) continue;
         packs.set(named, yield* resolvePack(options.catalog, named));
       }
+
       return {
         fallback,
         packs,
@@ -172,18 +175,23 @@ const resolvePack = (
 ): Effect.Effect<AutoTopUpPack, AutoTopUpInvalid> =>
   Effect.gen(function* () {
     const pack = tierOf(catalog, packId);
+
     if (pack === null) {
       return yield* new AutoTopUpInvalid({ pack: packId, reason: "unknown-pack" });
     }
+
     if ((pack.kind ?? "subscription") !== "one_off") {
       return yield* new AutoTopUpInvalid({ pack: packId, reason: "not-a-pack" });
     }
+
     if (pack.credits === undefined || pack.credits <= 0) {
       return yield* new AutoTopUpInvalid({ pack: packId, reason: "no-credits" });
     }
+
     if (pack.price === undefined) {
       return yield* new AutoTopUpInvalid({ pack: packId, reason: "no-price" });
     }
+
     return { tier: pack.id, amount: pack.credits, price: pack.price } satisfies AutoTopUpPack;
   });
 
@@ -218,7 +226,9 @@ export const crossedThreshold = (event: CreditSpend, threshold: number): boolean
         ? null
         : event.creditsAfter + event.cost
       : event.balanceAfter + event.amount;
+
   const after = event._tag === "UsageRecorded" ? event.creditsAfter : event.balanceAfter;
+
   return before !== null && before > threshold && after <= threshold;
 };
 
@@ -246,7 +256,10 @@ export const topUpFailureCommandId = (account: string, seq: number): string =>
 
 /** The tag of a provider's refusal, for a record an operator can match. */
 const failureTag = (error: unknown): string => {
+  // SAFETY: the port's failures are tagged errors, and a value that is not one
+  // has no `_tag`, which the check on the next line catches.
   const tag = (error as { readonly _tag?: unknown } | null)?._tag;
+
   return typeof tag === "string" ? tag : "unknown";
 };
 
@@ -293,6 +306,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
     // a provider. A deployment that opted in without one would otherwise grant
     // credits no invoice can collect, so it fails at boot instead.
     const router = Option.getOrNull(yield* Effect.serviceOption(PaymentsRouter));
+
     if (config !== null && router === null) {
       return yield* Effect.die(
         new ProviderCapabilityMissing({ provider: "none", op: "createInvoice" }),
@@ -306,8 +320,10 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // The line is the tier's, not the deployment's: a tier that never stated
       // one never refills, however the pack is configured.
       const line = topUpOf(standing);
+
       if (line === null) return;
       const threshold = line.threshold;
+
       // While a cooldown is open the deadline is the only thing that may buy,
       // and it buys through its own event below. Dropping the crossing here is
       // what defers it instead of buying a second pack inside the window.
@@ -322,12 +338,15 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
         event._tag === "TopUpCooldownCleared"
           ? creditsOf(standing) <= threshold
           : crossedThreshold(event, threshold);
+
       if (!due) return;
+
       if (creditsOf(standing) > threshold) return;
 
       // The product is the standing's line first and the deployment's second:
       // a free tier and an enterprise tier refill the pools they have.
       const pack = packFor(config, line.pack);
+
       if (pack === null) {
         return yield* Effect.die(
           new TopUpPackUnresolved({
@@ -336,6 +355,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
           }),
         );
       }
+
       // The bound on how often one account is charged is the tier's, so a
       // scheduled change moves it at the boundary with the line and the pack.
       const cooldown = topUpCooldownFor(config, line);
@@ -343,6 +363,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       const chosen = providerFor(router, standing.refs);
       const canCharge = chosen !== null && chosen.capabilities.has("charge");
       const canInvoice = chosen !== null && chosen.capabilities.has("invoice");
+
       if (chosen === null || (!canCharge && !canInvoice)) {
         return yield* Effect.die(
           new ProviderCapabilityMissing({
@@ -373,13 +394,16 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
 
       const purchase = Effect.gen(function* () {
         const payments = yield* Effect.serviceOption(Payments);
+
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
             provider: chosen.name,
             op: "createInvoice",
           });
         }
+
         const service = payments.value;
+
         // Charge the saved method when the provider has one, because that is
         // money taken at the crossing rather than money collected later. A
         // charge that fails falls back to the invoice: a card that did not work
@@ -391,9 +415,11 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
           currency: pack.price.currency,
           commandId,
         };
+
         const invoice = service
           .createInvoice(money)
           .pipe(Effect.map(({ invoiceId }) => ({ invoiceId })));
+
         const paid = yield* canCharge
           ? service.charge(money).pipe(
               Effect.map(({ chargeId }) => ({ chargeId })),
@@ -409,6 +435,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
               ),
             )
           : invoice;
+
         // A redelivery is the same command id, which the store resolves to the
         // receipt it already recorded rather than a second pack.
         yield* asSystem(
@@ -437,6 +464,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // The account's own provider, never every provider in the router: a
       // second one must not invoice the same crossing.
       const outcome = yield* Effect.provide(purchase, chosen.payments).pipe(Effect.result);
+
       if (Result.isFailure(outcome)) {
         yield* asSystem(
           subscriptions.send(

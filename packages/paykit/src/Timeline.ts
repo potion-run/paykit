@@ -565,6 +565,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
           ? {}
           : { price: event.price, currency: event.price.currency }),
       };
+
       return appended(timeline, entry);
     }
 

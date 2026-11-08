@@ -106,11 +106,13 @@ export const PaykitCatalogClient = (url: string, options: PaykitCatalogClientOpt
   Layer.unwrap(
     Effect.gen(function* () {
       const client = yield* RpcClient.make(PaykitCatalogRpcs);
+
       const catalog = yield* RpcClient.withHeaders(client.Catalog(), options.headers ?? {}).pipe(
         Effect.catchTag("RpcClientError", (error) =>
           Effect.fail(new CatalogUnavailable({ message: error.message })),
         ),
       );
+
       return Layer.succeed(CatalogService, yield* validateCatalog(catalog));
     }),
   ).pipe(

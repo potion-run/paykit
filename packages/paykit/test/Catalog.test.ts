@@ -642,10 +642,13 @@ describe("catalog", () => {
       topUp: { threshold: 500, pack: "credits_1m" },
       grants: [allowance(messages, { included: 100 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [plan] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogUnknownTopUpPack);
+
       if (result.failure._tag !== "CatalogUnknownTopUpPack") return;
       expect(result.failure.pack).toBe("credits_1m");
     }
@@ -659,12 +662,14 @@ describe("catalog", () => {
       credits: 1_000_000,
       grants: [],
     });
+
     const other = tier({
       id: "other",
       price: { amount: 1_900, currency: "usd", interval: "month" },
       credits: 5_000,
       grants: [allowance(messages, { included: 100 })],
     });
+
     const plan = tier({
       id: "plan",
       price: { amount: 1_900, currency: "usd", interval: "month" },
@@ -672,8 +677,10 @@ describe("catalog", () => {
       topUp: { threshold: 500, pack: "other" },
       grants: [allowance(messages, { included: 100 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [pack, other, plan] });
     expect(Result.isFailure(result)).toBe(true);
+
     if (Result.isFailure(result)) {
       expect(result.failure).toBeInstanceOf(CatalogUnknownTopUpPack);
     }
@@ -687,6 +694,7 @@ describe("catalog", () => {
       credits: 1_000_000,
       grants: [],
     });
+
     const plan = tier({
       id: "plan",
       price: { amount: 1_900, currency: "usd", interval: "month" },
@@ -694,8 +702,10 @@ describe("catalog", () => {
       topUp: { threshold: 500, pack: "credits_1m" },
       grants: [allowance(messages, { included: 100 })],
     });
+
     const result = defineCatalog({ features: [messages], tiers: [pack, plan] });
     expect(Result.isSuccess(result)).toBe(true);
+
     if (Result.isSuccess(result)) {
       expect(creditTermsOf(result.success, "plan")?.topUp).toEqual({
         threshold: 500,

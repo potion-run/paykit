@@ -18,6 +18,17 @@ coverage/
 
 
 
+# Agent-tool mirrors of `.agents/skills`; the canonical skill tree is checked in.
+/.claude/
+/.codex/
+/.continue/
+/.cursor/
+/.gemini/
+/.opencode/
+/.pi/
+/.roo/
+/.windsurf/
+
 # Shallow source mirrors (populate via ./scripts/vendor-agent-sources.sh).
 # The README beside them is ours; the clones are not.
 .agent_sources/github.com/

@@ -278,6 +278,7 @@ it("renders a refill that could not be bought as its own entry, with no money on
       }),
     ),
   ]);
+
   const entry = timeline.entries.at(-1);
   expect(entry?.kind).toBe("topup-failed");
   expect(entry?.tier).toBe("pack");

@@ -204,6 +204,7 @@ export const TopUpFailureRecord = Schema.Struct({
   /** When the crossing gave up. */
   at: Schema.DateTimeUtc,
 });
+
 export type TopUpFailureRecord = typeof TopUpFailureRecord.Type;
 
 /**

@@ -76,6 +76,7 @@ export type TopUpThreshold = typeof TopUpThreshold.Type;
  * and cost every variant author a cast.
  */
 export const TopUpPackId = Schema.String.pipe(Schema.check(Schema.isMinLength(1)));
+
 export type TopUpPackId = typeof TopUpPackId.Type;
 
 /**
@@ -101,6 +102,7 @@ export const TopUpTerms = Schema.Struct({
    */
   pack: Schema.optionalKey(TopUpPackId),
 });
+
 export type TopUpTerms = typeof TopUpTerms.Type;
 
 /**

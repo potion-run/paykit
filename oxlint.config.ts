@@ -26,8 +26,24 @@ export default defineConfig({
     "**/node_modules/**",
     "**/fixtures/**",
     "**/.agents/**",
+    "**/.claude/**",
+    "**/.codex/**",
+    "**/.continue/**",
+    "**/.cursor/**",
+    "**/.gemini/**",
+    "**/.opencode/**",
+    "**/.pi/**",
+    "**/.roo/**",
+    "**/.windsurf/**",
     "**/.agent_sources/**",
     "**/.agent-sources/**",
+    // Vendored anti-slop rules and their upstream tests; see
+    // `tools/oxlint/anti-slop/UPSTREAM.md`.
+    "tools/oxlint/anti-slop/**",
+  ],
+  jsPlugins: [
+    { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
+    { name: "anti-slop-effect", specifier: "./tools/oxlint/anti-slop/effect/index.ts" },
   ],
   rules: {
     "no-irregular-whitespace": "off",
@@ -135,12 +151,10 @@ export default defineConfig({
     "effecttsgo/schema-number": "error",
     "effecttsgo/schema-opaque-instance-member": "error",
     "effecttsgo/schema-struct-with-tag": "error",
-    // The last two findings are pure mappers that must stay synchronous:
-    // `SqlEventLog.rowToReadModel` backs a synchronous `readModel`, and
-    // `Doctor.decodeEvent` mirrors it. Neither can await an Effect without
-    // changing the store's read contract, so the rule stays `warn` until that
-    // contract moves; inside Effect code, `schema-sync-in-effect` is the gate.
-    "effecttsgo/schema-sync": "warn",
+    // The two synchronous mappers (`SqlEventLog.rowToReadModel` and
+    // `Doctor.decodeEvent`) are now the only schema runs outside an Effect, so
+    // the rule is a gate rather than a reminder.
+    "effecttsgo/schema-sync": "error",
     "effecttsgo/schema-sync-in-effect": "error",
     "effecttsgo/schema-union-of-literals": "error",
     "effecttsgo/scope-in-layer-effect": "error",
@@ -195,6 +209,56 @@ export default defineConfig({
     "unicorn/no-useless-length-check": "error",
     "unicorn/no-useless-spread": "error",
     "unicorn/prefer-string-starts-ends-with": "error",
+
+    "oxc/no-accumulating-spread": "error",
+    "anti-slop/no-array-filter-map": "error",
+    "anti-slop/no-chained-type-assertions": "error",
+    // The domain builds objects from `Schema.optionalKey` fields, where an
+    // absent key and a `undefined` value are different encodings. The
+    // conditional spread is how a projection keeps the absence explicit in one
+    // expression; the rule's advice mutates a local instead, which is longer
+    // and loses the purity of the mapper.
+    "anti-slop/no-conditional-empty-object-spread": "off",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reduce-accumulator-copy": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    // `Included = number | "unlimited"` and the other domain unions are
+    // narrowed with `typeof`, which is the language's own discriminant check.
+    // Parsing them again at every branch would add a schema run without adding
+    // evidence; the schemas already own the I/O boundary.
+    "anti-slop/no-runtime-typeof": "off",
+    // "Shape" is Alchemy's term for a Resource's attributes
+    // (`Resource<BillingStackShape>`), and the repo uses it for that meaning
+    // everywhere, including in `AGENTS.md`.
+    "anti-slop/no-shape-in-symbol-names": "off",
+    "anti-slop/no-unknown-parameters": "off",
+    "anti-slop/no-unknown-returns": "off",
+    "anti-slop/no-unknown-type-aliases": "error",
+    // The store, binding and JSON helpers take the type their boundary
+    // actually hands them: a SQL row, a parsed body, a provider's metadata.
+    // Each is decoded with the schema that owns it before it reaches a domain
+    // type, and the generic defaults (`<A = Record<string, unknown>>`) mirror
+    // the vendor APIs (`D1Like`, Alchemy's `SqlExecutor`) field for field.
+    "anti-slop/no-unsafe-dictionary-type": "off",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-readable-spacing": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+
+    "anti-slop-effect/no-manual-effect-error-tag": "error",
+    // The domain states its tagged unions as plain `_tag` objects (and, for
+    // the Schema-backed ones, as a `Schema.Union` of `TaggedStruct`s with no
+    // named variants). Branching on `_tag` and writing the literal is the
+    // vocabulary the aggregates, views and tests share; a `Match` or a
+    // constructor would not carry more evidence, and `Effect` matching is
+    // already required where it applies (`effecttsgo/*` and
+    // `prefer-effect-match`).
+    "anti-slop-effect/no-manual-tag-comparison": "off",
+    "anti-slop-effect/no-manual-tagged-construction": "off",
+    "anti-slop-effect/no-service-constructor-imports": "error",
+    "anti-slop-effect/prefer-effect-match": "error",
   },
   overrides: [
     {
@@ -203,6 +267,11 @@ export default defineConfig({
       // decoding a fixture synchronously are the test's own setup, not the
       // code under test. Every rule stays on outside `test/`, so the same shape
       // in a package's `src` still reports.
+      //
+      // The anti-slop rules follow the same line: a property test constructs
+      // intentionally invalid states, asserts the exact tagged value it got
+      // back and casts an arbitrary into the domain type it generated. Those
+      // are fixture declarations, not production shapes.
       files: ["**/test/**"],
       rules: {
         "effecttsgo/any-unknown-in-error-context": "off",
@@ -212,6 +281,12 @@ export default defineConfig({
         "effecttsgo/schema-sync-in-effect": "off",
         "effecttsgo/unnecessary-pipe-chain": "off",
         "effecttsgo/unsafe-effect-type-assertion": "off",
+        "anti-slop/no-array-filter-map": "off",
+        "anti-slop/no-chained-type-assertions": "off",
+        "anti-slop/no-known-value-widening": "off",
+        "anti-slop/no-object-parameters": "off",
+        "anti-slop/require-safety-comment-for-type-assertion": "off",
+        "anti-slop-effect/prefer-effect-match": "off",
       },
     },
   ],

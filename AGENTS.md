@@ -56,6 +56,10 @@ side effect and its record, and a top-up policy that runs twice on one crossing.
   tsrs ships no binary. `scripts/build-package.ts` runs `tsrs -b --force` for `pnpm build`.
 - **oxlint** (`pnpm lint`) runs type-aware rules; **oxfmt** (`pnpm format`) formats source and
   `package.json`, and `pnpm format:check` is the gate. The pre-commit hook runs the formatter.
+- **anti-slop** (`tools/oxlint/anti-slop`) vendors the generic and Effect Oxlint plugins from
+  `dmmulroy/anti-slop`; `pnpm lint` loads them through their TypeScript entry points, and
+  `@oxlint/plugins` is pinned to the installed `oxlint`. Rule policy lives in `oxlint.config.ts`;
+  provenance and the update procedure are in `tools/oxlint/anti-slop/UPSTREAM.md`.
 - **effect-tsgo** (`pnpm prepare:patch`, run by `prepare`) patches the installed `oxlint` and
   `oxlint-tsgolint` binaries so the `effecttsgo/*` rules in `oxlint.config.ts` run type-aware.
   The patch lives in `node_modules`, so an install that skips `prepare` fails `pnpm lint` with

@@ -243,12 +243,8 @@ const keysFor = (
   extra: Reactivity.KeysInput | undefined,
 ): Reactivity.KeysInput => {
   if (Array.isArray(extra)) return ["paykit", accountReactivityKey(account), ...extra];
-  const merged: Record<string, ReadonlyArray<unknown>> = {
-    paykit: [],
-    [accountReactivityKey(account)]: [],
-  };
-  if (extra !== undefined) Object.assign(merged, extra);
-  return merged;
+
+  return Object.assign({ paykit: [], [accountReactivityKey(account)]: [] }, extra);
 };
 
 /**
@@ -258,6 +254,7 @@ const keysFor = (
  */
 const callOptions = Effect.gen(function* () {
   const call = yield* Effect.serviceOption(BindingCall);
+
   return Option.isNone(call) ? {} : callOptionsOf(call)();
 });
 
@@ -267,26 +264,41 @@ const accountId = (account: string) => Subscription.ref(account).id;
 const entitlementsAtom = <E>(
   runtime: Atom.AtomRuntime<BillingAtomServices, E>,
   account: string,
-): Atom.Atom<AsyncResult.AsyncResult<EntitlementsState | null, BillingAtomRemoteError | E>> =>
-  runtime.atom(
+): Atom.Atom<AsyncResult.AsyncResult<EntitlementsState | null, BillingAtomRemoteError | E>> => {
+  const atom = runtime.atom(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = yield* callOptions;
+
       return yield* client.Entitlements.get(accountId(account), options);
     }),
-  ) as Atom.Atom<AsyncResult.AsyncResult<EntitlementsState | null, BillingAtomRemoteError | E>>;
+  );
+
+  // SAFETY: `runtime.atom` is typed for the layer's channel; the query's own
+  // error union is the one this module names, and the runtime carries both.
+  return atom as Atom.Atom<
+    AsyncResult.AsyncResult<EntitlementsState | null, BillingAtomRemoteError | E>
+  >;
+};
 
 const billingAtom = <E>(
   runtime: Atom.AtomRuntime<BillingAtomServices, E>,
   account: string,
-): Atom.Atom<AsyncResult.AsyncResult<BillingStateView | null, BillingAtomRemoteError | E>> =>
-  runtime.atom(
+): Atom.Atom<AsyncResult.AsyncResult<BillingStateView | null, BillingAtomRemoteError | E>> => {
+  const atom = runtime.atom(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = yield* callOptions;
+
       return yield* client.BillingState.get(accountId(account), options);
     }),
-  ) as Atom.Atom<AsyncResult.AsyncResult<BillingStateView | null, BillingAtomRemoteError | E>>;
+  );
+
+  // SAFETY: the same runtime atom as `entitlementsAtom`, for the same reason.
+  return atom as Atom.Atom<
+    AsyncResult.AsyncResult<BillingStateView | null, BillingAtomRemoteError | E>
+  >;
+};
 
 /**
  * Billing as Effect atoms: the tenant bindings, shaped for a client.
@@ -343,10 +355,12 @@ const clientLayer = (
   options: BillingAtomUrlOptions,
 ): Layer.Layer<BillingClient | CatalogService, BillingAtomClientError, never> => {
   const httpClient = options.httpClient ?? FetchHttpClient.layer;
+
   const catalogService =
     options.catalog === undefined
       ? PaykitCatalogClient(options.catalogUrl ?? `${options.url}/catalog`)
       : Layer.unwrap(Effect.map(catalog(options.catalog), (parsed) => catalogLayer(parsed)));
+
   return Layer.mergeAll(
     catalogService.pipe(Layer.provide(httpClient)),
     BillingApi.layerClientHttp(options.url).pipe(Layer.provide(httpClient)),
@@ -363,21 +377,25 @@ export type BillingAtomClientError = CatalogError | PaykitCatalogClientError;
 export const make = <E = never>(
   options: BillingAtomOptions<E>,
 ): BillingAtoms<E | BillingAtomClientError> => {
-  // The served catalog adds a failure to the layer's channel that the local
-  // one does not have, so the union is cast once here rather than repeated at
-  // every atom below.
-  const layer = ("layer" in options ? options.layer : clientLayer(options)) as Layer.Layer<
-    BillingClient | CatalogService,
-    E | BillingAtomClientError,
-    never
-  >;
+  const chosen = "layer" in options ? options.layer : clientLayer(options);
+
+  // SAFETY: the served catalog adds a failure to the layer's channel that the
+  // local one does not have, so the union is cast once here rather than
+  // repeated at every atom below.
+  const layer = chosen as Layer.Layer<BillingClient | CatalogService, E | BillingAtomClientError>;
+
   const factory = options.runtime ?? Atom.runtime;
-  const runtime = factory(
+
+  const built = factory(
     // `provideMerge` keeps the Api client and the catalog on the runtime, so an
     // application query — and a test that seeds a standing — can reach them
     // without rebuilding the transport.
     BillingApiLayer.pipe(Layer.provideMerge(layer)),
-  ) as Atom.AtomRuntime<BillingAtomServices, E | CatalogError>;
+  );
+
+  // SAFETY: `provideMerge` keeps the catalog the layer built on the runtime, so
+  // the runtime's services are the client and the catalog both.
+  const runtime = built as Atom.AtomRuntime<BillingAtomServices, E | CatalogError>;
 
   const withAccount = (account: string) =>
     factory.withReactivity(["paykit", accountReactivityKey(account)]);
@@ -385,9 +403,9 @@ export const make = <E = never>(
   // One atom per account: a component may call `billing.entitlements(id)` on
   // every render without handing `useAtomValue` a new atom each time.
   //
-  // The Api client decodes a rejection into the schema `Instance<...>` form;
-  // the public alias names the same class a caller matches, so the cast keeps
-  // the atom's error channel readable at the call site.
+  // SAFETY: the Api client decodes a rejection into the schema `Instance<...>`
+  // form; the public alias names the same class a caller matches, so the cast
+  // keeps the atom's error channel readable at the call site.
   const entitlements = Atom.family(
     (account: string): BillingQuery<EntitlementsState, E | CatalogError> =>
       Atom.withServerValueInitial(
@@ -397,6 +415,7 @@ export const make = <E = never>(
 
   const billing = Atom.family((account: string): BillingQuery<BillingStateView, E | CatalogError> =>
     Atom.withServerValueInitial(
+      // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
       billingAtom(runtime, account) as BillingQuery<BillingStateView, E | CatalogError>,
     ).pipe(withAccount(account)),
   );
@@ -421,6 +440,7 @@ export const make = <E = never>(
         (request: Request) =>
           Effect.gen(function* () {
             const bound = yield* service(account);
+
             return yield* bound(request);
           }),
         { reactivityKeys: keysFor(account, options.reactivityKeys?.[verb]) },
@@ -433,6 +453,7 @@ export const make = <E = never>(
       runtime.fn((request: CheckRequest) =>
         Effect.gen(function* () {
           const bound = yield* Check(account);
+
           return yield* bound(request);
         }),
       ),

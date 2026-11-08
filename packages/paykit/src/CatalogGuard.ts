@@ -87,6 +87,7 @@ export const catalogMismatchOf = (
 ): CatalogMismatch | null => {
   if (input.tier === undefined) return null;
   const tier = tierOf(catalog, input.tier);
+
   if (tier === null) {
     return new CatalogMismatch({
       tier: input.tier,
@@ -95,20 +96,26 @@ export const catalogMismatchOf = (
       actual: "missing",
     });
   }
+
   const granted = allowancesOf(catalog, input.tier);
+
   if (granted !== null && input.allowances !== undefined) {
     const expected = allowancesKey(granted);
     const actual = allowancesKey(input.allowances);
+
     if (expected !== actual) {
       return new CatalogMismatch({ tier: tier.id, field: "allowances", expected, actual });
     }
   }
+
   const expectedPrice = priceKey(
     tier.price === undefined
       ? undefined
       : (priceFor(tier.price, input.price?.currency ?? tier.price.currency) ?? undefined),
   );
+
   const actualPrice = priceKey(input.price);
+
   if (expectedPrice !== actualPrice) {
     return new CatalogMismatch({
       tier: tier.id,
@@ -117,10 +124,12 @@ export const catalogMismatchOf = (
       actual: actualPrice,
     });
   }
+
   // The credit terms decide what a request costs and when the pool runs out,
   // so a command that claims different ones never reaches `decide`.
   const expectedCredits = String(tier.credits ?? 0);
   const actualCredits = String(input.credits ?? 0);
+
   if (expectedCredits !== actualCredits) {
     return new CatalogMismatch({
       tier: tier.id,
@@ -129,8 +138,10 @@ export const catalogMismatchOf = (
       actual: actualCredits,
     });
   }
+
   const expectedExpire = tier.creditsExpire ?? "period";
   const actualExpire = input.creditsExpire ?? "period";
+
   if (expectedExpire !== actualExpire) {
     return new CatalogMismatch({
       tier: tier.id,
@@ -139,12 +150,14 @@ export const catalogMismatchOf = (
       actual: actualExpire,
     });
   }
+
   // The line at which a spend refills the pool is a plan term like the grant
   // itself: a caller that moves it would buy a pack the deploy never agreed to.
   // The whole line is compared — the threshold, the cooldown and the pack —
   // because a caller that changes any of them changes what a crossing costs.
   const expectedTopUp = topUpKey(tier.topUp);
   const actualTopUp = topUpKey(input.topUp);
+
   if (expectedTopUp !== actualTopUp) {
     return new CatalogMismatch({
       tier: tier.id,
@@ -153,8 +166,10 @@ export const catalogMismatchOf = (
       actual: actualTopUp,
     });
   }
+
   const expectedRates = ratesKey(ratesOf(catalog, tier.id) ?? {});
   const actualRates = ratesKey(input.rates ?? {});
+
   if (expectedRates !== actualRates) {
     return new CatalogMismatch({
       tier: tier.id,
@@ -163,6 +178,7 @@ export const catalogMismatchOf = (
       actual: actualRates,
     });
   }
+
   return null;
 };
 
@@ -207,11 +223,17 @@ export const CatalogGuardLive = Layer.effect(
   CatalogGuard,
   Effect.gen(function* () {
     const catalog = yield* CatalogService;
+
     return (effect, { payload }) =>
       Effect.suspend(() => {
+        // SAFETY: `payload` is the command's decoded input, which the Api
+        // normalizes; the `input` key is the one a carried catalog uses, and a
+        // command without it is left untouched below.
         const input = (payload as { readonly input?: CatalogCarried } | null)?.input;
+
         if (input === undefined) return effect;
         const mismatch = catalogMismatchOf(catalog, input);
+
         return mismatch === null ? effect : Effect.fail(mismatch);
       });
   }),

@@ -392,11 +392,13 @@ describe("the pack and the bound a standing's line selects", () => {
     amount: 5_000,
     price: { amount: 4_900, currency: "usd", interval: "month" as const },
   };
+
   const small = {
     tier: "pack_small",
     amount: 100,
     price: { amount: 990, currency: "usd", interval: "month" as const },
   };
+
   const terms = {
     fallback,
     packs: new Map([["pack_small", small]]),
@@ -428,6 +430,7 @@ describe("the pack and the bound a standing's line selects", () => {
   });
   describe("a refill that could not be bought", () => {
     const state = subscribedAt("pro");
+
     const failure = new RecordTopUpFailure({
       tier: "pack",
       price: { amount: 4_900, currency: "usd", interval: "month" },
@@ -438,6 +441,7 @@ describe("the pack and the bound a standing's line selects", () => {
     it("is recorded as its own event, carrying what was wanted and what refused it", () => {
       const decision = decideAt(state, failure, start, "across");
       expect(isAccepted(decision)).toBe(true);
+
       if (!isAccepted(decision)) return;
       const [event] = decision as ReadonlyArray<TopUpFailed>;
       // The crossing's id, so an operator can tie the failure to the spend and a
@@ -455,6 +459,7 @@ describe("the pack and the bound a standing's line selects", () => {
     it("lands on the standing, and is cleared by the purchase that makes it good", () => {
       const decision = decideAt(state, failure, start, "across");
       expect(isAccepted(decision)).toBe(true);
+
       if (!isAccepted(decision)) return;
       const failed = evolveAt(state, decision, start, "across");
       expect(topUpFailureOf(failed)?.reason).toBe("PaymentDeclined");
@@ -470,7 +475,9 @@ describe("the pack and the bound a standing's line selects", () => {
         start,
         "bought",
       );
+
       expect(isAccepted(bought)).toBe(true);
+
       if (!isAccepted(bought)) return;
       expect(topUpFailureOf(evolveAt(failed, bought, start, "bought"))).toBeNull();
     });
@@ -478,15 +485,19 @@ describe("the pack and the bound a standing's line selects", () => {
     it("survives a tier change, because the failure happened", () => {
       const decision = decideAt(state, failure, start, "across");
       expect(isAccepted(decision)).toBe(true);
+
       if (!isAccepted(decision)) return;
       const failed = evolveAt(state, decision, start, "across");
+
       const moved = decideAt(
         failed,
         commandOf({ _tag: "ChangeTier", tier: "pro" }, failed, start),
         start,
         "move",
       );
+
       expect(isAccepted(moved)).toBe(true);
+
       if (!isAccepted(moved)) return;
       expect(topUpFailureOf(evolveAt(failed, moved, start, "move"))).not.toBeNull();
     });

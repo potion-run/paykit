@@ -549,6 +549,7 @@ it.effect(
       code: "card_declined",
       message: "the card was declined",
     });
+
     const processor = PaymentsStripe({
       bindings: {
         createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
@@ -557,6 +558,7 @@ it.effect(
         createInvoice: () => Effect.fail(declined),
       },
     });
+
     return storyWith(processor, { pack: "pack" })(
       ...subscribed,
       Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
@@ -782,6 +784,7 @@ const picky = tier({
 const pickyCatalog = Effect.runSync(
   catalog({ features: [messages, ai], tiers: [picky, pack, smallPack] }),
 );
+
 const pickyTerms = allowancesOf(pickyCatalog, "picky")!;
 const pickyLine = { threshold: 1_000, cooldown: Duration.hours(1), pack: "pack_small" };
 const tierCooldownEnds = at("2030-01-01T01:00:00Z");
@@ -827,6 +830,7 @@ it.effect("buys the pack and honours the bound the tier states, not the deployme
     Layer.provide(MemoryBillingReadStore),
     Layer.provideMerge(paymentsRouter(PaymentsMemory())),
   );
+
   // The deployment names the big pack and a half-hour bound; this tier states
   // both of its own, and both its own win.
   return Story.make(PaykitModel, {

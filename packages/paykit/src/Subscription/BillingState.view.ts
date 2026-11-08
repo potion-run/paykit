@@ -280,6 +280,7 @@ export class BillingState extends Domain.View("BillingState", {
       // A purchase is the refill that was owed, so the page stops reporting the
       // failure it makes good on (ADR 0027).
       const { topUpFailure: _madeGood, ...rest } = view;
+
       return withAccount(
         {
           ...rest,
