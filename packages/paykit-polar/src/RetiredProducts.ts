@@ -25,6 +25,7 @@ const LIST_MAX_PAGES = 100;
 /** The tier a product declares, or `null` when the metadata carries none. */
 const tierOf = (product: Polar.Product): string | null => {
   const tier = product.metadata[PAYKIT_TIER];
+
   return typeof tier === "string" ? tier : null;
 };
 
@@ -51,11 +52,13 @@ const activeProducts = <R>(
       page({ page: pageNumber, limit: LIST_PAGE_SIZE, is_archived: false }),
       (result) => {
         const rows = [...seen, ...result.items.map(found)];
+
         return result.last || result.items.length === 0 || pageNumber >= LIST_MAX_PAGES
           ? Effect.succeed(rows)
           : collect(pageNumber + 1, rows);
       },
     );
+
   return collect(1, []);
 };
 

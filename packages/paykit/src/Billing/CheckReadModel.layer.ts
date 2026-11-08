@@ -23,9 +23,11 @@ export const CheckReadModel = Layer.effect(
   Check,
   Effect.gen(function* () {
     const store = yield* BillingReadStore;
+
     return Effect.fn("Paykit.Check")(function* (account) {
       return Effect.fn("Paykit.Check.readModel")(function* (request) {
         const row = yield* mapBindingFailure(toCheckError)(store.get(account));
+
         return evaluateCheck(row === null ? null : rowToState(row), { account, ...request });
       });
     });

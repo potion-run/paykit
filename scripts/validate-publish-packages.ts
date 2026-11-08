@@ -37,20 +37,29 @@ const dependencyFields = ["dependencies", "devDependencies", "peerDependencies"]
 /** Everything wrong with one package's manifest, as lines a human can act on. */
 const manifestProblems = ({ dir, raw }: WorkspacePackage): ReadonlyArray<string> => {
   const problems: Array<string> = [];
+
   for (const field of required) {
     if (raw[field] === undefined) problems.push(`${dir}: missing \`${field}\``);
   }
+
+  // SAFETY: package.json is JSON; the manifest is validated field by field in this check.
   const publishConfig = raw.publishConfig as { access?: unknown } | undefined;
+
   if (publishConfig?.access !== "public") {
     problems.push(`${dir}: \`publishConfig.access\` must be "public"`);
   }
+
   const files = Array.isArray(raw.files) ? raw.files : [];
+
   for (const file of publishedFiles) {
     if (!files.includes(file)) problems.push(`${dir}: \`files\` must include "${file}"`);
   }
+
   for (const field of dependencyFields) {
     const dependencies = raw[field];
+
     if (typeof dependencies !== "object" || dependencies === null) continue;
+
     for (const [name, spec] of Object.entries(dependencies)) {
       // Internal dependencies follow the workspace, so the packages never drift.
       if (name.startsWith("@potion.run/") && spec !== "workspace:*") {
@@ -58,6 +67,7 @@ const manifestProblems = ({ dir, raw }: WorkspacePackage): ReadonlyArray<string>
       }
     }
   }
+
   return problems;
 };
 
@@ -68,14 +78,17 @@ const validate = Effect.fn("PublishPackages.validate")(function* () {
   const invalid: Array<string> = [];
 
   const manifest = yield* readManifest(root, ".");
+
   if (manifest.manifest.private !== true) {
     problems.push("package.json: the root manifest must be private; the root does not publish");
     invalid.push(".");
   }
 
   const packages = yield* publishablePackages(root, "packages");
+
   for (const pkg of packages) {
     const found = manifestProblems(pkg);
+
     if (found.length > 0) {
       problems.push(...found);
       invalid.push(pkg.dir);
@@ -87,17 +100,20 @@ const validate = Effect.fn("PublishPackages.validate")(function* () {
   const version = yield* sharedVersion(packages).pipe(
     Effect.catchTag("VersionMismatch", (mismatch) => {
       problems.push(mismatch.message);
+
       return Effect.succeed(undefined);
     }),
   );
 
   if (problems.length > 0) {
     yield* Console.error(problems.map((problem) => `  ${problem}`).join("\n"));
+
     return yield* new InvalidPublishMetadata({
       message: `${problems.length} problem(s) in ${invalid.length === 0 ? "the manifests" : `${invalid.length} manifest(s)`}`,
       dirs: invalid,
     });
   }
+
   yield* Console.log(`Validated ${packages.length} packages at ${version}`);
 });
 

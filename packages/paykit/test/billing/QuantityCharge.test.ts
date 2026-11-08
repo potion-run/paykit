@@ -17,6 +17,7 @@ import { world } from "../../src/World.ts";
 
 const price = { amount: 1_900, currency: "usd", interval: "month" as const };
 const seats = feature({ id: "seats", name: "Seats", kind: "non_consumable" });
+
 const teamTier = tier({
   id: "team",
   price,
@@ -29,6 +30,7 @@ const teamTier = tier({
     }),
   ],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [seats], tiers: [teamTier] }));
 const terms = tierTermsOf(testCatalog, "team")!;
 const account = "acct_seat_charge";
@@ -72,6 +74,7 @@ const worldOf = (providers: Parameters<typeof world>[0]["providers"]) =>
 describe("a vendor that owns the subscription quantity", () => {
   it.live("is told the new total and records the invoice it opened", () => {
     const memory = PaymentsMemory();
+
     return Effect.gen(function* () {
       yield* subscribed("memory");
       const set = yield* SetQuantity(account);
@@ -100,6 +103,7 @@ describe("a vendor that owns the subscription quantity", () => {
 
   it.live("answers the quantity it left in place when the change writes nothing", () => {
     const memory = PaymentsMemory();
+
     return Effect.gen(function* () {
       yield* subscribed("memory");
       const set = yield* SetQuantity(account);
@@ -117,6 +121,7 @@ describe("a vendor that owns the subscription quantity", () => {
 describe("a vendor without the quantity capability", () => {
   it.live("leaves the proration for the local collector", () => {
     const manual = PaymentsManual();
+
     return Effect.gen(function* () {
       yield* subscribed("manual");
       const set = yield* SetQuantity(account);

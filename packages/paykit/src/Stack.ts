@@ -58,6 +58,7 @@ export const ProviderDescriptor = Schema.Struct({
   /** Whether the vendor's seat count is per feature or per subscription. */
   seatScope: Schema.optional(Schema.Literals(["feature", "subscription"])),
 });
+
 export type ProviderDescriptor = typeof ProviderDescriptor.Type;
 
 /** Drop the runtime layer; keep what a deploy needs to validate and record. */
@@ -143,13 +144,16 @@ export const validateProviderMappings = (
   // account's `refs` pick one — but two with the same name make that choice
   // ambiguous.
   const seen = new Set<string>();
+
   for (const provider of providers) {
     if (seen.has(provider.name)) return new ProviderDuplicate({ provider: provider.name });
     seen.add(provider.name);
   }
+
   for (const provider of providers) {
     for (const [tierId, mapped] of Object.entries(provider.prices ?? {})) {
       const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+
       if (tier === undefined) {
         return new CatalogPriceMismatch({
           tier: tierId,
@@ -158,14 +162,18 @@ export const validateProviderMappings = (
           actual: "missing",
         });
       }
+
       const mismatch = checkPrice(tier, mapped);
+
       if (mismatch !== null) return mismatch;
     }
+
     // A pricing the provider states and the catalog does not is as much a
     // disagreement as a different rate: the vendor would bill a feature the
     // entitlement plane never priced.
     for (const [tierId, mapped] of Object.entries(provider.usagePrices ?? {})) {
       const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+
       if (tier === undefined) {
         return new CatalogPriceMismatch({
           tier: tierId,
@@ -174,9 +182,11 @@ export const validateProviderMappings = (
           actual: "missing",
         });
       }
+
       for (const [featureId, actual] of Object.entries(mapped)) {
         const grant = tier.grants.find((candidate) => candidate.feature === featureId);
         const expected = grant === undefined ? null : pricingOf(grant);
+
         if (expected === null) {
           return new CatalogPriceMismatch({
             tier: tier.id,
@@ -185,6 +195,7 @@ export const validateProviderMappings = (
             actual: pricingKey(actual),
           });
         }
+
         if (pricingKey(expected) !== pricingKey(actual)) {
           return new CatalogPriceMismatch({
             tier: tier.id,
@@ -195,10 +206,12 @@ export const validateProviderMappings = (
         }
       }
     }
+
     // A unit price the provider states through the one-rate shorthand is
     // checked the same way, unless the full pricing already covered it.
     for (const [tierId, mapped] of Object.entries(provider.unitPrices ?? {})) {
       const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+
       if (tier === undefined) {
         return new CatalogPriceMismatch({
           tier: tierId,
@@ -207,15 +220,18 @@ export const validateProviderMappings = (
           actual: "missing",
         });
       }
+
       for (const [featureId, unitPrice] of Object.entries(mapped)) {
         if (provider.usagePrices?.[tierId]?.[featureId] !== undefined) continue;
         const grant = tier.grants.find((candidate) => candidate.feature === featureId);
         const pricing = grant === undefined ? null : pricingOf(grant);
         const expected = pricing === null ? undefined : (soleUnitPriceOf(pricing) ?? undefined);
         const mismatch = checkUnitPrice(tier.id, featureId, expected, unitPrice);
+
         if (mismatch !== null) return mismatch;
       }
     }
+
     // A provider that owns the subscription item's quantity must map every
     // billable seat, or the seat change would reach a vendor that has no price
     // to put it on. A provider without the capability keeps the local
@@ -223,15 +239,19 @@ export const validateProviderMappings = (
     if (provider.capabilities.includes("quantity")) {
       for (const [tierId] of Object.entries(provider.prices ?? {})) {
         const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+
         if (tier === undefined) continue;
         let billableSeats = 0;
+
         for (const grant of tier.grants) {
           if (!isQuantityGrant(grant) || grant.overage !== "bill") continue;
           billableSeats += 1;
           const pricing = pricingOf(grant);
           const unitPrice = pricing === null ? null : soleUnitPriceOf(pricing);
+
           if (unitPrice === null) continue;
           const mapped = provider.seatPrices?.[tierId]?.[grant.feature];
+
           if (mapped === undefined) {
             return new CatalogPriceMismatch({
               tier: tierId,
@@ -240,6 +260,7 @@ export const validateProviderMappings = (
               actual: "missing",
             });
           }
+
           if (mapped.amount !== unitPrice.amount || mapped.currency !== unitPrice.currency) {
             return new CatalogPriceMismatch({
               tier: tierId,
@@ -249,6 +270,7 @@ export const validateProviderMappings = (
             });
           }
         }
+
         // Polar's seat count is one number on the subscription. A tier with
         // two billable seat features would make `setQuantity` ambiguous, so the
         // deploy refuses it rather than choosing one.
@@ -262,6 +284,7 @@ export const validateProviderMappings = (
         }
       }
     }
+
     // A provider that can meter a postpaid tier must map every billable
     // feature, or the close would have a price to charge and no meter to send
     // the quantity to. A provider that maps no price for the tier is not
@@ -269,13 +292,17 @@ export const validateProviderMappings = (
     if (provider.capabilities.includes("usage")) {
       for (const [tierId] of Object.entries(provider.prices ?? {})) {
         const tier = parsed.tiers.find((candidate) => candidate.id === tierId);
+
         if (tier === undefined) continue;
+
         for (const grant of tier.grants) {
           // A seat is billed by the subscription's quantity, not a usage meter.
           if (isQuantityGrant(grant)) continue;
           const pricing = pricingOf(grant);
+
           if (pricing === null) continue;
           const mappedPricing = provider.usagePrices?.[tierId]?.[grant.feature];
+
           if (mappedPricing !== undefined) {
             if (pricingKey(pricing) !== pricingKey(mappedPricing)) {
               return new CatalogPriceMismatch({
@@ -285,9 +312,12 @@ export const validateProviderMappings = (
                 actual: pricingKey(mappedPricing),
               });
             }
+
             continue;
           }
+
           const unitPrice = soleUnitPriceOf(pricing);
+
           if (unitPrice === null) {
             // A ladder has no single rate to hand the one-rate shorthand; the
             // provider has to state the full pricing through `usagePrices`.
@@ -298,7 +328,9 @@ export const validateProviderMappings = (
               actual: pricingKey(pricing),
             });
           }
+
           const mappedUnitPrice = provider.unitPrices?.[tierId]?.[grant.feature];
+
           if (mappedUnitPrice === undefined) {
             return new CatalogPriceMismatch({
               tier: tierId,
@@ -307,6 +339,7 @@ export const validateProviderMappings = (
               actual: "missing",
             });
           }
+
           if (
             mappedUnitPrice.amount !== unitPrice.amount ||
             mappedUnitPrice.currency !== unitPrice.currency ||
@@ -323,14 +356,18 @@ export const validateProviderMappings = (
       }
     }
   }
+
   for (const tier of parsed.tiers) {
     if (tier.price === undefined) continue;
+
     const canSell = providers.some(
       (provider) =>
         provider.capabilities.includes("checkout") || provider.capabilities.includes("invoice"),
     );
+
     if (!canSell) return new NoPurchasePath({ tier: tier.id });
   }
+
   return null;
 };
 
@@ -348,6 +385,7 @@ const checkUnitPrice = (
   actual: UnitPrice,
 ): CatalogPriceMismatch | null => {
   const field = `unitPrice.${feature}`;
+
   if (expected === undefined) {
     return new CatalogPriceMismatch({
       tier,
@@ -356,6 +394,7 @@ const checkUnitPrice = (
       actual: unitPriceText(actual),
     });
   }
+
   if (
     expected.amount !== actual.amount ||
     expected.currency !== actual.currency ||
@@ -368,6 +407,7 @@ const checkUnitPrice = (
       actual: unitPriceText(actual),
     });
   }
+
   return null;
 };
 
@@ -381,6 +421,7 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
       actual: priceField(mapped, "amount"),
     });
   }
+
   for (const field of ["amount", "currency", "interval"] as const) {
     if (tier.price[field] !== mapped[field]) {
       return new CatalogPriceMismatch({
@@ -391,6 +432,7 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
       });
     }
   }
+
   return null;
 };
 
@@ -411,7 +453,9 @@ export const validateStack = (
     const parsed = yield* catalog(props.catalog);
     const providers = props.providers ?? [];
     const invalid = validateProviderMappings(parsed, providers.map(providerDescriptor));
+
     if (invalid !== null) return yield* invalid;
+
     return {
       id,
       catalog: parsed,

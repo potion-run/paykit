@@ -80,8 +80,10 @@ const subscribed = [
 /** A provider that refuses every saved-method charge. */
 const declining = (declined: PaymentDeclined): MoneyProvider<"memory"> => {
   const capabilities: ReadonlySet<PaymentCapability> = new Set(["charge"]);
+
   const missing = (op: string) =>
     Effect.fail(new ProviderCapabilityMissing({ provider: "declining", op }));
+
   const service = Payments.toLayer(
     Effect.succeed({
       createCheckout: () => missing("createCheckout"),
@@ -93,6 +95,7 @@ const declining = (declined: PaymentDeclined): MoneyProvider<"memory"> => {
       setQuantity: () => missing("setQuantity"),
     }),
   );
+
   return {
     name: "declining",
     kind: "memory",
@@ -109,6 +112,7 @@ const storyWith = (provider: MoneyProvider, retries: ReadonlyArray<Duration.Dura
     Layer.provide(MemoryBillingReadStore),
     Layer.provideMerge(paymentsRouter(provider)),
   );
+
   return Story.make(PaykitModel, {
     layer: handlers.pipe(Layer.provideMerge(dunning({ retries }).pipe(Layer.orDie))),
   });
@@ -208,6 +212,7 @@ it.effect("records each failed rung and expires the standing when grace elapses"
     code: "card_declined",
     message: "the card was declined",
   });
+
   return storyWith(declining(declined), [Duration.hours(1), Duration.hours(2)])(
     ...subscribed,
     Story.when(
@@ -291,6 +296,7 @@ it.effect("refuses a ladder entry that is not a positive duration", () =>
         onSuccess: () => null,
       }),
     );
+
     expect(outcome?._tag).toBe("DunningInvalid");
     expect(outcome?.index).toBe(1);
   }),

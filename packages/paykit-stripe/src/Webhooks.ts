@@ -63,6 +63,7 @@ const header = (headers: Readonly<Record<string, string>>, name: string): string
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === name) return value;
   }
+
   return undefined;
 };
 
@@ -107,16 +108,19 @@ export const stripeWebhook = (
   const byPrice = new Map(
     Object.entries(props.tiers ?? {}).map(([tier, mapped]) => [mapped.priceId, tier]),
   );
+
   const toleranceSeconds = props.toleranceSeconds ?? 300;
 
   return Effect.fn("Stripe.webhook")(function* (request: StripeWebhookRequest) {
     const signature = header(request.headers, "stripe-signature");
+
     if (signature === undefined) {
       return yield* new WebhookSignatureInvalid({
         provider: "stripe",
         reason: "missing Stripe-Signature header",
       });
     }
+
     const event = yield* Stripe.Webhooks.constructEvent({
       payload: request.body,
       signature,
@@ -129,10 +133,13 @@ export const stripeWebhook = (
           : new WebhookSignatureInvalid({ provider: "stripe", reason: cause.message }),
       ),
     );
+
     const id = event.id ?? "";
+
     const data = yield* Schema.decodeUnknownEffect(EventData)(event.data).pipe(
       Effect.mapError(() => new WebhookInvalid({ event: id, field: "payload" })),
     );
+
     const invalid = (field: string) => new WebhookInvalid({ event: id, field });
     const none = Option.none<WebhookEvent>();
 
@@ -140,6 +147,7 @@ export const stripeWebhook = (
     const tierOfPrice = (line: typeof PricedLine.Type): { readonly tier?: string } => {
       const price = line.price?.id;
       const tier = price === undefined ? undefined : byPrice.get(price);
+
       return tier === undefined ? {} : { tier };
     };
 
@@ -148,11 +156,14 @@ export const stripeWebhook = (
         const session = yield* Schema.decodeUnknownEffect(CheckoutSession)(data.object).pipe(
           Effect.mapError(() => invalid("payload")),
         );
+
         const account = session.client_reference_id ?? session.customer;
+
         if (account === null || account === undefined) return yield* invalid("account");
         const tier = session.metadata?.tier;
         const amount = session.amount_total;
         const currency = session.currency;
+
         return Option.some({
           id,
           provider: "stripe",
@@ -169,9 +180,12 @@ export const stripeWebhook = (
         const invoice = yield* Schema.decodeUnknownEffect(Billed)(data.object).pipe(
           Effect.mapError(() => invalid("payload")),
         );
+
         const account = invoice.customer;
+
         if (account === null || account === undefined) return yield* invalid("account");
         const first = invoice.lines?.data[0];
+
         return Option.some({
           id,
           provider: "stripe",
@@ -190,9 +204,12 @@ export const stripeWebhook = (
         const subscription = yield* Schema.decodeUnknownEffect(Billed)(data.object).pipe(
           Effect.mapError(() => invalid("payload")),
         );
+
         const account = subscription.customer;
+
         if (account === null || account === undefined) return yield* invalid("account");
         const first = subscription.items?.data[0];
+
         return Option.some({
           id,
           provider: "stripe",

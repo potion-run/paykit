@@ -20,6 +20,7 @@ describe("HOLD_STATUS_TRANSITIONS", () => {
     expect(nextHoldStatus("open", "settle")).toBe("settled");
     expect(nextHoldStatus("open", "release")).toBe("released");
     expect(nextHoldStatus("open", "expire")).toBe("expired");
+
     for (const status of ["settled", "released", "expired"] as const) {
       for (const transition of HOLD_TRANSITIONS) {
         expect(nextHoldStatus(status, transition)).toBe(status);

@@ -40,6 +40,7 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
@@ -397,6 +398,7 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
   Effect.gen(function* () {
     const subscription = yield* Subscription;
     const entitlements = yield* Entitlements;
+
     const receipt = yield* subscription.send(
       Subscription.ref(account.id),
       new Subscribe({
@@ -408,6 +410,7 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
         rates: {},
       }),
     );
+
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
 
     const hold = yield* holdBinding(account.id);
@@ -461,6 +464,7 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
  * event the log keeps.
  */
 const creditRates = { ai: { default: 1, dimensions: { "gpt-large": 10 } } };
+
 const creditSubscribed = [
   Story.provide(Actor, system("test")),
   Story.clock(start),

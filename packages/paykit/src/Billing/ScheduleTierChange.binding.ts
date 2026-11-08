@@ -45,6 +45,7 @@ const scheduleRefusals = [
 
 /** Every refusal a scheduled change can answer. */
 export type ScheduleTierChangeRefusal = InstanceType<(typeof scheduleRefusals)[number]>;
+
 export type ScheduleTierChangeError = BindingError<ScheduleTierChangeRefusal>;
 
 /** Whether a failure is `ScheduleTierChange` refusing the request. */
@@ -70,6 +71,7 @@ const withdrawRefusals = [
 
 /** Every refusal a withdrawal can answer. */
 export type WithdrawTierChangeRefusal = InstanceType<(typeof withdrawRefusals)[number]>;
+
 export type WithdrawTierChangeError = BindingError<WithdrawTierChangeRefusal>;
 
 /** Whether a failure is `WithdrawTierChange` refusing the request. */

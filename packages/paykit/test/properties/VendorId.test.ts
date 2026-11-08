@@ -26,9 +26,13 @@ describe("vendor identity parts", () => {
       Arbitrary.schema(Pair),
       ({ left, right }) => {
         const encoded = encodeVendorPart(left);
+
         if (!SAFE.test(encoded)) return false;
+
         if (encoded.includes(":")) return false;
+
         if (left !== right && encoded === encodeVendorPart(right)) return false;
+
         // Encoding is a function of the value, not of the call.
         return encodeVendorPart(left) === encoded;
       },
@@ -44,7 +48,9 @@ describe("vendor identity parts", () => {
       ({ stage, tier, otherStage, otherTier }) => {
         const key = (stageId: string, tierId: string) =>
           `paykit:${encodeVendorPart(stageId)}:${encodeVendorPart(tierId)}`;
+
         const same = stage === otherStage && tier === otherTier;
+
         return (key(stage, tier) === key(otherStage, otherTier)) === same;
       },
       { runs: 120, size: 24 },

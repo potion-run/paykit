@@ -7,11 +7,15 @@ export const ACTOR_HEADER = "x-paykit-actor";
 /** One cookie's value, without a dependency on a browser or a runtime. */
 export const cookieValue = (cookie: string | null, name: string): string | null => {
   if (cookie === null) return null;
+
   for (const part of cookie.split(";")) {
     const index = part.indexOf("=");
+
     if (index === -1) continue;
+
     if (part.slice(0, index).trim() === name) return part.slice(index + 1).trim();
   }
+
   return null;
 };
 

@@ -8,12 +8,14 @@ import { messages } from "../../src/Feature.ts";
 import { tier } from "../../src/Tier.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   topUp: { threshold: 500 },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const ceilTier = tier({
   id: "ceil",
   price: { amount: 4900, currency: "usd", interval: "month" },
@@ -27,9 +29,11 @@ const ceilTier = tier({
     }),
   ],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier] }),
 );
+
 const free = allowancesOf(testCatalog, "free")!;
 const pro = allowancesOf(testCatalog, "pro")!;
 const ceil = allowancesOf(testCatalog, "ceil")!;
@@ -66,6 +70,7 @@ describe("the catalog guard", () => {
       topUp: proTerms.topUp,
       rates: proTerms.rates,
     });
+
     expect(pool?.field).toBe("credits");
 
     const expiry = catalogMismatchOf(testCatalog, {
@@ -77,6 +82,7 @@ describe("the catalog guard", () => {
       topUp: proTerms.topUp,
       rates: proTerms.rates,
     });
+
     expect(expiry?.field).toBe("creditsExpire");
 
     const rates = catalogMismatchOf(testCatalog, {
@@ -88,6 +94,7 @@ describe("the catalog guard", () => {
       topUp: proTerms.topUp,
       rates: { messages: { default: 1 } },
     });
+
     expect(rates?.field).toBe("rates");
   });
 
@@ -99,6 +106,7 @@ describe("the catalog guard", () => {
       ...proTerms,
       topUp: { threshold: 1_000 },
     });
+
     expect(moved?.field).toBe("topUp");
 
     const omitted = catalogMismatchOf(testCatalog, {
@@ -109,6 +117,7 @@ describe("the catalog guard", () => {
       creditsExpire: proTerms.creditsExpire,
       rates: proTerms.rates,
     });
+
     expect(omitted?.field).toBe("topUp");
 
     const freeClaim = catalogMismatchOf(testCatalog, {
@@ -116,6 +125,7 @@ describe("the catalog guard", () => {
       allowances: free,
       topUp: { threshold: 500 },
     });
+
     expect(freeClaim?.field).toBe("topUp");
   });
 
@@ -138,6 +148,7 @@ describe("the catalog guard", () => {
       allowances: pro,
       price: { amount: 100, currency: "usd", interval: "month" },
     });
+
     expect(mismatch?.field).toBe("price");
   });
 
@@ -147,12 +158,14 @@ describe("the catalog guard", () => {
       allowances: free,
       price: proPrice,
     });
+
     expect(mismatch?.field).toBe("allowances");
   });
 
   it("refuses a ceiling or price the catalog never sold", () => {
     const granted = ceil.messages!;
     const terms = creditTermsOf(testCatalog, "ceil")!;
+
     const carries = (messages: typeof granted) =>
       catalogMismatchOf(testCatalog, {
         tier: "ceil",
@@ -182,6 +195,7 @@ describe("the catalog guard", () => {
       allowances: free,
       price: proPrice,
     });
+
     expect(mismatch?.field).toBe("price");
   });
 

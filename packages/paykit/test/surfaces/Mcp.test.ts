@@ -24,11 +24,13 @@ import {
 import { BillingMcp } from "../../src/Surfaces.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
 const free = allowancesOf(testCatalog, "free")!;
 
@@ -50,6 +52,7 @@ const World = Layer.orDie(
 const mcpClient = (handler: (request: Request) => Promise<Response>) => {
   let session: string | undefined;
   let id = 0;
+
   const post = Effect.fn(function* (body: object, headers: Record<string, string> = {}) {
     const response = yield* Effect.promise(() =>
       handler(
@@ -66,12 +69,16 @@ const mcpClient = (handler: (request: Request) => Promise<Response>) => {
         }),
       ),
     );
+
     session ??= response.headers.get("mcp-session-id") ?? undefined;
     const text = yield* Effect.promise(() => response.text());
+
     return text === "" ? undefined : (JSON.parse(text) as { result?: any; error?: any });
   });
+
   const request = (method: string, params: object, headers?: Record<string, string>) =>
     post({ id: ++id, method, params }, headers);
+
   const connect = Effect.gen(function* () {
     yield* request("initialize", {
       protocolVersion: "2025-11-25",
@@ -80,6 +87,7 @@ const mcpClient = (handler: (request: Request) => Promise<Response>) => {
     });
     yield* post({ method: "notifications/initialized" });
   });
+
   return { connect, request };
 };
 
@@ -101,7 +109,9 @@ const withMcp = <A, E>(effect: Effect.Effect<A, E, McpHandler>) =>
       ),
       { disableLogger: true },
     );
+
     yield* Effect.addFinalizer(() => Effect.promise(dispose));
+
     return yield* effect.pipe(Effect.provideService(McpHandler, handler));
   }).pipe(Effect.scoped) as Effect.Effect<A, E, never>;
 
@@ -133,6 +143,7 @@ describe("the MCP surface", () => {
         },
         { "x-paykit-actor": account.id },
       );
+
       expect(planted!.result.isError).toBe(false);
 
       const tracked = yield* mcp.request(
@@ -143,6 +154,7 @@ describe("the MCP surface", () => {
         },
         { "x-paykit-actor": account.id },
       );
+
       expect(tracked!.result.isError).toBe(false);
 
       const read = yield* mcp.request(
@@ -150,6 +162,7 @@ describe("the MCP surface", () => {
         { name: "BillingApi_Entitlements_get", arguments: { key: account.id } },
         { "x-paykit-actor": account.id },
       );
+
       expect(read!.result.isError).toBe(false);
       expect(read!.result.structuredContent.value.features.messages.used).toBe(7);
     }).pipe(withMcp),
@@ -159,10 +172,12 @@ describe("the MCP surface", () => {
     Effect.gen(function* () {
       const mcp = mcpClient(yield* McpHandler);
       yield* mcp.connect;
+
       const refused = yield* mcp.request("tools/call", {
         name: "BillingApi_TrackUsage_send",
         arguments: { target: account.id, input: { feature: "messages", amount: 1 } },
       });
+
       expect(refused!.result.isError).toBe(true);
       expect(JSON.parse(refused!.result.content[0].text)).toMatchObject({
         _tag: "Unauthenticated",
@@ -174,6 +189,7 @@ describe("the MCP surface", () => {
     Effect.gen(function* () {
       const mcp = mcpClient(yield* McpHandler);
       yield* mcp.connect;
+
       const refused = yield* mcp.request(
         "tools/call",
         {
@@ -185,6 +201,7 @@ describe("the MCP surface", () => {
         },
         { "x-paykit-actor": account.id },
       );
+
       expect(refused!.result.isError).toBe(true);
       expect(JSON.parse(refused!.result.content[0].text)).toMatchObject({ _tag: "Forbidden" });
     }).pipe(withMcp),
@@ -195,9 +212,11 @@ describe("the MCP surface", () => {
       const mcp = mcpClient(yield* McpHandler);
       yield* mcp.connect;
       const listed = yield* mcp.request("tools/list", {});
+
       const names = (listed!.result.tools as ReadonlyArray<{ name: string }>).map(
         (tool) => tool.name,
       );
+
       expect(names).toContain("BillingApi_TrackUsage_send");
       expect(names).toContain("BillingApi_Hold_send");
       expect(names.some((name) => name.includes("GrantCredits"))).toBe(false);
@@ -210,9 +229,11 @@ describe("the MCP surface", () => {
       const mcp = mcpClient(yield* McpHandler);
       yield* mcp.connect;
       const listed = yield* mcp.request("tools/list", {});
+
       const names = (listed!.result.tools as ReadonlyArray<{ name: string }>).map(
         (tool) => tool.name,
       );
+
       // `Preview` is a binding, not an Api command, so it is not reachable.
       expect(names.some((name) => name.toLowerCase().includes("preview"))).toBe(false);
     }).pipe(withMcp),

@@ -116,6 +116,7 @@ const provided = <A extends { readonly key: string }>(tag: A) =>
     // A tag is a value and a type at once; the helper only needs to know the
     // service is there, so the shape is erased at this one line.
     const held = yield* Effect.serviceOption(tag as never);
+
     return Option.isSome(held);
   });
 
@@ -197,6 +198,7 @@ describe("the operator bindings", () => {
 
       const refused = yield* Effect.exit(recover({ dedupeKey: "recover-3" }));
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("NotInGrace");
     }),
   );
@@ -208,11 +210,13 @@ describe("the operator bindings", () => {
       const expire = yield* Expire(account);
 
       const deadline = DateTime.add(DateTime.makeUnsafe(Date.now()), { days: 7 });
+
       const failed = yield* fail({
         reason: "card_declined",
         graceUntil: deadline,
         dedupeKey: "fail-1",
       });
+
       expect(failed.dunningAttempts).toBeGreaterThan(0);
       expect(failed.graceUntil).toBeDefined();
 
@@ -225,13 +229,16 @@ describe("the operator bindings", () => {
     Effect.gen(function* () {
       yield* subscribe;
       const extend = yield* ExtendTrial(account);
+
       const refused = yield* Effect.exit(
         extend({
           trialEndsAt: DateTime.add(DateTime.makeUnsafe(Date.now()), { days: 3 }),
           dedupeKey: "extend-1",
         }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("TrialNotActive");
     }),
   );
@@ -240,6 +247,7 @@ describe("the operator bindings", () => {
 describe("refunding a charge", () => {
   it.live("sends money back up to what the account was charged, once per dedupe key", () => {
     const memory = PaymentsMemory();
+
     return Effect.gen(function* () {
       yield* subscribe;
       const enterGrace = yield* EnterGrace(account);
@@ -250,7 +258,9 @@ describe("refunding a charge", () => {
       const refused = yield* Effect.exit(
         refund({ chargeId: "ch_1", amount: 100, currency: "usd", dedupeKey: "refund-0" }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure")
         expect(String(refused.cause)).toContain("RefundExceedsCharged");
       // The refusal never reached the provider: no money left the account.
@@ -270,6 +280,7 @@ describe("refunding a charge", () => {
         reason: "duplicate order",
         dedupeKey: "refund-1",
       });
+
       expect(first.refunded).toBe(1_000);
       expect(first.refundId.length).toBeGreaterThan(0);
 
@@ -281,6 +292,7 @@ describe("refunding a charge", () => {
         reason: "duplicate order",
         dedupeKey: "refund-1",
       });
+
       expect(retried.refundId).toBe(first.refundId);
       expect(memory.refunds.length).toBe(1);
 
@@ -288,6 +300,7 @@ describe("refunding a charge", () => {
       const tooMuch = yield* Effect.exit(
         refund({ chargeId: "ch_1", amount: 901, currency: "usd", dedupeKey: "refund-2" }),
       );
+
       expect(tooMuch._tag).toBe("Failure");
       expect(memory.refunds.length).toBe(1);
 
@@ -297,6 +310,7 @@ describe("refunding a charge", () => {
         currency: "usd",
         dedupeKey: "refund-3",
       });
+
       expect(rest.refunded).toBe(1_900);
       expect(memory.refunds.length).toBe(2);
     }).pipe(Effect.provide(adminWithPayments(memory)));
@@ -307,6 +321,7 @@ describe("refunding a charge", () => {
     () =>
       Effect.gen(function* () {
         const held = yield* Effect.serviceOption(Refund as never);
+
         return Option.isSome(held);
       }).pipe(
         Effect.provide(adminApiWorld),

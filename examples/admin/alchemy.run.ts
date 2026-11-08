@@ -25,6 +25,7 @@ const Example = Alchemy.Stack(
     const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
     const worker = yield* AdminWorker;
+
     const app = yield* Cloudflare.Website.Foldkit("PaykitAdmin", {
       rootDir: import.meta.dirname,
       main: "src/AppWorker.ts",
@@ -41,4 +42,5 @@ const Example = Alchemy.Stack(
     };
   }),
 );
+
 export default Example;

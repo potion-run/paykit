@@ -26,11 +26,13 @@ import { update } from "../src/update.ts";
 import { view } from "../src/view.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const pro = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const account = AccountId.make("acct_a");
@@ -83,6 +85,7 @@ describe("the console view", () => {
 
   it("renders every lab tab without an open account", () => {
     const opened = update(model(true), Message.ToggledDevTools({ isOpen: true })).model;
+
     for (const { tab } of devToolsTabs) {
       const selected = update(opened, Message.SelectedDevToolsTab({ tab })).model;
       expect(render(selected).title).toBe("Paykit admin");
@@ -96,6 +99,7 @@ describe("the console view", () => {
   it("renders a loaded overview with charts", () => {
     const base = model(false, "/overview");
     const requestId = Option.getOrThrow(base.overview).requestId;
+
     const overview = BillingOverview.make({
       asOf: at,
       accounts: 3,
@@ -126,12 +130,14 @@ describe("the console view", () => {
         },
       ],
     });
+
     const loaded = update(
       base,
       Message.ReceivedAdminQuery({
         message: AdminQueries.Message.SucceededOverview({ requestId, overview }),
       }),
     ).model;
+
     expect(render(loaded).title).toBe("Paykit admin");
   });
 
@@ -143,6 +149,7 @@ describe("the console view", () => {
   it("renders every lab tab with a seeded account", () => {
     const opened = update(model(true), Message.ToggledDevTools({ isOpen: true })).model;
     const withAccount = update(opened, Message.ClickedOpenDevToolsAccount()).model;
+
     for (const { tab } of devToolsTabs) {
       const selected = update(withAccount, Message.SelectedDevToolsTab({ tab })).model;
       expect(render(selected).title).toBe("Paykit admin");

@@ -3,6 +3,7 @@ import {
   Check,
   InsecureDevGuards,
   Paykit,
+  moneyRoutes,
   Subscription,
   type MoneyProvider,
 } from "@potion.run/paykit";
@@ -10,7 +11,7 @@ import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { billing } from "../src/billing.config.ts";
-import { moneyRoutes, Provider } from "../src/Billing.ts";
+import { Provider } from "../src/Billing.ts";
 
 const account = "acct_routes";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
@@ -22,6 +23,7 @@ const recording = (asked: Array<Record<string, unknown>> = []): PolarClient => (
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request);
+
       return { url: `https://polar.test/checkout/${request.productId}` };
     }),
   createCustomerSession: () => Effect.sync(() => ({ url: "https://polar.test/portal" })),
@@ -46,9 +48,11 @@ const world = (provider: MoneyProvider) =>
 const signed = (body: unknown): { headers: Record<string, string>; body: string } => {
   const payload = JSON.stringify(body);
   const timestamp = String(Math.floor(performance.timeOrigin + performance.now()) / 1000);
+
   const tag = new Bun.CryptoHasher("sha256", Buffer.from(secret.slice(6), "base64"))
     .update(`${"msg_example"}.${timestamp}.${payload}`)
     .digest("base64");
+
   return {
     headers: {
       "webhook-id": "msg_example",
@@ -92,6 +96,7 @@ describe("the example's money routes", () => {
       // 1. The route asks the provider for a path to pay.
       const purchase = yield* routes.purchase(account, "pro");
       expect("url" in purchase).toBe(true);
+
       if ("url" in purchase) expect(purchase.url).toContain("prod_example");
 
       // 2. The provider says it was paid, signed with its own secret.
@@ -102,12 +107,14 @@ describe("the example's money routes", () => {
       // 3. The entitlement answers from local state, no provider in the read.
       const check = yield* Check(account);
       let answer = yield* check({ feature: "messages", amount: 1 });
+
       // A view is fed by deliveries, so the read catches up just after the
       // command commits.
       for (let attempt = 0; attempt < 500 && !answer.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
         answer = yield* check({ feature: "messages", amount: 1 });
       }
+
       expect(answer.allowed).toBe(true);
       expect(answer.remaining).toBe(2_000);
     }).pipe(Effect.provide(world(polar()))),
@@ -131,9 +138,11 @@ describe("the example's money routes", () => {
   it.live("an event paykit does not model is acknowledged and ignored", () =>
     Effect.gen(function* () {
       const routes = yield* moneyRoutes(polar());
+
       const applied = yield* routes.deliver(
         signed({ type: "product.updated", data: { id: "prod_example" } }),
       );
+
       expect(applied).toEqual({ action: "ignored", eventId: null });
     }).pipe(Effect.provide(world(polar()))),
   );
@@ -141,13 +150,16 @@ describe("the example's money routes", () => {
   it.live("a price with no tier mapping cannot activate, and names the field", () =>
     Effect.gen(function* () {
       const routes = yield* moneyRoutes(polar());
+
       const error = yield* Effect.flip(
         routes.deliver(signed(orderPaid({ product_id: "prod_unknown" }))),
       );
+
       // The decoder refused to invent a tier; a paid order on an account with
       // no standing cannot activate without one. The route answers 400, which
       // is a support ticket rather than a silently free month.
       expect(error._tag).toBe("WebhookInvalid");
+
       if (error._tag === "WebhookInvalid") expect(error.field).toBe("tier");
     }).pipe(Effect.provide(world(polar()))),
   );

@@ -45,6 +45,7 @@ const CapStep = Schema.Union([
   Schema.TaggedStruct("Track", { amount: Amount }),
   Schema.TaggedStruct("Hold", { amount: Amount }),
 ]);
+
 type CapStep = typeof CapStep.Type;
 
 const capView = (state: SubscribedState) => ({
@@ -66,10 +67,12 @@ describe("spend cap", () => {
       Arbitrary.schema(Schema.Array(CapStep).pipe(Schema.check(Schema.isMaxLength(60)))),
       (steps) => {
         let state = opened("capped");
+
         for (const [index, step] of steps.entries()) {
           const used = usedOf(state, "messages");
           const reserved = reservedOf(state, "messages");
           const headroom = CEILING - used - reserved;
+
           const decision =
             step._tag === "Track"
               ? decideAt(
@@ -95,16 +98,19 @@ describe("spend cap", () => {
             feature: "messages",
             amount: step.amount,
           });
+
           if (asked.allowed !== isAccepted(decision)) return false;
 
           if (!isAccepted(decision)) {
             if (decision._tag !== "SpendCapExceeded") return false;
+
             if (step.amount <= headroom) return false;
             continue;
           }
 
           if (step.amount > headroom) return false;
           state = evolveAt(state, decision, start, `cap-${index}`) as SubscribedState;
+
           if (usedOf(state, "messages") + reservedOf(state, "messages") > CEILING) return false;
         }
 
@@ -121,6 +127,7 @@ describe("flags", () => {
       Arbitrary.schema(Schema.Array(Amount).pipe(Schema.check(Schema.isMaxLength(40)))),
       (amounts) => {
         let state = opened("enterprise");
+
         for (const [index, amount] of amounts.entries()) {
           const track = decideAt(
             state,
@@ -128,6 +135,7 @@ describe("flags", () => {
             start,
             `flag-track-${index}`,
           );
+
           if (!Schema.is(FeatureNotMetered)(track)) return false;
 
           const hold = decideAt(
@@ -141,6 +149,7 @@ describe("flags", () => {
             start,
             `flag-hold-${index}`,
           );
+
           if (!Schema.is(FeatureNotMetered)(hold)) return false;
 
           const asked = evaluateCheck(
@@ -150,10 +159,14 @@ describe("flags", () => {
             },
             { account: "acct_flag_property", feature: "sso", amount },
           );
+
           if (!asked.allowed) return false;
+
           if (state.remaining.sso !== null) return false;
+
           if (usedOf(state, "sso") !== 0 || reservedOf(state, "sso") !== 0) return false;
         }
+
         return true;
       },
       { runs: 60, size: 20 },

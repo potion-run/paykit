@@ -21,11 +21,13 @@ const ProrationCase = Schema.Struct({
   /** Days from the period start; negative and past-the-end instants are legal. */
   offsetDays: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: -30, maximum: 120 }))),
 });
+
 type ProrationCase = typeof ProrationCase.Type;
 
 const periodOf = (days: number) => {
   const periodStart = start;
   const periodEnd = DateTime.add(start, { days });
+
   return { start: periodStart, end: periodEnd };
 };
 
@@ -37,10 +39,13 @@ describe("proration", () => {
         const period = periodOf(input.periodDays);
         const at = DateTime.add(start, { days: input.offsetDays });
         const fraction = unusedFraction(period, at);
+
         if (!(fraction >= 0 && fraction <= 1)) return false;
 
         const value = prorate({ from: input.from, to: input.to, period, at });
+
         if (input.from === undefined && input.to === undefined) return value === null;
+
         if (
           input.from !== undefined &&
           input.to !== undefined &&
@@ -48,23 +53,31 @@ describe("proration", () => {
         ) {
           return value === null;
         }
+
         if (value === null) return false;
 
         const currency = input.from?.currency ?? input.to!.currency;
+
         if (value.currency !== currency) return false;
+
         if (value.due !== value.charge - value.credit) return false;
+
         if (value.credit < 0 || value.credit > (input.from?.amount ?? 0)) return false;
+
         if (value.charge < 0 || value.charge > (input.to?.amount ?? 0)) return false;
 
         // At the boundaries the whole unused share is on one side or the
         // other, with no rounding residue.
         if (input.offsetDays <= 0) {
           if (value.credit !== (input.from?.amount ?? 0)) return false;
+
           if (value.charge !== (input.to?.amount ?? 0)) return false;
         }
+
         if (input.offsetDays >= input.periodDays) {
           return value.credit === 0 && value.charge === 0;
         }
+
         return true;
       },
       { runs: 120, size: 30 },
@@ -86,6 +99,7 @@ describe("proration", () => {
         const period = periodOf(input.periodDays);
         const at = DateTime.add(start, { days: input.offsetDays });
         const value = prorate({ from: input.price, to: input.price, period, at });
+
         return value !== null && value.due === 0 && value.credit === value.charge;
       },
       { runs: 60 },
@@ -134,9 +148,11 @@ describe("proration", () => {
 
         const earlierValue = prorate({ from, to, period, at: before });
         const laterValue = prorate({ from, to, period, at: after });
+
         if (earlierValue === null || laterValue === null) {
           return earlierValue === laterValue;
         }
+
         return earlierValue.credit >= laterValue.credit && earlierValue.charge >= laterValue.charge;
       },
       { runs: 120, size: 30 },
@@ -176,12 +192,14 @@ describe("proration", () => {
       ({ currency, interval, from, via, to, periodDays, offsetDays }) => {
         const period = periodOf(periodDays);
         const at = DateTime.add(start, { days: offsetDays });
+
         const priceOf = (amount: number | undefined) =>
           amount === undefined ? undefined : { amount, currency, interval };
 
         const direct = prorate({ from: priceOf(from), to: priceOf(to), period, at });
         const first = prorate({ from: priceOf(from), to: priceOf(via), period, at });
         const second = prorate({ from: priceOf(via), to: priceOf(to), period, at });
+
         // `from` and `to` are always priced, so every leg is a real proration.
         if (direct === null || first === null || second === null) return false;
 

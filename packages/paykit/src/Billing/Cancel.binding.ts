@@ -22,6 +22,7 @@ const cancelRefusals = [NotSubscribed, AlreadyCanceled, Unauthenticated, Forbidd
 
 /** Every refusal a cancellation can answer. */
 export type CancelRefusal = InstanceType<(typeof cancelRefusals)[number]>;
+
 export type CancelError = BindingError<CancelRefusal>;
 
 /** Whether a failure is `ScheduleCancellation` refusing the request. */
@@ -37,6 +38,7 @@ const resumeRefusals = [NotSubscribed, NotScheduled, Unauthenticated, Forbidden]
 
 /** Every refusal a resume can answer. */
 export type ResumeRefusal = InstanceType<(typeof resumeRefusals)[number]>;
+
 export type ResumeError = BindingError<ResumeRefusal>;
 
 /** Whether a failure is `Resume` refusing the request. */

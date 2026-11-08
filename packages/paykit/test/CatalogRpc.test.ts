@@ -96,6 +96,7 @@ it.live("refuses a caller with no session, so the catalog is not a public read",
     const handlers = yield* deployHandlers;
     const outcome = yield* Effect.result(servedFrom(handlers, {}));
     expect(outcome._tag).toBe("Failure");
+
     if (outcome._tag !== "Failure") return;
     expect(outcome.failure._tag).toBe("Unauthenticated");
   }),

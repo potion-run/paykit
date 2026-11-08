@@ -21,11 +21,13 @@ import { Message } from "../src/Message.ts";
 import { update } from "../src/update.ts";
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const pro = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const account = AccountId.make("acct_a");
@@ -67,11 +69,13 @@ const seeded = (devTools: boolean) => init(flags(devTools), url()).model;
 
 const opened = (devTools = true) => {
   const model = seeded(devTools);
+
   return update(model, Message.ClickedAccount({ account })).model;
 };
 
 const openAccount = (model: ReturnType<typeof opened>) => {
   if (Option.isNone(model.account)) throw new Error("expected an open account");
+
   return model.account.value;
 };
 
@@ -80,6 +84,7 @@ describe("the event lab", () => {
     const tags = devToolsEvents.map((event) => event.tag).toSorted();
     expect(tags).toEqual(subscriptionEventTags.toSorted());
     expect(tags).toEqual(Subscription.definition.events.map((event) => event.tag).toSorted());
+
     for (const event of devToolsEvents) {
       const parsed = JSON.parse(event.body) as unknown;
       expect(typeof parsed).toBe("object");
@@ -111,12 +116,14 @@ describe("the event lab", () => {
   it("emits the selected event at the account's next sequence", () => {
     const model = opened();
     const event = devToolsEvents.find((candidate) => candidate.tag === "CreditsGranted");
+
     if (event === undefined) throw new Error("expected a CreditsGranted default");
 
     const result = update(
       update(model, Message.UpdatedDevToolsEventTag({ value: event.tag })).model,
       Message.ClickedEmitDevToolsEvent(),
     );
+
     const account = openAccount(result.model);
     expect(account.events[0]?.tag).toBe("CreditsGranted");
     expect(account.events[0]?.seq).toBe(1);
@@ -165,6 +172,7 @@ describe("the event lab", () => {
   it("resets the event body when the tag changes", () => {
     const model = opened();
     const event = devToolsEvents.find((candidate) => candidate.tag === "UsageReserved");
+
     if (event === undefined) throw new Error("expected a UsageReserved default");
     const changed = update(model, Message.UpdatedDevToolsEventTag({ value: event.tag })).model;
     expect(changed.devTools.eventBody).toBe(event.body);
@@ -175,6 +183,7 @@ describe("the event lab", () => {
     const withStanding = openAccount(seededModel);
     expect(Option.isSome(withStanding.billing)).toBe(true);
     expect(Option.isSome(withStanding.entitlements)).toBe(true);
+
     if (Option.isSome(withStanding.entitlements)) {
       expect(Object.keys(withStanding.entitlements.value.features)).toContain("messages");
       // The seeded holds are folded into the allowance view, not a second count.
@@ -182,6 +191,7 @@ describe("the event lab", () => {
     }
 
     const seededHolds = withStanding.holds;
+
     if (Option.isNone(seededHolds)) throw new Error("expected seeded holds");
     expect(seededHolds.value.state).toBe("Loaded");
     expect(seededHolds.value.holds.length).toBe(3);
@@ -189,6 +199,7 @@ describe("the event lab", () => {
     expect(seededHolds.value.holds.some((hold) => hold.status === "settled")).toBe(true);
 
     const seededRefs = withStanding.providerRefs;
+
     if (Option.isNone(seededRefs)) throw new Error("expected seeded provider refs");
     expect(seededRefs.value.state).toBe("Loaded");
     expect(seededRefs.value.refs.manual?.customer).toBe("cus_acct_a");
@@ -232,6 +243,7 @@ describe("the event lab", () => {
       seeded(true),
       Message.UpdatedDevToolsAccountId({ value: "acct_empty" }),
     ).model;
+
     expect(Option.isNone(model.account)).toBe(true);
 
     const result = update(model, Message.ClickedOpenDevToolsAccount());
@@ -244,6 +256,7 @@ describe("the event lab", () => {
     expect(account.id).toBe("acct_empty");
     expect(Option.isSome(account.billing)).toBe(true);
     expect(Option.isSome(account.entitlements)).toBe(true);
+
     if (Option.isNone(account.holds)) throw new Error("expected seeded holds");
     expect(account.holds.value.holds.length).toBe(3);
   });

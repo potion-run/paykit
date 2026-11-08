@@ -31,6 +31,7 @@ const Query = Schema.Struct({
   ),
   after: Schema.optionalKey(Schema.Literals(["acct_0000", "acct_0003", "acct_0007", "acct_9999"])),
 });
+
 type Query = typeof Query.Type;
 
 const ListCase = Schema.Struct({
@@ -81,12 +82,15 @@ const expectedRows = (rows: ReadonlyArray<BillingReadRow>, query: Query) => {
       (query.tier === undefined || entry.tier === query.tier) &&
       (query.status === undefined || entry.status === query.status),
   );
+
   const order = query.order ?? "asc";
+
   const sorted = [...matching].sort((left, right) =>
     order === "asc"
       ? compareAccounts(left.account, right.account)
       : compareAccounts(right.account, left.account),
   );
+
   return query.after === undefined
     ? sorted
     : sorted.filter((entry) =>
@@ -105,26 +109,35 @@ describe("list paging", () => {
         const size = pageSizeOf(query);
 
         const first = queryRows(rows, query);
+
         if (first.rows.length > size) return false;
+
         if (first.rows.length !== Math.min(size, expected.length)) return false;
+
         if (first.rows.some((entry, index) => entry.account !== expected[index]?.account)) {
           return false;
         }
+
         const expectedNext = expected.length > size ? expected[size - 1]!.account : null;
+
         if (first.next !== expectedNext) return false;
 
         let cursor = first.next;
         let walked = first.rows.length;
         let guard = 0;
+
         while (cursor !== null) {
           if (guard++ > rows.length + 1) return false;
           const page = queryRows(rows, { ...query, after: cursor });
+
           if (page.rows.length > size) return false;
+
           if (
             page.rows.some((entry, index) => entry.account !== expected[walked + index]?.account)
           ) {
             return false;
           }
+
           walked += page.rows.length;
           cursor = page.next;
         }
@@ -142,8 +155,11 @@ describe("list paging", () => {
       (input) => {
         const rows = rowsOf(input.rows);
         const page = queryRows(rows, input.query);
+
         if (page.rows.length > MAX_PAGE) return false;
+
         if (page.rows.length > pageSizeOf(input.query)) return false;
+
         return page.rows.every(
           (entry) =>
             (input.query.standing === undefined || entry.standing === input.query.standing) &&
@@ -166,11 +182,13 @@ describe("list paging", () => {
     const rows = accounts.map((account) => row(account, plainRowSpec));
     const walked: Array<string> = [];
     let cursor: string | null = null;
+
     do {
       const page = queryRows(rows, {
         take: 1,
         ...(cursor === null ? {} : { after: cursor }),
       });
+
       walked.push(...page.rows.map((entry) => entry.account));
       cursor = page.next;
     } while (cursor !== null);
@@ -204,6 +222,7 @@ describe("list paging", () => {
       ({ accounts, take, order }) => {
         const unique = [...new Set(accounts)];
         const rows = unique.map((account) => row(account, plainRowSpec));
+
         const expected = [...unique].sort((left, right) =>
           order === "asc" ? compareAccounts(left, right) : compareAccounts(right, left),
         );
@@ -211,20 +230,25 @@ describe("list paging", () => {
         const walked: Array<string> = [];
         let cursor: string | null = null;
         let guard = 0;
+
         do {
           if (guard++ > unique.length + 1) return false;
+
           const page = queryRows(rows, {
             order,
             take,
             ...(cursor === null ? {} : { after: cursor }),
           });
+
           if (page.rows.length > take) return false;
           walked.push(...page.rows.map((entry) => entry.account));
           cursor = page.next;
         } while (cursor !== null);
 
         if (walked.length !== expected.length) return false;
+
         if (new Set(walked).size !== walked.length) return false;
+
         return walked.every((account, index) => account === expected[index]);
       },
       { runs: 100, size: 30 },

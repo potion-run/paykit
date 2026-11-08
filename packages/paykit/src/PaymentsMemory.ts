@@ -91,6 +91,7 @@ export const PaymentsMemory = (): MemoryPayments => {
   const service = Payments.toLayer(
     Effect.sync(() => {
       const next = () => `${++sequence}`;
+
       return {
         createCheckout: ({
           account,
@@ -103,6 +104,7 @@ export const PaymentsMemory = (): MemoryPayments => {
           Effect.sync(() => {
             const id = `co_${next()}`;
             checkouts.set(id, { account, tier });
+
             return { url: `https://paykit.memory/checkout/${id}` };
           }),
         createInvoice: ({
@@ -125,14 +127,18 @@ export const PaymentsMemory = (): MemoryPayments => {
               }),
             );
           }
+
           return Effect.sync(() => {
             // The command id is the vendor's idempotency key: a retried charge
             // is the invoice it already opened, not a second one.
             const previous = commandId === undefined ? undefined : invoiceFor.get(commandId);
+
             if (previous !== undefined) return { invoiceId: previous };
             const id = `in_${next()}`;
             invoices.set(id, { account, amount, currency });
+
             if (commandId !== undefined) invoiceFor.set(commandId, id);
+
             return { invoiceId: id };
           });
         },
@@ -156,8 +162,10 @@ export const PaymentsMemory = (): MemoryPayments => {
               }),
             );
           }
+
           return Effect.sync(() => {
             const previous = commandId === undefined ? undefined : chargeFor.get(commandId);
+
             if (previous !== undefined) return { chargeId: previous };
             const chargeId = `ch_${next()}`;
             charges.push({
@@ -167,7 +175,9 @@ export const PaymentsMemory = (): MemoryPayments => {
               currency,
               ...(commandId === undefined ? {} : { commandId }),
             });
+
             if (commandId !== undefined) chargeFor.set(commandId, chargeId);
+
             return { chargeId };
           });
         },
@@ -184,6 +194,7 @@ export const PaymentsMemory = (): MemoryPayments => {
             // The dedupe key is the operator's: a retried refund command is the
             // refund that already went back, not a second one.
             const previous = commandId === undefined ? undefined : refundFor.get(commandId);
+
             if (previous !== undefined) return { refundId: previous };
             const refundId = `re_${next()}`;
             refunds.push({
@@ -192,7 +203,9 @@ export const PaymentsMemory = (): MemoryPayments => {
               amount,
               ...(commandId === undefined ? {} : { commandId }),
             });
+
             if (commandId !== undefined) refundFor.set(commandId, refundId);
+
             return { refundId };
           }),
         createPortal: ({ account }: { account: string }) =>
@@ -210,7 +223,9 @@ export const PaymentsMemory = (): MemoryPayments => {
         }) =>
           Effect.sync(() => {
             const previous = quantities.find((change) => change.commandId === args.commandId);
+
             if (previous === undefined) quantities.push(args);
+
             // An immediate proration opens an invoice; `none` defers it.
             return args.proration === "immediate" ? { invoiceId: `in_${next()}` } : {};
           }),
@@ -225,6 +240,7 @@ export const PaymentsMemory = (): MemoryPayments => {
             // The command id is the period: a redelivered close reaches the
             // same report, so the fake meters once like a real vendor does.
             const key = `${args.commandId}:${args.account}`;
+
             if (reported.has(key)) return {};
             reported.add(key);
             reports.push({
@@ -234,11 +250,13 @@ export const PaymentsMemory = (): MemoryPayments => {
               lines: args.lines,
               commandId: args.commandId,
             });
+
             return {};
           }),
       };
     }),
   );
+
   const payments = Layer.merge(
     service,
     Layer.succeed(PaymentsProvider, { name: "memory", capabilities }),

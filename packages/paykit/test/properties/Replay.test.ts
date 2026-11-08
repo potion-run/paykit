@@ -13,6 +13,7 @@ describe("replay", () => {
       (script) => {
         const { state, events, now } = walk(script);
         const rebuilt = foldAt(events, now);
+
         if (!same(canonical(rebuilt), canonical(state))) return false;
 
         // A counter is a fold of the events since the last reset, not a number
@@ -24,10 +25,13 @@ describe("replay", () => {
           if (event._tag === "SubscriptionActivated" || event._tag === "TrialStarted") {
             return index;
           }
+
           if (event._tag !== "UsageReset") return latest;
           const kept = (event as unknown as { readonly kept?: Record<string, boolean> }).kept;
+
           return kept?.messages === true ? latest : index;
         }, -1);
+
         const recorded = events
           .slice(lastReset + 1)
           .filter(
@@ -39,13 +43,16 @@ describe("replay", () => {
             (sum, event) => sum + (event as unknown as { readonly amount: number }).amount,
             0,
           );
+
         if (state._tag !== "Subscribed") return true;
+
         if ((state.usage.messages ?? 0) !== recorded) return false;
 
         // The credit pool is a fold too: every event that moves it carries the
         // balance it left, so the last such event must be the state's balance.
         const balances = events.flatMap((event) => {
           const value = event as unknown as Readonly<Record<string, unknown>>;
+
           switch (event._tag) {
             case "SubscriptionActivated":
             case "TrialStarted":
@@ -62,6 +69,7 @@ describe("replay", () => {
               return [];
           }
         });
+
         return state.credits === (balances.at(-1) ?? 0);
       },
       { runs: 60, size: 50 },
@@ -74,6 +82,7 @@ describe("replay", () => {
       (script) => {
         const first = walk(script);
         const second = walk(script);
+
         return (
           same(canonical(first.state), canonical(second.state)) && same(first.events, second.events)
         );
@@ -91,8 +100,10 @@ describe("replay", () => {
         { command: { _tag: "TrackUsage", amount: 10 }, advanceDays: 1 },
       ],
     } as const;
+
     const { state } = walk(script);
     expect(state._tag).toBe("Subscribed");
+
     if (state._tag === "Subscribed") expect(state.usage.messages).toBe(10);
   });
 });

@@ -27,6 +27,7 @@ describe("reading a pricing a provider or a catalog writes", () => {
         { upTo: "inf", amount: 2, currency: "usd" },
       ],
     });
+
     expect(asPricing(ladder)).toBe(ladder);
   });
 

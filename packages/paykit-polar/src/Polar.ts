@@ -131,6 +131,7 @@ export interface PolarProps {
   readonly client?: PolarClient;
 }
 
+// SAFETY: a thrown value is untyped; an empty layer satisfies any service requirement, and the error formatter reads the one field it reports.
 const declined = (op: string, cause: unknown): PaymentDeclined =>
   new PaymentDeclined({
     provider: "polar",
@@ -152,6 +153,7 @@ export const polarBindings = (
 ): PolarBindings => {
   const success = `${where.origin}${where.successPath ?? "/welcome"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
+
   return {
     createCheckoutSession: ({ account, productId, kind }) =>
       client
@@ -249,6 +251,7 @@ export const polarBindings = (
               lines,
               (line) => {
                 const eventName = where.meters?.[line.feature];
+
                 if (eventName === undefined) {
                   return Effect.fail(
                     new PaymentDeclined({
@@ -258,6 +261,7 @@ export const polarBindings = (
                     }),
                   );
                 }
+
                 return client.reportUsage!({
                   eventName,
                   externalCustomerId: account,
@@ -315,6 +319,7 @@ export const Polar = (props: PolarProps): MoneyProvider<"merchant_of_record"> =>
       ...(props.server === undefined ? {} : { server: props.server }),
       ...(props.baseUrl === undefined ? {} : { baseUrl: props.baseUrl }),
     });
+
   const webhook =
     props.webhookSecret === undefined
       ? undefined
@@ -328,6 +333,7 @@ export const Polar = (props: PolarProps): MoneyProvider<"merchant_of_record"> =>
               : { toleranceSeconds: props.webhookToleranceSeconds }),
           }),
         };
+
   return PaymentsPolar({
     bindings: polarBindings(client, props),
     ...(props.tiers === undefined ? {} : { tiers: props.tiers }),
@@ -340,4 +346,5 @@ export const polarPriceOf = (props: Pick<PolarProps, "tiers">, tier: string): Pr
   props.tiers?.[tier]?.price ?? null;
 
 /** A layer that provides nothing; kept so `Polar` composes with `Layer.mergeAll`. */
+// SAFETY: a thrown value is untyped; an empty layer satisfies any service requirement, and the error formatter reads the one field it reports.
 export const polarLayer = Layer.empty as Layer.Layer<never>;

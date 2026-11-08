@@ -31,6 +31,7 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
 
 /** Two providers in one Stack: memory first, so it serves a new account. */
@@ -67,6 +68,7 @@ const referred = (account: string, provider: string) =>
 const stateOf = (account: string) =>
   Effect.gen(function* () {
     const subscription = yield* Subscription;
+
     return yield* subscription.state(Subscription.ref(account));
   });
 
@@ -76,7 +78,9 @@ describe("a Stack with two providers", () => {
       const purchase = yield* (yield* SubscribeBinding("acct_new"))({
         tier: "pro" as TierId,
       });
+
       expect("url" in purchase).toBe(true);
+
       if ("url" in purchase) expect(purchase.url).toContain("paykit.memory");
       const state = yield* stateOf("acct_new");
       expect(Object.keys(state.refs)).toEqual(["memory"]);
@@ -86,11 +90,13 @@ describe("a Stack with two providers", () => {
   it.live("an account that already pays through the second provider stays there", () =>
     Effect.gen(function* () {
       yield* referred("acct_manual", "manual");
+
       // `manual` has no checkout, so the purchase is an invoice — proof the
       // router picked the provider the standing names, not the fallback.
       const purchase = yield* (yield* SubscribeBinding("acct_manual"))({
         tier: "pro" as TierId,
       });
+
       expect("invoiceId" in purchase).toBe(true);
       const state = yield* stateOf("acct_manual");
       expect(state.refs.manual).toBeDefined();
@@ -105,6 +111,7 @@ describe("a Stack with two providers", () => {
       // `manual` declares no portal, so the routed call fails on that provider;
       // the fallback would have opened one.
       expect(error).toBeInstanceOf(ProviderCapabilityMissing);
+
       if (error._tag === "ProviderCapabilityMissing") expect(error.provider).toBe("manual");
 
       // An account with no refs falls back to the first provider, which has a

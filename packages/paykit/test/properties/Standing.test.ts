@@ -46,6 +46,7 @@ const GrantSpec = Schema.Struct({
     Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2_000 }))),
   ),
 });
+
 type GrantSpec = typeof GrantSpec.Type;
 
 const CreditRatesSpec = Schema.Struct({
@@ -77,12 +78,15 @@ const ActivationCase = Schema.Struct({
   previous: Schema.Literals(["empty", "subscribed"]),
   trialUsed: Schema.Boolean,
 });
+
 type ActivationCase = typeof ActivationCase.Type;
 
 const allowanceOf = (spec: GrantSpec): Allowance => {
   if (spec.kind === "flag") return grant(features[spec.feature]);
+
   const unitPrice =
     spec.included === "unlimited" || spec.unitPrice === undefined ? undefined : spec.unitPrice;
+
   return allowance(features[spec.feature], {
     included: spec.included,
     overage: spec.included === "unlimited" ? "allow" : unitPrice === undefined ? "block" : "bill",
@@ -97,7 +101,9 @@ const allowanceOf = (spec: GrantSpec): Allowance => {
 const allowancesOf = (specs: ReadonlyArray<GrantSpec>): Allowances => {
   const entries = specs.map((spec) => [spec.feature, allowanceOf(spec)] as const);
   const unique = new Map<FeatureKey, Allowance>(entries);
+
   if (unique.size === 0) unique.set("messages", allowance(features.messages, { included: 100 }));
+
   return Object.fromEntries(unique) as Allowances;
 };
 
@@ -106,8 +112,10 @@ const includedRemaining = (allowance: Allowance): number | null =>
 
 const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
   const refs = { stripe: { customer: "cus_previous" } };
+
   if (kind === "empty") return { ...initialSubscriptionState, refs };
   const terms = allowancesOf([]);
+
   const previousGrant = activationOf({
     tier: "prior",
     allowances: terms,
@@ -118,6 +126,7 @@ const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
     period: { start, end: DateTime.add(start, { days: 30 }), anchorTz: "UTC" },
     statusAfter: "active",
   });
+
   return {
     ...standingFrom(
       { ...previousGrant, interval: "annual" },
@@ -147,6 +156,7 @@ const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
 
 const stateOf = (state: SubscriptionState): SubscribedState => {
   if (state._tag !== "Subscribed") throw new Error("the activation did not open a standing");
+
   return state;
 };
 
@@ -156,14 +166,18 @@ const stateOf = (state: SubscriptionState): SubscribedState => {
  */
 const canonicalJson = (value: unknown): string => {
   if (value === undefined) return "null";
+
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+
   if (value !== null && typeof value === "object") {
     const entries = Object.entries(value as Readonly<Record<string, unknown>>)
       .filter(([, item]) => item !== undefined)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+
     return `{${entries.join(",")}}`;
   }
+
   return JSON.stringify(value) ?? "null";
 };
 
@@ -180,11 +194,13 @@ describe("activationOf", () => {
       Arbitrary.schema(ActivationCase),
       (input) => {
         const allowances = allowancesOf(input.grants);
+
         const period = {
           start,
           end: DateTime.add(start, { days: input.periodDays }),
           anchorTz: input.anchorTz,
         };
+
         const grant = activationOf({
           tier: "pro",
           allowances,
@@ -210,29 +226,41 @@ describe("activationOf", () => {
         });
 
         const prepaid = Math.min(input.prepaid, input.credits);
+
         if (grant.credits !== input.credits) return false;
+
         if (prepaid === 0) {
           if (grant.prepaidCredits !== undefined) return false;
         } else if (grant.prepaidCredits !== prepaid) {
           return false;
         }
+
         if (grant.tier !== "pro") return false;
+
         if (grant.statusAfter !== input.status) return false;
+
         if (grant.creditsExpire !== input.creditsExpire) return false;
+
         if ((grant.topUp?.threshold ?? null) !== (input.topUp ?? null)) return false;
+
         if (grant.periodStart !== period.start || grant.periodEnd !== period.end) return false;
+
         if (grant.anchorTz !== period.anchorTz) return false;
+
         if (JSON.stringify(grant.price) !== JSON.stringify(input.price)) return false;
 
         const expectedRemaining = Object.fromEntries(
           Object.entries(allowances).map(([feature, value]) => [feature, includedRemaining(value)]),
         );
+
         if (JSON.stringify(grant.remaining) !== JSON.stringify(expectedRemaining)) return false;
 
         const firstUnitPrice = Object.values(allowances).find(
           (value) => value.unitPrice !== undefined,
         )?.unitPrice?.currency;
+
         const expectedCurrency = input.price?.currency ?? firstUnitPrice ?? input.previousCurrency;
+
         if (grant.currency !== expectedCurrency) return false;
 
         return true;
@@ -255,12 +283,15 @@ describe("standingFrom", () => {
       Arbitrary.schema(ActivationCase),
       (input) => {
         const allowances = allowancesOf(input.grants);
+
         const period = {
           start,
           end: DateTime.add(start, { days: input.periodDays }),
           anchorTz: input.anchorTz,
         };
+
         const previous = previousOf(input.previous);
+
         const activation = activationOf({
           tier: "pro",
           allowances,
@@ -284,46 +315,67 @@ describe("standingFrom", () => {
             : { previousCurrency: input.previousCurrency }),
           statusAfter: input.status,
         });
+
         const grant: StandingGrant = {
           ...activation,
           ...(input.interval === undefined ? {} : { interval: input.interval }),
           ...(input.status === "trialing" ? { trialEndsAt: period.end } : {}),
         };
+
         const state = stateOf(standingFrom(grant, previous, { trialUsed: input.trialUsed }));
 
         if (state.tier !== "pro") return false;
+
         if (state.status !== input.status) return false;
+
         if (state.period.start !== period.start || state.period.end !== period.end) return false;
+
         if (state.period.anchorTz !== period.anchorTz) return false;
+
         if (state.credits !== activation.credits) return false;
+
         if (JSON.stringify(state.allowances) !== JSON.stringify(activation.allowances))
           return false;
+
         if (JSON.stringify(state.remaining) !== JSON.stringify(activation.remaining)) return false;
+
         if (state.creditsExpire !== activation.creditsExpire) return false;
+
         if ((state.topUp?.threshold ?? null) !== (activation.topUp?.threshold ?? null))
           return false;
+
         if (JSON.stringify(state.rates) !== JSON.stringify(activation.rates)) return false;
+
         if (JSON.stringify(state.price) !== JSON.stringify(activation.price)) return false;
 
         // The pack part is inside the pool, and omitted only when there is
         // none to protect. A state that says otherwise makes expiry arithmetic
         // subtract more than the account ever bought.
         const prepaid = state.prepaidCredits ?? 0;
+
         if (prepaid !== (activation.prepaidCredits ?? 0)) return false;
+
         if (prepaid < 0 || prepaid > state.credits) return false;
 
         if (state.interval !== (input.interval ?? activation.price?.interval ?? "month")) {
           return false;
         }
+
         if (state.trialUsed !== input.trialUsed) return false;
+
         if (JSON.stringify(state.refs) !== JSON.stringify(previous.refs)) return false;
 
         // Everything a standing accumulates starts empty on a new one.
         if (Object.keys(state.usage).length !== 0) return false;
+
         if (Object.keys(state.holds).length !== 0) return false;
+
         if (Object.keys(state.dedupeKeys).length !== 0) return false;
+
         if (state.dunningAttempts !== 0) return false;
+
         if (state.cancelAtPeriodEnd !== false) return false;
+
         for (const field of [
           "graceUntil",
           "pendingTier",
@@ -335,6 +387,7 @@ describe("standingFrom", () => {
         ] as const) {
           if (field in state) return false;
         }
+
         return true;
       },
       { runs: 200, size: 40 },
@@ -346,11 +399,13 @@ describe("standingFrom", () => {
       Arbitrary.schema(ActivationCase),
       (input) => {
         const allowances = allowancesOf(input.grants);
+
         const period = {
           start,
           end: DateTime.add(start, { days: input.periodDays }),
           anchorTz: input.anchorTz,
         };
+
         const activation = activationOf({
           tier: "pro",
           allowances,
@@ -374,6 +429,7 @@ describe("standingFrom", () => {
             : { previousCurrency: input.previousCurrency }),
           statusAfter: input.status,
         });
+
         const state = stateOf(
           standingFrom(
             {
@@ -385,11 +441,13 @@ describe("standingFrom", () => {
             { trialUsed: input.trialUsed },
           ),
         );
+
         // What an activation records is what a replay decodes: a state the
         // schema cannot read back is a state the next deploy cannot load.
         const decoded = Schema.decodeSync(SubscriptionState)(
           Schema.encodeSync(SubscriptionState)(state),
         );
+
         return canonicalJson(decoded) === canonicalJson(state);
       },
       { runs: 60, size: 20 },

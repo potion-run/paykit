@@ -75,6 +75,7 @@ export const BillingStateView = Schema.Struct({
    */
   pendingTier: Schema.optionalKey(PendingTier),
 });
+
 export type BillingStateView = typeof BillingStateView.Type;
 
 const epoch = DateTime.makeUnsafe(0);
@@ -101,6 +102,7 @@ const withAccount = (view: BillingStateView, context: ViewContext): BillingState
 
 const withoutGrace = (view: BillingStateView, context: ViewContext): BillingStateView => {
   const { graceUntil: _graceUntil, ...rest } = view;
+
   return withAccount(rest, context);
 };
 
@@ -117,6 +119,7 @@ export class BillingState extends Domain.View("BillingState", {
   rejects: [Forbidden],
   validate: Effect.fn(function* ({ key }) {
     const actor = yield* Actor;
+
     if (!mayActOn(actor, key.id)) {
       return yield* new Forbidden({
         account: key.id,
@@ -142,6 +145,7 @@ export class BillingState extends Domain.View("BillingState", {
         topUpCooldownUntil: _previousCooldown,
         ...rest
       } = view;
+
       return withAccount(
         {
           ...rest,
@@ -177,6 +181,7 @@ export class BillingState extends Domain.View("BillingState", {
         topUp: _previousTopUp,
         ...rest
       } = view;
+
       return withAccount(
         {
           ...rest,
@@ -208,6 +213,7 @@ export class BillingState extends Domain.View("BillingState", {
         topUp: _previousTopUp,
         ...rest
       } = view;
+
       return withAccount(
         {
           ...rest,
@@ -251,6 +257,13 @@ export class BillingState extends Domain.View("BillingState", {
         { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
         context,
       ),
+    // A reversal lowers the same fold, so the page's "refunded" is the money
+    // that is actually back rather than everything ever acknowledged.
+    RefundReversed: (view, event, context): BillingStateView =>
+      withAccount(
+        { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
+        context,
+      ),
     PaymentFailed: (view, event, context): BillingStateView =>
       withAccount(
         {
@@ -274,6 +287,7 @@ export class BillingState extends Domain.View("BillingState", {
       // A purchase is the refill that was owed, so the page stops reporting the
       // failure it makes good on (ADR 0027).
       const { topUpFailure: _madeGood, ...rest } = view;
+
       return withAccount(
         {
           ...rest,
@@ -302,6 +316,7 @@ export class BillingState extends Domain.View("BillingState", {
       ),
     TopUpCooldownCleared: (view, _event, context): BillingStateView => {
       const { topUpCooldownUntil: _cleared, ...rest } = view;
+
       return withAccount(rest, context);
     },
     CreditsConsumed: (view, event, context): BillingStateView =>
@@ -334,6 +349,7 @@ export class BillingState extends Domain.View("BillingState", {
       ),
     TierChangeWithdrawn: (view, _event, context): BillingStateView => {
       const { pendingTier: _withdrawn, ...rest } = view;
+
       return withAccount(rest, context);
     },
     PeriodClosed: (view, event, context): BillingStateView =>

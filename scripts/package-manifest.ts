@@ -11,6 +11,7 @@ export const PackageJson = Schema.Struct({
   version: Schema.String,
   private: Schema.optionalKey(Schema.Boolean),
 });
+
 export type PackageJson = typeof PackageJson.Type;
 
 /** A whole `package.json`, so a gate can also read `exports`, `files` and `publishConfig`. */
@@ -40,12 +41,14 @@ export const readManifest = Effect.fn("PackageManifest.read")(function* (
   const path = yield* Path.Path;
   const file = path.join(root, dir, "package.json");
   const text = yield* fs.readFileString(file);
+
   const raw = yield* Schema.decodeEffect(Schema.fromJsonString(RawPackageJson))(text).pipe(
     Effect.mapError(
       (cause) =>
         new UnreadableManifest({ message: `${dir}: package.json is not valid JSON`, file, cause }),
     ),
   );
+
   const manifest = yield* Schema.decodeUnknownEffect(PackageJson)(raw).pipe(
     Effect.mapError(
       (cause) =>
@@ -56,6 +59,7 @@ export const readManifest = Effect.fn("PackageManifest.read")(function* (
         }),
     ),
   );
+
   return { dir, manifest, raw } satisfies WorkspacePackage;
 });
 
@@ -67,15 +71,20 @@ export const workspacePackages = Effect.fn("PackageManifest.workspace")(function
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const entries = (yield* fs.readDirectory(path.join(root, directory))).sort();
+
   const packages = yield* Effect.forEach(entries, (entry) =>
     Effect.gen(function* () {
       const full = path.join(root, directory, entry);
+
       // Skip stray files such as `.DS_Store`, and directories without a manifest.
       if ((yield* fs.stat(full)).type !== "Directory") return undefined;
+
       if (!(yield* fs.exists(path.join(full, "package.json")))) return undefined;
+
       return yield* readManifest(root, path.join(directory, entry));
     }),
   );
+
   return packages.filter((pkg): pkg is WorkspacePackage => pkg !== undefined);
 });
 
@@ -85,6 +94,7 @@ export const publishablePackages = Effect.fn("PackageManifest.publishable")(func
   directory: string,
 ) {
   const packages = yield* workspacePackages(root, directory);
+
   return packages.filter(({ manifest }) => manifest.private !== true);
 });
 
@@ -97,14 +107,17 @@ export const filesUnder = Effect.fn("PackageManifest.files")(function* (director
   // A workspace cycle links node_modules back into a package; following it
   // walks the same tree forever. Generated output is not source either.
   const skip = new Set(["node_modules", ".git", "lib", "dist", ".alchemy"]);
+
   for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
     for (const entry of yield* fs.readDirectory(current)) {
       if (skip.has(entry)) continue;
       const full = path.join(current, entry);
+
       if ((yield* fs.stat(full)).type === "Directory") pending.push(full);
       else files.push(path.relative(directory, full));
     }
   }
+
   return files.sort();
 });
 
@@ -118,19 +131,24 @@ export const sharedVersion = Effect.fn("PackageManifest.sharedVersion")(function
   packages: ReadonlyArray<WorkspacePackage>,
 ) {
   const versions = new Set(packages.map(({ manifest }) => manifest.version));
+
   if (versions.size !== 1) {
     const specs = packages.map(({ manifest }) => `${manifest.name}@${manifest.version}`);
+
     // Name the packages on each version, except where that is most of them.
     const groups = [...versions].map((version) => {
-      const names = packages
-        .filter(({ manifest }) => manifest.version === version)
-        .map(({ manifest }) => manifest.name);
+      const names = packages.flatMap(({ manifest }) =>
+        manifest.version === version ? [manifest.name] : [],
+      );
+
       return `${version}: ${names.length > 5 ? `${names.length} packages` : names.join(", ")}`;
     });
+
     return yield* new VersionMismatch({
       message: `Packages must share one version; found ${groups.join("; ")}`,
       specs,
     });
   }
+
   return [...versions][0];
 });

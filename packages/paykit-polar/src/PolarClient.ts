@@ -35,9 +35,11 @@ export const POLAR_BASE_URL: Readonly<Record<PolarServer, string>> = {
  */
 export const distilledPolarClient = (config: PolarClientConfig): PolarClient => {
   const baseUrl = config.baseUrl ?? POLAR_BASE_URL[config.server ?? "production"];
+
   // Credentials, the protocol and an HTTP client, provided once: every Polar
   // op needs all three, and a Worker has no `process.env` to read a key from.
   /** A vendor failure is a declined payment the model can record. */
+  // SAFETY: a thrown value is untyped; the SDK's metadata type only declares the two keys it knows, while Polar accepts any.
   const declined = (op: string) => (cause: unknown) =>
     new PaymentDeclined({
       provider: "polar",
@@ -51,6 +53,7 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
     FetchHttpClient.layer,
   );
 
+  // SAFETY: a thrown value is untyped; the SDK's metadata type only declares the two keys it knows, while Polar accepts any.
   return {
     createCheckoutSession: (request) =>
       Polar.checkoutsCreate({
@@ -89,6 +92,7 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         const customer = yield* Polar.customersGetExternal({
           external_id: request.customerExternalId,
         });
+
         const draft = yield* Polar.ordersCreate({
           customer_id: customer.id,
           product_id: request.productId,
@@ -99,7 +103,9 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
             ? {}
             : { metadata: { paykit_command_id: request.commandId } }),
         });
+
         const paid = yield* Polar.ordersFinalize({ id: draft.id });
+
         return { invoiceId: paid.id };
       }).pipe(Effect.mapError(declined("createInvoice")), Effect.provide(live)),
     createRefund: (request) =>

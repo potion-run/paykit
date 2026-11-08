@@ -37,9 +37,11 @@ class UnreadableManifest extends Data.TaggedError("UnreadableManifest")<{
 const nextVersion = (current: string, input: string): Effect.Effect<string, BadVersion> => {
   if (/^\d+\.\d+\.\d+$/.test(input)) return Effect.succeed(input);
   const [major, minor, patch] = current.split(".").map(Number);
+
   if (major === undefined || minor === undefined || patch === undefined) {
     return Effect.fail(new BadVersion({ message: `"${current}" is not a version` }));
   }
+
   switch (input) {
     case "major":
       return Effect.succeed(`${major + 1}.0.0`);
@@ -57,6 +59,7 @@ const nextVersion = (current: string, input: string): Effect.Effect<string, BadV
 const readManifest = Effect.fn("Release.readManifest")(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(file);
+
   const raw = yield* Schema.decodeEffect(Schema.fromJsonString(RawManifest))(text).pipe(
     Effect.mapError(
       (cause) =>
@@ -67,7 +70,9 @@ const readManifest = Effect.fn("Release.readManifest")(function* (file: string) 
         }),
     ),
   );
+
   const version = raw.version;
+
   if (typeof version !== "string") {
     return yield* new UnreadableManifest({
       message: `${file}: package.json has no string version`,
@@ -75,6 +80,7 @@ const readManifest = Effect.fn("Release.readManifest")(function* (file: string) 
       cause: version,
     });
   }
+
   return { raw, version };
 });
 
@@ -83,6 +89,7 @@ const bumpAll = Effect.fn("Release.bump")(function* (input: string) {
   const path = yield* Path.Path;
   const root = path.resolve(import.meta.dirname, "../..");
   const packages = path.join(root, PACKAGES);
+
   const files = (yield* fs.readDirectory(packages))
     .map((entry) => path.join(packages, entry, "package.json"))
     .sort();
@@ -90,12 +97,15 @@ const bumpAll = Effect.fn("Release.bump")(function* (input: string) {
   const manifests = yield* Effect.forEach(files, (file) =>
     Effect.map(readManifest(file), (manifest) => ({ file, ...manifest })),
   );
+
   const versions = new Set(manifests.map((manifest) => manifest.version));
+
   if (versions.size !== 1) {
     return yield* new BadVersion({
       message: `packages disagree about the version: ${[...versions].join(", ")}`,
     });
   }
+
   const current = [...versions][0]!;
   const next = yield* nextVersion(current, input);
 
@@ -117,6 +127,7 @@ const bumpAll = Effect.fn("Release.bump")(function* (input: string) {
 });
 
 const input = process.argv[2];
+
 if (input === undefined) {
   console.error("usage: bump.ts patch|minor|major|x.y.z");
   process.exit(1);

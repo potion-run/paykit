@@ -27,11 +27,13 @@ const tagOfError = (error: CatalogError): string => error._tag as string;
 
 const accepted = (catalogInput: Parameters<typeof defineCatalog>[0]): Catalog | null => {
   const result = defineCatalog(catalogInput);
+
   return Result.isFailure(result) ? null : result.success;
 };
 
 const refusedTag = (catalogInput: Parameters<typeof defineCatalog>[0]): string | null => {
   const result = defineCatalog(catalogInput);
+
   return Result.isFailure(result) ? tagOfError(result.failure) : null;
 };
 
@@ -57,12 +59,15 @@ const ladderOf = (
   currency: string,
 ): ReadonlyArray<PriceBandInput> => {
   const sorted = [...new Set(ceilings)].sort((left, right) => left - right);
+
   const ladder = sorted.map((upTo, index) => ({
     upTo,
     amount: amounts[Math.min(index, amounts.length - 1)]!,
     currency,
   }));
+
   if (ladder.length === 0) ladder.push({ upTo: 1, amount: amounts[0]!, currency });
+
   return [...ladder, { upTo: "inf", amount: amounts[amounts.length - 1]!, currency }];
 };
 
@@ -100,25 +105,32 @@ describe("a price ladder the catalog can express", () => {
         const input = { kind, currency, bands } as const;
         const banded = pricing(input);
         const rejected = refusedTag(bandedCatalog(input, currency));
+
         if (rejected !== null) return false;
 
         if (priceOf(banded, 0) !== 0) return false;
         const sortedCounts = [...counts].sort((a, b) => a - b);
+
         for (const count of sortedCounts) {
           if (priceOf(banded, count) < 0) return false;
+
           // Every count has a band that covers it, so no count prices to zero
           // just because the ladder ended early.
           const chosen =
             banded._tag === "unit"
               ? null
               : banded.bands.find((band) => band.upTo === "inf" || count <= band.upTo);
+
           if (chosen === undefined || chosen === null) return false;
+
           if (kind === "volume") {
             const landed =
               banded._tag === "volume"
                 ? banded.bands.find((band) => band.upTo === "inf" || count <= band.upTo)
                 : undefined;
+
             if (landed === undefined) return false;
+
             if (
               priceOf(banded, count) !==
               Math.ceil(count / (landed.unitPrice.units ?? 1)) * landed.unitPrice.amount
@@ -127,6 +139,7 @@ describe("a price ladder the catalog can express", () => {
             }
           }
         }
+
         if (kind === "graduated") {
           for (let index = 1; index < sortedCounts.length; index += 1) {
             if (priceOf(banded, sortedCounts[index - 1]!) > priceOf(banded, sortedCounts[index]!)) {
@@ -134,7 +147,9 @@ describe("a price ladder the catalog can express", () => {
             }
           }
         }
+
         const resolved = tierOf(accepted(bandedCatalog(input, currency))!, "metered")!;
+
         return same(resolved.grants[0]!.pricing, banded);
       },
       { runs: 100, size: 30 },
@@ -166,6 +181,7 @@ describe("a price ladder the catalog can express", () => {
             { upTo: "inf", amount, currency },
           ],
         } as const;
+
         if (refusedTag(bandedCatalog(outOfOrder, currency)) !== "CatalogPricingBand") return false;
 
         const unterminated = {
@@ -173,10 +189,12 @@ describe("a price ladder the catalog can express", () => {
           currency,
           bands: [{ upTo: first, amount, currency }],
         } as const;
+
         if (refusedTag(bandedCatalog(unterminated, currency)) !== "CatalogPricingBand")
           return false;
 
         const other = currency === "usd" ? "eur" : "usd";
+
         const mismatched = {
           kind,
           currency,
@@ -185,6 +203,7 @@ describe("a price ladder the catalog can express", () => {
             { upTo: "inf", amount, currency },
           ],
         } as const;
+
         return refusedTag(bandedCatalog(mismatched, currency)) === "CatalogPricingCurrency";
       },
       { runs: 80, size: 20 },
@@ -200,6 +219,7 @@ describe("a price ladder the catalog can express", () => {
         { upTo: "inf", amount: 2, currency: "usd" },
       ],
     } as const;
+
     expect(refusedTag(bandedCatalog(rising, "usd"))).toBe("CatalogVolumeRateRises");
   });
 });
@@ -247,6 +267,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
           credits: baseCredits,
           grants: [allowance(messages, { included: baseIncluded })],
         });
+
         const variant = tier({
           id: "annual",
           variantOf: "base",
@@ -274,22 +295,33 @@ describe("a tier can be customized and sold in more than one currency", () => {
                 },
               }),
         });
+
         const resolved = accepted({ features: [messages], tiers: [base, variant] });
+
         if (resolved === null) return false;
         const annual = tierOf(resolved, "annual")!;
         const original = tierOf(resolved, "base")!;
 
         const name = rename ?? "Base";
+
         if (annual.name !== name) return false;
+
         if (original.name !== "Base") return false;
+
         if (annual.price?.amount !== (variantAmount ?? baseAmount)) return false;
+
         if (annual.price?.interval !== (variantAmount === undefined ? "month" : "annual"))
           return false;
+
         if (annual.credits !== (variantCredits ?? baseCredits)) return false;
+
         if (original.credits !== baseCredits) return false;
         const included = variantIncluded ?? baseIncluded;
+
         if ((annual.grants[0] as Allowance).included !== included) return false;
+
         if ((original.grants[0] as Allowance).included !== baseIncluded) return false;
+
         return annual.variantOf === undefined;
       },
       { runs: 100, size: 30 },
@@ -302,6 +334,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
       variantOf: "missing",
       grants: [allowance(messages, { included: 1 })],
     });
+
     expect(refusedTag({ features: [messages], tiers: [orphan] })).toBe("CatalogUnknownVariant");
 
     const first = tier({
@@ -309,11 +342,13 @@ describe("a tier can be customized and sold in more than one currency", () => {
       variantOf: "second",
       grants: [allowance(messages, { included: 1 })],
     });
+
     const second = tier({
       id: "second",
       variantOf: "first",
       grants: [allowance(messages, { included: 1 })],
     });
+
     expect(refusedTag({ features: [messages], tiers: [first, second] })).toBe(
       "CatalogVariantCycle",
     );
@@ -338,17 +373,21 @@ describe("a tier can be customized and sold in more than one currency", () => {
       ),
       ({ baseAmount, baseCurrency, entries }) => {
         const seen = new Set([baseCurrency]);
+
         const additional = entries.filter((entry) => {
           if (seen.has(entry.currency)) return false;
           seen.add(entry.currency);
+
           return true;
         });
+
         const price = {
           amount: baseAmount,
           currency: baseCurrency,
           interval: "month" as const,
           ...(additional.length === 0 ? {} : { additionalCurrencies: additional }),
         };
+
         const source = accepted({
           features: [messages],
           tiers: [
@@ -360,17 +399,21 @@ describe("a tier can be customized and sold in more than one currency", () => {
             }),
           ],
         });
+
         if (source === null) return false;
 
         if (priceFor(price, baseCurrency)?.amount !== baseAmount) return false;
+
         for (const entry of additional) {
           if (priceFor(price, entry.currency)?.amount !== entry.amount) return false;
         }
+
         for (const unsold of ["usd", "eur", "gbp"] as const) {
           const expected =
             unsold === baseCurrency
               ? baseAmount
               : (additional.find((entry) => entry.currency === unsold)?.amount ?? null);
+
           if ((priceFor(price, unsold)?.amount ?? null) !== expected) return false;
         }
 
@@ -387,6 +430,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
             }),
           ],
         });
+
         return duplicate === null;
       },
       { runs: 100, size: 30 },
@@ -404,6 +448,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
       },
       grants: [allowance(messages, { included: 10 })],
     });
+
     expect(refusedTag({ features: [messages], tiers: [duplicateBase] })).toBe(
       "CatalogAdditionalCurrency",
     );
@@ -421,6 +466,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
       },
       grants: [allowance(messages, { included: 10 })],
     });
+
     expect(refusedTag({ features: [messages], tiers: [twice] })).toBe("CatalogAdditionalCurrency");
   });
 
@@ -435,6 +481,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
       },
       grants: [allowance(messages, { included: 10 })],
     });
+
     const source = Effect.runSync(catalog({ features: [messages], tiers: [pro] }));
     expect(priceFor(tierOf(source, "pro")!.price!, "eur")?.amount).toBe(1_800);
     expect(priceFor(tierOf(source, "pro")!.price!, "gbp")).toBe(null);
@@ -466,6 +513,7 @@ describe("a standing is quoted in the currency it was sold in", () => {
           interval: "month" as const,
           additionalCurrencies: [{ currency: "eur", amount: eur }],
         });
+
         const source = accepted({
           features: [messages],
           tiers: [
@@ -481,9 +529,11 @@ describe("a standing is quoted in the currency it was sold in", () => {
             }),
           ],
         });
+
         if (source === null) return false;
 
         const base = subscribedIn(source, "pro");
+
         const standing = {
           ...base,
           currency: soldIn,
@@ -493,18 +543,26 @@ describe("a standing is quoted in the currency it was sold in", () => {
             interval: "month" as const,
           },
         };
+
         const targetAmount = soldIn === "usd" ? scaleUsd : scaleEur;
         const plan = planChangeTier(source, "scale", standing, start);
+
         if (plan === null || plan.input.price === undefined) return false;
+
         if (plan.input.price.currency !== soldIn) return false;
+
         if (plan.input.price.amount !== targetAmount) return false;
+
         if (plan.proration === null || plan.proration.currency !== soldIn) return false;
+
         if (plan.proration.due !== targetAmount - (soldIn === "usd" ? proUsd : proEur)) {
           return false;
         }
 
         const scheduled = scheduleTierChangeInputOf(source, "scale", soldIn);
+
         if (scheduled === null || scheduled.price === undefined) return false;
+
         if (scheduled.price.currency !== soldIn || scheduled.price.amount !== targetAmount) {
           return false;
         }

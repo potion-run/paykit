@@ -7,6 +7,7 @@ export const ProrationPeriod = Schema.Struct({
   start: Schema.DateTimeUtc,
   end: Schema.DateTimeUtc,
 });
+
 export type ProrationPeriod = typeof ProrationPeriod.Type;
 
 /** What a mid-cycle tier change costs. Every amount is a minor unit. */
@@ -17,6 +18,7 @@ export const Proration = Schema.Struct({
   /** `charge - credit`: negative means the account is owed. */
   due: Schema.Int,
 });
+
 export type Proration = typeof Proration.Type;
 
 /**
@@ -35,10 +37,13 @@ export const prorateQuantity = (input: {
 }): Proration | null => {
   const billable = (quantity: number): number => Math.max(0, quantity - input.included);
   const delta = billable(input.to) - billable(input.from);
+
   if (delta === 0) return null;
   const fraction = unusedFraction(input.period, input.at);
   const amount = Math.round(Math.abs(delta) * input.unitPrice.amount * fraction);
+
   if (amount === 0) return null;
+
   return delta > 0
     ? { currency: input.unitPrice.currency, credit: 0, charge: amount, due: amount }
     : { currency: input.unitPrice.currency, credit: amount, charge: 0, due: -amount };
@@ -49,8 +54,10 @@ export const unusedFraction = (period: ProrationPeriod, at: DateTime.Utc): numbe
   const start = DateTime.toEpochMillis(period.start);
   const end = DateTime.toEpochMillis(period.end);
   const now = DateTime.toEpochMillis(at);
+
   if (end <= start) return 0;
   const fraction = (end - now) / (end - start);
+
   return Math.min(1, Math.max(0, fraction));
 };
 
@@ -70,16 +77,21 @@ export const prorate = (input: {
   readonly at: DateTime.Utc;
 }): Proration | null => {
   const { from, to } = input;
+
   if (from === undefined && to === undefined) return null;
+
   if (from !== undefined && to !== undefined && from.currency !== to.currency) return null;
   const currency = from?.currency ?? to!.currency;
+
   if (from !== undefined && to !== undefined && from.interval !== to.interval) {
     // A cadence change is not a mid-cycle proration: the next period owns it.
     return null;
   }
+
   const fraction = unusedFraction(input.period, input.at);
   const credit = from === undefined ? 0 : portion(from.amount, fraction);
   const charge = to === undefined ? 0 : portion(to.amount, fraction);
+
   return { currency, credit, charge, due: charge - credit };
 };
 

@@ -89,6 +89,7 @@ export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray
 
 const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
+
   return [
     createTable(scope, BILLING_TABLES.event, [
       "aggregate TEXT NOT NULL",
@@ -169,8 +170,10 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
 const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
   const name = scope.dialect === "postgres" && scope.schema !== undefined;
+
   const table = (logical: string) =>
     name ? `${quoteIdentifier(scope.schema!)}.${quoteIdentifier(logical)}` : logical;
+
   return [
     `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewState)} (
       view TEXT NOT NULL,
@@ -258,6 +261,7 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
  */
 const backfillStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
+
   return [
     `ALTER TABLE ${tableName(BILLING_TABLES.viewEntry, scope)} ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`,
     createTable(scope, BILLING_TABLES.backfill, [
@@ -278,10 +282,13 @@ const backfillStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
  */
 const outboxSequenceStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
+
   const seq =
     scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+
   const outbox = tableName(BILLING_TABLES.outbox, scope);
   const next = tableName("billing_outbox_next", scope);
+
   return [
     createTable(scope, "billing_outbox_next", [
       `seq ${seq}`,
@@ -307,8 +314,10 @@ const outboxSequenceStatements = (scope: Required<MigrationScope>): ReadonlyArra
  */
 const viewOutboxStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
+
   const seq =
     scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+
   return [
     createTable(scope, BILLING_TABLES.viewOutbox, [
       `seq ${seq}`,
@@ -342,6 +351,7 @@ const viewOutboxStatements = (scope: Required<MigrationScope>): ReadonlyArray<st
  */
 export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<MigrationFile> => {
   const scope = scopeOf(input);
+
   return [
     fileOf("0001_init", initStatements(scope)),
     fileOf("0002_consumer_backfill", backfillStatements(scope)),
@@ -364,6 +374,7 @@ export const readMigrationFiles = (
   input?: Partial<MigrationScope>,
 ): Effect.Effect<ReadonlyArray<MigrationRecord>> => {
   const scope = scopeOf(input);
+
   return Effect.forEach(migrationFiles(scope), (file) =>
     Effect.map(sha256(file.sql), (hash) => ({
       name: file.id,
@@ -390,23 +401,30 @@ export const readMigrationFiles = (
  */
 export const migrateDryRun = (input?: Partial<MigrationScope>): string => {
   const scope = scopeOf(input);
+
   const lines = [
     `-- paykit billing schema (${scope.dialect}${scope.dialect === "postgres" ? `, schema ${scope.schema}` : ""})`,
     `-- bookkeeping: ${scope.table} (managed by @alchemy.run/sql/Migrations)`,
     ...schemaStatements(scope),
   ];
+
   for (const file of migrationFiles(scope)) {
     lines.push(`-- ${file.id}`, file.sql);
   }
+
   return lines.join("\n");
 };
 
 const describeCause = (cause: unknown): string => {
   if (typeof cause === "object" && cause !== null) {
+    // SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
     const { message, _tag } = cause as { message?: unknown; _tag?: unknown };
+
     if (typeof message === "string" && message.length > 0) return message;
+
     if (typeof _tag === "string") return _tag;
   }
+
   return String(cause);
 };
 
@@ -415,6 +433,7 @@ const describeCause = (cause: unknown): string => {
  * executor. `batch` is the atomic unit both Alchemy and paykit rely on: a
  * migration's statements and its bookkeeping row commit together.
  */
+// SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
 const migrationExecutor = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
@@ -499,6 +518,7 @@ const useSearchPath = <A, E, R>(
   Effect.gen(function* () {
     const previous = yield* readSearchPath(sql);
     yield* tryRun(sql, "SELECT set_config('search_path', ?, false)", [schema]);
+
     return yield* effect.pipe(
       Effect.ensuring(
         previous === undefined
@@ -520,6 +540,7 @@ const normalizeScope = (
     schema: input?.schema,
     table: input?.table,
   });
+
   if (scope.dialect === "postgres" && !isSchemaName(scope.schema)) {
     return Effect.fail(
       new MigrationError({
@@ -527,6 +548,7 @@ const normalizeScope = (
       }),
     );
   }
+
   if (!/^[a-z_][a-z0-9_]*$/.test(scope.table)) {
     return Effect.fail(
       new MigrationError({
@@ -534,6 +556,7 @@ const normalizeScope = (
       }),
     );
   }
+
   return Effect.succeed(scope);
 };
 
@@ -544,6 +567,7 @@ const normalizeScope = (
  */
 const recoverable = (cause: unknown): boolean => {
   const message = describeCause(cause).toLowerCase();
+
   return (
     message.includes("no such table") ||
     message.includes("no such column") ||
@@ -558,6 +582,7 @@ const readAppliedNames = (
   scope: Required<MigrationScope>,
 ): ReadonlyArray<string> => {
   const table = tableName(scope.table, scope);
+
   try {
     return sql
       .all<{ name: string }>(`SELECT name FROM ${table} ORDER BY name ASC`)
@@ -567,6 +592,7 @@ const readAppliedNames = (
     // A permission or connection failure is not "fresh database" and must
     // surface, or a migration run would replay over a database it cannot read.
     if (!recoverable(cause)) throw cause;
+
     // The oldest Alchemy shape carries the name in `id`, so read that too —
     // otherwise a legacy upgrade would look like a fresh application.
     try {
@@ -575,6 +601,7 @@ const readAppliedNames = (
         .map((row) => row.name);
     } catch (fallback) {
       if (!recoverable(fallback)) throw fallback;
+
       return [];
     }
   }
@@ -630,6 +657,7 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
         yield* tryExec(sql, statement);
       }
     }
+
     yield* applyAlchemyFormat({ executor, table: scope.table, records }).pipe(
       Effect.mapError((error) => annotate(error, pending)),
     );
@@ -649,4 +677,5 @@ export {
   MigrationHistoryConflictError,
   RewrittenMigrationHistoryError,
 } from "@alchemy.run/sql/Migrations";
+
 export type { MigrationApplyError, MigrationRecord } from "@alchemy.run/sql/Migrations";

@@ -60,6 +60,7 @@ test.provider.skipIf(!hasKey)(
       const created = yield* GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
         Effect.provide(live(key)),
       );
+
       expect(created.data.length).toBe(1);
       const createdPrice = created.data[0];
       expect(createdPrice?.unit_amount).toBe(1900);
@@ -72,11 +73,13 @@ test.provider.skipIf(!hasKey)(
       const second = yield* stack.deploy(
         StripePrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
       );
+
       expect(second.prices.pro).toBe(lookupKey);
 
       const replaced = yield* GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
         Effect.provide(live(key)),
       );
+
       expect(replaced.data[0]?.unit_amount).toBe(2400);
       expect(replaced.data[0]?.id).not.toBe(createdPrice?.id);
 
@@ -86,6 +89,7 @@ test.provider.skipIf(!hasKey)(
       const previous = yield* GetPrice({ price: createdPrice!.id! }).pipe(
         Effect.provide(live(key)),
       );
+
       expect(previous.id).toBe(createdPrice?.id);
 
       // A tier that leaves the catalog is retained the same way.
@@ -107,6 +111,7 @@ test.provider.skipIf(!hasKey)("creates a one-time price for a one-off pack", (st
         tiers: { credits: { price: packPrice, kind: "one_off" } },
       }),
     );
+
     const creditKey = sold.prices.credits;
 
     const created = yield* GetPrices({
@@ -114,6 +119,7 @@ test.provider.skipIf(!hasKey)("creates a one-time price for a one-off pack", (st
       active: true,
       limit: 1,
     }).pipe(Effect.provide(live(key)));
+
     const price = created.data[0];
     expect(price?.unit_amount).toBe(9_900);
     // A pack is charged once; a recurring price would make `mode=payment`
@@ -141,11 +147,13 @@ test.provider.skipIf(!hasKey)(
       );
 
       const meteredKey = sold.usage.pro.messages;
+
       const created = yield* GetPrices({
         lookup_keys: [meteredKey],
         active: true,
         limit: 1,
       }).pipe(Effect.provide(live(key)));
+
       const price = created.data[0];
       expect(price?.unit_amount).toBe(2);
       expect(price?.currency).toBe("usd");
@@ -183,6 +191,7 @@ test.provider.skipIf(!hasKey)(
       } as const;
 
       const sold = yield* stack.deploy(StripePrices("Prices", { tiers }));
+
       const priceOf = (lookupKey: string) =>
         GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
           Effect.provide(live(key)),
@@ -223,6 +232,7 @@ test.provider.skipIf(!hasKey)(
           },
         }),
       );
+
       const replaced = yield* priceOf(changed.usage.ladder.messages);
       expect(replaced?.id).not.toBe(ladderPrice?.id);
       const previous = yield* GetPrice({ price: ladderPrice!.id! }).pipe(Effect.provide(live(key)));

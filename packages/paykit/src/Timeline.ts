@@ -9,6 +9,7 @@ import { Price } from "./Tier.ts";
  * order, so a consumer can decode one entry without knowing its tag first.
  */
 export const AccountEvent = Schema.Union([...Subscription.definition.events]);
+
 export type AccountEvent = typeof AccountEvent.Type;
 
 /**
@@ -32,9 +33,11 @@ export const TimelineKind = Schema.Literals([
   "payment-failed",
   "topup-failed",
   "refund",
+  "refund-reversed",
   "proration",
   "period",
 ]);
+
 export type TimelineKind = typeof TimelineKind.Type;
 
 /**
@@ -79,6 +82,7 @@ export const TimelineEntry = Schema.Struct({
   /** Why a payment failed. */
   reason: Schema.optionalKey(Schema.String),
 });
+
 export type TimelineEntry = typeof TimelineEntry.Type;
 
 /** What one period recorded for one feature. Units and credits, never money's currency. */
@@ -96,6 +100,7 @@ export const TimelineFeature = Schema.Struct({
   /** Units this period's holds returned unspent. */
   released: Schema.Int,
 });
+
 export type TimelineFeature = typeof TimelineFeature.Type;
 
 /** What one period did to the credit pool. */
@@ -111,6 +116,7 @@ export const TimelineCredits = Schema.Struct({
   /** The pool when the period last moved it, when any event in it did. */
   balanceAfter: Schema.optionalKey(Schema.Int),
 });
+
 export type TimelineCredits = typeof TimelineCredits.Type;
 
 /** One period's rollup, oldest first, with its per-feature and credit totals. */
@@ -120,6 +126,7 @@ export const TimelinePeriod = Schema.Struct({
   features: Schema.Record(Schema.String, TimelineFeature),
   credits: TimelineCredits,
 });
+
 export type TimelinePeriod = typeof TimelinePeriod.Type;
 
 /**
@@ -138,6 +145,7 @@ export const UsageTimeline = Schema.Struct({
   /** Whether the last period is still open. A terminal close leaves it closed. */
   open: Schema.Boolean,
 });
+
 export type UsageTimeline = typeof UsageTimeline.Type;
 
 /** One event to fold: the event, and the sequence and time the log stamped it with. */
@@ -201,11 +209,14 @@ const openPeriod = (
   end: DateTime.Utc,
 ): UsageTimeline => {
   const current = currentPeriod(timeline);
+
   if (current !== undefined && sameInstant(current.start, start)) {
     return replaceLastPeriod(timeline, { ...current, end });
   }
+
   const previous = timeline.periods[timeline.periods.length - 1];
   const carried = previous?.credits.balanceAfter;
+
   return {
     ...timeline,
     open: true,
@@ -243,6 +254,7 @@ const withPeriod = (
   change: (period: TimelinePeriod) => TimelinePeriod,
 ): UsageTimeline => {
   const period = currentPeriod(timeline);
+
   return period === undefined ? timeline : replaceLastPeriod(timeline, change(period));
 };
 
@@ -269,6 +281,7 @@ const stamped = (
  */
 export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): UsageTimeline => {
   const { event, envelope } = input;
+
   if (envelope.seq <= timeline.lastSeq) return timeline;
 
   const period = currentPeriod(timeline);
@@ -280,6 +293,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
       const opened = openPeriod(timeline, event.periodStart, event.periodEnd);
       const openedPeriod = currentPeriod(opened)!;
       const granted = event.credits - (event.prepaidCredits ?? 0);
+
       const entry: TimelineEntry = {
         ...stamped(input, openedPeriod),
         kind: event._tag === "SubscriptionActivated" ? "started" : "trial",
@@ -288,6 +302,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         creditsAfter: event.credits,
         ...(event.price === undefined ? {} : { price: event.price }),
       };
+
       return appended(
         replaceLastPeriod(
           opened,
@@ -304,10 +319,12 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
       // The trial's period is now longer. It moves no counter, so it is not an
       // entry; the period rollup's end is what a reader sees move.
       const current = currentPeriod(timeline);
+
       const extended =
         current === undefined
           ? timeline
           : replaceLastPeriod(timeline, { ...current, end: event.periodEnd });
+
       return { ...extended, lastSeq: envelope.seq };
     }
 
@@ -319,6 +336,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         creditsAfter: event.credits,
         ...(event.priceAfter === undefined ? {} : { price: event.priceAfter }),
       };
+
       return appended(
         withPeriod(timeline, (value) => withCredits(value, { balanceAfter: event.credits })),
         entry,
@@ -335,9 +353,11 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         creditsAfter: event.creditsAfter,
         ...(event.charge === undefined ? {} : { charge: event.charge }),
       };
+
       return appended(
         withPeriod(timeline, (value) => {
           const feature = value.features[event.feature] ?? emptyFeature;
+
           return withCredits(
             withFeature(value, event.feature, {
               units: feature.units + event.amount,
@@ -363,9 +383,11 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         amount: event.amount,
         credits: event.cost,
       };
+
       return appended(
         withPeriod(timeline, (value) => {
           const feature = value.features[event.feature] ?? emptyFeature;
+
           return withFeature(value, event.feature, { held: feature.held + event.amount });
         }),
         entry,
@@ -381,9 +403,11 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         amount: event.amount,
         credits: event.cost,
       };
+
       return appended(
         withPeriod(timeline, (value) => {
           const feature = value.features[event.feature] ?? emptyFeature;
+
           return withFeature(value, event.feature, {
             settled: feature.settled + event.amount,
             released: feature.released + event.released,
@@ -402,9 +426,11 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         amount: event.amount,
         credits: event.cost,
       };
+
       return appended(
         withPeriod(timeline, (value) => {
           const feature = value.features[event.feature] ?? emptyFeature;
+
           return withFeature(value, event.feature, { released: feature.released + event.amount });
         }),
         entry,
@@ -418,6 +444,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         credits: event.amount,
         creditsAfter: event.balanceAfter,
       };
+
       return appended(
         withPeriod(timeline, (value) =>
           withCredits(value, {
@@ -440,6 +467,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         ...(event.invoiceId === undefined ? {} : { invoiceId: event.invoiceId }),
         ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
       };
+
       return appended(
         withPeriod(timeline, (value) =>
           withCredits(value, {
@@ -458,6 +486,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         credits: event.amount,
         creditsAfter: event.balanceAfter,
       };
+
       return appended(
         withPeriod(timeline, (value) =>
           withCredits(value, {
@@ -476,6 +505,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         credits: event.amount,
         creditsAfter: event.balanceAfter,
       };
+
       return appended(
         withPeriod(timeline, (value) =>
           withCredits(value, {
@@ -494,6 +524,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         charge: event.amount,
         currency: event.currency,
       };
+
       return appended(timeline, entry);
     }
 
@@ -508,6 +539,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         refundId: event.refundId,
         ...(event.reason === undefined ? {} : { reason: event.reason }),
       };
+
       return appended(timeline, entry);
     }
 
@@ -517,6 +549,22 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         kind: "payment-failed",
         reason: event.reason,
       };
+
+      return appended(timeline, entry);
+    }
+
+    case "RefundReversed": {
+      // Money coming back is its own fact, and not a negative refund: the amount
+      // that returned, named by the refund it undoes (ADR 0030).
+      const entry: TimelineEntry = {
+        ...stamped(input, periodOf),
+        kind: "refund-reversed",
+        charge: event.amount,
+        currency: event.currency,
+        refundId: event.refundId,
+        ...(event.reason === undefined ? {} : { reason: event.reason }),
+      };
+
       return appended(timeline, entry);
     }
 
@@ -533,6 +581,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
           ? {}
           : { price: event.price, currency: event.price.currency }),
       };
+
       return appended(timeline, entry);
     }
 
@@ -544,6 +593,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         currency: event.currency,
         invoiceId: event.invoiceId,
       };
+
       return appended(timeline, entry);
     }
 
@@ -551,6 +601,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
       const closing = { start: event.periodStart, end: event.periodEnd };
       const entry: TimelineEntry = { ...stamped(input, closing), kind: "period" };
       const closed: UsageTimeline = { ...appended(timeline, entry), open: false };
+
       return isTerminalStatus(event.statusAfter)
         ? closed
         : {

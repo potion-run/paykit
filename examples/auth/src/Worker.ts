@@ -47,6 +47,7 @@ export const serve = Effect.gen(function* () {
       // The Session middleware resolves the cookie and pins an account actor to
       // its own id. The Admin middleware requires an admin actor.
       if (path.startsWith("/api")) return yield* tenant.fetch;
+
       if (path.startsWith("/admin")) return yield* admin.fetch;
 
       // A purchase is an operation, not a command on the Api: it asks the
@@ -61,28 +62,35 @@ export const serve = Effect.gen(function* () {
             payload: null,
           }),
         );
+
         if (Result.isFailure(resolved)) {
           return HttpServerResponse.jsonUnsafe(
             { error: resolved.failure._tag },
             { status: Paykit.httpStatus(resolved.failure) },
           );
         }
+
         const tier = url.searchParams.get("tier");
+
         if (tier === null) {
           return HttpServerResponse.text("?tier= is required", { status: 400 });
         }
+
         const subscribe = yield* subscribeOf(resolved.success.id);
         const purchase = yield* Effect.result(subscribe({ tier }));
+
         if (Result.isFailure(purchase)) {
           return HttpServerResponse.jsonUnsafe(
             { error: purchase.failure._tag },
             { status: Paykit.httpStatus(purchase.failure) },
           );
         }
+
         return HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
       }
 
       if (path === "/") return HttpServerResponse.html(Page);
+
       return HttpServerResponse.text("Not Found", { status: 404 });
     }),
   };
@@ -110,6 +118,7 @@ export default class AuthWorker extends Cloudflare.Worker<AuthWorker>()(
   { main: import.meta.url, compatibility: { flags: ["nodejs_compat"] } },
   Effect.gen(function* () {
     const server = yield* serve;
+
     return { fetch: server.fetch };
   }).pipe(Effect.provide(World), Effect.orDie),
 ) {}

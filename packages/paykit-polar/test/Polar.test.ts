@@ -18,21 +18,25 @@ const recording = (asked: Array<Record<string, unknown>>): PolarClient => ({
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: "https://polar.sh/checkout/cs_1" };
     }),
   createCustomerSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: "https://polar.sh/portal/cs_1" };
     }),
   createInvoice: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { invoiceId: "ord_proration_1" };
     }),
   createRefund: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { refundId: "re_test" };
     }),
 });
@@ -44,6 +48,7 @@ describe("Polar as a paykit provider", () => {
   it.effect("sells a tier through one checkout, with the product the catalog maps", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Polar({
         accessToken: "polar_t",
         origin: "https://app.example.com",
@@ -61,6 +66,7 @@ describe("Polar as a paykit provider", () => {
           });
         }),
       );
+
       expect(session.url).toContain("polar.sh");
       expect(asked[0]).toMatchObject({
         productId: "prod_123",
@@ -75,6 +81,7 @@ describe("Polar as a paykit provider", () => {
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
       const seatPrice = { amount: 1_000, currency: "usd" } as const;
+
       const provider = Polar({
         accessToken: "polar_t",
         origin: "https://app.example.com",
@@ -86,6 +93,7 @@ describe("Polar as a paykit provider", () => {
           setSubscriptionSeats: (request) =>
             Effect.sync(() => {
               asked.push(request as never);
+
               return {};
             }),
         },
@@ -94,6 +102,7 @@ describe("Polar as a paykit provider", () => {
       expect(provider.capabilities.has("quantity")).toBe(true);
       expect(provider.seatScope).toBe("subscription");
       expect(provider.seatPrices).toEqual({ pro: { seats: seatPrice } });
+
       const result = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -108,6 +117,7 @@ describe("Polar as a paykit provider", () => {
           });
         }),
       );
+
       // No invoice id: the local collector opens the order for an immediate
       // change, and Polar's next renewal bills the new count.
       expect(result).toEqual({});
@@ -119,6 +129,7 @@ describe("Polar as a paykit provider", () => {
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
       const unitPrice = { amount: 2, currency: "usd" } as const;
+
       const provider = Polar({
         accessToken: "polar_t",
         origin: "https://app.example.com",
@@ -129,6 +140,7 @@ describe("Polar as a paykit provider", () => {
           reportUsage: (request) =>
             Effect.sync(() => {
               asked.push(request as never);
+
               return {};
             }),
         },
@@ -165,18 +177,21 @@ describe("Polar as a paykit provider", () => {
   it.effect("opens the customer portal through a customer session", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Polar({
         accessToken: "polar_t",
         origin: "https://app.example.com",
         tiers,
         client: recording(asked),
       });
+
       const portal = yield* runWith(
         provider,
         Effect.gen(function* () {
           return yield* (yield* Payments).createPortal({ account: "acct_1" });
         }),
       );
+
       expect(portal.url).toContain("portal");
       expect(asked[0]).toMatchObject({ customerExternalId: "acct_1" });
     }),
@@ -200,6 +215,7 @@ describe("Polar as a paykit provider", () => {
             ),
         },
       });
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -212,7 +228,9 @@ describe("Polar as a paykit provider", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
+
       if ((error as PaymentDeclined)._tag === "PaymentDeclined")
         expect((error as PaymentDeclined).message).toContain("insufficient_funds");
     }),
@@ -225,6 +243,7 @@ describe("Polar as a paykit provider", () => {
         origin: "https://app.example.com",
         client: recording([]),
       });
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -237,6 +256,7 @@ describe("Polar as a paykit provider", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
     }),
   );
@@ -248,6 +268,7 @@ describe("Polar as a paykit provider", () => {
       tiers,
       client: recording([]),
     });
+
     expect(provider.kind).toBe("merchant_of_record");
     expect(provider.capabilities.has("checkout")).toBe(true);
     // Polar owns tax and receipts; paykit still owns the entitlement.
@@ -281,6 +302,7 @@ describe("Polar as a paykit provider", () => {
   it.effect("bills a one-off order when an invoice product is configured", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Polar({
         accessToken: "polar_t",
         origin: "https://app.example.com",
@@ -288,7 +310,9 @@ describe("Polar as a paykit provider", () => {
         invoiceProductId: "prod_proration",
         client: recording(asked),
       });
+
       expect(provider.capabilities.has("invoice")).toBe(true);
+
       const invoice = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -299,6 +323,7 @@ describe("Polar as a paykit provider", () => {
           });
         }),
       );
+
       expect(invoice.invoiceId).toBe("ord_proration_1");
       expect(asked[0]).toMatchObject({
         customerExternalId: "acct_1",
@@ -319,11 +344,14 @@ describe("Polar as a paykit provider", () => {
         webhookSecret: Redacted.make(secret),
         client: recording([]),
       });
+
       expect(provider.webhook?.provider).toBe("polar");
       const timestamp = String(Math.floor((yield* Clock.currentTimeMillis) / 1000));
+
       const decoded = yield* provider.webhook!.decode(
         request({ timestamp, body: { type: "product.updated", data: { id: "p_1" } } }),
       );
+
       expect(decoded._tag).toBe("None");
 
       const bare = Polar({
@@ -331,6 +359,7 @@ describe("Polar as a paykit provider", () => {
         origin: "https://app.example.com",
         client: recording([]),
       });
+
       expect(bare.webhook).toBe(undefined);
     }),
   );
@@ -342,6 +371,7 @@ describe("Polar as a paykit provider", () => {
       tiers,
       client: recording([]),
     });
+
     // A capability this deployment did not configure must not be advertised.
     expect(provider.capabilities.has("invoice")).toBe(false);
     expect(ProviderCapabilityMissing).toBeDefined();

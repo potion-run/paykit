@@ -37,23 +37,29 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const ai = feature({ id: "ai", name: "AI", creditRates: { default: 1, "gpt-large": 10 } });
+
 const creditsTier = tier({
   id: "credits",
   price: { amount: 1900, currency: "usd", interval: "month" },
   credits: 50_000,
   grants: [allowance(messages, { included: 100 })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [ai, messages], tiers: [proTier, creditsTier] }),
 );
+
 const pro = allowancesOf(testCatalog, "pro")!;
 const creditsTerms = creditTermsOf(testCatalog, "credits")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const annualPrice = { amount: 19_000, currency: "usd", interval: "annual" as const };
+
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
+
 const account = Subscription.ref("acct_schedule");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -78,6 +84,7 @@ const activated = new SubscriptionActivated({
 });
 
 const creditsAllowances = allowancesOf(testCatalog, "credits")!;
+
 const creditsActivated = new SubscriptionActivated({
   tier: "credits",
   allowances: creditsAllowances,

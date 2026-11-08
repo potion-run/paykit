@@ -69,6 +69,7 @@ export const usageOutcome = (
   request: TrackUsageRequest,
 ): TrackUsageResult => {
   const feature = state?.features[request.feature];
+
   const rate =
     feature?.creditRates === undefined
       ? 0
@@ -76,6 +77,7 @@ export const usageOutcome = (
           dimension: request.dimension,
           properties: request.properties,
         });
+
   return {
     remaining: feature?.remaining ?? null,
     used: feature?.used ?? 0,

@@ -59,6 +59,7 @@ const keysOf = (secret: string): ReadonlyArray<Uint8Array> => {
   const body = secret.startsWith("whsec_") ? secret.slice("whsec_".length) : secret;
   const standard = Result.getOrNull(Base64.decode(body));
   const legacy = new TextEncoder().encode(secret);
+
   return standard === null ? [legacy] : [standard, legacy];
 };
 
@@ -77,32 +78,40 @@ const verifySignature = (input: {
 }): Effect.Effect<void, WebhookSignatureInvalid> =>
   Effect.gen(function* () {
     const seconds = Number(input.timestamp);
+
     if (!Number.isFinite(seconds)) {
       return yield* new WebhookSignatureInvalid({
         provider: "polar",
         reason: "webhook-timestamp is not a number",
       });
     }
+
     const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+
     if (Math.abs(now - seconds) > input.toleranceSeconds) {
       return yield* new WebhookSignatureInvalid({
         provider: "polar",
         reason: "webhook-timestamp is outside the tolerance",
       });
     }
+
     const mac = yield* Mac.Mac;
     const signed = new TextEncoder().encode(`${input.id}.${input.timestamp}.${input.body}`);
+
     // Every `v1` entry, decoded: `verify` compares in constant time, where
     // comparing the base64 strings would leak a matching prefix.
     const given = signaturesOf(input.signature)
       .map((entry) => Result.getOrNull(Base64.decode(entry)))
       .filter((tag): tag is Uint8Array => tag !== null);
+
     for (const bytes of keysOf(input.secret)) {
       const key = yield* Mac.key(Mac.hmacSha256, bytes);
+
       for (const tag of given) {
         if (yield* mac.verify(key, tag, signed)) return;
       }
     }
+
     return yield* new WebhookSignatureInvalid({
       provider: "polar",
       reason: "webhook-signature does not match",
@@ -148,6 +157,7 @@ const header = (headers: Readonly<Record<string, string>>, name: string): string
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === name) return value;
   }
+
   return undefined;
 };
 
@@ -191,10 +201,12 @@ export const polarWebhook = (
   // no plain entry matched.
   const byProduct = new Map<string, string>();
   const deferred: Array<readonly [string, PolarTier]> = [];
+
   for (const [tier, mapped] of Object.entries(props.tiers ?? {})) {
     if (typeof mapped.productId === "string") byProduct.set(mapped.productId, tier);
     else deferred.push([tier, mapped]);
   }
+
   const secret = Redacted.value(props.secret);
   const toleranceSeconds = props.toleranceSeconds ?? 300;
 
@@ -202,24 +214,28 @@ export const polarWebhook = (
     const id = header(request.headers, "webhook-id");
     const timestamp = header(request.headers, "webhook-timestamp");
     const signature = header(request.headers, "webhook-signature");
+
     if (id === undefined) {
       return yield* new WebhookSignatureInvalid({
         provider: "polar",
         reason: "missing webhook-id header",
       });
     }
+
     if (timestamp === undefined) {
       return yield* new WebhookSignatureInvalid({
         provider: "polar",
         reason: "missing webhook-timestamp header",
       });
     }
+
     if (signature === undefined) {
       return yield* new WebhookSignatureInvalid({
         provider: "polar",
         reason: "missing webhook-signature header",
       });
     }
+
     yield* verifySignature({
       id,
       timestamp,
@@ -232,21 +248,26 @@ export const polarWebhook = (
     const envelope = yield* Schema.decodeEffect(Envelope)(request.body).pipe(
       Effect.mapError(() => new WebhookInvalid({ event: id, field: "payload" })),
     );
+
     const invalid = (field: string) => new WebhookInvalid({ event: id, field });
     const none = Option.none<WebhookEvent>();
+
     // A product no tier maps is not a standing change: the event is dropped
     // rather than refused, so an unrelated one-off product does not make the
     // endpoint retry forever. A tier is never invented.
     const tierOf = (productId: string | null): Effect.Effect<{ readonly tier?: string }> => {
       if (productId === null) return Effect.succeed({});
       const known = byProduct.get(productId);
+
       if (known !== undefined) return Effect.succeed({ tier: known });
+
       return Effect.gen(function* () {
         for (const [tier, mapped] of deferred) {
           if ((yield* resolvePolarProductId(mapped.productId)) === productId) {
             return { tier };
           }
         }
+
         return {};
       });
     };
@@ -256,9 +277,12 @@ export const polarWebhook = (
         const checkout = yield* Schema.decodeUnknownEffect(CheckoutPayload)(envelope.data).pipe(
           Effect.mapError(() => invalid("payload")),
         );
+
         if (checkout.status !== "succeeded") return none;
         const account = checkout.external_customer_id;
+
         if (account === null || account === undefined) return yield* invalid("account");
+
         return Option.some({
           id,
           provider: "polar",
@@ -274,8 +298,11 @@ export const polarWebhook = (
         const order = yield* Schema.decodeUnknownEffect(OrderPayload)(envelope.data).pipe(
           Effect.mapError(() => invalid("payload")),
         );
+
         const account = order.customer.external_id;
+
         if (account === null || account === undefined) return yield* invalid("account");
+
         return Option.some({
           id,
           provider: "polar",
@@ -291,8 +318,11 @@ export const polarWebhook = (
         const subscription = yield* Schema.decodeUnknownEffect(SubscriptionPayload)(
           envelope.data,
         ).pipe(Effect.mapError(() => invalid("payload")));
+
         const account = subscription.customer.external_id;
+
         if (account === null || account === undefined) return yield* invalid("account");
+
         return Option.some({
           id,
           provider: "polar",
@@ -310,8 +340,11 @@ export const polarWebhook = (
         const subscription = yield* Schema.decodeUnknownEffect(SubscriptionPayload)(
           envelope.data,
         ).pipe(Effect.mapError(() => invalid("payload")));
+
         const account = subscription.customer.external_id;
+
         if (account === null || account === undefined) return yield* invalid("account");
+
         return Option.some({
           id,
           provider: "polar",

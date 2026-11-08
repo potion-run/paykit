@@ -20,6 +20,7 @@ export const UsageLine = Schema.Struct({
   unitPrice: UnitPrice,
   quantity: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
 });
+
 export type UsageLine = typeof UsageLine.Type;
 
 /** A provider did not implement the operation a binding asked for. */
@@ -61,6 +62,7 @@ export const PaymentCapability = Schema.Literals([
    */
   "quantity",
 ]);
+
 export type PaymentCapability = typeof PaymentCapability.Type;
 
 export const PaymentCapabilities = Schema.Array(PaymentCapability);
@@ -232,6 +234,7 @@ export const MoneyProviderKind = Schema.Literals([
   "manual",
   "memory",
 ]);
+
 export type MoneyProviderKind = typeof MoneyProviderKind.Type;
 
 /**
@@ -339,7 +342,9 @@ export const providerFor = (
 ): MoneyProvider | null => {
   for (const name of Object.keys(refs)) {
     const found = set.byName.get(name);
+
     if (found !== undefined) return found;
   }
+
   return set.fallback;
 };

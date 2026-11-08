@@ -10,8 +10,10 @@
  */
 export const encodeVendorPart = (value: string): string => {
   let encoded = "";
+
   for (const char of value) {
     encoded += /[A-Za-z0-9-]/.test(char) ? char : `_${char.codePointAt(0)!.toString(16)}_`;
   }
+
   return encoded;
 };

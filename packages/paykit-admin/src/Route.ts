@@ -5,6 +5,7 @@ import {
   SubscriptionStatus,
 } from "@potion.run/paykit/Read";
 import { pipe } from "effect/Function";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Route from "foldkit/route";
@@ -23,6 +24,7 @@ const accountFilterFields = {
 
 /** One query filter set, absent meaning "all". */
 export const AccountFilter = Schema.Struct(accountFilterFields);
+
 export type AccountFilter = typeof AccountFilter.Type;
 
 /** The filter plus the page cursor, which is what the URL actually carries. */
@@ -33,6 +35,7 @@ const routeQueryFields = {
 } as const;
 
 export const RouteQuery = Schema.Struct(routeQueryFields);
+
 export type RouteQuery = typeof RouteQuery.Type;
 
 /** Every account, unfiltered. */
@@ -63,6 +66,7 @@ export const ConsoleRoute = Route.defineRouteUnion({
   Plans: {},
   Features: {},
 });
+
 export type ConsoleRoute = typeof ConsoleRoute.Type;
 
 const accountsRouter = pipe(
@@ -126,19 +130,19 @@ export const accountRoute = (
 
 /** Re-point a route's filters, keeping which page it is and dropping the cursor. */
 export const withFilter = (route: ConsoleRoute, filter: AccountFilter): ConsoleRoute =>
-  route._tag === "Account"
-    ? accountRoute(route.account, filter)
-    : route._tag === "Accounts"
-      ? accountsRoute(filter)
-      : route;
+  Match.value(route).pipe(
+    Match.tag("Account", (current) => accountRoute(current.account, filter)),
+    Match.tag("Accounts", () => accountsRoute(filter)),
+    Match.orElse(() => route),
+  );
 
 /** Re-point a route's page cursor, keeping its page and filters. */
 export const withAfter = (route: ConsoleRoute, after: Option.Option<string>): ConsoleRoute =>
-  route._tag === "Account"
-    ? accountRoute(route.account, filterOf(route), after)
-    : route._tag === "Accounts"
-      ? accountsRoute(filterOf(route), after)
-      : route;
+  Match.value(route).pipe(
+    Match.tag("Account", (current) => accountRoute(current.account, filterOf(current), after)),
+    Match.tag("Accounts", () => accountsRoute(filterOf(route), after)),
+    Match.orElse(() => route),
+  );
 
 /**
  * The URL a route reflects: what the console pushes after a navigation, so the

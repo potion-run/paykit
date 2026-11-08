@@ -38,6 +38,7 @@ it.effect(
   "subscribes in the currency the caller asks for, at the amount the catalog states",
   () => {
     const input = subscribeInputOf(testCatalog, "pro", { currency: "eur" })!;
+
     return story(
       Story.provide(Actor, system("test")),
       Story.clock(start),

@@ -25,6 +25,7 @@ const translate = (
 ) =>
   Effect.gen(function* () {
     yield* TestClock.setTime(at);
+
     return yield* webhook(request({ timestamp: atSeconds, ...input }));
   });
 
@@ -46,6 +47,7 @@ describe("Polar webhooks", () => {
       // The published vector: if the key derivation or the signed string were
       // wrong, this would be a signature failure instead of a payload one.
       yield* TestClock.setTime(1_614_265_330_000);
+
       const exit = yield* Effect.exit(
         webhook({
           headers: {
@@ -56,7 +58,9 @@ describe("Polar webhooks", () => {
           body: '{"test": 2432232314}',
         }),
       );
+
       expect(exit._tag).toBe("Failure");
+
       if (exit._tag !== "Failure") return;
       // Not a `WebhookSignatureInvalid`: the signature was accepted.
       expect(String(exit.cause)).toContain("WebhookInvalid");
@@ -72,15 +76,19 @@ describe("Polar webhooks", () => {
       set: (key) => Effect.succeed(key),
       get: <T>() => Effect.succeed("prod_123" as T),
     };
+
     const deferred = polarWebhook({
       secret: Redacted.make(secret),
       tiers: { pro: { price: proPrice, productId: Output.literal("prod_123") } },
     });
+
     return Effect.gen(function* () {
       yield* TestClock.setTime(at);
+
       const event = Option.getOrThrow(
         yield* deferred(request({ timestamp: atSeconds, body: orderPaid })),
       );
+
       expect(event.tier).toBe("pro");
     }).pipe(Effect.provideService(RuntimeContext, context));
   });
@@ -113,6 +121,7 @@ describe("Polar webhooks", () => {
           currency: "usd",
         },
       });
+
       const succeeded = Option.getOrThrow(yield* translate({ body: checkout("succeeded") }));
       expect(succeeded.kind).toBe("checkout_completed");
       expect(succeeded.tier).toBe("pro");
@@ -138,6 +147,7 @@ describe("Polar webhooks", () => {
           },
         }),
       );
+
       expect(event.kind).toBe("payment_failed");
       expect(event.reason).toBe("past_due");
       expect(event.account).toBe("acct_1");
@@ -161,6 +171,7 @@ describe("Polar webhooks", () => {
             },
           }),
         );
+
         expect(event.kind).toBe("subscription_canceled");
         expect(event.account).toBe("acct_1");
       }
@@ -184,6 +195,7 @@ describe("Polar webhooks", () => {
           },
         }),
       );
+
       expect(event.kind).toBe("payment_succeeded");
       expect(event.tier).toBe(undefined);
     }),
@@ -204,6 +216,7 @@ describe("Polar webhooks", () => {
           signature: "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
         }),
       );
+
       expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
@@ -213,6 +226,7 @@ describe("Polar webhooks", () => {
       const stale = { body: orderPaid, timestamp: String(at / 1000 - 3_600) };
       const error = yield* Effect.flip(translate(stale));
       expect(error).toBeInstanceOf(WebhookSignatureInvalid);
+
       if (error._tag === "WebhookSignatureInvalid") {
         expect(error.provider).toBe("polar");
         expect(error.reason).toContain("tolerance");
@@ -223,9 +237,11 @@ describe("Polar webhooks", () => {
   it.effect("refuses a request with no signature header", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(at);
+
       const error = yield* Effect.flip(
         webhook({ headers: { "webhook-id": "msg_1" }, body: JSON.stringify(orderPaid) }),
       );
+
       expect(error).toBeInstanceOf(WebhookSignatureInvalid);
     }),
   );
@@ -244,9 +260,11 @@ describe("Polar webhooks", () => {
           const signature = sign({ id: "msg_1", timestamp: atSeconds, body });
 
           const valid = yield* Effect.result(translate({ body, signature }));
+
           if (Result.isFailure(valid) || Option.isNone(valid.success)) return false;
 
           const bodyTampered = yield* Effect.result(translate({ body: body + suffix, signature }));
+
           if (
             !Result.isFailure(bodyTampered) ||
             bodyTampered.failure._tag !== "WebhookSignatureInvalid"
@@ -260,6 +278,7 @@ describe("Polar webhooks", () => {
           const replacement = signature[index] === "A" ? "B" : "A";
           const flipped = `${signature.slice(0, index)}${replacement}${signature.slice(index + 1)}`;
           const signatureTampered = yield* Effect.result(translate({ body, signature: flipped }));
+
           return (
             Result.isFailure(signatureTampered) &&
             signatureTampered.failure._tag === "WebhookSignatureInvalid"
@@ -277,13 +296,16 @@ describe("Polar webhooks", () => {
           const body = JSON.stringify(orderPaid);
           const valid = sign({ id: "msg_1", timestamp: atSeconds, body });
           const invalid = "v1,AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
           const signature =
             order === "valid-last"
               ? `${invalid} ${valid}`
               : order === "valid-first"
                 ? `${valid} ${invalid}`
                 : `garbage ${valid}`;
+
           const result = yield* Effect.result(translate({ body, signature }));
+
           return !Result.isFailure(result) && Option.isSome(result.success);
         }),
       { runs: 3, size: 1 },
@@ -297,7 +319,9 @@ describe("Polar webhooks", () => {
           body: { ...orderPaid, data: { ...orderPaid.data, customer: { id: "cus_1" } } },
         }),
       );
+
       expect(error).toBeInstanceOf(WebhookInvalid);
+
       if (error._tag === "WebhookInvalid") expect(error.field).toBe("account");
     }),
   );

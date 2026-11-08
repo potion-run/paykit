@@ -60,11 +60,14 @@ describe("Payments conformance", () => {
                 kind: "subscription",
               }),
             );
+
             if (provider.capabilities.has("checkout")) {
               expect(Exit.isSuccess(exit)).toBe(true);
+
               if (Exit.isSuccess(exit)) expect(exit.value.url.length).toBeGreaterThan(0);
             } else {
               expect(Exit.isFailure(exit)).toBe(true);
+
               if (Exit.isFailure(exit)) {
                 expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
               }
@@ -79,8 +82,10 @@ describe("Payments conformance", () => {
             const exit = yield* Effect.exit(
               (yield* Payments).createInvoice({ account: "acct_1", amount: 1900, currency: "usd" }),
             );
+
             if (provider.capabilities.has("invoice")) {
               expect(Exit.isSuccess(exit)).toBe(true);
+
               if (Exit.isSuccess(exit)) expect(exit.value.invoiceId.length).toBeGreaterThan(0);
             } else {
               expect(Exit.isFailure(exit)).toBe(true);
@@ -94,12 +99,14 @@ describe("Payments conformance", () => {
           Effect.gen(function* () {
             if (!provider.capabilities.has("invoice")) return;
             const payments = yield* Payments;
+
             const request = {
               account: "acct_1",
               amount: 1900,
               currency: "usd",
               commandId: "same-change",
             } as const;
+
             const first = yield* payments.createInvoice(request);
             const second = yield* payments.createInvoice(request);
             expect(second.invoiceId).toBe(first.invoiceId);
@@ -113,10 +120,13 @@ describe("Payments conformance", () => {
             const exit = yield* Effect.exit(
               (yield* Payments).charge({ account: "acct_1", amount: 1900, currency: "usd" }),
             );
+
             expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("charge"));
+
             if (provider.capabilities.has("charge") && Exit.isSuccess(exit)) {
               expect(exit.value.chargeId.length).toBeGreaterThan(0);
             }
+
             if (!provider.capabilities.has("charge") && Exit.isFailure(exit)) {
               expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
             }
@@ -129,12 +139,14 @@ describe("Payments conformance", () => {
           Effect.gen(function* () {
             if (!provider.capabilities.has("charge")) return;
             const payments = yield* Payments;
+
             const request = {
               account: "acct_1",
               amount: 1900,
               currency: "usd",
               commandId: "same-crossing",
             } as const;
+
             const first = yield* payments.charge(request);
             const second = yield* payments.charge(request);
             expect(second.chargeId).toBe(first.chargeId);
@@ -148,7 +160,9 @@ describe("Payments conformance", () => {
             const exit = yield* Effect.exit(
               (yield* Payments).refund({ chargeId: "ch_1", amount: 100 }),
             );
+
             expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("refund"));
+
             if (Exit.isSuccess(exit)) {
               expect(exit.value.refundId.length).toBeGreaterThan(0);
             }
@@ -170,7 +184,9 @@ describe("Payments conformance", () => {
                 commandId: "period-usage:1:2",
               }),
             );
+
             expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("usage"));
+
             if (!provider.capabilities.has("usage") && Exit.isFailure(exit)) {
               expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
             }
@@ -183,6 +199,7 @@ describe("Payments conformance", () => {
           Effect.gen(function* () {
             const exit = yield* Effect.exit((yield* Payments).createPortal({ account: "acct_1" }));
             expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("portal"));
+
             if (!provider.capabilities.has("portal") && Exit.isFailure(exit)) {
               expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
             }
@@ -201,6 +218,7 @@ describe("Payments conformance", () => {
   it.effect("Memory meters a period once, even when the same close is replayed", () =>
     Effect.gen(function* () {
       const memory = PaymentsMemory();
+
       const args = {
         account: "acct_1",
         periodStart: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
@@ -211,6 +229,7 @@ describe("Payments conformance", () => {
         ],
         commandId: "period-usage:1:2",
       } as const;
+
       yield* Effect.gen(function* () {
         const payments = yield* Payments;
         yield* payments.reportUsage(args);
@@ -225,10 +244,12 @@ describe("Payments conformance", () => {
       bindings: stripeBindings,
       tiers: { pro: { price, priceId: "price_1" } },
     });
+
     const polar = PaymentsPolar({
       bindings: polarBindings,
       tiers: { pro: { price, productId: "prod_1" } },
     });
+
     expect(stripe.kind).toBe("processor");
     expect(polar.kind).toBe("merchant_of_record");
     // Neither fixture supplies an invoice binding, so neither declares one.
@@ -243,10 +264,12 @@ describe("Payments conformance", () => {
       bindings: { ...stripeBindings, reportUsage: () => Effect.succeed({}) },
       tiers: { pro: { price, priceId: "price_1" } },
     });
+
     const metering = PaymentsPolar({
       bindings: { ...polarBindings, reportUsage: () => Effect.succeed({}) },
       tiers: { pro: { price, productId: "prod_1" } },
     });
+
     expect(reporting.capabilities.has("usage")).toBe(true);
     expect(metering.capabilities.has("usage")).toBe(true);
   });
@@ -262,7 +285,9 @@ describe("Payments conformance", () => {
             kind: "subscription",
           }),
         );
+
         expect(Exit.isFailure(exit)).toBe(true);
+
         if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("PaymentDeclined");
       }).pipe(
         Effect.provide(PaymentsStripe({ bindings: stripeBindings }).payments),

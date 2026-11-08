@@ -40,6 +40,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
   }
 
   const listRequest = page === null ? sent++ : null;
+
   if (listRequest !== null) {
     commands.push(
       Command.mapMessage(
@@ -52,6 +53,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
   // Holds and provider refs are not part of the first-paint snapshot: the host
   // seeds the two views and the cursor, and the entities are read once at boot.
   const holdsRequest = route._tag === "Account" ? sent++ : null;
+
   if (holdsRequest !== null && route._tag === "Account") {
     commands.push(
       Command.mapMessage(
@@ -62,6 +64,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
   }
 
   const overviewRequest = route._tag === "Overview" ? sent++ : null;
+
   if (overviewRequest !== null) {
     commands.push(
       Command.mapMessage(AdminQueries.Overview({ requestId: overviewRequest }), (message) =>
@@ -71,6 +74,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags, Console
   }
 
   const providerRefsRequest = route._tag === "Account" ? sent++ : null;
+
   if (providerRefsRequest !== null && route._tag === "Account") {
     commands.push(
       Command.mapMessage(

@@ -144,6 +144,8 @@ export const asyncOf = (sql: SqlExecutor): SqlAsync => {
   // asynchronous port and still runs on the simplest engine.
   if (sql.query !== undefined) {
     const query = sql.query;
+
+    // SAFETY: the executor's generic row type is erased at the SQL boundary; the caller decodes it, and a fallback method refuses rather than returns a row.
     return {
       dialect: sql.dialect,
       query,
@@ -161,6 +163,9 @@ export const asyncOf = (sql: SqlExecutor): SqlAsync => {
       isolation: sql.isolation ?? "serializable",
     };
   }
+
+  // SAFETY: the executor's generic row type is erased at the SQL boundary; the
+  // caller decodes it, and the row is exactly what the statement selected.
   return {
     dialect: sql.dialect,
     query: <A>(statement: string, params: ReadonlyArray<SqlValue> = []) =>

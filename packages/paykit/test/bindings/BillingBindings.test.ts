@@ -181,7 +181,9 @@ describe("paykit bindings", () => {
       const refused = yield* Effect.exit(
         trackUsage({ feature: "messages", amount: 71, dedupeKey: "u-2" }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("AllowanceExceeded");
 
       const after = yield* (yield* Check(account))({ feature: "messages", amount: 0 });
@@ -204,19 +206,23 @@ describe("paykit bindings", () => {
     Effect.gen(function* () {
       yield* subscribe;
       const trackUsage = yield* TrackUsage(account);
+
       const used = yield* trackUsage({
         feature: "ai",
         amount: 2,
         dimension: "gpt-large",
         dedupeKey: "ai-1",
       });
+
       expect(used.cost).toBe(20);
       expect(used.credits).toBe(980);
 
       const refused = yield* Effect.exit(
         trackUsage({ feature: "ai", amount: 100, dimension: "gpt-large", dedupeKey: "ai-2" }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("CreditExceeded");
     }),
   );
@@ -241,6 +247,7 @@ describe("paykit bindings", () => {
         amount: 4,
         dedupeKey: "turn-1:settle",
       });
+
       expect(settled.billed).toBe(4);
       expect(settled.released).toBe(6);
       expect((yield* check({ feature: "messages", amount: 0 })).remaining).toBe(96);
@@ -251,6 +258,7 @@ describe("paykit bindings", () => {
         amount: 4,
         dedupeKey: "turn-1:settle",
       });
+
       expect(replay.billed).toBe(4);
       expect(replay.released).toBe(6);
     }),
@@ -276,10 +284,13 @@ describe("paykit bindings", () => {
     Effect.gen(function* () {
       yield* subscribe;
       const settleHold = yield* SettleHold(account);
+
       const refused = yield* Effect.exit(
         settleHold({ holdId: "never-placed", amount: 1, dedupeKey: "s-1" }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("HoldUnknown");
     }),
   );
@@ -296,6 +307,7 @@ describe("paykit bindings", () => {
 
       const refused = yield* Effect.exit(consumeCredits({ amount: 2000, dedupeKey: "spend-2" }));
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") {
         expect(String(refused.cause)).toContain("CreditExceedsBalance");
       }
@@ -314,6 +326,7 @@ describe("paykit bindings", () => {
       // Resume after the cancellation is withdrawn has nothing to undo.
       const refused = yield* Effect.exit(resume({ dedupeKey: "resume-2" }));
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("NotScheduled");
     }),
   );
@@ -327,6 +340,7 @@ describe("paykit bindings", () => {
       // Free to pro mid-period is a positive proration: the part of the month
       // left, at pro's price.
       expect(moved.proration).not.toBe(null);
+
       if (moved.proration !== null) {
         expect(moved.proration.due).toBeGreaterThan(0);
         expect(moved.proration.currency).toBe("usd");
@@ -336,6 +350,7 @@ describe("paykit bindings", () => {
       // failure at the boundary, which is the point of the brand.
       const unknown = yield* Effect.exit(changeTier({ tier: "nope", dedupeKey: "upgrade-2" }));
       expect(unknown._tag).toBe("Failure");
+
       if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("TierNotInCatalog");
     }).pipe(Effect.provide(inProcessWorld)),
   );
@@ -351,6 +366,7 @@ describe("paykit bindings", () => {
 
       const refused = yield* Effect.exit(withdraw({ dedupeKey: "move-3" }));
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") {
         expect(String(refused.cause)).toContain("NoTierChangeScheduled");
       }
@@ -368,6 +384,7 @@ describe("paykit bindings", () => {
         trialEndsAt: deadline,
         dedupeKey: "trial-1",
       });
+
       expect(started.tier).toBe("pro");
       expect(started.status).toBe("trialing");
       expect(started.trialEndsAt).not.toBe(null);
@@ -379,7 +396,9 @@ describe("paykit bindings", () => {
           dedupeKey: "trial-2",
         }),
       );
+
       expect(again._tag).toBe("Failure");
+
       if (again._tag === "Failure") expect(String(again.cause)).toContain("TrialAlreadyUsed");
     }),
   );
@@ -389,10 +408,13 @@ describe("paykit bindings", () => {
       yield* subscribe;
       const startTrial = yield* StartTrial(account);
       const past = DateTime.subtract(DateTime.makeUnsafe(Date.now()), { days: 1 });
+
       const refused = yield* Effect.exit(
         startTrial({ tier: "pro", trialEndsAt: past, dedupeKey: "trial-past" }),
       );
+
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") {
         expect(String(refused.cause)).toContain("TrialDeadlineNotLater");
       }
@@ -424,6 +446,7 @@ describe("paykit bindings", () => {
 
       const quoted = yield* preview({ command: { kind: "changeTier", tier: "pro" } });
       expect(quoted._tag).toBe("accepted");
+
       if (quoted._tag === "accepted") {
         expect(quoted.proration?.due ?? 0).toBeGreaterThan(0);
         expect(quoted.events.length).toBeGreaterThan(0);
@@ -434,7 +457,9 @@ describe("paykit bindings", () => {
       const unknown = yield* Effect.exit(
         preview({ command: { kind: "changeTier", tier: "nope" } }),
       );
+
       expect(unknown._tag).toBe("Failure");
+
       if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("TierNotInCatalog");
     }).pipe(Effect.provide(inProcessWorld)),
   );
@@ -485,6 +510,7 @@ describe("paykit bindings", () => {
       // file, so a delivery against `account` would meet a standing that exists.
       const hookee = "acct_webhook" as AccountId;
       const webhook = yield* Webhook();
+
       const event = {
         id: "evt_1",
         provider: "manual",
@@ -508,6 +534,7 @@ describe("paykit bindings", () => {
       const portal = yield* Portal(account);
       const refused = yield* Effect.exit(portal());
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") {
         expect(String(refused.cause)).toContain("ProviderCapabilityMissing");
       }
@@ -522,6 +549,7 @@ describe("paykit bindings", () => {
       const portal = yield* Portal(account);
       const refused = yield* Effect.exit(portal());
       expect(refused._tag).toBe("Failure");
+
       if (refused._tag === "Failure") {
         expect(String(refused.cause)).toContain("ProviderCapabilityMissing");
       }

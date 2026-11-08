@@ -20,20 +20,25 @@ export const portalOperation = Effect.fn("Paykit.Portal")(function* () {
 
   return Effect.fn("Paykit.Portal.open")(function* (input: PortalInput) {
     const standing = yield* subscription.state(Subscription.ref(input.account));
+
     const chosen = Option.match(router, {
       onNone: () => null,
       onSome: (set) => providerFor(set, standing.refs),
     });
+
     const attempt = Effect.gen(function* () {
       const payments = yield* Effect.serviceOption(Payments);
+
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
           provider: chosen?.name ?? "none",
           op: "createPortal",
         });
       }
+
       return yield* Option.getOrThrow(payments).createPortal({ account: input.account });
     });
+
     return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
   });
 });

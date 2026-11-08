@@ -34,6 +34,7 @@ const unlimitedTier = tier({
   price: { amount: 9_900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: "unlimited" })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [unlimitedTier] }));
 const unlimited = allowancesOf(testCatalog, "unlimited")!;
 const price = { amount: 9_900, currency: "usd", interval: "month" as const };
@@ -220,6 +221,7 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
   Effect.gen(function* () {
     const subscription = yield* Subscription;
     const entitlements = yield* Entitlements;
+
     const receipt = yield* subscription.send(
       Subscription.ref(account.id),
       new Subscribe({
@@ -231,15 +233,18 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
         price,
       }),
     );
+
     yield* entitlements.query(Subscription.ref(account.id), { atLeast: receipt });
     yield* BillingRead.caughtUp(receipt);
 
     const track = yield* trackUsageBinding(account.id);
+
     const tracked = yield* track({
       feature: "messages",
       amount: 1_000_000,
       dedupeKey: "unlimited-track",
     });
+
     expect(tracked.used).toBe(1_000_000);
 
     const inProcess = yield* checkBinding(account.id);
@@ -257,11 +262,13 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
 
     // The row round-trips the absence of a count, not a zero.
     const store = yield* BillingReadStore;
+
     const row = yield* waitForProjection(
       store,
       account.id,
       Option.getOrNull(yield* entitlements.query(Subscription.ref(account.id))),
     );
+
     expect(row?.features.messages?.included).toBe("unlimited");
     expect(row?.features.messages?.remaining).toBeNull();
     expect(row?.features.messages?.used).toBe(1_000_000);

@@ -46,7 +46,9 @@ interface FakeCreateBody {
 
 const bodyOf = (request: HttpClientRequest.HttpClientRequest): unknown => {
   const body = request.body;
+
   if (body._tag !== "Uint8Array") return undefined;
+
   return JSON.parse(new TextDecoder().decode(body.body));
 };
 
@@ -111,6 +113,7 @@ const vendorProduct = (input: {
         custom_label: null,
         custom_multiplier: null,
       };
+
       const base = {
         id: `${input.id}_metered_${index}`,
         created_at: input.createdAt,
@@ -124,6 +127,7 @@ const vendorProduct = (input: {
         meter_id: metered.meterId,
         meter,
       };
+
       return metered.tiers === undefined
         ? { ...base, amount_type: "metered_unit", unit_amount: String(metered.amount) }
         : {
@@ -175,7 +179,9 @@ const fakePolar = () => {
             readonly aggregation: DistilledPolar.MeterAggregation;
             readonly metadata?: Readonly<Record<string, unknown>>;
           };
+
           const id = `mtr_${++meterCreated}`;
+
           const meter: DistilledPolar.Meter = {
             id,
             created_at: new Date(Date.UTC(2030, 0, 1, 0, 0, meterCreated)).toISOString(),
@@ -190,12 +196,15 @@ const fakePolar = () => {
             metadata: (body.metadata ?? {}) as DistilledPolar.MetadataOutputType,
             archived_at: null,
           };
+
           meters.set(id, meter);
+
           return Effect.succeed(json(request, 201, meter));
         }
 
         if (isMeterCollection && request.method === "GET") {
           const matches = [...meters.values()].filter((meter) => meter.archived_at == null);
+
           return Effect.succeed(
             json(request, 200, {
               items: matches,
@@ -206,6 +215,7 @@ const fakePolar = () => {
 
         if (meterId !== undefined && request.method === "GET") {
           const meter = meters.get(meterId);
+
           return Effect.succeed(
             meter === undefined
               ? json(request, 404, { detail: "Not found" })
@@ -215,9 +225,11 @@ const fakePolar = () => {
 
         if (meterId !== undefined && request.method === "PATCH") {
           const current = meters.get(meterId);
+
           if (current === undefined) {
             return Effect.succeed(json(request, 404, { detail: "Not found" }));
           }
+
           const body = bodyOf(request) as {
             readonly name?: string | null;
             readonly filter?: DistilledPolar.Filter | null;
@@ -225,6 +237,7 @@ const fakePolar = () => {
             readonly metadata?: Readonly<Record<string, unknown>>;
             readonly is_archived?: boolean | null;
           };
+
           const updated: DistilledPolar.Meter = {
             ...current,
             ...(body.name == null ? {} : { name: body.name }),
@@ -237,7 +250,9 @@ const fakePolar = () => {
               ? {}
               : { archived_at: body.is_archived ? new Date().toISOString() : null }),
           };
+
           meters.set(updated.id, updated);
+
           return Effect.succeed(json(request, 200, updated));
         }
 
@@ -247,6 +262,7 @@ const fakePolar = () => {
         if (request.method === "POST" && isCollection) {
           const body = bodyOf(request) as FakeCreateBody;
           const price = body.prices?.find((candidate) => candidate.amount_type === "fixed");
+
           const metered = (body.prices ?? [])
             .filter(
               (candidate) =>
@@ -259,7 +275,9 @@ const fakePolar = () => {
               currency: candidate.price_currency ?? "usd",
               ...(candidate.tiers === undefined ? {} : { tiers: candidate.tiers }),
             }));
+
           const productId = `prod_${++created}`;
+
           const product = vendorProduct({
             id: productId,
             name: body.name,
@@ -277,12 +295,15 @@ const fakePolar = () => {
             createdAt: new Date(Date.UTC(2030, 0, 1, 0, 0, created)).toISOString(),
             metered,
           });
+
           products.set(productId, product);
+
           return Effect.succeed(json(request, 201, product));
         }
 
         if (request.method === "GET" && id !== undefined) {
           const product = products.get(id);
+
           return Effect.succeed(
             product === undefined
               ? json(request, 404, { detail: "Not found" })
@@ -292,9 +313,11 @@ const fakePolar = () => {
 
         if (request.method === "GET" && isCollection) {
           const query = url.searchParams.get("query");
+
           const matches = [...products.values()]
             .filter((product) => query === null || product.name.includes(query))
             .sort((left, right) => right.created_at.localeCompare(left.created_at));
+
           return Effect.succeed(
             json(request, 200, {
               items: matches,
@@ -305,14 +328,17 @@ const fakePolar = () => {
 
         if (request.method === "PATCH" && id !== undefined) {
           const current = products.get(id);
+
           if (current === undefined) {
             return Effect.succeed(json(request, 404, { detail: "Not found" }));
           }
+
           const request_ = bodyOf(request) as {
             readonly name?: string | null;
             readonly description?: string | null;
             readonly metadata?: Readonly<Record<string, unknown>>;
           };
+
           const updated: DistilledPolar.Product = {
             ...current,
             ...(request_.name == null ? {} : { name: request_.name }),
@@ -321,7 +347,9 @@ const fakePolar = () => {
               ? {}
               : { metadata: request_.metadata as DistilledPolar.MetadataOutputType }),
           };
+
           products.set(updated.id, updated);
+
           return Effect.succeed(json(request, 200, updated));
         }
 
@@ -374,6 +402,7 @@ const unusedClient: PolarClient = {
 test.provider("joins provisioning and the provider into one call", (stack) =>
   Effect.gen(function* () {
     polar.reset();
+
     const billing = yield* stack.deploy(
       PolarBilling("Billing", {
         accessToken: "polar_fake",
@@ -420,6 +449,7 @@ test.provider("a price change is a new generation, and the old one is kept", (st
   Effect.gen(function* () {
     polar.reset();
     const first = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
+
     const changed = yield* stack.deploy(
       PolarPrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
     );
@@ -433,6 +463,7 @@ test.provider("a price change is a new generation, and the old one is kept", (st
 test.provider("creates a one-time product for a one-off pack", (stack) =>
   Effect.gen(function* () {
     polar.reset();
+
     const sold = yield* stack.deploy(
       PolarPrices("Prices", {
         tiers: { credits: { price: { ...proPrice, amount: 9_900 }, kind: "one_off" } },
@@ -442,9 +473,11 @@ test.provider("creates a one-time product for a one-off pack", (stack) =>
     const product = polar.products.get(sold.products.credits);
     expect(product?.is_recurring).toBe(false);
     expect(product?.recurring_interval).toBe(null);
+
     const packed = product?.prices.find((price) => "price_amount" in price) as
       | { readonly price_amount: number }
       | undefined;
+
     expect(packed?.price_amount).toBe(9_900);
   }),
 );
@@ -452,6 +485,7 @@ test.provider("creates a one-time product for a one-off pack", (stack) =>
 test.provider("creates a meter and a metered price from the catalog's unit price", (stack) =>
   Effect.gen(function* () {
     polar.reset();
+
     const sold = yield* stack.deploy(
       PolarPrices("Prices", {
         tiers: {
@@ -464,6 +498,7 @@ test.provider("creates a meter and a metered price from the catalog's unit price
     );
 
     const product = polar.products.get(sold.products.pro);
+
     const metered = product?.prices.find((price) => "meter_id" in price) as
       | {
           readonly meter_id: string;
@@ -471,6 +506,7 @@ test.provider("creates a meter and a metered price from the catalog's unit price
           readonly price_currency: string;
         }
       | undefined;
+
     expect(metered?.unit_amount).toBe("2");
     expect(metered?.price_currency).toBe("usd");
 
@@ -494,6 +530,7 @@ test.provider("creates a meter and a metered price from the catalog's unit price
         },
       }),
     );
+
     expect(changed.products.pro).not.toBe(sold.products.pro);
     expect(polar.products.get(sold.products.pro)?.is_archived).toBe(false);
     expect(polar.meters.size).toBe(1);
@@ -516,6 +553,7 @@ test.provider("a tier that leaves the catalog is retained, so a later deploy ado
 test.provider("creates a package metered price from the catalog's units", (stack) =>
   Effect.gen(function* () {
     polar.reset();
+
     const sold = yield* stack.deploy(
       PolarPrices("Prices", {
         tiers: {
@@ -528,9 +566,11 @@ test.provider("creates a package metered price from the catalog's units", (stack
     );
 
     const product = polar.products.get(sold.products.pro);
+
     const metered = product?.prices.find((price) => "meter_id" in price) as
       | { readonly unit_amount: string }
       | undefined;
+
     expect(metered?.unit_amount).toBe("0.5");
 
     const again = yield* stack.deploy(
@@ -543,6 +583,7 @@ test.provider("creates a package metered price from the catalog's units", (stack
         },
       }),
     );
+
     expect(again.products.pro).toBe(sold.products.pro);
   }),
 );
@@ -550,6 +591,7 @@ test.provider("creates a package metered price from the catalog's units", (stack
 test.provider("creates a tiered metered price from the catalog's ladder", (stack) =>
   Effect.gen(function* () {
     polar.reset();
+
     const sold = yield* stack.deploy(
       PolarPrices("Prices", {
         tiers: {
@@ -571,6 +613,7 @@ test.provider("creates a tiered metered price from the catalog's ladder", (stack
     );
 
     const product = polar.products.get(sold.products.pro);
+
     const metered = product?.prices.find((price) => "meter_id" in price) as
       | {
           readonly amount_type: string;
@@ -583,6 +626,7 @@ test.provider("creates a tiered metered price from the catalog's ladder", (stack
           };
         }
       | undefined;
+
     expect(metered?.amount_type).toBe("metered_tiers");
     expect(metered?.tiers.type).toBe("graduated");
     expect(metered?.tiers.tiers).toEqual([
@@ -609,6 +653,7 @@ test.provider("creates a tiered metered price from the catalog's ladder", (stack
         },
       }),
     );
+
     expect(again.products.pro).toBe(sold.products.pro);
   }),
 );
@@ -618,6 +663,7 @@ test.provider(
   (stack) =>
     Effect.gen(function* () {
       polar.reset();
+
       const ladder = (infAmount: number) => ({
         kind: "graduated" as const,
         currency: "usd",
@@ -626,6 +672,7 @@ test.provider(
           { upTo: "inf" as const, amount: infAmount, currency: "usd" },
         ],
       });
+
       const tiers = (infAmount: number) => ({
         pro: { price: proPrice, usage: { messages: ladder(infAmount) } },
       });

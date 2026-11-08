@@ -18,10 +18,13 @@ export const KIND_HEADER = "x-paykit-kind";
 export const actorFromHeaders = (headers: Headers.Input): ActorValue | null => {
   const read = Headers.fromInput(headers);
   const id = Headers.get(read, ACTOR_HEADER);
+
   if (Option.isNone(id)) return null;
   const kind = Headers.get(read, KIND_HEADER);
   const decoded = Schema.decodeUnknownOption(ActorKind)(Option.getOrElse(kind, () => "account"));
+
   if (Option.isNone(decoded)) return null;
+
   return { kind: decoded.value, id: id.value };
 };
 

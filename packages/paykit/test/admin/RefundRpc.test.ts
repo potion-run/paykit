@@ -73,6 +73,7 @@ const charge = (amount: number, dedupeKey: string) =>
 describe("the console refund RPC", () => {
   it.live("takes money through the in-process binding and records it once", () => {
     const memory = PaymentsMemory();
+
     return Effect.gen(function* () {
       yield* subscribe;
       yield* charge(1_900, "pay-1");
@@ -86,7 +87,9 @@ describe("the console refund RPC", () => {
         reason: "duplicate order",
         commandId: "refund-1",
       });
+
       expect(first._tag).toBe("applied");
+
       if (first._tag !== "applied") return;
       expect(first.refundId.length).toBeGreaterThan(0);
       expect(first.refunded).toBe(1_000);
@@ -102,6 +105,7 @@ describe("the console refund RPC", () => {
         reason: "duplicate order",
         commandId: "refund-1",
       });
+
       expect(retried).toEqual(first);
       expect(memory.refunds.length).toBe(1);
 
@@ -113,10 +117,13 @@ describe("the console refund RPC", () => {
         currency: "usd",
         commandId: "refund-2",
       });
+
       expect(tooMuch._tag).toBe("rejected");
+
       if (tooMuch._tag === "rejected") {
         expect(tooMuch.rejection._tag).toBe("RefundExceedsCharged");
       }
+
       expect(memory.refunds.length).toBe(1);
     }).pipe(Effect.provide(world(memory)));
   });
@@ -126,6 +133,7 @@ describe("the console refund RPC", () => {
       yield* subscribe;
       yield* charge(1_900, "pay-2");
       const refund = yield* AdminRefund;
+
       const answer = yield* refund.refund({
         account,
         chargeId: "ch_1",
@@ -133,7 +141,9 @@ describe("the console refund RPC", () => {
         currency: "usd",
         commandId: "refund-3",
       });
+
       expect(answer._tag).toBe("rejected");
+
       if (answer._tag === "rejected") {
         expect(answer.rejection._tag).toBe("ProviderCapabilityMissing");
       }
@@ -142,17 +152,21 @@ describe("the console refund RPC", () => {
 
   it.live("allocates a command id when the caller omits one", () => {
     const memory = PaymentsMemory();
+
     return Effect.gen(function* () {
       yield* subscribe;
       yield* charge(1_900, "pay-4");
       const refund = yield* AdminRefund;
+
       const answer = yield* refund.refund({
         account,
         chargeId: "ch_1",
         amount: 500,
         currency: "usd",
       });
+
       expect(answer._tag).toBe("applied");
+
       if (answer._tag === "applied") expect(answer.commandId.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(world(memory)));
   });

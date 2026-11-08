@@ -8,10 +8,12 @@ export const TierId = Schema.String.pipe(
   Schema.check(Schema.isMinLength(1)),
   Schema.brand("TierId"),
 );
+
 export type TierId = typeof TierId.Type;
 
 /** The billing cadence a tier is sold on. */
 export const Interval = Schema.Literals(["month", "annual"]);
+
 export type Interval = typeof Interval.Type;
 
 /** One currency's amount for a price, alongside the base currency. */
@@ -19,6 +21,7 @@ export const AdditionalCurrency = Schema.Struct({
   currency: Schema.String.pipe(Schema.check(Schema.isMinLength(1))),
   amount: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
 });
+
 export type AdditionalCurrency = typeof AdditionalCurrency.Type;
 
 /** Money is integer minor units plus a currency. No floats, no dollars. */
@@ -32,6 +35,7 @@ export const Price = Schema.Struct({
    */
   additionalCurrencies: Schema.optionalKey(Schema.Array(AdditionalCurrency)),
 });
+
 export type Price = typeof Price.Type;
 
 /**
@@ -43,7 +47,9 @@ export const priceFor = (price: Price, currency: string): Price | null => {
   if (price.currency === currency) {
     return { amount: price.amount, currency: price.currency, interval: price.interval };
   }
+
   const additional = price.additionalCurrencies?.find((entry) => entry.currency === currency);
+
   return additional === undefined
     ? null
     : { amount: additional.amount, currency: additional.currency, interval: price.interval };
@@ -51,6 +57,7 @@ export const priceFor = (price: Price, currency: string): Price | null => {
 
 /** When the credits a tier grants run out. `"period"` zeroes them at a close. */
 export const CreditsExpire = Schema.Literals(["period", "never"]);
+
 export type CreditsExpire = typeof CreditsExpire.Type;
 
 /**
@@ -59,6 +66,7 @@ export type CreditsExpire = typeof CreditsExpire.Type;
  * pool should be refilled.
  */
 export const TopUpThreshold = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)));
+
 export type TopUpThreshold = typeof TopUpThreshold.Type;
 
 /**
@@ -68,6 +76,7 @@ export type TopUpThreshold = typeof TopUpThreshold.Type;
  * and cost every variant author a cast.
  */
 export const TopUpPackId = Schema.String.pipe(Schema.check(Schema.isMinLength(1)));
+
 export type TopUpPackId = typeof TopUpPackId.Type;
 
 /**
@@ -93,6 +102,7 @@ export const TopUpTerms = Schema.Struct({
    */
   pack: Schema.optionalKey(TopUpPackId),
 });
+
 export type TopUpTerms = typeof TopUpTerms.Type;
 
 /**
@@ -129,6 +139,7 @@ export const topUpKey = (terms: TopUpTerms | undefined): string =>
  * a single payment that grants credits and never starts a period.
  */
 export const TierKind = Schema.Literals(["subscription", "one_off"]);
+
 export type TierKind = typeof TierKind.Type;
 
 /** What a variant may change about its base tier. */
@@ -142,6 +153,7 @@ export const TierCustomize = Schema.Struct({
   grants: Schema.optionalKey(Schema.Array(Allowance)),
   rateCard: Schema.optionalKey(Schema.Record(Schema.String, RateCard)),
 });
+
 export type TierCustomize = typeof TierCustomize.Type;
 
 /**
@@ -179,6 +191,7 @@ export const Tier = Schema.Struct({
    */
   rateCard: Schema.optionalKey(Schema.Record(Schema.String, RateCard)),
 });
+
 export type Tier = typeof Tier.Type;
 
 /** A subscription tier as an author writes it: at least one grant. */
@@ -296,6 +309,8 @@ export const tier = (input: TierInput): Tier => {
   // the catalog requires.
   const creditsExpire = input.creditsExpire ?? (kind === "one_off" ? "never" : undefined);
   const grants = input.grants ?? [];
+
+  // SAFETY: the catalog schema validates the id and variant when the tier is declared.
   return {
     id: input.id as TierId,
     ...(input.name === undefined ? {} : { name: input.name }),

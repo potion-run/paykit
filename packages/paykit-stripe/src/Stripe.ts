@@ -145,6 +145,7 @@ export interface StripeProps {
   readonly client?: StripeClient;
 }
 
+// SAFETY: a thrown value is untyped; this reads the one field a payment error reports and falls back to `String(cause)`.
 const declined = (op: string, cause: unknown): PaymentDeclined =>
   new PaymentDeclined({
     provider: "stripe",
@@ -170,13 +171,11 @@ export interface StripeOrigin {
  * does not are left out rather than stubbed: paykit answers
  * `ProviderCapabilityMissing` for those, which is a refusal a caller can see.
  */
-export const stripeClientBindings = (
-  client: StripeClient,
-  where: StripeOrigin,
-): { readonly bindings: StripeBindings } => {
+export const stripeClientBindings = (client: StripeClient, where: StripeOrigin) => {
   const success = `${where.origin}${where.successPath ?? "/welcome"}`;
   const cancel = `${where.origin}${where.cancelPath ?? "/pricing"}`;
   const billing = `${where.origin}${where.billingPath ?? "/billing"}`;
+
   const bindings: StripeBindings = {
     createCheckoutSession: ({ account, tier, priceIds, kind }) =>
       client
@@ -292,6 +291,7 @@ export const stripeClientBindings = (
               lines,
               (line) => {
                 const eventName = where.meters?.[line.feature];
+
                 if (eventName === undefined) {
                   return Effect.fail(
                     new PaymentDeclined({
@@ -301,6 +301,7 @@ export const stripeClientBindings = (
                     }),
                   );
                 }
+
                 return client.reportUsage!({
                   eventName,
                   customerExternalId: account,
@@ -321,6 +322,7 @@ export const stripeClientBindings = (
             ).pipe(Effect.as({})),
         }),
   };
+
   return { bindings };
 };
 
@@ -355,6 +357,7 @@ export const Stripe = (props: StripeProps): MoneyProvider<"processor"> => {
       secretKey: props.secretKey,
       ...(props.apiBaseUrl === undefined ? {} : { apiBaseUrl: props.apiBaseUrl }),
     });
+
   const webhook =
     props.webhookSecret === undefined
       ? undefined
@@ -368,6 +371,7 @@ export const Stripe = (props: StripeProps): MoneyProvider<"processor"> => {
               : { toleranceSeconds: props.webhookToleranceSeconds }),
           }),
         };
+
   return PaymentsStripe({
     ...stripeClientBindings(client, props),
     ...(props.tiers === undefined ? {} : { tiers: props.tiers }),

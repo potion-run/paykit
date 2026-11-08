@@ -49,31 +49,39 @@ describe("preview", () => {
           const subscription = yield* Subscription;
           const ref = Subscription.ref("acct_preview_property");
           const terms = tierTermsOf(testCatalog, startTier);
+
           if (terms === null) return false;
           yield* subscription.send(ref, new Subscribe({ tier: startTier, ...terms }));
           const state = yield* subscription.state(ref);
+
           if (state._tag !== "Subscribed") return false;
 
           const command: PreviewCommand = kind === "cancel" ? { kind } : { kind, tier: nextTier };
           const preview = yield* Preview(ref.id);
           const result = yield* preview({ command });
           const now = start;
+
           const pureCommand =
             kind === "cancel"
               ? new ScheduleCancellation()
               : kind === "subscribe"
                 ? (() => {
                     const next = tierTermsOf(testCatalog, nextTier);
+
                     return next === null ? null : new Subscribe({ tier: nextTier, ...next });
                   })()
                 : commandOf({ _tag: "ChangeTier", tier: nextTier }, state, now);
+
           if (pureCommand === null) return false;
 
           const decision = decideAt(state, pureCommand, now, "preview-property");
+
           if (isAccepted(decision)) {
             if (result._tag !== "accepted") return false;
             const expected = evolveAt(state, decision, now, "preview-property");
+
             if (!same(canonical(result.state), canonical(expected))) return false;
+
             if (
               !same(
                 result.events.map((event) => event._tag),
@@ -82,13 +90,17 @@ describe("preview", () => {
             ) {
               return false;
             }
+
             const eventProration = decision.find(
               (event) => (event as { readonly proration?: unknown }).proration !== undefined,
             );
+
             if (eventProration !== undefined) {
               const recorded = (eventProration as { readonly proration?: unknown }).proration;
+
               if (!same(result.proration, recorded)) return false;
             }
+
             return true;
           }
 

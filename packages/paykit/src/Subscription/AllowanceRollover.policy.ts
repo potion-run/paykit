@@ -24,6 +24,7 @@ export class AllowanceRollover extends Domain.Policy("AllowanceRollover", {
 export const AllowanceRolloverLive = AllowanceRollover.toLayer(
   Effect.gen(function* () {
     const subscriptions = yield* Subscription;
+
     return Effect.fn("Paykit.AllowanceRollover.react")(function* ({ key, event }) {
       const entries: ReadonlyArray<readonly [string, DateTime.Utc]> =
         event._tag === "AllowanceReset"
@@ -31,6 +32,7 @@ export const AllowanceRolloverLive = AllowanceRollover.toLayer(
             ? []
             : [[event.feature, event.resetAt]]
           : Object.entries(event.resetAt ?? {});
+
       for (const [feature, at] of entries) {
         yield* subscriptions
           .schedule(key, new ResetAllowance({ feature, at }), {

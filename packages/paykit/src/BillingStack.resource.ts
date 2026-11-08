@@ -18,6 +18,7 @@ export const BillingStore = Schema.Union([
   Schema.TaggedStruct("PostgresStore", { schema: Schema.String }),
   Schema.TaggedStruct("SqliteStore", { schema: Schema.String }),
 ]);
+
 export type BillingStore = typeof BillingStore.Type;
 
 export const BillingStackRecord = Schema.Struct({
@@ -25,6 +26,7 @@ export const BillingStackRecord = Schema.Struct({
   providers: Schema.optionalKey(Schema.Array(ProviderDescriptor)),
   store: Schema.optionalKey(BillingStore),
 });
+
 export type BillingStackRecord = typeof BillingStackRecord.Type;
 
 /**
@@ -63,6 +65,7 @@ export const BillingStackAttrs = Schema.Struct({
   providers: Schema.Array(ProviderDescriptor),
   store: BillingStore,
 });
+
 export type BillingStackAttrs = typeof BillingStackAttrs.Type;
 
 export type BillingStackShape = Resource<
@@ -102,7 +105,9 @@ export const reconcileBillingStack = (
     const parsed = yield* catalog(props.catalog);
     const providers = props.providers ?? [];
     const invalid = validateProviderMappings(parsed, providers);
+
     if (invalid !== null) return yield* invalid;
+
     return {
       version: BILLING_STACK_VERSION,
       catalog: parsed,
@@ -130,12 +135,14 @@ export const readBillingStack = (
         // Read off the record rather than the type: state written before the
         // field existed still has to be judged, not trusted.
         const found = billingStackVersionOf(output);
+
         if (found > BILLING_STACK_VERSION) {
           return yield* new BillingStackStateTooNew({
             found,
             expected: BILLING_STACK_VERSION,
           });
         }
+
         return output;
       });
 

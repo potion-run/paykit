@@ -29,6 +29,7 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/tsgo": "catalog:",
+    "@oxlint/plugins": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "effect": "catalog:",

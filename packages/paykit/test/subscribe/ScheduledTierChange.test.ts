@@ -69,6 +69,7 @@ describe("a tier change scheduled for the boundary", () => {
   it("is recorded on the standing, not applied now", () => {
     const verdict = Subscription.predict(subscribed(), schedule(), { id, now: start, context });
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events).toHaveLength(1);
     expect(verdict.events[0]).toBeInstanceOf(TierChangeScheduled);
@@ -92,6 +93,7 @@ describe("a tier change scheduled for the boundary", () => {
         interval: "month",
       },
     });
+
     const verdict = Subscription.predict(
       state,
       new ClosePeriod({
@@ -100,7 +102,9 @@ describe("a tier change scheduled for the boundary", () => {
       } as never),
       { id, now: monthLater, context },
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
 
     const tags = verdict.events.map((event) => event._tag);
@@ -114,6 +118,7 @@ describe("a tier change scheduled for the boundary", () => {
       allowances?: unknown;
       topUp?: { threshold: number };
     }>;
+
     expect(changed?.allowances).toEqual({ messages: small });
     expect(changed?.topUp).toEqual({ threshold: 20 });
     expect((verdict.state as SubscribedState).topUp).toEqual({ threshold: 20 });
@@ -130,6 +135,7 @@ describe("a tier change scheduled for the boundary", () => {
       now: start,
       context,
     });
+
     expect(verdict._tag).toBe("Rejected");
   });
 });
@@ -137,6 +143,7 @@ describe("a tier change scheduled for the boundary", () => {
 describe("a top-up line on the standing", () => {
   it("moves with a mid-period change, and is cleared by a tier that states none", () => {
     const state = subscribed({ topUp: { threshold: 500 } });
+
     const verdict = Subscription.predict(
       state,
       new ChangeTier({
@@ -148,7 +155,9 @@ describe("a top-up line on the standing", () => {
       }),
       { id, now: start, context },
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     // The new tier did not state a line, so the old one does not survive it.
     expect(verdict.events[0]).not.toHaveProperty("topUp");
@@ -169,6 +178,7 @@ describe("a top-up line on the standing", () => {
         interval: "month",
       },
     });
+
     const verdict = Subscription.predict(
       state,
       new ClosePeriod({
@@ -177,7 +187,9 @@ describe("a top-up line on the standing", () => {
       } as never),
       { id, now: monthLater, context },
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     const changed = verdict.events.find((event) => event._tag === "TierChanged");
     expect(changed).toMatchObject({ topUp: { threshold: 20 } });
@@ -200,12 +212,15 @@ describe("withdrawing a scheduled tier change", () => {
 
   it("records the intent it abandoned and leaves the standing where it is", () => {
     const state = subscribed(pendingAt());
+
     const verdict = Subscription.predict(state, new WithdrawTierChange(), {
       id,
       now: start,
       context,
     });
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events).toHaveLength(1);
     // The log keeps which change was abandoned: a second schedule overwrites the
@@ -225,12 +240,15 @@ describe("withdrawing a scheduled tier change", () => {
 
   it("then closes the period on the tier the account is on", () => {
     const state = subscribed(pendingAt());
+
     const verdict = Subscription.predict(state, new WithdrawTierChange(), {
       id,
       now: start,
       context,
     });
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
 
     const closed = Subscription.predict(
@@ -241,7 +259,9 @@ describe("withdrawing a scheduled tier change", () => {
       } as never),
       { id, now: monthLater, context },
     );
+
     expect(closed._tag).toBe("Accepted");
+
     if (closed._tag !== "Accepted") return;
     // No `TierChanged`: the withdrawn schedule does not land at the boundary.
     expect(closed.events.map((event) => event._tag)).not.toContain("TierChanged");
@@ -253,7 +273,9 @@ describe("withdrawing a scheduled tier change", () => {
       now: start,
       context,
     });
+
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(NoTierChangeScheduled);
   });
@@ -264,7 +286,9 @@ describe("withdrawing a scheduled tier change", () => {
       new WithdrawTierChange(),
       { id, now: start, context },
     );
+
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(NotSubscribed);
   });
@@ -293,7 +317,9 @@ describe("what a schedule refuses", () => {
       now: start,
       context,
     });
+
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(TierNotInCatalog);
   });
@@ -304,7 +330,9 @@ describe("what a schedule refuses", () => {
       withTier({ price: { amount: 1_900, currency: "eur", interval: "month" } }),
       { id, now: start, context },
     );
+
     expect(verdict._tag).toBe("Rejected");
+
     if (verdict._tag !== "Rejected") return;
     expect(verdict.rejection).toBeInstanceOf(CurrencyMismatch);
   });
@@ -333,6 +361,7 @@ describe("the pool at the boundary", () => {
 
   const accepted = (verdict: ReturnType<typeof closeAt>): SubscribedState => {
     expect(verdict._tag).toBe("Accepted");
+
     return verdict._tag === "Accepted" ? (verdict.state as SubscribedState) : (undefined as never);
   };
 
@@ -344,12 +373,15 @@ describe("the pool at the boundary", () => {
       subscribed({ credits: 0, creditsExpire: "never", pendingTier: monthly }),
       monthLater,
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
 
     const changed = verdict.events.find((event) => event._tag === "TierChanged") as
       | { readonly credits: number }
       | undefined;
+
     expect(changed?.credits).toBe(500);
     expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
     expect((verdict.state as SubscribedState).credits).toBe(500);
@@ -358,10 +390,13 @@ describe("the pool at the boundary", () => {
     // The new grant is for the new period, so its own rule applies at its close.
     const next = closeAt(accepted(verdict), monthAfterThat);
     expect(next._tag).toBe("Accepted");
+
     if (next._tag !== "Accepted") return;
+
     const expired = next.events.find((event) => event._tag === "CreditsExpired") as
       | { readonly amount: number; readonly balanceAfter: number }
       | undefined;
+
     expect(expired).toMatchObject({ amount: 500, balanceAfter: 0 });
     expect((next.state as SubscribedState).credits).toBe(0);
   });
@@ -379,12 +414,15 @@ describe("the pool at the boundary", () => {
       }),
       monthLater,
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
 
     const changed = verdict.events.find((event) => event._tag === "TierChanged") as
       | { readonly credits: number; readonly prepaidCredits?: number }
       | undefined;
+
     expect(changed?.credits).toBe(600);
     expect(changed?.prepaidCredits).toBe(100);
     expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
@@ -396,10 +434,13 @@ describe("the pool at the boundary", () => {
     // The plan's part of the new pool expires next period; the pack does not.
     const next = closeAt(after, monthAfterThat);
     expect(next._tag).toBe("Accepted");
+
     if (next._tag !== "Accepted") return;
+
     const expired = next.events.find((event) => event._tag === "CreditsExpired") as
       | { readonly amount: number; readonly balanceAfter: number }
       | undefined;
+
     expect(expired).toMatchObject({ amount: 500, balanceAfter: 100 });
     expect((next.state as SubscribedState).credits).toBe(100);
     expect((next.state as SubscribedState).prepaidCredits).toBe(100);
@@ -414,7 +455,9 @@ describe("the pool at the boundary", () => {
       }),
       monthLater,
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
     expect((verdict.state as SubscribedState).credits).toBe(500);
@@ -429,13 +472,16 @@ describe("the pool at the boundary", () => {
       }),
       monthLater,
     );
+
     expect(verdict._tag).toBe("Accepted");
+
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events.map((event) => event._tag)).not.toContain("CreditsExpired");
     expect((verdict.state as SubscribedState).credits).toBe(500);
 
     const next = closeAt(accepted(verdict), monthAfterThat);
     expect(next._tag).toBe("Accepted");
+
     if (next._tag !== "Accepted") return;
     expect(next.events.map((event) => event._tag)).not.toContain("CreditsExpired");
     expect((next.state as SubscribedState).credits).toBe(500);
@@ -458,6 +504,7 @@ it("starts every counter over, including a resets:never one", () => {
       interval: "month",
     },
   });
+
   const verdict = Subscription.predict(
     state,
     new ClosePeriod({
@@ -466,12 +513,15 @@ it("starts every counter over, including a resets:never one", () => {
     } as never),
     { id, now: monthLater, context },
   );
+
   expect(verdict._tag).toBe("Accepted");
+
   if (verdict._tag !== "Accepted") return;
 
   const reset = verdict.events.find((event) => event._tag === "UsageReset") as
     | { readonly remaining: Record<string, number | null>; readonly kept?: Record<string, boolean> }
     | undefined;
+
   expect(reset?.remaining.messages).toBe(20);
   expect(reset?.kept?.messages).toBeUndefined();
   const after = verdict.state as SubscribedState;
@@ -484,6 +534,7 @@ it("keeps a resets:never count across a close that changes no tier", () => {
     tier: "lifetime",
     allowances: { messages: lifetime },
   });
+
   const verdict = Subscription.predict(
     state,
     new ClosePeriod({
@@ -492,11 +543,15 @@ it("keeps a resets:never count across a close that changes no tier", () => {
     } as never),
     { id, now: monthLater, context },
   );
+
   expect(verdict._tag).toBe("Accepted");
+
   if (verdict._tag !== "Accepted") return;
+
   const reset = verdict.events.find((event) => event._tag === "UsageReset") as
     | { readonly kept?: Record<string, boolean> }
     | undefined;
+
   expect(reset?.kept?.messages).toBe(true);
   expect((verdict.state as SubscribedState).usage.messages).toBe(60);
 });

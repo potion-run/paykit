@@ -10,6 +10,7 @@ const client = (asked: Array<Record<string, unknown>> = []): StripeClient => ({
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
+
       return { url: `https://checkout.stripe.test/${request.priceIds.join(",")}` };
     }),
   createBillingPortalSession: () => Effect.succeed({ url: "https://billing.stripe.test/portal" }),
@@ -26,12 +27,14 @@ describe("selling a tier by lookup key", () => {
   it.effect("resolves the key to the price that answers for the tier now", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers: { pro: { price: proPrice, lookupKey: "paykit:pro" } },
         client: client(asked),
       });
+
       const checkout = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -42,6 +45,7 @@ describe("selling a tier by lookup key", () => {
           });
         }),
       );
+
       // The id came from the resolver, not from config: a replaced price needs
       // no config change.
       expect(checkout.url).toContain("price_resolved");
@@ -52,12 +56,14 @@ describe("selling a tier by lookup key", () => {
   it.effect("still prefers an explicit priceId when one is configured", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers: { pro: { price: proPrice, priceId: "price_pinned", lookupKey: "paykit:pro" } },
         client: client(asked),
       });
+
       const checkout = yield* runWith(
         provider,
         Effect.gen(function* () {
@@ -68,6 +74,7 @@ describe("selling a tier by lookup key", () => {
           });
         }),
       );
+
       expect(checkout.url).toContain("price_pinned");
     }),
   );
@@ -79,12 +86,14 @@ describe("selling a tier by lookup key", () => {
         createBillingPortalSession: client().createBillingPortalSession,
         createInvoice: client().createInvoice,
       };
+
       const provider = Stripe({
         secretKey: Redacted.make("sk_test_1"),
         origin: "https://app.example.com",
         tiers: { pro: { price: proPrice, lookupKey: "paykit:pro" } },
         client: partial,
       });
+
       const error = yield* Effect.flip(
         runWith(
           provider,
@@ -97,7 +106,9 @@ describe("selling a tier by lookup key", () => {
           }),
         ),
       );
+
       expect(error).toBeInstanceOf(PaymentDeclined);
+
       if (error._tag === "PaymentDeclined") expect(error.code).toBe("price_not_configured");
     }),
   );

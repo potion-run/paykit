@@ -30,6 +30,7 @@ type McpServices = Services<typeof BillingApi>;
  */
 export const toMcpHandler = Effect.gen(function* () {
   const context = yield* Effect.context<McpServices>();
+
   const { handler, dispose } = HttpRouter.toWebHandler(
     BillingMcp.pipe(
       Layer.provide(
@@ -46,5 +47,6 @@ export const toMcpHandler = Effect.gen(function* () {
     ),
     { disableLogger: true },
   );
+
   return { handler, dispose };
 });

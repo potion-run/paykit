@@ -56,6 +56,7 @@ const FeatureSpec = Schema.Struct({
   amount: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 300 }))),
   dimension: Schema.optionalKey(Schema.Literals(["default", "gpt-large", "unknown"])),
 });
+
 type FeatureSpec = typeof FeatureSpec.Type;
 
 const featureOf = (spec: FeatureSpec): JudgedFeature => ({
@@ -105,10 +106,12 @@ describe("capacity verdicts", () => {
         const verdict = capacityOf({ standing: spec.standing, feature, ask });
         const headroom = headroomOf(feature);
         const overflow = moneyOverflowOf(feature, spec.amount);
+
         const creditCost =
           feature.creditRates === undefined
             ? undefined
             : spec.amount * creditRateOf(feature.creditRates, { dimension: spec.dimension });
+
         const creditAvailable = feature.remaining ?? 0;
 
         // The rules in the order the write paths apply them: the first refusal
@@ -129,6 +132,7 @@ describe("capacity verdicts", () => {
                       spec.amount > feature.remaining
                     ? "Remaining"
                     : "Allowed";
+
         if (verdict._tag !== expected) return false;
 
         switch (verdict._tag) {
@@ -136,11 +140,15 @@ describe("capacity verdicts", () => {
             return spec.standing === "blocked";
           case "Allowed":
             if (spec.standing === "blocked") return false;
+
             if (feature.creditRates !== undefined) {
               return creditCost! <= creditAvailable;
             }
+
             if (headroom !== null && spec.amount > headroom) return false;
+
             if (overflow !== null) return false;
+
             if (
               feature.overage === "block" &&
               feature.remaining !== null &&
@@ -148,6 +156,7 @@ describe("capacity verdicts", () => {
             ) {
               return false;
             }
+
             return true;
           case "Remaining":
             return (
@@ -205,16 +214,19 @@ describe("capacity verdicts", () => {
         const feature = featureOf(spec);
         const smallAmount = Math.min(spec.amount, large);
         const largeAmount = Math.max(spec.amount, large);
+
         const small = capacityOf({
           standing: spec.standing,
           feature,
           ask: askOf(smallAmount, spec.dimension),
         });
+
         const bigger = capacityOf({
           standing: spec.standing,
           feature,
           ask: askOf(largeAmount, spec.dimension),
         });
+
         // Allowed is downward-closed in `amount`, and refused is upward-closed.
         return !(bigger._tag === "Allowed" && small._tag !== "Allowed");
       },
@@ -227,6 +239,7 @@ describe("capacity verdicts", () => {
       Arbitrary.schema(FeatureSpec),
       (spec) => {
         const feature = featureOf(spec);
+
         // `allowsOne` is the read model's one-unit reading at the default
         // dimension: a view carries one `allowed` flag, not one per dimension.
         const verdict = capacityOf({
@@ -234,6 +247,7 @@ describe("capacity verdicts", () => {
           feature,
           ask: { amount: 1 },
         });
+
         return allowsOne(spec.standing, feature) === (verdict._tag === "Allowed");
       },
       { runs: 200, size: 30 },
@@ -249,9 +263,12 @@ describe("money overflow", () => {
         const feature = featureOf(spec);
         const overflow = moneyOverflowOf(feature, spec.amount);
         const promised = promisedOf(feature, spec.amount);
+
         if (feature.moneyCap === undefined) return overflow === null;
         const exceeded = feature.billed + promised > feature.moneyCap;
+
         if (!exceeded) return overflow === null;
+
         return (
           overflow !== null &&
           overflow.cap === feature.moneyCap &&
@@ -277,11 +294,14 @@ describe("money overflow", () => {
         const large = Math.max(spec.amount, other);
         const atSmall = moneyOverflowOf(feature, small);
         const atLarge = moneyOverflowOf(feature, large);
+
         // Refusal is upward-closed, and the promised total is non-decreasing.
         if (atSmall !== null && atLarge === null) return false;
+
         if (atSmall !== null && atLarge !== null && atLarge.promised < atSmall.promised) {
           return false;
         }
+
         return true;
       },
       { runs: 200, size: 40 },
@@ -305,6 +325,7 @@ const CountersSpec = Schema.Struct({
   reserved: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 200 }))),
   billed: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 20_000 }))),
 });
+
 type Counters = typeof CountersSpec.Type;
 
 const sameCounters = (left: Counters, right: Counters): boolean =>
@@ -319,15 +340,18 @@ describe("downgrade verdicts", () => {
       Arbitrary.schema(Schema.Struct({ allowance: AllowanceSpec, counters: CountersSpec })),
       ({ allowance, counters }) => {
         const verdict = downgradeOf(allowance, counters);
+
         const usage =
           allowance.overage === "block" &&
           allowance.included !== "unlimited" &&
           counters.used + counters.reserved > allowance.included;
+
         const spend = allowance.moneyCap !== undefined && counters.billed > allowance.moneyCap;
         const ceiling = spendCeilingOf(allowance);
         const overCeiling = ceiling !== null && counters.used + counters.reserved > ceiling;
 
         const expected = usage ? "Usage" : spend ? "Spend" : overCeiling ? "Ceiling" : "Allowed";
+
         if (verdict._tag !== expected) return false;
 
         switch (verdict._tag) {
@@ -375,14 +399,18 @@ describe("downgrade verdicts", () => {
           : countersAtLeast(small, large)
             ? large
             : null;
+
         const second = first === small ? large : first === large ? small : null;
+
         // Two counters that are not comparable in both directions do not
         // constrain each other; skip that pair rather than claim an order.
         if (first === null || second === null) return true;
+
         if (sameCounters(first, second)) return true;
 
         const atFirst = downgradeOf(allowance, first);
         const atSecond = downgradeOf(allowance, second);
+
         // A move already refused cannot become allowed by consuming more.
         return atFirst._tag === "Allowed" || atSecond._tag !== "Allowed";
       },

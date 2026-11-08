@@ -19,6 +19,7 @@ import {
   encodeVendorPart,
   unitAmountDecimalOf,
   unitsOf,
+  type PriceBand,
   type Pricing,
   type UnitPrice,
 } from "@potion.run/paykit";
@@ -146,12 +147,18 @@ const toPricing = (price: StripePrice): Pricing | null => {
         currency: price.currency,
       },
     }));
+
     if (bands.length === 0) return null;
+
+    const nonEmptyBands: [PriceBand, ...Array<PriceBand>] = [bands[0]!, ...bands.slice(1)];
+
     return price.tiers_mode === "volume"
-      ? { _tag: "volume", currency: price.currency, bands: bands as never }
-      : { _tag: "graduated", currency: price.currency, bands: bands as never };
+      ? { _tag: "volume", currency: price.currency, bands: nonEmptyBands }
+      : { _tag: "graduated", currency: price.currency, bands: nonEmptyBands };
   }
+
   if (price.unit_amount === null) return null;
+
   return {
     _tag: "unit",
     unitPrice: {
@@ -162,6 +169,8 @@ const toPricing = (price: StripePrice): Pricing | null => {
   };
 };
 
+// SAFETY: the catalog only sells metered prices on a monthly or annual tier, so
+// Stripe's day and week intervals cannot reach this mapping.
 const attrsOf = (price: StripePrice): MeteredPrice["Attributes"] => ({
   id: price.id,
   product: typeof price.product === "string" ? price.product : price.product.id,
@@ -178,6 +187,7 @@ const matches = (price: StripePrice, props: MeteredPriceProps): boolean => {
   const pricing = props.pricing;
   const tiers = stripeTiersOf(pricing);
   const transform = stripeTransformOf(pricing);
+
   return (
     price.billing_scheme === (pricing._tag === "unit" ? "per_unit" : "tiered") &&
     price.currency === currencyOf(pricing) &&
@@ -202,17 +212,22 @@ const LIST_MAX_PAGES = 100;
 const listByActive = Effect.fn(function* (active: boolean) {
   const prices: StripePrice[] = [];
   let startingAfter: string | undefined;
+
   for (let page = 0; page < LIST_MAX_PAGES; page++) {
     const response = yield* GetPrices({
       active,
       limit: LIST_PAGE_SIZE,
       ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
     });
+
     prices.push(...response.data);
+
     if (!response.has_more || response.data.length === 0) break;
     startingAfter = response.data[response.data.length - 1]?.id;
+
     if (startingAfter === undefined) break;
   }
+
   return prices;
 });
 
@@ -220,27 +235,34 @@ const listAll = Effect.fn(function* () {
   const [active, inactive] = yield* Effect.all([listByActive(true), listByActive(false)], {
     concurrency: 2,
   });
+
   const seen = new Set<string>();
+
   return [...active, ...inactive].filter((price) => {
     if (seen.has(price.id)) return false;
     seen.add(price.id);
+
     return true;
   });
 });
 
 const findByAlchemyId = Effect.fn(function* (id: string) {
   const prices = yield* listAll();
+
   for (const price of prices) {
     if (yield* hasAlchemyMetadata(id, tagRecord(price.metadata))) return price;
   }
+
   return undefined;
 });
 
 const observe = Effect.fn(function* (input: { id?: string; logicalId: string }) {
   if (input.id !== undefined) {
     const byId = yield* getById(input.id);
+
     if (byId !== undefined) return byId;
   }
+
   return yield* findByAlchemyId(input.logicalId);
 });
 
@@ -255,18 +277,22 @@ export const MeteredPriceProvider = () =>
 
     diff: Effect.fn(function* ({ news }) {
       if (!isResolved(news)) return undefined;
+
       return undefined;
     }),
 
     read: Effect.fn(function* ({ id, output }) {
       const existing = yield* observe({ id: output?.id, logicalId: id });
+
       if (existing === undefined) return undefined;
       const attrs = attrsOf(existing);
+
       return (yield* hasAlchemyMetadata(id, tagRecord(existing.metadata))) ? attrs : Unowned(attrs);
     }),
 
     list: Effect.fn(function* () {
       const prices = (yield* listAll()).filter((price) => price.active);
+
       return prices
         .filter((price) => price.metadata[alchemyMetadataKeys.stack] !== undefined)
         .map(attrsOf);
@@ -276,6 +302,7 @@ export const MeteredPriceProvider = () =>
       const metadata = yield* desiredMetadata(id);
       const desiredLookupKey = news.lookupKey;
       let current = yield* observe({ id: output?.id, logicalId: id });
+
       if (current !== undefined && !matches(current, news)) current = undefined;
 
       if (current === undefined) {
@@ -301,6 +328,7 @@ export const MeteredPriceProvider = () =>
       const { upsert, removed } = diffMetadata(observedMetadata, metadata);
       const metadataChanged = upsert.length > 0 || removed.length > 0;
       const lookupKeyChanged = (current.lookup_key ?? "") !== desiredLookupKey;
+
       if (!metadataChanged && !lookupKeyChanged) return attrsOf(current);
 
       const updated = yield* UpdatePrice({
@@ -315,11 +343,13 @@ export const MeteredPriceProvider = () =>
             }
           : {}),
       });
+
       return attrsOf(updated);
     }),
 
     delete: Effect.fn(function* ({ output }) {
       const existing = yield* getById(output.id);
+
       if (existing === undefined || !existing.active) return;
       yield* UpdatePrice({ price: existing.id, active: false }).pipe(
         Effect.catchIf(isMissing, () => Effect.void),
@@ -334,10 +364,14 @@ export const MeteredPriceProvider = () =>
  */
 export const registerMeteredPriceProvider = Effect.gen(function* () {
   const collection = Option.getOrUndefined(yield* Effect.serviceOption(Providers));
+
   if (collection === undefined || collection.get(MeteredPrice.Type) !== undefined) return;
   const context = yield* Layer.build(MeteredPriceProvider());
-  collection.providers[MeteredPrice.Type] = Context.get(
-    context,
-    Provider.Provider(MeteredPrice.Type) as unknown as Context.Key<never, never>,
-  ) as never;
+  const providerService: unknown = Provider.Provider(MeteredPrice.Type);
+  // SAFETY: `Provider.Provider` is `Context.Service()(type)` at runtime, so the
+  // key it names is the service the layer just built; its declared type models
+  // the provider as an Effect rather than as a `Context.Key`.
+  const providerKey = providerService as Context.Key<never, Provider.ProviderService>;
+
+  collection.providers[MeteredPrice.Type] = Context.get(context, providerKey);
 });

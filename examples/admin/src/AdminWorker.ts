@@ -32,6 +32,7 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;
         const url = new URL(request.url, "http://localhost");
+
         if (url.pathname === "/session") {
           // The browser sends these cookies on the WebSocket handshake too,
           // which is why the console can use pushed live reads instead of
@@ -42,8 +43,11 @@ export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
             sessionCookies(exampleActor, { secure: url.protocol === "https:" }),
           ).pipe(Effect.orDie);
         }
+
         if (url.pathname.startsWith("/console")) return yield* console;
+
         if (url.pathname.startsWith("/admin")) return yield* admin.fetch;
+
         return HttpServerResponse.text("Not Found", { status: 404 });
       }),
     };

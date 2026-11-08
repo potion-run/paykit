@@ -36,7 +36,9 @@ describe("the Foldkit adapter", () => {
         requestId: 7,
         query: {},
       }).effect.pipe(Effect.provideService(AdminReads, reads()));
+
       expect(message._tag).toBe("SucceededListAccounts");
+
       if (message._tag !== "SucceededListAccounts") return;
       expect(message.requestId).toBe(7);
       expect(message.page.rows).toEqual([]);
@@ -56,7 +58,9 @@ describe("the Foldkit adapter", () => {
           }),
         ),
       );
+
       expect(message._tag).toBe("FailedListAccounts");
+
       if (message._tag !== "FailedListAccounts") return;
       expect(message.error._tag).toBe("AdminReadFailed");
     }),
@@ -82,7 +86,9 @@ describe("the Foldkit adapter", () => {
           }),
         ),
       );
+
       expect(message._tag).toBe("SucceededProviderRefs");
+
       if (message._tag !== "SucceededProviderRefs") return;
       expect(message.requestId).toBe(10);
       expect(message.answer.refs.manual?.customer).toBe("cus_1");
@@ -99,10 +105,13 @@ describe("the Foldkit adapter", () => {
         byTier: [],
         revenue: [],
       });
+
       const message = yield* AdminQueries.Overview({ requestId: 11 }).effect.pipe(
         Effect.provideService(AdminReads, reads({ overview: () => Effect.succeed(overview) })),
       );
+
       expect(message._tag).toBe("SucceededOverview");
+
       if (message._tag !== "SucceededOverview") return;
       expect(message.requestId).toBe(11);
       expect(message.overview.accounts).toBe(2);
@@ -123,7 +132,9 @@ describe("the Foldkit adapter", () => {
           }),
         ),
       );
+
       expect(message._tag).toBe("SucceededPreview");
+
       if (message._tag !== "SucceededPreview") return;
       expect(message.answer._tag).toBe("unpredictable");
     }),

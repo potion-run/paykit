@@ -17,19 +17,23 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: { amount: 9900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 5000, overage: "block" })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
+
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const account = "acct_preview";
 
@@ -77,6 +81,7 @@ it.live("previews a subscribe without recording anything", () =>
     const preview = yield* Preview(account);
     const result = yield* preview({ command: { kind: "subscribe", tier: "pro" } });
     expect(result._tag).toBe("accepted");
+
     if (result._tag !== "accepted") return;
     expect(result.state._tag).toBe("Subscribed");
     expect(result.events.map((event) => event._tag)).toEqual(["SubscriptionActivated"]);
@@ -104,6 +109,7 @@ it.live("previews the charge a tier change would make", () =>
     const preview = yield* Preview(account);
     const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
     expect(result._tag).toBe("accepted");
+
     if (result._tag !== "accepted") return;
     expect(result.proration?.due).toBe(8000);
     expect(result.proration?.credit).toBe(1900);
@@ -130,6 +136,7 @@ it.live("previews a change and a schedule in the standing's currency", () =>
     const preview = yield* Preview(account);
     const change = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
     expect(change._tag).toBe("accepted");
+
     if (change._tag !== "accepted") return;
     expect(change.proration?.currency).toBe("eur");
     expect(
@@ -139,6 +146,7 @@ it.live("previews a change and a schedule in the standing's currency", () =>
 
     const scheduled = yield* preview({ command: { kind: "scheduleTierChange", tier: "scale" } });
     expect(scheduled._tag).toBe("accepted");
+
     if (scheduled._tag !== "accepted" || scheduled.state._tag !== "Subscribed") return;
     expect(scheduled.state.pendingTier?.currency).toBe("eur");
     expect(scheduled.state.pendingTier?.price?.currency).toBe("eur");
@@ -150,6 +158,7 @@ it.live("a preview carries the rejection the write would return", () =>
     const preview = yield* Preview(account);
     const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
     expect(result._tag).toBe("rejected");
+
     if (result._tag !== "rejected") return;
     // A model refusal is data: the console renders the tag it carries.
     expect((result.rejection as { readonly _tag: string })._tag).toBe("NotSubscribed");
@@ -159,9 +168,11 @@ it.live("a preview carries the rejection the write would return", () =>
 it.live("a preview of a tier the catalog does not carry fails typed", () =>
   Effect.gen(function* () {
     const preview = yield* Preview(account);
+
     const exit = yield* Effect.exit(
       preview({ command: { kind: "subscribe", tier: "enterprise" } }),
     );
+
     expect(exit._tag).toBe("Failure");
     expect(String(exit)).toContain("TierNotInCatalog");
   }).pipe(run),
@@ -172,10 +183,12 @@ it("a preview's events match what the same command records", () =>
     const preview = yield* Preview(account);
     const predicted = yield* preview({ command: { kind: "subscribe", tier: "free" } });
     expect(predicted._tag).toBe("accepted");
+
     if (predicted._tag !== "accepted") return;
     // `predict` runs the same `decide`, so the tag and the period agree with
     // the event the model would record at the same instant.
     const subscription = yield* Subscription;
+
     const receipt = yield* subscription.send(
       Subscription.ref(account),
       new Subscribe({
@@ -186,6 +199,7 @@ it("a preview's events match what the same command records", () =>
         allowances: allowancesOf(testCatalog, "free")!,
       }),
     );
+
     expect(receipt.events.map((event) => event._tag)).toEqual(
       predicted.events.map((event) => event._tag),
     );
@@ -196,11 +210,14 @@ it("the clock a preview decides at is the clock the model used", () =>
     const preview = yield* Preview(account);
     const result = yield* preview({ command: { kind: "subscribe", tier: "free" } });
     expect(result._tag).toBe("accepted");
+
     if (result._tag !== "accepted" || result.state._tag !== "Subscribed") return;
     const now = DateTime.makeUnsafe(yield* Effect.sync(() => Date.now()));
+
     const drift = Math.abs(
       DateTime.toEpochMillis(result.state.period.start) - DateTime.toEpochMillis(now),
     );
+
     expect(drift).toBeLessThan(5_000);
   }).pipe(run));
 
@@ -221,6 +238,7 @@ it.live("previews scheduling a change without recording it", () =>
     const preview = yield* Preview(account);
     const result = yield* preview({ command: { kind: "scheduleTierChange", tier: "scale" } });
     expect(result._tag).toBe("accepted");
+
     if (result._tag !== "accepted") return;
     // A scheduled change carries no proration: the period it was scheduled in
     // has ended, so there is nothing to prorate.
@@ -241,6 +259,7 @@ it.live("previews the withdrawal of a scheduled change", () =>
     const preview = yield* Preview(account);
     const nothing = yield* preview({ command: { kind: "withdrawTierChange" } });
     expect(nothing._tag).toBe("rejected");
+
     if (nothing._tag !== "rejected") return;
     expect((nothing.rejection as { readonly _tag: string })._tag).toBe("NotSubscribed");
 
@@ -269,6 +288,7 @@ it.live("previews the withdrawal of a scheduled change", () =>
 
     const result = yield* preview({ command: { kind: "withdrawTierChange" } });
     expect(result._tag).toBe("accepted");
+
     if (result._tag !== "accepted") return;
     expect(result.events.map((event) => event._tag)).toEqual(["TierChangeWithdrawn"]);
     // The schedule is still there: a preview does not record.

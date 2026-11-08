@@ -26,6 +26,7 @@ export { BindingCall, BindingFailed, type BindingError } from "./Bindings.ts";
 
 // ── command bindings, served by both layers ────────────────────────────────
 export { Check, type CheckError, type CheckRequest, type CheckVerb } from "./Check.binding.ts";
+
 export {
   TrackUsage,
   type TrackUsageError,
@@ -33,6 +34,7 @@ export {
   type TrackUsageResult,
   type TrackUsageVerb,
 } from "./TrackUsage.binding.ts";
+
 export {
   Hold,
   type HoldError,
@@ -40,6 +42,7 @@ export {
   type HoldResult,
   type HoldVerb,
 } from "./Hold.binding.ts";
+
 export {
   SettleHold,
   type SettleHoldError,
@@ -47,6 +50,7 @@ export {
   type SettleHoldResult,
   type SettleHoldVerb,
 } from "./SettleHold.binding.ts";
+
 export {
   ReleaseHold,
   type ReleaseHoldError,
@@ -54,6 +58,7 @@ export {
   type ReleaseHoldResult,
   type ReleaseHoldVerb,
 } from "./ReleaseHold.binding.ts";
+
 export {
   ConsumeCredits,
   type ConsumeCreditsError,
@@ -61,6 +66,7 @@ export {
   type ConsumeCreditsResult,
   type ConsumeCreditsVerb,
 } from "./ConsumeCredits.binding.ts";
+
 export {
   Resume,
   ScheduleCancellation,
@@ -71,6 +77,7 @@ export {
   type ResumeVerb,
   type StandingResult,
 } from "./Cancel.binding.ts";
+
 export {
   ScheduleTierChange,
   WithdrawTierChange,
@@ -80,6 +87,7 @@ export {
   type WithdrawTierChangeError,
   type WithdrawTierChangeVerb,
 } from "./ScheduleTierChange.binding.ts";
+
 export {
   StartTrial,
   type StartTrialError,
@@ -96,18 +104,21 @@ export {
   type ChangeTierResult,
   type ChangeTierVerb,
 } from "./ChangeTier.binding.ts";
+
 export {
   Subscribe,
   type SubscribeError,
   type SubscribeRequest,
   type SubscribeVerb,
 } from "./Subscribe.binding.ts";
+
 export {
   Preview,
   type PreviewError,
   type PreviewRequest,
   type PreviewVerb,
 } from "./Preview.binding.ts";
+
 export {
   ChargeProration,
   Portal,
@@ -118,7 +129,9 @@ export {
   type PortalResult,
   type PortalVerb,
 } from "./Portal.binding.ts";
+
 export { List, type ListError, type ListVerb } from "./List.binding.ts";
+
 export { Webhook, type WebhookApplyError, type WebhookVerb } from "./Webhook.binding.ts";
 
 // ── the operator surface, served by its own layer ───────────────────────────
@@ -161,10 +174,15 @@ export {
 
 // ── the four layers ────────────────────────────────────────────────────────
 export { BillingInProcess } from "./BillingInProcess.layer.ts";
+
 export { CheckReadModel } from "./CheckReadModel.layer.ts";
+
 export { CheckOverTransport } from "./CheckOverTransport.layer.ts";
+
 export { BillingApiLayer } from "./BillingApi.layer.ts";
+
 export { BillingAdminInProcess } from "./BillingAdminInProcess.layer.ts";
+
 export { BillingAdminApiLayer } from "./BillingAdminApi.layer.ts";
 
 export {

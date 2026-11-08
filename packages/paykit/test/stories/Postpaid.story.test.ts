@@ -41,6 +41,7 @@ const meteredTier = tier({
     }),
   ],
 });
+
 const paygoTier = tier({
   id: "paygo",
   grants: [
@@ -51,9 +52,11 @@ const paygoTier = tier({
     }),
   ],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [meteredTier, paygoTier] }),
 );
+
 const metered = allowancesOf(testCatalog, "metered")!;
 const paygo = allowancesOf(testCatalog, "paygo")!;
 const account = Subscription.ref("acct_postpaid");

@@ -34,11 +34,13 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: { amount: 9900, currency: "usd", interval: "month" },
@@ -51,13 +53,16 @@ export const testCatalog: Catalog = Effect.runSync(
 
 const allowances = (id: string) => {
   const found = allowancesOf(testCatalog, id);
+
   if (found === null) throw new Error(`test catalog is missing ${id}`);
+
   return found;
 };
 
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
+
 const account = Subscription.ref("acct_1");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");

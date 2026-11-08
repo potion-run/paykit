@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
  * ordinary per-unit price.
  */
 export const BillingUnits = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)));
+
 export type BillingUnits = typeof BillingUnits.Type;
 
 /**
@@ -20,6 +21,7 @@ export const UnitPrice = Schema.Struct({
   /** How many feature units `amount` buys. Defaults to one. */
   units: Schema.optionalKey(BillingUnits),
 });
+
 export type UnitPrice = typeof UnitPrice.Type;
 
 /**
@@ -50,6 +52,7 @@ export const PriceBand = Schema.Struct({
   ]),
   unitPrice: UnitPrice,
 });
+
 export type PriceBand = typeof PriceBand.Type;
 
 /** A band as an author writes it: a ceiling and what the units in it cost. */
@@ -88,6 +91,7 @@ export const Pricing = Schema.Union([
     bands: Schema.NonEmptyArray(PriceBand),
   }),
 ]);
+
 export type Pricing = typeof Pricing.Type;
 
 /** A pricing as an author writes it. */
@@ -139,6 +143,7 @@ export const pricing = (input: PricingInput): Pricing => {
       },
     };
   }
+
   return {
     _tag: input.kind,
     currency: input.currency,
@@ -161,7 +166,9 @@ export type PricingValue = Pricing | UnitPrice | PricingInput;
  */
 export const asPricing = (value: PricingValue): Pricing => {
   if ("_tag" in value) return value;
+
   if ("kind" in value) return pricing(value);
+
   return { _tag: "unit", unitPrice: value };
 };
 
@@ -179,12 +186,14 @@ export const unitAmountDecimalOf = (price: UnitPrice): string => {
   // package's fractional rate), not the catalog's integer amount.
   if (!Number.isSafeInteger(price.amount)) return String(price.amount);
   const units = BigInt(unitsOf(price));
+
   if (units === 1n) return String(price.amount);
   const numerator = BigInt(price.amount) * DECIMAL_SCALE;
   const rounded = (numerator + units / 2n) / units;
   const whole = rounded / DECIMAL_SCALE;
   const fraction = (rounded % DECIMAL_SCALE).toString().padStart(Number(DECIMAL_PLACES), "0");
   const trimmed = fraction.replace(/0+$/, "");
+
   return trimmed.length === 0 ? String(whole) : `${whole}.${trimmed}`;
 };
 
@@ -207,6 +216,7 @@ export const unitsOf = (price: UnitPrice): number => price.units ?? 1;
  */
 export const priceOfUnits = (price: UnitPrice, units: number): number => {
   if (units <= 0) return 0;
+
   return Math.ceil(units / unitsOf(price)) * price.amount;
 };
 
@@ -219,20 +229,27 @@ const bandCeiling = (band: PriceBand): number => (band.upTo === "inf" ? Infinity
  */
 export const priceOf = (pricing: Pricing, billable: number): number => {
   if (billable <= 0) return 0;
+
   if (pricing._tag === "unit") return priceOfUnits(pricing.unitPrice, billable);
+
   if (pricing._tag === "volume") {
     const chosen = pricing.bands.find((band) => billable <= bandCeiling(band));
+
     return chosen === undefined ? 0 : priceOfUnits(chosen.unitPrice, billable);
   }
+
   let previous = 0;
   let total = 0;
+
   for (const band of pricing.bands) {
     const ceiling = bandCeiling(band);
     const inBand = Math.max(0, Math.min(billable, ceiling) - previous);
     total += priceOfUnits(band.unitPrice, inBand);
     previous = ceiling;
+
     if (billable <= ceiling) break;
   }
+
   return total;
 };
 
@@ -246,6 +263,7 @@ export const PricedLine = Schema.Struct({
   /** The money this line charged, in minor units. */
   amount: Schema.Int,
 });
+
 export type PricedLine = typeof PricedLine.Type;
 
 /**
@@ -265,6 +283,7 @@ export const pricedLines = (
   if (after <= before) return [];
   const from = Math.max(0, before);
   const to = Math.max(0, after);
+
   if (pricing._tag === "unit") {
     return [
       {
@@ -275,13 +294,16 @@ export const pricedLines = (
       },
     ];
   }
+
   if (pricing._tag === "volume") {
     const chosen = pricing.bands.find((band) => to <= bandCeiling(band));
+
     if (chosen === undefined) return [];
     // The band the total lands in prices every unit, so the event's money is
     // what the new band charges for `to` less what the total cost before it —
     // not the new band applied to `from`, which would hide the repricing.
     const amount = priceOfUnits(chosen.unitPrice, to) - priceOf(pricing, from);
+
     return amount === 0
       ? []
       : [
@@ -293,16 +315,20 @@ export const pricedLines = (
           },
         ];
   }
+
   const lines: Array<PricedLine> = [];
   let previous = 0;
+
   for (const band of pricing.bands) {
     const ceiling = bandCeiling(band);
     const bandFrom = Math.max(from, previous);
     const bandTo = Math.min(to, ceiling);
+
     if (bandTo > bandFrom) {
       const amount =
         priceOfUnits(band.unitPrice, bandTo - previous) -
         priceOfUnits(band.unitPrice, bandFrom - previous);
+
       if (amount !== 0) {
         lines.push({
           key: priceKey(band.unitPrice),
@@ -312,9 +338,12 @@ export const pricedLines = (
         });
       }
     }
+
     previous = ceiling;
+
     if (to <= ceiling) break;
   }
+
   return lines;
 };
 
@@ -329,5 +358,6 @@ export const chargeOfPricing = (pricing: Pricing, before: number, after: number)
  */
 export const soleUnitPriceOf = (pricing: Pricing): UnitPrice | null => {
   const prices = pricesOf(pricing);
+
   return prices.length === 1 ? prices[0]! : null;
 };

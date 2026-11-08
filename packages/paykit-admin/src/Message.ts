@@ -90,4 +90,5 @@ export const Message = defineMessageUnion({
   ClickedFailDevToolsReads: {},
   ClickedResetDevTools: {},
 });
+
 export type Message = typeof Message.Type;

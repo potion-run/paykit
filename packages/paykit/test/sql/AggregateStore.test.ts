@@ -31,15 +31,20 @@ const poolKit = (arrivals: Ref.Ref<number>, gate: Deferred.Deferred<void>) => ({
     Effect.gen(function* () {
       const state = (input.state as { readonly pool: number } | null) ?? { pool: INITIAL_POOL };
       const amount = (input.command as { readonly amount: number }).amount;
+
       if (amount > 0) {
         const arrived = yield* Ref.updateAndGet(arrivals, (seen) => seen + 1);
+
         if (arrived === 2) yield* Deferred.succeed(gate, undefined);
         yield* Deferred.await(gate);
       }
+
       if (state.pool < amount) {
         return { _tag: "Rejected" as const, rejection: { _tag: "Overdrawn" } };
       }
+
       const pool = state.pool - amount;
+
       return {
         _tag: "Accepted" as const,
         state: { pool },
@@ -77,6 +82,7 @@ const world = Effect.gen(function* () {
   const sql = sqliteExecutor(database);
   yield* migrate(sql);
   const log = SqlEventLog(sql, { now: () => clock.now });
+
   return { database, sql, log, clock };
 });
 
@@ -104,6 +110,7 @@ describe("the SQL aggregate store", () => {
     Effect.gen(function* () {
       const { log } = yield* world;
       const store = yield* storeOver(log);
+
       const exit = yield* Effect.exit(
         store.send(
           account,
@@ -114,6 +121,7 @@ describe("the SQL aggregate store", () => {
           } as never,
         ),
       );
+
       expect(exit._tag).toBe("Failure");
     }),
   );
@@ -212,6 +220,7 @@ describe("the SQL aggregate store", () => {
       const { log } = yield* world;
       const store = yield* storeOver(log);
       yield* appendOnce(log, "cmd-1");
+
       const exit = yield* Effect.exit(
         store.schedule(
           account,
@@ -220,6 +229,7 @@ describe("the SQL aggregate store", () => {
           { at: 1 } as never,
         ),
       );
+
       expect(exit._tag).toBe("Failure");
       expect(String(exit)).toContain("AlreadyExecuted");
     }),
@@ -275,6 +285,7 @@ describe("the SQL aggregate store", () => {
 
       const grown = yield* store.state(account);
       const events = yield* store.events!(account);
+
       const fold = events.reduce(
         (pool, row) => pool - (row.event as { readonly amount: number }).amount,
         INITIAL_POOL,

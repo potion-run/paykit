@@ -31,6 +31,7 @@ const activation = (over: { readonly credits?: number } = {}) =>
 
 const subscribed = (state: SubscriptionState) => {
   if (state._tag !== "Subscribed") throw new Error("expected a subscribed standing");
+
   return state;
 };
 
@@ -80,6 +81,7 @@ describe("activationOf", () => {
         unitPrice: { amount: 2, currency: "eur" },
       }),
     };
+
     expect(
       activationOf({
         tier: "metered",
@@ -141,6 +143,7 @@ describe("standingFrom", () => {
       ...initialSubscriptionState,
       refs: { stripe: { customer: "cus_1" } },
     };
+
     const trial = subscribed(
       standingFrom(
         { ...activation(), interval: "annual", trialEndsAt: end, statusAfter: "trialing" },
@@ -148,6 +151,7 @@ describe("standingFrom", () => {
         { trialUsed: true },
       ),
     );
+
     const converted = subscribed(standingFrom(activation(), trial, { trialUsed: trial.trialUsed }));
 
     expect(converted.refs).toEqual({ stripe: { customer: "cus_1" } });
@@ -170,6 +174,7 @@ describe("standingFrom", () => {
     const previous = subscribed(
       standingFrom(activation(), initialSubscriptionState, { trialUsed: false }),
     );
+
     const grant = activation();
     const { currency: _currency, price: _price, ...bare } = grant;
     expect(subscribed(standingFrom(bare, previous, { trialUsed: false })).currency).toBe("usd");

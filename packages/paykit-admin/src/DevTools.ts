@@ -31,6 +31,7 @@ export const DevToolsEvent = Schema.Struct({
   tag: Schema.String,
   body: Schema.String,
 });
+
 export type DevToolsEvent = typeof DevToolsEvent.Type;
 
 const body = (value: Readonly<Record<string, unknown>>): string => JSON.stringify(value);
@@ -280,6 +281,17 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({}),
   },
   {
+    tag: "RefundReversed",
+    body: body({
+      refundId: "re_dev_1",
+      amount: 1_900,
+      currency: "usd",
+      refundedAfter: 0,
+      reason: "ach_return",
+      commandId: "reverse_dev_1",
+    }),
+  },
+  {
     tag: "TopUpFailed",
     body: body({
       tier: "credits_100k",
@@ -305,6 +317,7 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
 ];
 
 export const DevToolsTab = Schema.Literals(["events", "reads", "feed"]);
+
 export type DevToolsTab = typeof DevToolsTab.Type;
 
 /** The tabs the floating panel shows, in the order they appear. */
@@ -331,6 +344,7 @@ export const DevToolsState = Schema.Struct({
   /** Rows the lab seeded locally; they never reach the server projection. */
   labRows: Schema.Array(BillingReadRow),
 });
+
 export type DevToolsState = typeof DevToolsState.Type;
 
 const firstEvent = Option.getOrThrow(Array.head(devToolsEvents));
@@ -364,20 +378,26 @@ export const devToolsEventOf = (tag: string): Option.Option<DevToolsEvent> =>
 const reviveDates = (value: unknown): unknown => {
   if (typeof value === "string") {
     const date = DateTime.make(value);
+
     return Option.isSome(date) ? date.value : value;
   }
+
   if (Array.isArray(value)) return value.map(reviveDates);
+
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [key, reviveDates(entry)]),
     );
   }
+
   return value;
 };
 
 export const decodeDevToolsEvent = (event: DevToolsEvent): Option.Option<AccountEvent> => {
   try {
+    // SAFETY: the event body is JSON; the value is revived and then decoded by the event schema.
     const body = reviveDates(JSON.parse(event.body)) as Record<string, unknown>;
+
     return Schema.decodeUnknownOption(AccountEvent)({ _tag: event.tag, ...body });
   } catch {
     return Option.none();
@@ -401,6 +421,7 @@ export const nextEventSeq = (account: {
 }): number => {
   const cursor = Option.getOrElse(account.cursor, () => 0);
   const newest = Array.reduce(account.events, 0, (max, event) => Math.max(max, event.seq));
+
   return Math.max(cursor, newest) + 1;
 };
 
@@ -436,8 +457,10 @@ const seedEntitlement = (
   const isFlag = allowance.kind === "flag";
   const included = allowance.included;
   const used = isFlag || included === "unlimited" ? 0 : Math.floor(included / 8);
+
   const remaining =
     isFlag || included === "unlimited" ? null : Math.max(0, included - used - reserved);
+
   return {
     kind: allowance.kind ?? "metered",
     included,
@@ -469,13 +492,16 @@ export const devToolsBilling = (
 ): BillingStateView => {
   const terms = seedTerms(catalog, tier);
   const periodEnd = DateTime.add(at, { months: 1 });
+
   const price = Option.getOrUndefined(
     Option.flatMap(terms, (value) => Option.fromNullishOr(value.price)),
   );
+
   const credits = Option.getOrElse(
     Option.map(terms, (value) => value.credits),
     () => 0,
   );
+
   const pending = Option.getOrUndefined(
     Option.flatMap(catalog, (value) =>
       Option.flatMap(
@@ -488,6 +514,7 @@ export const devToolsBilling = (
       ),
     ),
   );
+
   return {
     account,
     tier,
@@ -535,14 +562,17 @@ export const devToolsEntitlements = (
   const terms = seedTerms(catalog, tier);
   const periodEnd = DateTime.add(at, { months: 1 });
   const allowances = Option.map(terms, (value) => value.allowances);
+
   const reservedOf = (feature: string): number =>
     Array.reduce(holds, 0, (total, hold) =>
       hold.feature === feature && hold.status === "open" ? total + hold.amount : total,
     );
+
   const features = Option.match(allowances, {
     onNone: () => {
       const feature = seedFeature(catalog);
       const reserved = reservedOf(feature);
+
       return {
         [feature]: {
           kind: "metered" as const,
@@ -566,6 +596,7 @@ export const devToolsEntitlements = (
         ]),
       ),
   });
+
   return {
     account,
     tier,
@@ -599,6 +630,7 @@ export const devToolsHolds = (
   at: DateTime.Utc,
 ): ReadonlyArray<HoldRecord> => {
   const feature = seedFeature(catalog);
+
   const hold = (
     id: string,
     amount: number,
@@ -614,6 +646,7 @@ export const devToolsHolds = (
     expiresAt: DateTime.add(at, { hours }),
     status,
   });
+
   return [
     hold(`hold_${account}_1`, 120, 2),
     hold(`hold_${account}_2`, 40, 6),

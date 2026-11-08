@@ -29,7 +29,9 @@ export {
   makeAdminReads,
   previewAnswerOf,
 } from "./Admin/Reads.ts";
+
 export type { AdminReadsShape } from "./Admin/Reads.ts";
+
 export {
   AdminChangeTier,
   AdminChangeTierClient,
@@ -46,7 +48,9 @@ export {
   ChangeTierRequest,
   makeAdminChangeTier,
 } from "./Admin/ChangeTier.ts";
+
 export type { AdminChangeTierShape } from "./Admin/ChangeTier.ts";
+
 export {
   AdminRefund,
   AdminRefundClient,
@@ -61,12 +65,21 @@ export {
   RefundRequest,
   makeAdminRefund,
 } from "./Admin/Refund.ts";
+
 export type { AdminRefundShape } from "./Admin/Refund.ts";
+
 export { AdminConsoleRpcs, AdminConsoleServer } from "./Admin/Server.ts";
+
 export { AdminAction, actionsFor } from "./AdminActions.ts";
+
 export type { AdminActionDescriptor } from "./AdminActions.ts";
+
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
+
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
+
 export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
+
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
+
 export { scheduleTierChangeInputOf } from "./TierCommand.ts";

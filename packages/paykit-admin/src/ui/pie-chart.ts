@@ -26,9 +26,11 @@ export const pieChart = <Message>(h: HtmlBuilder<Message>, options: PieChartOpti
   const values = options.segments.map((segment) => ({ ...segment, value: finite(segment.value) }));
   const total = values.reduce((sum, segment) => sum + segment.value, 0);
   let offset = 0;
+
   const rings = values.flatMap((segment) => {
     if (segment.value === 0 || total === 0) return [];
     const percentage = (segment.value / total) * 100;
+
     const circle = h.circle([
       h.Attribute("cx", "21"),
       h.Attribute("cy", "21"),
@@ -40,9 +42,12 @@ export const pieChart = <Message>(h: HtmlBuilder<Message>, options: PieChartOpti
       h.Attribute("stroke-dashoffset", String(-offset)),
       h.Attribute("transform", "rotate(-90 21 21)"),
     ]);
+
     offset += percentage;
+
     return [circle];
   });
+
   return h.div(
     [
       h.Class(classNames("pk-pie", options.className)),

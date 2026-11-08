@@ -8,6 +8,7 @@ export const FeatureId = Schema.String.pipe(
   Schema.check(Schema.isMinLength(1)),
   Schema.brand("FeatureId"),
 );
+
 export type FeatureId = typeof FeatureId.Type;
 
 /**
@@ -15,6 +16,7 @@ export type FeatureId = typeof FeatureId.Type;
  * by a tier and has nothing to spend down: no counter, no overage, no reset.
  */
 export const FeatureKind = Schema.Literals(["metered", "flag", "non_consumable"]);
+
 export type FeatureKind = typeof FeatureKind.Type;
 
 /**
@@ -23,10 +25,12 @@ export type FeatureKind = typeof FeatureKind.Type;
  * multipliers is a {@link RateCard}.
  */
 export const CreditRates = Schema.Record(Schema.String, Schema.Int);
+
 export type CreditRates = typeof CreditRates.Type;
 
 /** A property match: every key must equal the event's property. */
 export const RateMatch = Schema.Record(Schema.String, Schema.String);
+
 export type RateMatch = typeof RateMatch.Type;
 
 /**
@@ -38,6 +42,7 @@ export const RateRule = Schema.Struct({
   /** Credits one unit costs when this rule matches. */
   credits: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
 });
+
 export type RateRule = typeof RateRule.Type;
 
 /**
@@ -51,6 +56,7 @@ export const RateMultiplier = Schema.Struct({
   /** Add a fixed number of credits to the rate; it may be negative. */
   add: Schema.optionalKey(Schema.Int),
 });
+
 export type RateMultiplier = typeof RateMultiplier.Type;
 
 /**
@@ -71,6 +77,7 @@ export const RateCard = Schema.Struct({
   /** Every matching multiplier applies. */
   multipliers: Schema.optionalKey(Schema.Array(RateMultiplier)),
 });
+
 export type RateCard = typeof RateCard.Type;
 
 /** A card as an author writes it. */
@@ -91,6 +98,7 @@ export interface RateCardInput {
 
 /** Every credit-priced feature's card, keyed by feature id. */
 export const CreditRateCards = Schema.Record(Schema.String, RateCard);
+
 export type CreditRateCards = typeof CreditRateCards.Type;
 
 /**
@@ -135,6 +143,7 @@ export const rateCard = (input: RateCardInput): RateCard => ({
  */
 export const cardFromRates = (rates: CreditRates): RateCard => {
   const { default: fallback, ...dimensions } = rates;
+
   return {
     default: fallback ?? 0,
     ...(Object.keys(dimensions).length === 0 ? {} : { dimensions }),
@@ -161,10 +170,12 @@ export const creditRateOf = (
   const rule = card.rules?.find((candidate) => matches(candidate.match, ask.properties));
   const base = rule?.credits ?? dimensionRate ?? card.default;
   let rate = base;
+
   for (const multiplier of card.multipliers ?? []) {
     if (!matches(multiplier.match, ask.properties)) continue;
     rate = rate * (multiplier.factor ?? 1) + (multiplier.add ?? 0);
   }
+
   return Math.max(0, Math.round(rate));
 };
 
@@ -190,6 +201,7 @@ export const Feature = Schema.Struct({
    */
   rateCard: Schema.optionalKey(RateCard),
 });
+
 export type Feature = typeof Feature.Type;
 
 /** A metered feature as an author writes it: counted, or priced in credits. */
@@ -285,6 +297,7 @@ export function feature(input: {
   readonly creditRates?: CreditRates;
   readonly rateCard?: RateCardInput;
 }): Feature {
+  // SAFETY: the catalog schema validates the id when the feature is declared.
   return {
     id: input.id as FeatureId,
     ...(input.name === undefined ? {} : { name: input.name }),

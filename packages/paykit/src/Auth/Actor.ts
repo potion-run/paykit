@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
  * translator, a policy, a migration) that already authenticated upstream.
  */
 export const ActorKind = Schema.Literals(["account", "admin", "system"]);
+
 export type ActorKind = typeof ActorKind.Type;
 
 /** The caller a request carries into the domain. */
@@ -16,6 +17,7 @@ export const ActorSchema = Schema.Struct({
   /** The account for `account`, the operator for `admin`, the component for `system`. */
   id: Schema.String,
 });
+
 export type ActorValue = typeof ActorSchema.Type;
 
 /**

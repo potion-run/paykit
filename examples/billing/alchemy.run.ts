@@ -31,6 +31,7 @@ const BillingExample = Alchemy.Stack(
   Effect.gen(function* () {
     const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
     const worker = yield* BillingWorker;
+
     return {
       url: worker.url.as<string>(),
       tiers: recorded.tiers,
@@ -38,4 +39,5 @@ const BillingExample = Alchemy.Stack(
     };
   }),
 );
+
 export default BillingExample;

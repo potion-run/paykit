@@ -15,6 +15,7 @@ const refusals = [WebhookInvalid, TierNotInCatalog] as const;
  * not know" is the honest answer to retry on.
  */
 export type WebhookRefusal = InstanceType<(typeof refusals)[number]>;
+
 export type WebhookApplyError = BindingError<WebhookRefusal>;
 
 /** Whether a failure is the edge refusing a delivery it cannot apply. */

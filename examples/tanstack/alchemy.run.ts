@@ -30,6 +30,7 @@ const Example = Alchemy.Stack(
     const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
     const service = yield* BillingWorker;
+
     const site = yield* Cloudflare.Website.Vite("PaykitWebsite", {
       rootDir: import.meta.dirname,
       main: "src/worker.ts",
@@ -46,4 +47,5 @@ const Example = Alchemy.Stack(
     };
   }),
 );
+
 export default Example;

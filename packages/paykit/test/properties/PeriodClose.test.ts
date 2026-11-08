@@ -63,6 +63,7 @@ const closeCommand = (state: SubscribedState): ClosePeriod =>
 
 const actionFor = (state: SubscriptionState, periodEnd: DateTime.Utc, now: DateTime.Utc) => {
   const decision = decideAt(state, new ClosePeriod({ periodEnd }), now, "probe-close");
+
   return decision;
 };
 
@@ -94,6 +95,7 @@ describe("period close", () => {
       ),
       ({ periodEndOffsetDays, nowOffsetDays, alreadyClosed }) => {
         let state: SubscriptionState = subscribedAt("pro");
+
         if (alreadyClosed) {
           const decision = decideAt(
             state,
@@ -101,20 +103,26 @@ describe("period close", () => {
             state.period.end,
             "first-close",
           );
+
           if (!isAccepted(decision)) return false;
           state = evolveAt(state, decision, state.period.end, "first-close");
         }
+
         if (state._tag !== "Subscribed") return false;
 
         const periodEnd = at(DateTime.toEpochMillis(state.period.end) + days(periodEndOffsetDays));
         const now = at(DateTime.toEpochMillis(state.period.end) + days(nowOffsetDays));
         const canClose = canClosePeriod(state, periodEnd, now);
+
         if (canClose !== expectedCanClose(state, periodEnd, now)) return false;
 
         const decision = actionFor(state, periodEnd, now);
+
         if (canClose !== isAccepted(decision)) return false;
+
         if (!canClose && (decision as { readonly _tag: string })._tag !== "PeriodNotClosed")
           return false;
+
         return true;
       },
       { runs: 100, size: 20 },
@@ -132,12 +140,14 @@ describe("period close", () => {
       ),
       ({ messageUse, seatUse, held }) => {
         let state: SubscribedState = subscribedIn(closeCatalog, "kept");
+
         const messageDecision = decideAt(
           state,
           new TrackUsage({ feature: "messages", amount: messageUse }),
           start,
           "messages",
         );
+
         if (!isAccepted(messageDecision)) return false;
         state = evolveAt(state, messageDecision, start, "messages") as SubscribedState;
 
@@ -147,6 +157,7 @@ describe("period close", () => {
           start,
           "seats",
         );
+
         if (!isAccepted(seatDecision)) return false;
         state = evolveAt(state, seatDecision, start, "seats") as SubscribedState;
 
@@ -162,6 +173,7 @@ describe("period close", () => {
             start,
             "held",
           );
+
           if (!isAccepted(heldDecision)) return false;
           state = evolveAt(state, heldDecision, start, "held") as SubscribedState;
         }
@@ -173,23 +185,35 @@ describe("period close", () => {
         const beforeSeatsBilled = billedOf(state, "seats");
 
         const close = decideAt(state, closeCommand(state), state.period.end, "close");
+
         if (!isAccepted(close)) return false;
         const reset = close.find((event) => event._tag === "UsageReset") as UsageReset | undefined;
+
         if (reset === undefined) return false;
+
         if (reset.kept?.seats !== true) return false;
+
         if (reset.kept.messages === true) return false;
 
         const after = evolveAt(state, close, state.period.end, "close");
+
         if (after._tag !== "Subscribed") return false;
 
         // The kept feature is untouched; the resetting one starts clean.
         if (usedOf(after, "seats") !== beforeSeatsUsed) return false;
+
         if (reservedOf(after, "seats") !== beforeSeatsReserved) return false;
+
         if (remainingOf(after, "seats") !== beforeSeatsRemaining) return false;
+
         if (billedOf(after, "seats") !== beforeSeatsBilled) return false;
+
         if (usedOf(after, "messages") !== 0) return false;
+
         if (reservedOf(after, "messages") !== 0) return false;
+
         if (remainingOf(after, "messages") !== 100) return false;
+
         if (beforeMessagesUsed > 0 && reset.carried.messages !== 0) return false;
 
         return true;

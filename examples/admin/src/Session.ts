@@ -22,22 +22,30 @@ export const KIND_COOKIE = "pk_kind";
 const cookieValue = (cookie: string, name: string): string | null => {
   for (const part of cookie.split(";")) {
     const index = part.indexOf("=");
+
     if (index === -1) continue;
+
     if (part.slice(0, index).trim() === name) return part.slice(index + 1).trim();
   }
+
   return null;
 };
 
 /** The actor a request's cookie names, or `null` when it names none. */
 export const actorFromCookie = (headers: Headers.Input): ActorValue | null => {
   const cookie = Headers.get(Headers.fromInput(headers), "cookie");
+
   if (Option.isNone(cookie)) return null;
   const id = cookieValue(cookie.value, ACTOR_COOKIE);
+
   if (id === null || id === "") return null;
+
   const kind = Schema.decodeUnknownOption(ActorKind)(
     cookieValue(cookie.value, KIND_COOKIE) ?? "account",
   );
+
   if (Option.isNone(kind)) return null;
+
   return { kind: kind.value, id };
 };
 
@@ -56,6 +64,7 @@ export const sessionCookies = (
     sameSite: "lax",
     ...(options.secure ? { secure: true } : {}),
   };
+
   return [
     [ACTOR_COOKIE, actor.id, cookieOptions],
     [KIND_COOKIE, actor.kind, cookieOptions],

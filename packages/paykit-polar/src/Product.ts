@@ -3,6 +3,7 @@ import {
   encodeVendorPart,
   unitAmountDecimalOf,
   type Price,
+  type PriceBand,
   type Pricing,
   type TierKind,
   type UnitPrice,
@@ -155,6 +156,7 @@ export type Product = Resource<
 export const Product = Resource<Product>("Polar.Product");
 
 type VendorProduct = Polar.Product;
+
 type VendorPrice = VendorProduct["prices"][number];
 
 type FixedPrice = {
@@ -226,6 +228,7 @@ const tierOf = (product: VendorProduct): string => metadataOf(product)[PAYKIT_TI
 
 const attrsOf = (product: VendorProduct): Product["Attributes"] => {
   const price = product.prices.filter(isFixedPrice).find((candidate) => !candidate.is_archived);
+
   return {
     id: product.id,
     name: product.name,
@@ -259,26 +262,23 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
               currency: candidate.price_currency,
             },
           }));
-          const pricing: Pricing =
+
+          const nonEmptyBands: [PriceBand, ...Array<PriceBand>] = [bands[0]!, ...bands.slice(1)];
+
+          const pricing = (
             candidate.tiers.type === "volume"
               ? {
                   _tag: "volume",
                   currency: candidate.price_currency,
-                  bands: bands as unknown as Pricing & { _tag: "volume" } extends {
-                    bands: infer B;
-                  }
-                    ? B
-                    : never,
+                  bands: nonEmptyBands,
                 }
               : {
                   _tag: "graduated",
                   currency: candidate.price_currency,
-                  bands: bands as unknown as Pricing & { _tag: "graduated" } extends {
-                    bands: infer B;
-                  }
-                    ? B
-                    : never,
-                };
+                  bands: nonEmptyBands,
+                }
+          ) satisfies Pricing;
+
           return { meterId: candidate.meter_id, pricing };
         }),
     ],
@@ -327,6 +327,7 @@ const pricingOfUsage = (usage: ProductUsage): Pricing =>
 const usageSignature = (usage: ProductUsage): string => {
   const pricing = pricingOfUsage(usage);
   const rate = (price: UnitPrice) => `${price.currency}:${unitAmountDecimalOf(price)}`;
+
   return pricing._tag === "unit"
     ? `${usage.meterId}:unit:${rate(pricing.unitPrice)}`
     : `${usage.meterId}:${pricing._tag}:${pricing.currency}:${pricing.bands
@@ -353,11 +354,17 @@ const samePrice = (left: Price, right: Price, kind: TierKind = "subscription"): 
 /** A price change is a replacement, not an in-place edit; an archived product never returns. */
 const shouldReplace = (news: ProductProps, output: Product["Attributes"] | undefined): boolean => {
   if (output === undefined) return false;
+
   if (output.archived) return true;
+
   if (news.tier !== output.tier) return true;
+
   if ((news.kind ?? "subscription") !== output.kind) return true;
+
   if (!sameUsage(desiredUsage(news), output.usage ?? [])) return true;
+
   if (!sameSeats(desiredSeats(news), output.seats ?? [])) return true;
+
   return !samePrice(news.price, output.price, output.kind);
 };
 
@@ -366,24 +373,30 @@ const LIST_MAX_PAGES = 100;
 
 const listAll = Effect.fn(function* () {
   const products: VendorProduct[] = [];
+
   for (let page = 1; page <= LIST_MAX_PAGES; page++) {
     const listed = yield* Polar.productsList({ limit: LIST_PAGE_SIZE, page });
     products.push(...listed.items);
+
     if (page >= listed.pagination.max_page || listed.items.length === 0) break;
   }
+
   return products;
 });
 
 /** Every generation of one tier's product, newest first. */
 const generationsOf = Effect.fn(function* (stage: string, tier: string) {
   const name = productNameOf(stage, tier);
+
   // The name carries the stage and the metadata carries the tier. Both must
   // match, so a product from another stage is never adopted.
   const matches = (yield* listAll()).filter(
     (product) => product.name === name && tierOf(product) === tier,
   );
+
   // A price change creates a new generation; the newest wins when state is lost.
   matches.sort((left, right) => right.created_at.localeCompare(left.created_at));
+
   return matches;
 });
 
@@ -400,6 +413,7 @@ const findByTierAndPrice = Effect.fn(function* (stage: string, tier: string, new
   return (yield* generationsOf(stage, tier)).find((product) => {
     if (product.is_archived) return false;
     const attrs = attrsOf(product);
+
     return (
       samePrice(attrs.price, news.price, kindOf(product)) &&
       sameUsage(desiredUsage(news), attrs.usage) &&
@@ -414,8 +428,10 @@ const getById = (id: string) =>
 const observe = Effect.fn(function* (input: { id?: string; stage: string; tier: string }) {
   if (input.id !== undefined) {
     const byId = yield* getById(input.id);
+
     if (byId !== undefined) return byId;
   }
+
   return yield* findByTier(input.stage, input.tier);
 });
 
@@ -435,26 +451,32 @@ export const ProductProvider = () =>
 
     diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
+
       if (shouldReplace(news, output)) {
         return { action: "replace" } as const;
       }
+
       return undefined;
     }),
 
     read: Effect.fn(function* ({ id, olds, output }) {
       const stage = yield* Stage;
+
       const existing = yield* observe({
         id: output?.id,
         stage,
         tier: output?.tier ?? olds.tier,
       });
+
       if (existing === undefined) return undefined;
       const attrs = attrsOf(existing);
+
       return (yield* hasAlchemyMetadata(id, metadataOf(existing))) ? attrs : Unowned(attrs);
     }),
 
     list: Effect.fn(function* () {
       const products = (yield* listAll()).filter((product) => !product.is_archived);
+
       return products
         .filter((product) => metadataOf(product)[alchemyMetadataKeys.stack] !== undefined)
         .map(attrsOf);
@@ -467,6 +489,7 @@ export const ProductProvider = () =>
       const metadata = yield* desiredMetadata(id, news.tier);
 
       let current = yield* observe({ id: output?.id, stage, tier: news.tier });
+
       // A previous generation (same logical id, a different price) must not be
       // updated in place: Polar embeds the price in the product. A retry after
       // a create that never reached state finds the generation it made.
@@ -492,6 +515,7 @@ export const ProductProvider = () =>
               },
               ...desiredUsage(news).map((usage) => {
                 const pricing = pricingOfUsage(usage);
+
                 if (pricing._tag === "unit") {
                   return {
                     amount_type: "metered_unit",
@@ -500,6 +524,7 @@ export const ProductProvider = () =>
                     price_currency: pricing.unitPrice.currency,
                   };
                 }
+
                 return {
                   amount_type: "metered_tiers",
                   meter_id: usage.meterId,
@@ -545,6 +570,7 @@ export const ProductProvider = () =>
           : {}),
         ...(metadataChanged ? { metadata } : {}),
       });
+
       return attrsOf(updated);
     }),
 

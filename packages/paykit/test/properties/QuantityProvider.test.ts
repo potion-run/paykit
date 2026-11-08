@@ -54,15 +54,19 @@ const deferred = tier({
 const providerCatalog = Effect.runSync(catalog({ features: [seats], tiers: [team, deferred] }));
 
 const Stock = Schema.Literals(["team", "deferred"]);
+
 type Stock = typeof Stock.Type;
 
 const termsOf = (tierId: Stock) => {
   const terms = tierTermsOf(providerCatalog, tierId);
+
   if (terms === null) throw new Error(`the seat catalog is missing ${tierId}`);
+
   return terms;
 };
 
 const account = "acct_provider";
+
 const same = (left: unknown, right: unknown): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
@@ -110,52 +114,70 @@ describe("a provider that owns the subscription quantity", () => {
       Arbitrary.schema(Case),
       (input) => {
         const memory = PaymentsMemory();
+
         return Effect.gen(function* () {
           yield* open(input.tier, "memory");
           const subscription = yield* Subscription;
           const ref = Subscription.ref(account);
           const set = yield* SetQuantity(account);
+
           const first = yield* set({
             feature: "seats",
             quantity: input.quantity,
             dedupeKey: input.key,
           });
+
           const retry = yield* set({
             feature: "seats",
             quantity: input.quantity,
             dedupeKey: input.key,
           });
+
           const state = yield* subscription.state(ref);
           const charge = yield* ChargeQuantityProration(account);
           const collected = yield* charge({ prorationId: input.key });
 
           // A no-op answer is the quantity the account holds, not zero.
           if (first.quantity !== input.quantity) return false;
+
           if (retry.quantity !== input.quantity) return false;
+
           if (!same(first.proration, retry.proration)) return false;
+
           if (memory.quantities.length !== 1) return false;
 
           const seen = memory.quantities[0]!;
+
           const mode =
             termsOf(input.tier).allowances.seats!.prorate === "period_end" ? "none" : "immediate";
+
           if (seen.account !== account) return false;
+
           if (seen.subscription !== "sub_provider") return false;
+
           if (seen.tier !== input.tier || seen.feature !== "seats") return false;
+
           if (seen.quantity !== input.quantity) return false;
+
           if (seen.proration !== mode) return false;
+
           if (seen.commandId !== input.key) return false;
 
           if (state._tag !== "Subscribed") return false;
           const entry = state.quantityProrations?.[input.key];
+
           if (first.proration === undefined) {
             // Nothing moved money, or the change is billed at the boundary.
             if (entry !== undefined) return false;
           } else {
             if (entry === undefined) return false;
+
             if (!same(entry.proration, first.proration)) return false;
+
             // The vendor opened the invoice, so the entry says it is billed.
             if (entry.invoiceId === undefined) return false;
           }
+
           // The collector only collects a positive due it still owns.
           return collected.outcome === "nothing";
         }).pipe(Effect.provide(worldOf(memory)));
@@ -178,29 +200,41 @@ describe("a provider that owns the subscription quantity", () => {
       Arbitrary.schema(Billable),
       (input) => {
         const manual = PaymentsManual();
+
         return Effect.gen(function* () {
           yield* open("team", "manual");
           const subscription = yield* Subscription;
           const set = yield* SetQuantity(account);
+
           const changed = yield* set({
             feature: "seats",
             quantity: input.quantity,
             dedupeKey: "seats:local",
           });
+
           const state = yield* subscription.state(Subscription.ref(account));
+
           if (state._tag !== "Subscribed") return false;
           const entry = state.quantityProrations?.["seats:local"];
+
           if (changed.proration === undefined || entry === undefined) return false;
+
           if (changed.proration.due <= 0) return false;
+
           if (entry.invoiceId !== undefined) return false;
+
           if (!same(entry.proration, changed.proration)) return false;
 
           const charge = yield* ChargeQuantityProration(account);
           const first = yield* charge({ prorationId: "seats:local" });
           const second = yield* charge({ prorationId: "seats:local" });
+
           if (first.outcome !== "charged") return false;
+
           if (first.amount !== changed.proration.due) return false;
+
           if (first.currency !== changed.proration.currency) return false;
+
           return second.outcome === "nothing";
         }).pipe(Effect.provide(worldOf(manual)));
       },
@@ -216,7 +250,9 @@ const polarOf = () => {
     readonly proration: "immediate" | "none";
     readonly commandId: string;
   }> = [];
+
   const invoices: Array<{ readonly amount: number; readonly currency: string }> = [];
+
   const provider = PaymentsPolar({
     tiers: {
       team: {
@@ -237,6 +273,7 @@ const polarOf = () => {
       createInvoice: (args) =>
         Effect.sync(() => {
           invoices.push({ amount: args.amount, currency: args.currency });
+
           return { invoiceId: "polar_invoice_1" };
         }),
       setQuantity: (args) =>
@@ -246,10 +283,12 @@ const polarOf = () => {
             proration: args.proration,
             commandId: args.commandId,
           });
+
           return {};
         }),
     },
   });
+
   return { provider, calls, invoices };
 };
 
@@ -270,6 +309,7 @@ describe("a vendor that owns the count but not the money", () => {
       Arbitrary.schema(polarCase),
       (input) => {
         const polar = polarOf();
+
         return Effect.gen(function* () {
           yield* open(input.tier, "polar");
           const subscription = yield* Subscription;
@@ -278,33 +318,45 @@ describe("a vendor that owns the count but not the money", () => {
           const first = yield* set({ feature: "seats", quantity: input.quantity, dedupeKey: key });
           const retry = yield* set({ feature: "seats", quantity: input.quantity, dedupeKey: key });
           const state = yield* subscription.state(Subscription.ref(account));
+
           if (state._tag !== "Subscribed") return false;
+
           if (first.quantity !== input.quantity || retry.quantity !== input.quantity) return false;
 
           // The binding calls the vendor on every attempt; both calls carry
           // the same total, mode and key, so a provider that dedupes updates
           // one subscription item.
           const mode = input.tier === "deferred" ? "none" : "immediate";
+
           if (polar.calls.length !== 2) return false;
+
           const carried = polar.calls.every(
             (call) =>
               call.seats === input.quantity && call.proration === mode && call.commandId === key,
           );
+
           if (!carried) return false;
 
           const entry = state.quantityProrations?.[key];
           const charge = yield* ChargeQuantityProration(account);
           const collected = yield* charge({ prorationId: key });
+
           if (input.tier === "deferred" || first.proration === undefined) {
             if (entry !== undefined) return false;
+
             return collected.outcome === "nothing" && polar.invoices.length === 0;
           }
+
           // The vendor owns the count, not the immediate money.
           if (entry === undefined || entry.invoiceId !== undefined) return false;
+
           if (collected.outcome !== "charged") return false;
+
           if (collected.amount !== first.proration.due) return false;
+
           if (polar.invoices.length !== 1) return false;
           const second = yield* charge({ prorationId: key });
+
           return second.outcome === "nothing";
         }).pipe(Effect.provide(worldOf(polar.provider)));
       },

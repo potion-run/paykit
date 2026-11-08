@@ -54,10 +54,12 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.TrackUsage")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.TrackUsage.record")(function* (request) {
           const receipt = yield* bound(toTrackUsageError)(
             client.TrackUsage(
@@ -72,9 +74,11 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
+
           const view = yield* bound(toTrackUsageError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+
           return usageOutcome(view, request);
         });
       });
@@ -85,8 +89,10 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.SetQuantity")(function* (account) {
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.SetQuantity.set")(function* (request) {
           const receipt = yield* bound(toSetQuantityError)(
             client.SetQuantity(
@@ -99,9 +105,11 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
+
           const view = yield* bound(toSetQuantityError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+
           // A no-op decision records no event, so the reply cannot carry the
           // quantity; the view just caught up to the change and is the same
           // number a caller reads next.
@@ -120,12 +128,15 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.Check")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.Check.ask")(function* (request) {
           const view = yield* bound(toCheckError)(client.Entitlements.get(id, options()));
+
           return evaluateCheck(view, { account, ...request });
         });
       });
@@ -136,12 +147,15 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.Hold")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.Hold.place")(function* (request) {
           const holdId = request.holdId ?? request.dedupeKey;
+
           const receipt = yield* bound(toHoldError)(
             client.Hold(
               id,
@@ -157,10 +171,13 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
+
           const view = yield* bound(toHoldError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+
           const remaining = view?.features[request.feature]?.remaining ?? null;
+
           return { holdId, remaining };
         });
       });
@@ -171,10 +188,12 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.SettleHold")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.SettleHold.hold")(function* (request) {
           const receipt = yield* bound(toSettleHoldError)(
             client.SettleHold(
@@ -187,12 +206,14 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
+
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
           yield* bound(toSettleHoldError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+
           return receipt.reply;
         });
       });
@@ -203,20 +224,24 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.ReleaseHold")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.ReleaseHold.hold")(function* (request) {
           const receipt = yield* bound(toReleaseHoldError)(
             client.ReleaseHold(id, { holdId: request.holdId }, options(request.dedupeKey)),
           );
+
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
           yield* bound(toReleaseHoldError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
+
           return receipt.reply;
         });
       });
@@ -227,14 +252,17 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.ConsumeCredits")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.ConsumeCredits.spend")(function* (request) {
           const receipt = yield* bound(toConsumeCreditsError)(
             client.ConsumeCredits(id, { amount: request.amount }, options(request.dedupeKey)),
           );
+
           return receipt.reply;
         });
       });
@@ -245,18 +273,22 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.ScheduleCancellation")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.ScheduleCancellation.schedule")(function* (request) {
           const receipt = yield* bound(toCancelError)(
             // An inputless command takes its options third: input, then options.
             client.ScheduleCancellation(id, {}, options(request.dedupeKey)),
           );
+
           const view = yield* bound(toCancelError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
+
           return { cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false };
         });
       });
@@ -267,17 +299,21 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.Resume")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.Resume.undo")(function* (request) {
           const receipt = yield* bound(toResumeError)(
             client.Resume(id, {}, options(request.dedupeKey)),
           );
+
           const view = yield* bound(toResumeError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
+
           return { cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false };
         });
       });
@@ -292,23 +328,29 @@ export const BillingApiLayer = Layer.mergeAll(
       const client = yield* BillingApi.Client;
       const catalog = yield* CatalogService;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.ScheduleTierChange")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
           const scheduled = scheduleTierChangeInputOf(catalog, request.tier);
+
           if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
+
           const receipt = yield* bound(toScheduleTierChangeError)(
             client.ScheduleTierChange(id, scheduled, options(request.dedupeKey)),
           );
+
           const view = yield* bound(toScheduleTierChangeError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
+
           return { pendingTier: view?.pendingTier?.tier ?? null };
         });
       });
@@ -319,17 +361,21 @@ export const BillingApiLayer = Layer.mergeAll(
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.WithdrawTierChange")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.WithdrawTierChange.take")(function* (request) {
           const receipt = yield* bound(toWithdrawTierChangeError)(
             client.WithdrawTierChange(id, {}, options(request.dedupeKey)),
           );
+
           const view = yield* bound(toWithdrawTierChangeError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
+
           return { pendingTier: view?.pendingTier?.tier ?? null };
         });
       });
@@ -341,20 +387,24 @@ export const BillingApiLayer = Layer.mergeAll(
       const client = yield* BillingApi.Client;
       const catalog = yield* CatalogService;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
       return Effect.fn("Paykit.StartTrial")(function* (account) {
         // The Api speaks branded account ids; a binding takes the id as it
         // arrives and brands it once, here, through the aggregate's own ref.
         const id = Subscription.ref(account).id;
+
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
           const grant = subscribeInputOf(catalog, request.tier, {
             ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
             ...(request.currency === undefined ? {} : { currency: request.currency }),
           });
+
           if (grant === null) {
             return yield* bound(toStartTrialError)(
               Effect.fail(new TierNotInCatalog({ tier: request.tier })),
             );
           }
+
           const receipt = yield* bound(toStartTrialError)(
             client.StartTrial(
               id,
@@ -362,9 +412,11 @@ export const BillingApiLayer = Layer.mergeAll(
               options(request.dedupeKey),
             ),
           );
+
           const view = yield* bound(toStartTrialError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
+
           return {
             tier: view?.tier ?? request.tier,
             status: view?.status ?? "trialing",

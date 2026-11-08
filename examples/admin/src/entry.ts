@@ -27,6 +27,7 @@ const session = await fetch(`${location.origin}/session`, {
   method: "POST",
   credentials: "same-origin",
 });
+
 if (!session.ok) console.error("Could not start an admin session:", session.status);
 
 /**

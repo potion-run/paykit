@@ -29,19 +29,23 @@ import {
 import { assertProperty } from "../support/Property.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const scaleTier = tier({
   id: "scale",
   price: { amount: 9_900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 5_000 })],
 });
+
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
+
 const proAllowances = allowancesOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_change";
@@ -79,6 +83,7 @@ it.live("quotes a tier change without recording it", () =>
     const change = yield* AdminChangeTier;
     const quote = yield* change.change({ account, tier: "scale" });
     expect(quote._tag).toBe("quoted");
+
     if (quote._tag !== "quoted") return;
     expect(quote.proration?.due).toBe(8000);
 
@@ -94,6 +99,7 @@ it.live("applies only the proration the operator confirmed", () =>
     const change = yield* AdminChangeTier;
     const quote = yield* change.change({ account, tier: "scale" });
     expect(quote._tag).toBe("quoted");
+
     if (quote._tag !== "quoted") return;
 
     const applied = yield* change.change({
@@ -102,7 +108,9 @@ it.live("applies only the proration the operator confirmed", () =>
       expected: quote.proration,
       commandId: "cmd_change",
     });
+
     expect(applied._tag).toBe("applied");
+
     if (applied._tag !== "applied") return;
     expect(applied.commandId).toBe("cmd_change");
     expect(applied.proration?.due).toBe(8000);
@@ -118,13 +126,16 @@ it.live("returns a requote instead of applying a different amount", () =>
     yield* subscribeToPro;
     const change = yield* AdminChangeTier;
     const wrong = { currency: "usd", credit: 0, charge: 0, due: 0 };
+
     const answer = yield* change.change({
       account,
       tier: "scale",
       expected: wrong,
       commandId: "cmd_wrong",
     });
+
     expect(answer._tag).toBe("requote");
+
     if (answer._tag !== "requote") return;
     expect(answer.proration?.due).toBe(8000);
 
@@ -139,12 +150,14 @@ it.live("refuses a change with no standing, and a tier the catalog lacks", () =>
     const change = yield* AdminChangeTier;
     const noStanding = yield* change.change({ account, tier: "scale" });
     expect(noStanding._tag).toBe("rejected");
+
     if (noStanding._tag === "rejected") {
       expect(noStanding.rejection._tag).toBe("NotSubscribed");
     }
 
     const unknown = yield* change.change({ account, tier: "enterprise" });
     expect(unknown._tag).toBe("rejected");
+
     if (unknown._tag === "rejected") {
       expect(unknown.rejection._tag).toBe("TierNotInCatalog");
     }
@@ -167,18 +180,23 @@ it.effect("a quoted tier change is never refused for disagreeing with itself", (
     ({ script, tier }) => {
       const { state, now } = walk(script);
       const plan = planChangeTier(generatedCatalog, tier, state, now);
+
       if (plan === null) return false;
 
       const decision = decideAt(state, new ChangeTier(plan.input), now, "quote");
+
       if (!isAccepted(decision)) {
         // A quote can be refused for the standing, the currency or a ceiling,
         // but never for its own arithmetic.
         return decision._tag !== "ProrationMismatch";
       }
+
       const changed = decision.find((event) => event._tag === "TierChanged") as
         | { readonly proration?: Proration }
         | undefined;
+
       if (changed === undefined) return false;
+
       // And the log carries the money the operator was shown.
       return sameProration(plan.proration, changed.proration ?? null);
     },
@@ -244,6 +262,7 @@ it.live("quotes in the currency the standing was sold in", () =>
     const change = yield* AdminChangeTier;
     const quote = yield* change.change({ account: "acct_eur_change", tier: "scale" });
     expect(quote._tag).toBe("quoted");
+
     if (quote._tag !== "quoted") return;
     expect(quote.proration?.currency).toBe("eur");
     expect(quote.proration?.due).toBe(8_000);

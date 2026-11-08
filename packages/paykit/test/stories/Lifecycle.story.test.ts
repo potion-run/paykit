@@ -70,6 +70,7 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
@@ -80,15 +81,19 @@ const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeT
 
 const allowances = (id: string) => {
   const found = allowancesOf(testCatalog, id);
+
   if (found === null) throw new Error(`missing ${id}`);
+
   return found;
 };
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const proAllowances = allowances("pro");
+
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
+
 const account = Subscription.ref("acct_life");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");

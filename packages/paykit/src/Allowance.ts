@@ -3,10 +3,12 @@ import { FeatureId, type Feature } from "./Feature.ts";
 import { Pricing, UnitPrice, pricing as makePricing, type PricingInput } from "./Pricing.ts";
 
 export { UnitPrice, priceKey as unitPriceKey } from "./Pricing.ts";
+
 export type { PriceBand, Pricing, PricingInput } from "./Pricing.ts";
 
 /** What happens when a feature is used past its included amount. */
 export const Overage = Schema.Literals(["block", "bill", "allow"]);
+
 export type Overage = typeof Overage.Type;
 
 /**
@@ -24,6 +26,7 @@ export const Resets = Schema.Literals([
   "annual",
   "never",
 ]);
+
 export type Resets = typeof Resets.Type;
 
 /**
@@ -32,10 +35,12 @@ export type Resets = typeof Resets.Type;
  * period bill it in full. Only a non-consumable allowance states one.
  */
 export const Prorate = Schema.Literals(["immediate", "period_end"]);
+
 export type Prorate = typeof Prorate.Type;
 
 /** How many intervals a reset schedule waits between boundaries. Defaults to one. */
 export const ResetEvery = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)));
+
 export type ResetEvery = typeof ResetEvery.Type;
 
 /**
@@ -48,6 +53,7 @@ export const Included = Schema.Union([
   Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   Schema.Literal("unlimited"),
 ]);
+
 export type Included = typeof Included.Type;
 
 /**
@@ -57,6 +63,7 @@ export type Included = typeof Included.Type;
  * kind of thing it is.
  */
 export const AllowanceKind = Schema.Literals(["metered", "flag", "non_consumable"]);
+
 export type AllowanceKind = typeof AllowanceKind.Type;
 
 /**
@@ -123,10 +130,12 @@ export const Allowance = Schema.Struct({
    */
   moneyCap: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
 });
+
 export type Allowance = typeof Allowance.Type;
 
 /** Every feature's allowance in a tier, keyed by feature id. */
 export const Allowances = Schema.Record(Schema.String, Allowance);
+
 export type Allowances = typeof Allowances.Type;
 
 /**
@@ -160,7 +169,9 @@ export const carryCapOf = (allowance: {
   readonly included?: Included;
 }): number | null => {
   if (allowance.carryOver !== true) return null;
+
   if (allowance.carryCap !== undefined) return allowance.carryCap;
+
   return typeof allowance.included === "number" ? allowance.included : null;
 };
 
@@ -356,8 +367,11 @@ export function allowance(
   input: AllowanceInput | QuantityAllowanceInput,
 ): Allowance {
   const kind = feature.kind === "non_consumable" ? "non_consumable" : "metered";
+  // SAFETY: the overloads narrow `input` at the call site; this implementation reads the shared fields of the union.
   const value = input as AllowanceInput & QuantityAllowanceInput;
+  // SAFETY: the overloads narrow `input` at the call site; this implementation reads the shared fields of the union.
   const included = value.included as Included;
+
   return {
     feature: feature.id,
     kind,

@@ -29,10 +29,12 @@ const AllowanceSpec = Schema.Struct({
   resets: Schema.Literals(["month", "annual", "never"]),
   carryOver: Schema.Boolean,
 });
+
 type AllowanceSpec = typeof AllowanceSpec.Type;
 
 const buildAllowance = (spec: AllowanceSpec): Allowance => {
   if (spec.kind === "flag") return grant(messages);
+
   return allowance(messages, {
     included: spec.included,
     overage: spec.included === "unlimited" ? "allow" : spec.overage,
@@ -74,12 +76,15 @@ describe("allowance algebra", () => {
         if (included === null) {
           return reset.remaining === null && reset.carried === 0;
         }
+
         // A `resets: "never"` feature keeps its usage and remainder across
         // the boundary; the close is a no-op for it.
         if (built.resets === "never") {
           const current = script === "fallback" ? included : script;
+
           return reset.kept === true && reset.carried === 0 && reset.remaining === current;
         }
+
         // A period that does not carry starts exactly at what it includes.
         if (built.carryOver !== true) {
           return reset.kept === false && reset.remaining === included && reset.carried === 0;
@@ -87,6 +92,7 @@ describe("allowance algebra", () => {
 
         const spendable = script === "fallback" ? included : script;
         const expected = Math.min(Math.max(spendable, 0), included);
+
         return (
           reset.kept === false &&
           reset.carried === expected &&
@@ -118,7 +124,9 @@ describe("allowance algebra", () => {
         // rollover, so the headroom is `included + cap - used - reserved`.
         const remaining = included + carried - used - reserved;
         const headroom = spendHeadroomOf({ remaining, cap, carried });
+
         if (headroom !== included + cap - used - reserved) return false;
+
         // The same period with no carry has the same headroom: carrying does
         // not buy extra billed units.
         return spendHeadroomOf({ remaining: included - used - reserved, cap }) === headroom;
@@ -152,9 +160,12 @@ describe("calendar", () => {
       ({ start, interval, anchorTz }) => {
         const at = DateTime.makeUnsafe(start);
         const period = periodFrom(at, interval, anchorTz);
+
         if (DateTime.toEpochMillis(period.end) <= DateTime.toEpochMillis(period.start))
           return false;
+
         if (period.anchorTz !== anchorTz) return false;
+
         // The next interval from the end is still after the end, however the
         // calendar clamps a month end.
         if (
@@ -163,6 +174,7 @@ describe("calendar", () => {
         ) {
           return false;
         }
+
         return true;
       },
       { runs: 100, size: 30 },
@@ -182,9 +194,13 @@ describe("credit rates", () => {
       ),
       ({ defaultRate, named, dimension }) => {
         const rates = { default: defaultRate, dimensions: { "gpt-large": named } };
+
         if (creditRateOf(rates) !== defaultRate) return false;
+
         if (creditRateOf(rates, { dimension: "default" }) !== defaultRate) return false;
+
         if (creditRateOf(rates, { dimension: "gpt-large" }) !== named) return false;
+
         return (
           creditRateOf(rates, { dimension }) === (dimension === "gpt-large" ? named : defaultRate)
         );

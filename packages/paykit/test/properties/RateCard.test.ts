@@ -34,6 +34,7 @@ const Ask = Schema.Struct({
   size: Schema.optionalKey(Size),
   lifecycle: Schema.optionalKey(Lifecycle),
 });
+
 type Ask = typeof Ask.Type;
 
 const propertiesOf = (ask: Ask): Readonly<Record<string, string>> => ({
@@ -78,18 +79,22 @@ describe("a rate card prices on the event, not on a name", () => {
           rules: [{ match: { size: "large" }, credits: large }],
           multipliers: [{ match: { lifecycle: "spot" }, factor, add }],
         });
+
         const properties = propertiesOf(ask);
         const named = ask.dimension === "gpt-large" ? dimension : fallback;
         const chosen = matches({ size: "large" }, properties) ? large : named;
+
         const adjusted = matches({ lifecycle: "spot" }, properties)
           ? chosen * factor + add
           : chosen;
+
         const expected = Math.max(0, Math.round(adjusted));
 
         if (creditRateOf(card, askOf(ask)) !== expected) return false;
         // A multiplier is a change, not a replacement: a card with none prices
         // the same event at the base rate.
         const plain = rateCard({ default: fallback, dimensions: { "gpt-large": dimension } });
+
         return creditRateOf(plain, askOf(ask)) === Math.max(0, Math.round(named));
       },
       { runs: 120, size: 30 },
@@ -105,6 +110,7 @@ describe("a rate card prices on the event, not on a name", () => {
         { match: { size: "large", lifecycle: "spot" }, credits: 100 },
       ],
     });
+
     expect(creditRateOf(card, { dimension: "gpt-large", properties: { size: "large" } })).toBe(16);
     expect(creditRateOf(card, { properties: { size: "small" } })).toBe(1);
     expect(creditRateOf(card, { dimension: "gpt-large", properties: { size: "small" } })).toBe(5);
@@ -119,6 +125,7 @@ describe("a rate card prices on the event, not on a name", () => {
         { match: { lifecycle: "spot" }, add: -100 },
       ],
     });
+
     expect(creditRateOf(card, { properties: { lifecycle: "spot" } })).toBe(0);
     expect(creditRateOf(card, { properties: { lifecycle: "on_demand" } })).toBe(10);
     // No properties means no match at all, even for an empty rule.
@@ -137,6 +144,7 @@ describe("a rate card prices on the event, not on a name", () => {
       ({ fallback, alpha, beta }) => {
         const rates = { default: fallback, alpha, beta };
         const card = cardFromRates(rates);
+
         return (
           creditRateOf(card, { dimension: "alpha" }) === alpha &&
           creditRateOf(card, { dimension: "beta" }) === beta &&
@@ -160,11 +168,13 @@ describe("a rate card prices on the event, not on a name", () => {
         const price = { amount: 1_900, currency: "usd", interval: "month" as const };
         const ai = feature({ id: "ai", name: "AI", rateCard: rateCard({ default: base }) });
         const search = feature({ id: "search", name: "Search", creditRates: { default: other } });
+
         const free = tier({
           id: "free",
           price,
           grants: [allowance(messages, { included: 10 })],
         });
+
         const pro = tier({
           id: "pro",
           price,
@@ -172,11 +182,14 @@ describe("a rate card prices on the event, not on a name", () => {
           grants: [allowance(messages, { included: 10 })],
           rateCard: { ai: rateCard({ default: override }) },
         });
+
         const source = Effect.runSync(
           catalog({ features: [ai, search, messages], tiers: [free, pro] }),
         );
+
         const proRates = ratesOf(source, "pro")!;
         const freeRates = ratesOf(source, "free")!;
+
         return (
           proRates.ai!.default === override &&
           proRates.search!.default === other &&
@@ -202,12 +215,14 @@ const capture = (() => {
   const price = { amount: 1_900, currency: "usd", interval: "month" as const };
   const card = pricedCard(3, 20, 12, 0.5);
   const ai = feature({ id: "ai", name: "AI", rateCard: card });
+
   const a = tier({
     id: "a",
     price,
     credits: 100_000,
     grants: [allowance(messages, { included: 10 })],
   });
+
   const b = tier({
     id: "b",
     price: { amount: 9_900, currency: "usd", interval: "month" },
@@ -215,12 +230,15 @@ const capture = (() => {
     grants: [allowance(messages, { included: 10 })],
     rateCard: { ai: rateCard({ default: 99 }) },
   });
+
   return { card, source: Effect.runSync(catalog({ features: [ai, messages], tiers: [a, b] })) };
 })();
 
 const termsOf = (tierId: string) => {
   const terms = tierTermsOf(capture.source, tierId);
+
   if (terms === null) throw new Error(`the rate-card catalog is missing ${tierId}`);
+
   return terms;
 };
 
@@ -243,6 +261,7 @@ describe("the rate an event was priced at is the rate it records", () => {
       ({ amount, billed, ask }) => {
         const opened = subscribedIn(capture.source, "a");
         const rate = creditRateOf(capture.card, askOf(ask));
+
         const held = decideAt(
           opened,
           new Hold({
@@ -255,16 +274,22 @@ describe("the rate an event was priced at is the rate it records", () => {
           start,
           "hold",
         );
+
         if (!isAccepted(held)) return false;
+
         const reserved = held.find(
           (event): event is InstanceType<typeof UsageReserved> => event._tag === "UsageReserved",
         );
+
         if (reserved === undefined || reserved.rate !== rate) return false;
+
         if (reserved.cost !== amount * rate) return false;
 
         const withHold = evolveAt(opened, held, start, "hold");
+
         if (withHold._tag !== "Subscribed") return false;
         const next = termsOf("b");
+
         const proration =
           prorate({
             from: withHold.price,
@@ -272,6 +297,7 @@ describe("the rate an event was priced at is the rate it records", () => {
             period: withHold.period,
             at: start,
           }) ?? undefined;
+
         const change = decideAt(
           withHold,
           new ChangeTier({
@@ -282,8 +308,10 @@ describe("the rate an event was priced at is the rate it records", () => {
           start,
           "change",
         );
+
         if (!isAccepted(change)) return false;
         const changed = evolveAt(withHold, change, start, "change");
+
         if (changed._tag !== "Subscribed") return false;
 
         const settle = decideAt(
@@ -292,17 +320,24 @@ describe("the rate an event was priced at is the rate it records", () => {
           start,
           "settle",
         );
+
         if (!isAccepted(settle)) return false;
+
         const recorded = settle.find(
           (event): event is InstanceType<typeof UsageRecorded> => event._tag === "UsageRecorded",
         );
+
         const settled = settle.find(
           (event): event is InstanceType<typeof UsageSettled> => event._tag === "UsageSettled",
         );
+
         if (recorded === undefined || settled === undefined) return false;
+
         // The hold's rate, not the new tier's card, prices the finished work.
         if (recorded.cost !== Math.min(billed, amount) * rate) return false;
+
         if (settled.cost !== amount * rate) return false;
+
         return recorded.creditsAfter === changed.credits - recorded.cost;
       },
       { runs: 80, size: 30 },
@@ -320,16 +355,20 @@ describe("the rate an event was priced at is the rate it records", () => {
       ({ amount, ask }) => {
         const opened = subscribedIn(capture.source, "a");
         const rate = creditRateOf(capture.card, askOf(ask));
+
         const decision = decideAt(
           opened,
           new TrackUsage({ feature: "ai", amount, ...askOf(ask) }),
           start,
           "use",
         );
+
         if (!isAccepted(decision)) return false;
+
         const recorded = decision.find(
           (event): event is InstanceType<typeof UsageRecorded> => event._tag === "UsageRecorded",
         );
+
         return (
           recorded !== undefined &&
           recorded.cost === amount * rate &&

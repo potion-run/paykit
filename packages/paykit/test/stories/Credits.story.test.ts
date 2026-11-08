@@ -45,6 +45,7 @@ const creditsTier = tier({
   credits: 50_000,
   grants: [allowance(messages, { included: 100 })],
 });
+
 const keepTier = tier({
   id: "keep",
   price,
@@ -52,6 +53,7 @@ const keepTier = tier({
   creditsExpire: "never",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const noCreditsTier = tier({
   id: "smaller",
   price,
@@ -61,6 +63,7 @@ const noCreditsTier = tier({
 const testCatalog = Effect.runSync(
   catalog({ features: [ai, messages], tiers: [creditsTier, keepTier, noCreditsTier] }),
 );
+
 const terms = (id: string) => creditTermsOf(testCatalog, id)!;
 const creditsTerms = terms("credits");
 const keepTerms = terms("keep");
@@ -448,6 +451,7 @@ it.live("check prices a request from the pool, by dimension, on every read path"
     const entitlements = yield* Entitlements;
     const store = yield* BillingReadStore;
     const ref = Subscription.ref(account.id);
+
     const receipt = yield* subscription.send(
       ref,
       new Subscribe({
@@ -459,6 +463,7 @@ it.live("check prices a request from the pool, by dimension, on every read path"
         rates: creditsTerms.rates,
       }),
     );
+
     const view = Option.getOrNull(yield* entitlements.query(ref, { atLeast: receipt }));
     yield* waitForProjection(store, account.id, view);
 
@@ -471,12 +476,14 @@ it.live("check prices a request from the pool, by dimension, on every read path"
     });
 
     const check = yield* checkBinding(account.id);
+
     // 1,000 credits gone, 49,000 left; a big-model call costs 10.
     const granted = yield* check({
       feature: "ai",
       amount: 1,
       dimension: "gpt-large",
     });
+
     expect(granted.allowed).toBe(true);
     expect(granted.remaining).toBe(49_000);
 
@@ -486,6 +493,7 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       amount: 5_000,
       dimension: "gpt-large",
     });
+
     expect(refused.allowed).toBe(false);
     // The default rate prices the same request at 5,000, which fits.
     const cheap = yield* check({ feature: "ai", amount: 5_000 });
@@ -493,12 +501,14 @@ it.live("check prices a request from the pool, by dimension, on every read path"
 
     // A hold takes credits out of the pool before anything is billed.
     const held = yield* holdBinding(account.id);
+
     const placed = yield* held({
       feature: "ai",
       amount: 1_000,
       dimension: "gpt-large",
       dedupeKey: "credits-hold",
     });
+
     expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(39_000);
     const released = yield* releaseBinding(account.id);
     const releaseResult = yield* released({ holdId: placed.holdId, dedupeKey: "credits-release" });
@@ -520,6 +530,7 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       account.id,
       Option.getOrNull(yield* entitlements.query(ref)),
     );
+
     expect(row?.credits).toBe(49_000);
     expect(row?.features.ai?.creditRates).toEqual({
       default: 1,

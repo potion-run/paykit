@@ -30,6 +30,7 @@ export interface ClosableSqlExecutor extends SqlExecutor {
   readonly close: () => void;
 }
 
+// SAFETY: the SQLite driver returns rows typed by the statement; the generic is erased here and the store decodes its own row.
 const fail = (statement: string, cause: unknown): SqlError =>
   ({
     _tag: "SqlError",
@@ -70,6 +71,7 @@ export const SqliteDriver = (options: SqliteDriverOptions = {}): ClosableSqlExec
     options.filename ?? ":memory:",
     options.readonly === undefined ? undefined : { readonly: options.readonly },
   );
+
   return fromDatabase(database);
 };
 
@@ -82,9 +84,11 @@ export const SqliteDriver = (options: SqliteDriverOptions = {}): ClosableSqlExec
 export const fromDatabase = (database: Database): ClosableSqlExecutor => {
   const transaction = <A>(f: () => A): A => {
     database.exec("BEGIN IMMEDIATE");
+
     try {
       const result = f();
       database.exec("COMMIT");
+
       return result;
     } catch (error) {
       database.exec("ROLLBACK");
@@ -132,6 +136,8 @@ export const fromDatabase = (database: Database): ClosableSqlExecutor => {
             ),
       ),
 
+    // SAFETY: the statement's row type is erased by `better-sqlite3`; the
+    // caller decodes the row it selected.
     query: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
       whenOutside(
         Effect.try({
@@ -139,6 +145,8 @@ export const fromDatabase = (database: Database): ClosableSqlExecutor => {
           catch: (cause) => fail(sql, cause),
         }),
       ),
+    // SAFETY: same erased row type as `query`; `get` narrows the one row
+    // SQLite returns to the caller's selected shape.
     get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
       whenOutside(
         Effect.try({
@@ -168,6 +176,7 @@ export const fromDatabase = (database: Database): ClosableSqlExecutor => {
               const run = () => {
                 for (const statement of statements) database.exec(statement);
               };
+
               if (inside) run();
               else transaction(run);
             },
@@ -186,8 +195,12 @@ export const fromDatabase = (database: Database): ClosableSqlExecutor => {
     exec: (sql: string) => {
       database.exec(sql);
     },
+    // SAFETY: the statement's row type is erased by `better-sqlite3`; the
+    // caller decodes the row it selected.
     get: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
       (database.query(sql).get(...params) ?? undefined) as A | undefined,
+    // SAFETY: same erased row type as `get`; the caller's schema decodes every
+    // row of the selection.
     all: <A>(sql: string, params: ReadonlyArray<SqlValue> = []) =>
       database.query(sql).all(...params) as A[],
     transaction,

@@ -74,6 +74,7 @@ describe("capacity", () => {
       remaining: 100,
       creditRates: { default: 1, dimensions: { "gpt-large": 10 } },
     });
+
     expect(capacityOf({ standing: "good", feature: credit, ask: ask(100) })).toEqual({
       _tag: "Allowed",
     });
@@ -122,6 +123,7 @@ describe("capacity", () => {
       pricing: usd,
       moneyCap: 1_000,
     });
+
     expect(capacityOf({ standing: "good", feature: money, ask: ask(500) })).toEqual({
       _tag: "Allowed",
     });
@@ -260,6 +262,7 @@ describe("downgrade", () => {
       pricing: { kind: "unit", amount: 2, currency: "usd" },
       moneyCap: 5_000,
     });
+
     expect(downgradeOf(pro, { used: 130, reserved: 0, billed: 0 })._tag).toBe("Ceiling");
     expect(downgradeOf(pro, { used: 0, reserved: 0, billed: 5_001 })._tag).toBe("Spend");
     expect(downgradeOf(pro, { used: 0, reserved: 0, billed: 0 })._tag).toBe("Allowed");
@@ -279,6 +282,7 @@ describe("allowsOne", () => {
         used: 120 - remaining,
         remaining,
       });
+
     expect(allowsOne("good", at(0))).toBe(false);
     expect(allowsOne("good", at(1))).toBe(true);
   });

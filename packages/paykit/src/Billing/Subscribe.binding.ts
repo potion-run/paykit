@@ -34,6 +34,7 @@ const refusals = [
 
 /** Every refusal this operation can answer before the provider is asked. */
 export type SubscribeRefusal = InstanceType<(typeof refusals)[number]>;
+
 export type SubscribeError = BindingError<SubscribeRefusal | PaymentError>;
 
 /** Whether a failure is the model refusing the purchase. */

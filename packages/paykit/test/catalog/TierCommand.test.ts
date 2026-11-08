@@ -23,6 +23,7 @@ const messages = feature({ id: "messages", name: "Messages" });
 
 const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
 const proPrice = { amount: 1_900, currency: "usd", interval: "month" as const };
+
 const pro = tier({
   id: "pro",
   price: proPrice,
@@ -30,7 +31,9 @@ const pro = tier({
   topUp: { threshold: 100 },
   grants: [allowance(messages, { included: 2_000, overage: "bill" })],
 });
+
 const packPrice = { amount: 4_900, currency: "usd", interval: "month" as const };
+
 const pack = tier({
   id: "pack",
   kind: "one_off",
@@ -60,6 +63,7 @@ describe("subscribeInputOf", () => {
   it("omits what the tier does not state, so an ordinary plan grows no keys", () => {
     const input = subscribeInputOf(testCatalog, "free");
     expect(input).not.toBe(null);
+
     if (input === null) return;
     expect(input.credits).toBe(0);
     expect("price" in input).toBe(false);
@@ -120,6 +124,7 @@ describe("planChangeTier", () => {
     const at = DateTime.add(start, { days: 5 });
     const plan = planChangeTier(generatedCatalog, "scale", state, at);
     expect(plan).not.toBe(null);
+
     if (plan === null) return;
 
     expect(plan.proration).not.toBe(null);
@@ -131,6 +136,7 @@ describe("planChangeTier", () => {
   it("has no proration before a standing exists, and still builds the move", () => {
     const plan = planChangeTier(testCatalog, "pro", initialSubscriptionState, start);
     expect(plan).not.toBe(null);
+
     if (plan === null) return;
     expect(plan.proration).toBe(null);
     expect("proration" in plan.input).toBe(false);
@@ -148,6 +154,7 @@ describe("planChangeTier", () => {
       interval: "month" as const,
       additionalCurrencies: [{ currency: "eur", amount }],
     });
+
     const multiCurrency = Effect.runSync(
       catalog({
         features: [messages],
@@ -165,7 +172,9 @@ describe("planChangeTier", () => {
         ],
       }),
     );
+
     const state = subscribedIn(multiCurrency, "pro");
+
     const eur = {
       ...state,
       currency: "eur",

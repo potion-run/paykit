@@ -65,28 +65,35 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
     return Effect.fn("Paykit.PeriodCloseUsage.react")(function* ({ key, event, state }) {
       if (state === null) return;
       const lines = billableLines(state.features);
+
       if (lines.length === 0) return;
 
       const standing = yield* subscriptions.state(key);
+
       // A vendor reference is what says which customer's meter to feed. A free
       // postpaid tier that never bought anything has none, and there is no
       // vendor invoice to reconcile against.
       if (standing._tag !== "Subscribed") return;
+
       if (Object.keys(standing.refs).length === 0) return;
 
       if (router === null) return;
       const chosen = providerFor(router, standing.refs);
+
       if (chosen === null) return;
 
       const commandId = periodUsageCommandId(event.periodStart, event.periodEnd);
+
       const attempt = Effect.gen(function* () {
         const payments = yield* Effect.serviceOption(Payments);
+
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
             provider: chosen.name,
             op: "reportUsage",
           });
         }
+
         yield* payments.value.reportUsage({
           account: key.id,
           periodStart: event.periodStart,

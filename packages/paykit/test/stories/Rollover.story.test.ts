@@ -27,16 +27,19 @@ const carryingTier = tier({
   price,
   grants: [allowance(messages, { included: 2_000, carryOver: true })],
 });
+
 const plainTier = tier({
   id: "plain",
   price,
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const overdrawTier = tier({
   id: "overdraw",
   price,
   grants: [allowance(messages, { included: 100, overage: "bill", carryOver: true })],
 });
+
 const unlimitedTier = tier({
   id: "unlimited",
   price,
@@ -49,6 +52,7 @@ const testCatalog = Effect.runSync(
     tiers: [carryingTier, plainTier, overdrawTier, unlimitedTier],
   }),
 );
+
 const carrying = allowancesOf(testCatalog, "carrying")!;
 const plain = allowancesOf(testCatalog, "plain")!;
 const overdraw = allowancesOf(testCatalog, "overdraw")!;
@@ -101,6 +105,7 @@ const subscribed = (tierId: string, allowances: typeof carrying) =>
 
 function includedOf(allowances: typeof carrying): number | null {
   const included = allowances.messages!.included;
+
   return included === "unlimited" ? null : included;
 }
 

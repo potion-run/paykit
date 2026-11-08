@@ -20,8 +20,20 @@ export default defineConfig({
     "**/lib/**",
     "**/node_modules/**",
     "**/.agents/**",
+    "**/.claude/**",
+    "**/.codex/**",
+    "**/.continue/**",
+    "**/.cursor/**",
+    "**/.gemini/**",
+    "**/.opencode/**",
+    "**/.pi/**",
+    "**/.roo/**",
+    "**/.windsurf/**",
     "**/.agent_sources/**",
     "**/.agent-sources/**",
+    // The vendored anti-slop plugin is upstream source; its provenance record
+    // is `tools/oxlint/anti-slop/UPSTREAM.md`.
+    "tools/oxlint/anti-slop/**",
     "**/*.md",
     "**/*.mdx",
     // TanStack Router owns this file: it is emitted with single quotes and no

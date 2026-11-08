@@ -20,6 +20,7 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2_000 })],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
 const pro = allowancesOf(testCatalog, "pro")!;
 const secret = "whsec_outbound_test";
@@ -45,17 +46,21 @@ const transport = (
   } = {},
 ): Layer.Layer<Outbound> => {
   let attempts = 0;
+
   return Layer.succeed(Outbound, {
     endpoints: options.endpoints ?? [endpoint],
     deliver: (request) =>
       Effect.suspend(() => {
         attempts++;
+
         if (options.failFirst === true && attempts === 1) {
           return Effect.fail(
             new OutboundDeliveryError({ endpoint: request.endpoint.url, reason: "temporary" }),
           );
         }
+
         requests.push(request);
+
         return Effect.void;
       }),
   });
@@ -63,6 +68,7 @@ const transport = (
 
 const subscribe = Effect.gen(function* () {
   const subscription = yield* Subscription;
+
   return yield* subscription.send(
     Subscription.ref(account),
     new Subscribe({
@@ -86,16 +92,20 @@ const waitFor = (done: () => boolean) =>
 
 const verify = (request: OutboundRequest): boolean => {
   const match = /^t=(\d+),v1=([0-9a-f]+)$/.exec(request.headers["x-paykit-signature"] ?? "");
+
   if (match === null) return false;
+
   const tag = new Bun.CryptoHasher("sha256", new TextEncoder().encode(secret))
     .update(`${match[1]}.${request.body}`)
     .digest("hex");
+
   return tag === match[2];
 };
 
 describe("outbound events", () => {
   it.live("signs and sends every committed event once per endpoint", () => {
     const requests: Array<OutboundRequest> = [];
+
     return Effect.gen(function* () {
       yield* subscribe;
       yield* waitFor(() => requests.length > 0);
@@ -105,6 +115,7 @@ describe("outbound events", () => {
       expect(request.endpoint.url).toBe(endpoint.url);
       expect(request.idempotencyKey).toBe(`acct_outbound:1`);
       expect(request.headers["x-paykit-event"]).toBe("SubscriptionActivated");
+
       if (!verify(request)) throw new Error("the outbound signature did not verify");
 
       const body = JSON.parse(request.body) as {
@@ -112,6 +123,7 @@ describe("outbound events", () => {
         event: { _tag: string };
         envelope: { seq: number };
       };
+
       expect(body.account).toBe(account);
       expect(body.event._tag).toBe("SubscriptionActivated");
       expect(body.envelope.seq).toBe(1);
@@ -120,6 +132,7 @@ describe("outbound events", () => {
 
   it.live("retries a refused transport with the same idempotency key", () => {
     const requests: Array<OutboundRequest> = [];
+
     return Effect.gen(function* () {
       yield* subscribe;
       yield* waitFor(() => requests.length > 0);

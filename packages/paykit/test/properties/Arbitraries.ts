@@ -183,6 +183,7 @@ export const TierName = Schema.Literals([
   "cheap",
   "recurring",
 ]);
+
 export type TierName = typeof TierName.Type;
 
 /** The start of every generated script, so time is data, not the wall clock. */
@@ -190,9 +191,11 @@ export const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 
 export const Amount = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 500 })));
 export const Days = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 40 })));
+
 export const TrialDays = Schema.Int.pipe(
   Schema.check(Schema.isBetween({ minimum: 1, maximum: 30 })),
 );
+
 export const DedupeKey = Schema.optionalKey(Schema.Literals(["req-a", "req-b", "req-c"]));
 export const HoldId = Schema.Literals(["hold-a", "hold-b", "hold-c"]);
 
@@ -240,6 +243,7 @@ export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("DunningRetry", {}),
   Schema.TaggedStruct("AttachProviderRef", {}),
 ]);
+
 export type CommandPlan = typeof CommandPlan.Type;
 
 /** A command and how much virtual time passes before it. */
@@ -247,12 +251,14 @@ export const ScriptStep = Schema.Struct({
   command: CommandPlan,
   advanceDays: Days,
 });
+
 export type ScriptStep = typeof ScriptStep.Type;
 
 /** A generated history: commands in order, with a clock that moves with them. */
 export const Script = Schema.Struct({
   steps: Schema.Array(ScriptStep).pipe(Schema.check(Schema.isMaxLength(80))),
 });
+
 export type Script = typeof Script.Type;
 
 /** One command's decision: events to commit, or the rejection it returned. */
@@ -264,7 +270,9 @@ export const isAccepted = (
 
 const termsOf = (tierId: TierName) => {
   const found = tierTermsOf(testCatalog, tierId);
+
   if (found === null) throw new Error(`the generated catalog is missing tier ${tierId}`);
+
   return found;
 };
 
@@ -273,12 +281,14 @@ const priceOf = (tierId: TierName) => termsOf(tierId).price;
 /** The `ChangeTier` proration the state says a move at `now` would cost. */
 export const prorationFor = (state: SubscriptionState, tierId: TierName, now: DateTime.Utc) => {
   if (state._tag !== "Subscribed") return undefined;
+
   const priced = prorate({
     from: state.price,
     to: priceOf(tierId),
     period: { start: state.period.start, end: state.period.end },
     at: now,
   });
+
   return priced ?? undefined;
 };
 
@@ -289,6 +299,7 @@ export const commandOf = (
   now: DateTime.Utc,
 ): { readonly _tag: string } => {
   const graceUntil = DateTime.add(now, { days: 7 });
+
   switch (plan._tag) {
     case "Subscribe":
       return new Subscribe({ tier: plan.tier, ...termsOf(plan.tier) });
@@ -300,12 +311,14 @@ export const commandOf = (
       });
     case "ChangeTier": {
       const proration = prorationFor(state, plan.tier, now);
+
       return new ChangeTier({
         tier: plan.tier,
         ...termsOf(plan.tier),
         ...(proration === undefined ? {} : { proration }),
       });
     }
+
     case "TrackUsage":
       return new TrackUsage({
         feature: "messages",
@@ -378,11 +391,13 @@ export const commandOf = (
     case "DunningRetry": {
       const running = state._tag === "Subscribed" ? state : undefined;
       const startedAt = running?.dunningStartedAt ?? now;
+
       return new DunningRetry({
         afterAttempt: running?.dunningAttempts ?? 0,
         startedAt,
       });
     }
+
     case "AttachProviderRef":
       return new AttachProviderRef({ provider: "test", refs: { customer: "cus_property" } });
   }
@@ -425,6 +440,7 @@ export const evolveAt = (
         (state: SubscriptionState, event: unknown, envelope: unknown) => SubscriptionState
       >
     )[event._tag]!;
+
     return handler(current, event, {
       id: propertyAccount,
       stream: `Subscription/${propertyAccount}`,
@@ -457,14 +473,17 @@ export const walk = (script: Script): Walked => {
   let state: SubscriptionState = initialSubscriptionState;
   let now = start;
   const events: Array<{ readonly _tag: string }> = [];
+
   for (const [index, step] of script.steps.entries()) {
     now = DateTime.add(now, { days: step.advanceDays });
     const command = commandOf(step.command, state, now);
     const decision = decideAt(state, command, now, commandId(index));
+
     if (!isAccepted(decision)) continue;
     events.push(...decision);
     state = evolveAt(state, decision, now, commandId(index));
   }
+
   return { state, events, now };
 };
 
@@ -476,9 +495,12 @@ export const subscribedAt = (tier: TierName, now: DateTime.Utc = start): Subscri
     now,
     "open",
   );
+
   if (!isAccepted(decision)) throw new Error(`the fixture catalog could not open ${tier}`);
   const state = evolveAt(initialSubscriptionState, decision, now, "open");
+
   if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
+
   return state;
 };
 
@@ -489,21 +511,27 @@ export const subscribedIn = (
   now: DateTime.Utc = start,
 ): SubscribedState => {
   const terms = tierTermsOf(source, tier);
+
   if (terms === null) throw new Error(`the catalog is missing ${tier}`);
+
   const decision = decideAt(
     initialSubscriptionState,
     new Subscribe({ tier, ...terms }),
     now,
     "open",
   );
+
   if (!isAccepted(decision)) throw new Error(`the catalog could not open ${tier}`);
   const state = evolveAt(initialSubscriptionState, decision, now, "open");
+
   if (state._tag !== "Subscribed") throw new Error("opening did not activate a standing");
+
   return state;
 };
 
 /** The subset of the state a rollover assertion reads. */
 export const subscribed = (state: SubscriptionState): SubscribedState => {
   if (state._tag !== "Subscribed") throw new Error("the script never activated a standing");
+
   return state;
 };

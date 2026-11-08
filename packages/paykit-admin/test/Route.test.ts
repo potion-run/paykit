@@ -28,6 +28,7 @@ const url = (pathname: string, search?: string): Url => ({
 const routeOfHref = (href: string): ConsoleRoute => {
   const parsed = new URL(href, "https://admin.test");
   const search = parsed.search.replace(/^\?/, "");
+
   return routeOf(url(parsed.pathname, search === "" ? undefined : search));
 };
 
@@ -52,6 +53,7 @@ describe("the console route", () => {
       ConsoleRoute.Plans(),
       ConsoleRoute.Features(),
     ];
+
     for (const route of routes) {
       expect(routeOfHref(reflectRoute(route))).toEqual(route);
     }
@@ -90,6 +92,7 @@ describe("the console route", () => {
       filter({ tier: Option.some("pro") }),
       Option.some("acct_b"),
     );
+
     // A cursor from another filter names a row that filter may not have.
     expect(withFilter(paged, filter({ standing: Option.some("grace") }))).toEqual(
       accountRoute(account, filter({ standing: Option.some("grace") })),

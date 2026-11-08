@@ -23,9 +23,11 @@ export const sign = (input: {
     input.legacy === true
       ? new TextEncoder().encode(secret)
       : Buffer.from(secret.slice("whsec_".length), "base64");
+
   const tag = new Bun.CryptoHasher("sha256", bytes)
     .update(`${input.id}.${input.timestamp}.${input.body}`)
     .digest("base64");
+
   return `v1,${tag}`;
 };
 
@@ -39,6 +41,7 @@ export const request = (input: {
 }): PolarWebhookRequest => {
   const id = input.id ?? "msg_1";
   const body = typeof input.body === "string" ? input.body : JSON.stringify(input.body);
+
   return {
     headers: {
       "webhook-id": id,

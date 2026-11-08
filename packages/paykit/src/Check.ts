@@ -20,6 +20,7 @@ export const CheckInput = Schema.Struct({
   /** The event's properties, which a rate card's rules and multipliers match. */
   properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
 });
+
 export type CheckInput = typeof CheckInput.Type;
 
 /** What every `Check` implementation answers. */
@@ -30,6 +31,7 @@ export const CheckResult = Schema.Struct({
   resetsAt: Schema.NullOr(Schema.DateTimeUtc),
   standing: Standing,
 });
+
 export type CheckResult = typeof CheckResult.Type;
 
 /** A cross-service check could not be completed. */
@@ -91,10 +93,13 @@ export const evaluateCheck = (
 ): CheckResult => {
   if (state === null) return blocked;
   const feature = state.features[input.feature];
+
   if (feature === undefined) {
     return { allowed: false, remaining: 0, resetsAt: null, standing: state.standing };
   }
+
   const amount = input.amount ?? 1;
+
   // One judgement, the same one `decide` runs: the `allowed` a row carries and
   // the answer `check()` gives cannot disagree because there is one rule.
   const verdict = capacityOf({
@@ -119,6 +124,7 @@ export const evaluateCheck = (
       ...(input.properties === undefined ? {} : { properties: input.properties }),
     },
   });
+
   return {
     allowed: verdict._tag === "Allowed",
     remaining: feature.remaining,

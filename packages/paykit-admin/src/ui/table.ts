@@ -52,6 +52,7 @@ export const tableRow = <Message>(
     h.DataAttribute("slot", "table-row"),
     ...(options.attributes ?? []),
   ];
+
   return options.key === undefined
     ? h.tr(attributes, children)
     : h.keyed("tr")(options.key, attributes, children);

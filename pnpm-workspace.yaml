@@ -54,6 +54,9 @@ catalog:
   effect: "^4.1.2"
   foldkit: "^0.170.0"
   husky: "^9.1.7"
+  # The host package for the vendored anti-slop Oxlint plugins. Pinned exactly
+  # to the installed `oxlint`: the two are one API, so they move together.
+  "@oxlint/plugins": "1.91.0"
   oxfmt: "^0.76.0"
   oxlint: "^1.91.0"
   oxlint-tsgolint: "7.0.2005"

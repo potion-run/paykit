@@ -75,6 +75,7 @@ const provided = <A extends { readonly key: string }>(tag: A) =>
     // A tag is a value and a type at once; the helper only needs to know the
     // service is there, so the shape is erased at this one line.
     const held = yield* Effect.serviceOption(tag as never);
+
     return Option.isSome(held);
   });
 
@@ -118,6 +119,7 @@ describe("the binding surface a layer provides", () => {
       for (const tag of commands) {
         expect([tag.key, yield* provided(tag)]).toEqual([tag.key, true]);
       }
+
       // An operation is work the Api does not serve: a remote deployment exposes
       // it on its own route, never by handing the caller a tag it cannot honour.
       for (const tag of operations) {
@@ -129,6 +131,7 @@ describe("the binding surface a layer provides", () => {
   it("every binding names itself exactly once", () => {
     const keys = [...commands, ...operations].map((tag) => tag.key);
     expect(new Set(keys).size).toBe(keys.length);
+
     for (const key of keys) expect(key.startsWith("Paykit.")).toBe(true);
   });
 });

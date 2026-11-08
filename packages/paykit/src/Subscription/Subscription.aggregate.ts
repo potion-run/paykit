@@ -85,6 +85,12 @@ import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.t
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
+import {
+  RefundNotFound,
+  RefundReversed,
+  RefundReversalExceedsRefunded,
+  ReverseRefund,
+} from "./ReverseRefund.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
 import {
@@ -135,6 +141,8 @@ import {
   remainingOf,
   refundedOf,
   refundedWith,
+  refundOfProviderId,
+  reversedWith,
   refundableOf,
   closingHold,
   reservedCreditsOf,
@@ -188,15 +196,18 @@ const remainingAfterChange = (
       if (isQuantityGrant(allowance)) {
         const included = typeof allowance.included === "number" ? allowance.included : 0;
         const quantity = quantityAfterTierChange(state.quantities?.[feature] ?? included, included);
+
         return [
           feature,
           allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
         ];
       }
+
       // Usage and open reservations both still owe the old period's units. An
       // allowance with no count — unlimited, or a flag's grant — has none to
       // owe them against.
       const spendable = includedRemainingOf(allowance);
+
       return [
         feature,
         spendable === null ? null : spendable - usedOf(state, feature) - reservedOf(state, feature),
@@ -223,6 +234,7 @@ const releaseEvent = (
   // A credit-priced hold returns what it took — `cost` credits, not `amount`
   // units — so the log's remaining stays in one unit of account.
   const returns = state.rates[hold.feature] === undefined ? hold.amount : hold.cost;
+
   return new UsageReleased({
     holdId: hold.id,
     feature: hold.feature,
@@ -245,10 +257,12 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   const credits = pending === undefined ? state.credits : pending.credits + prepaid;
   const creditsExpire = pending?.creditsExpire ?? state.creditsExpire;
   const nextPeriodStart = periodEnd;
+
   // A scheduled change keeps the quantity a non-consumable feature holds, so
   // its new remaining is the new cap less that quantity — not the new grant.
   const pendingRemaining =
     pending === undefined ? undefined : startingRemaining(pending.allowances, state.quantities);
+
   const moved =
     pending === undefined
       ? []
@@ -267,17 +281,21 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
             ...(pending.price === undefined ? {} : { priceAfter: pending.price }),
             ...(() => {
               const resetAt = resetWindowsOf(pending.allowances, nextPeriodStart);
+
               return Object.keys(resetAt).length === 0 ? {} : { resetAt };
             })(),
           }),
         ];
+
   const allowances = pending?.allowances ?? state.allowances;
   const nextPeriodEnd = addInterval(nextPeriodStart, state.interval);
+
   const statusAfter: SubscriptionStatus = state.cancelAtPeriodEnd
     ? "canceled"
     : state.status === "trialing"
       ? "active"
       : state.status;
+
   // One reset per allowance, so `remaining` and `carried` cannot disagree about
   // what the closing period left behind.
   const resets = Object.entries(allowances).map(
@@ -299,11 +317,13 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
             },
       ] as const,
   );
+
   // A `resets: "never"` feature keeps its usage, holds and remainder, so the
   // reset does not touch it.
   const kept = Object.fromEntries(
     resets.filter(([, reset]) => reset.kept).map(([feature]) => [feature, true]),
   );
+
   // Expiry is a property of the grant that is ending. With no scheduled change,
   // that is the plan's own credits for the period just closed: a one-off pack
   // bought from a period pool is never expired, and a `"never"` pool has
@@ -316,12 +336,15 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // allowance instead of only `UsageReset` dropping the entities.
   const resetRunning = new Map<string, number | null>();
   const resetReleases: Array<UsageReleased> = [];
+
   for (const hold of Object.values(state.holds)) {
     if (hold.status !== "open" || kept[hold.feature] === true) continue;
     const returns = state.rates[hold.feature] === undefined ? hold.amount : hold.cost;
+
     const current = resetRunning.has(hold.feature)
       ? resetRunning.get(hold.feature)!
       : availableOf(state, hold.feature);
+
     const remainingAfter = remainingAfterRelease(current, returns);
     resetRunning.set(hold.feature, remainingAfter);
     resetReleases.push(
@@ -335,6 +358,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       }),
     );
   }
+
   return [
     ...moved,
     ...resetReleases,
@@ -376,12 +400,14 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
   // A credit-priced feature shares one pool: its `reserved` is the credits
   // every open hold kept out, not the units held on this feature.
   const reserved = rates === undefined ? reservedOf(state, feature) : reservedCreditsOf(state);
+
   // The write path knows `included`, a read model knows `carried`; the ceiling
   // is written from `remaining`, so the rollover part is derived here.
   const carried =
     typeof included === "number" && remaining !== null
       ? Math.max(0, remaining + used + reserved - included)
       : 0;
+
   return {
     overage: allowance?.overage ?? "block",
     included,
@@ -412,12 +438,14 @@ const moneyCapRefusalOf = (
   const allowance = state.allowances[feature];
   const used = usedOf(state, feature);
   const reserved = reservedOf(state, feature);
+
   const reservedCharge = chargeOf(
     pricingOf(allowance ?? {}),
     allowance?.included ?? null,
     used,
     reserved,
   );
+
   return new MoneyCapExceeded({
     feature,
     cap: verdict.cap,
@@ -454,6 +482,7 @@ const usageRefusalOf = (
       return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
     case "Remaining": {
       const included = state.allowances[feature]?.included;
+
       return new AllowanceExceeded({
         feature,
         included: typeof included === "number" ? included : 0,
@@ -462,6 +491,7 @@ const usageRefusalOf = (
         remaining: verdict.remaining,
       });
     }
+
     case "Ceiling":
       return new SpendCapExceeded({
         feature,
@@ -474,6 +504,7 @@ const usageRefusalOf = (
       return moneyCapRefusalOf(verdict, state, feature, amount);
     case "Credits": {
       const reserved = reservedCreditsOf(state);
+
       return new CreditExceeded({
         feature,
         cost: verdict.cost,
@@ -552,6 +583,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     GrantCredits,
     PurchaseCredits,
     Refund,
+    ReverseRefund,
     RecordTopUpFailure,
     TopUpCooldownElapsed,
     ConsumeCredits,
@@ -575,14 +607,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (state._tag === "Subscribed" && state.trialUsed) {
         return new TrialAlreadyUsed({ account: id });
       }
+
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
       }
+
       const currentCurrency = state._tag === "Subscribed" ? state.currency : undefined;
       const currency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
+
       if (currentCurrency !== undefined && currency !== undefined && currentCurrency !== currency) {
         return new CurrencyMismatch({ expected: currentCurrency, actual: currency });
       }
+
       // The deadline is the end of the first period, so it has to be ahead of
       // the start. A trial that ends before it begins opens a period the engine
       // would close on its next tick, and every `resetsAt` after it inherits the
@@ -590,9 +626,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (DateTime.toEpochMillis(command.trialEndsAt) <= DateTime.toEpochMillis(now)) {
         return new TrialDeadlineNotLater({ current: now, requested: command.trialEndsAt });
       }
+
       // A pack the account already bought survives a new activation; the
       // plan's own grant is the only part that starts fresh.
       const prepaid = prepaidCreditsOf(state);
+
       return [
         new TrialStarted({
           ...activationOf({
@@ -620,6 +658,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
       }
+
       // A second activation on an open standing would reset the period, the
       // counters and the holds. Only a terminal standing may be replaced by a
       // fresh purchase; an active change is `ChangeTier`, and a trial is
@@ -627,8 +666,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (state._tag === "Subscribed" && !isTerminalStatus(state.status)) {
         return new AlreadySubscribed({ account: id, status: state.status });
       }
+
       const currentCurrency = state._tag === "Subscribed" ? state.currency : undefined;
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
+
       if (
         currentCurrency !== undefined &&
         priceCurrency !== undefined &&
@@ -636,12 +677,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ) {
         return new CurrencyMismatch({ expected: currentCurrency, actual: priceCurrency });
       }
+
       const interval =
         command.price?.interval ?? (state._tag === "Subscribed" ? state.interval : "month");
+
       const period = periodFrom(now, interval, command.anchorTz ?? "UTC");
       // A pack the account already bought survives a new activation; the
       // plan's own grant is the only part that starts fresh.
       const prepaid = prepaidCreditsOf(state);
+
       return [
         new SubscriptionActivated({
           ...activationOf({
@@ -665,13 +709,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
       }
+
       const current = subscribed(state, id);
+
       if (Schema.is(NotSubscribed)(current)) return current;
+
       // A terminal standing has no open period to move through. The tier is
       // replaced by a new activation, not by a change that leaves it expired.
       if (isTerminalStatus(current.status)) {
         return new StandingEnded({ account: id, status: current.status });
       }
+
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         // Only a blocking allowance can be oversubscribed: below its count,
         // every later request is refused and the read model reports a negative
@@ -691,6 +739,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reserved: reservedOf(current, feature),
           billed: billedOf(current, feature),
         });
+
         switch (refusal._tag) {
           case "Allowed":
             break;
@@ -716,7 +765,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             });
         }
       }
+
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
+
       if (
         current.currency !== undefined &&
         priceCurrency !== undefined &&
@@ -724,6 +775,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ) {
         return new CurrencyMismatch({ expected: current.currency, actual: priceCurrency });
       }
+
       // The proration is money the event will carry, so it is judged here, in
       // the pure decision, against the prices and the period the model holds.
       // A caller that sends a number the model did not compute is refused
@@ -734,12 +786,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         period: { start: current.period.start, end: current.period.end },
         at: now,
       });
+
       if (sameProration(expected, command.proration ?? null) === false) {
         return new ProrationMismatch({
           expected,
           actual: command.proration ?? null,
         });
       }
+
       return [
         new TierChanged({
           tier: command.tier,
@@ -762,6 +816,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.proration === undefined ? {} : { proration: command.proration }),
           ...(() => {
             const resetAt = resetWindowsOf(command.allowances, now);
+
             return Object.keys(resetAt).length === 0 ? {} : { resetAt };
           })(),
         }),
@@ -773,20 +828,27 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         // catalog's rate cards, so this is the same credit math as a standing,
         // with the whole pool spendable and no allowance to consult.
         const rates = state.rates?.[command.feature];
+
         if (rates === undefined) {
           return new StandingBlocksUsage({ standing: "blocked", status: "none" });
         }
+
         if (command.amount <= 0) return [];
+
         if (command.dedupeKey !== undefined && state.dedupeKeys?.[command.dedupeKey] === true) {
           return [];
         }
+
         const cost =
           command.amount *
           creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
+
         const balance = state.credits ?? 0;
+
         if (cost > balance) {
           return new CreditExceeded({ feature: command.feature, cost, balance });
         }
+
         return [
           new UsageRecorded({
             feature: command.feature,
@@ -799,7 +861,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           }),
         ];
       }
+
       const allowance = state.allowances[command.feature];
+
       const verdict = capacityOf({
         standing: standingOf(state.status),
         feature: judgedOf(state, command.feature),
@@ -809,30 +873,39 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.properties === undefined ? {} : { properties: command.properties }),
         },
       });
+
       if (verdict._tag === "Standing") {
         return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
       }
+
       // A flag is granted, not metered: there is no counter to record usage
       // against, so a Track on one is refused however small the amount is.
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
+
       if (allowance !== undefined && isQuantityGrant(allowance)) {
         return new FeatureNotConsumable({ feature: command.feature });
       }
+
       if (command.amount <= 0) return [];
+
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
+
       const refusal = usageRefusalOf(verdict, state, command.feature, command.amount);
+
       if (refusal !== null) return refusal;
       // A credit-priced feature spends the account's pool: the event carries
       // the cost and the balance after it, so the pool is a fold of the log.
       const rates = state.rates[command.feature];
+
       if (rates !== undefined) {
         const cost =
           command.amount *
           creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
+
         return [
           new UsageRecorded({
             feature: command.feature,
@@ -847,11 +920,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           }),
         ];
       }
+
       const used = usedOf(state, command.feature);
       const remaining = remainingOf(state, command.feature);
       const pricing = pricingOf(allowance ?? {});
       const charge = chargeOf(pricing, allowance?.included ?? null, used, command.amount);
       const billed = billedOf(state, command.feature);
+
       return [
         new UsageRecorded({
           feature: command.feature,
@@ -884,13 +959,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     SetQuantity: (state, command, { id, now }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
       const allowance = state.allowances[command.feature];
+
       if (allowance === undefined || !isQuantityGrant(allowance)) {
         return new FeatureNotConsumable({ feature: command.feature });
       }
+
       if (command.quantity < 0) {
         return new QuantityInvalid({ feature: command.feature, quantity: command.quantity });
       }
+
       const included = typeof allowance.included === "number" ? allowance.included : 0;
+
       if (allowance.cap !== undefined && command.quantity > allowance.cap) {
         return new QuantityCapExceeded({
           feature: command.feature,
@@ -898,6 +977,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           quantity: command.quantity,
         });
       }
+
       if (allowance.overage === "block" && command.quantity > included) {
         return new QuantityExceeded({
           feature: command.feature,
@@ -905,8 +985,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           quantity: command.quantity,
         });
       }
+
       const before = quantityOf(state, command.feature, allowance);
+
       if (before === command.quantity) return [];
+
       // A blocked standing may give seats back; it may not take more.
       if (!allowsUsage(state.status) && command.quantity > before) {
         return new StandingBlocksUsage({
@@ -914,8 +997,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           status: state.status,
         });
       }
+
       const pricing = pricingOf(allowance);
       const unitPrice = pricing === null ? null : soleUnitPriceOf(pricing);
+
       const proration =
         allowance.prorate === "period_end" || unitPrice === null
           ? null
@@ -927,6 +1012,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               period: state.period,
               at: now,
             });
+
       return [
         new QuantityChanged({
           feature: command.feature,
@@ -944,7 +1030,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reason: "none",
         });
       }
+
       const entry = state.quantityProrations?.[command.prorationId];
+
       if (entry === undefined) {
         return new NoQuantityProrationDue({
           account: id,
@@ -952,6 +1040,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reason: "none",
         });
       }
+
       if (entry.invoiceId !== undefined) {
         return new NoQuantityProrationDue({
           account: id,
@@ -959,6 +1048,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reason: "billed",
         });
       }
+
       return [
         new QuantityProrationInvoiced({
           prorationId: command.prorationId,
@@ -972,6 +1062,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (state._tag !== "Subscribed" || state.status !== "grace") {
         return new NotInGrace({ status: statusOf(state) });
       }
+
       return [
         new PaymentRecorded({
           amount: command.amount,
@@ -982,16 +1073,20 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     RecordPaymentFailure: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
+
       if (state.status === "expired" || state.status === "canceled") return [];
+
       const graceUntil =
         state.graceUntil !== undefined &&
         DateTime.toEpochMillis(state.graceUntil) > DateTime.toEpochMillis(command.graceUntil)
           ? state.graceUntil
           : command.graceUntil;
+
       // A failure that opens a new run starts the ladder now; a second failure
       // in the same run keeps the first one, so every rung stays measured from
       // the failure the deployment is actually dunning.
       const dunningStartedAt = state.dunningAttempts === 0 ? now : (state.dunningStartedAt ?? now);
+
       return [
         new PaymentFailed({
           reason: command.reason,
@@ -1004,19 +1099,27 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     DunningRetry: (state, command, { now }) => {
       if (state._tag !== "Subscribed" || state.status !== "grace") return [];
+
       if (state.graceUntil === undefined) return [];
+
       // The deadline is the hard stop: a retry that is only being handled after
       // grace passed belongs to `GraceElapsed`, not to the card.
       if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(state.graceUntil)) return [];
+
       if (state.dunningAttempts !== command.afterAttempt) return [];
+
       if (state.dunningStartedAt === undefined) return [];
+
       if (
         DateTime.toEpochMillis(state.dunningStartedAt) !== DateTime.toEpochMillis(command.startedAt)
       ) {
         return [];
       }
+
       const price = state.price;
+
       if (price === undefined) return [];
+
       return [
         new DunningRetryDue({
           attempt: state.dunningAttempts + 1,
@@ -1028,29 +1131,36 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     EnterGrace: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (state.status === "grace") return new AlreadyInGrace();
+
       if (!canEnterGrace(state.status)) return new NotInGrace({ status: state.status });
+
       return [new GraceEntered({ graceUntil: command.graceUntil, statusAfter: "grace" })];
     },
     Recover: (state) => {
       if (state._tag !== "Subscribed" || state.status !== "grace") {
         return new NotInGrace({ status: statusOf(state) });
       }
+
       return [new Recovered({ statusAfter: "active" })];
     },
     Hold: (state, command, { now }) => {
       if (state._tag === "Unsubscribed") {
         return new StandingBlocksUsage({ standing: "blocked", status: "none" });
       }
+
       if (!allowsUsage(state.status)) {
         return new StandingBlocksUsage({
           standing: standingOf(state.status),
           status: state.status,
         });
       }
+
       // A flag has no counter and no pool: it is granted or it is not.
       const allowance = state.allowances[command.feature];
       const rates = state.rates[command.feature];
+
       const verdict = capacityOf({
         standing: standingOf(state.status),
         feature: judgedOf(state, command.feature),
@@ -1060,24 +1170,33 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.properties === undefined ? {} : { properties: command.properties }),
         },
       });
+
       if (verdict._tag === "Standing") {
         return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
       }
+
       if (allowance !== undefined && isFlagGrant(allowance)) {
         return new FeatureNotMetered({ feature: command.feature });
       }
+
       if (allowance !== undefined && isQuantityGrant(allowance)) {
         return new FeatureNotConsumable({ feature: command.feature });
       }
+
       // A hold with the id this standing already has is a replay: the retry
       // holds once, and the caller gets the same id back.
       if (holdOf(state, command.holdId) !== null) return [];
+
       if (command.amount <= 0) return [];
+
       if (command.dedupeKey !== undefined && state.dedupeKeys[command.dedupeKey] === true) {
         return [];
       }
+
       const refusal = holdRefusalOf(verdict, state, command.feature, command.amount);
+
       if (refusal !== null) return refusal;
+
       // The rate is captured here, so the bill at settle is the price the work
       // was priced at, not whatever the catalog says when it finishes.
       const rate =
@@ -1087,11 +1206,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               dimension: command.dimension,
               properties: command.properties,
             });
+
       const cost = command.amount * rate;
       const remaining = availableOf(state, command.feature);
       // A credit-priced hold takes credits out of the pool; a counted one takes
       // its own units.
       const held = rates === undefined ? command.amount : cost;
+
       return [
         new UsageReserved({
           holdId: command.holdId,
@@ -1110,20 +1231,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     SettleHold: (state, command, { now }) => {
       if (state._tag === "Unsubscribed") return new HoldUnknown({ holdId: command.holdId });
       const hold = holdOf(state, command.holdId);
+
       if (hold === null) return new HoldUnknown({ holdId: command.holdId });
+
       // The work is already billed: a replay records nothing rather than
       // charging twice, and the id makes the command id derivable.
       if (hold.status === "settled") return [];
+
       // A released or swept hold was never billed. A settle after the fact is
       // an idempotent no-op, not a refusal that makes a cleanup look like a
       // failed charge.
       if (hold.status === "released" || hold.status === "expired") return [];
+
       if (!allowsUsage(state.status)) {
         return new StandingBlocksUsage({
           standing: standingOf(state.status),
           status: state.status,
         });
       }
+
       if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(hold.expiresAt)) {
         return new HoldExpired({
           holdId: hold.id,
@@ -1132,7 +1258,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           now,
         });
       }
+
       const billed = command.amount ?? hold.amount;
+
       if (billed < 0 || billed > hold.amount) {
         return new HoldExceeded({
           holdId: hold.id,
@@ -1142,6 +1270,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining: availableOf(state, hold.feature) ?? 0,
         });
       }
+
       // Whatever was not billed returns in the same command, so the common
       // path is two calls and there is no third one to forget.
       const released = hold.amount - billed;
@@ -1155,12 +1284,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // The other open holds are promises to bill too; this one is being
       // billed now, so it is in `charge`, not in `reservedCharge`.
       const otherReserved = Math.max(0, reservedOf(state, hold.feature) - hold.amount);
+
       const reservedCharge = chargeOf(
         pricing,
         allowance?.included ?? null,
         used + billed,
         otherReserved,
       );
+
       // The other open holds are promises to bill too; this one is being
       // billed now, so it is in `charge`, not in `reservedCharge`. The money
       // rule judges the total, and the evidence stays this command's own split.
@@ -1168,6 +1299,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         { ...judgedOf(state, hold.feature), reserved: otherReserved },
         billed,
       );
+
       if (overflow !== null) {
         return new MoneyCapExceeded({
           feature: hold.feature,
@@ -1177,13 +1309,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           charge,
         });
       }
+
       // The hold took its units (or credits) out when it was placed; what it
       // did not bill comes back here. An unlimited allowance stays `null`.
       const available = availableOf(state, hold.feature);
+
       const remaining = remainingAfterRelease(
         available,
         creditPriced ? released * hold.rate : released,
       );
+
       return [
         new UsageRecorded({
           feature: hold.feature,
@@ -1222,13 +1357,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ReleaseHold: (state, command) => {
       if (state._tag === "Unsubscribed") return new HoldUnknown({ holdId: command.holdId });
       const hold = holdOf(state, command.holdId);
+
       if (hold === null) return new HoldUnknown({ holdId: command.holdId });
+
       // A released hold is a replay; a settled one was billed, so the units
       // are not there to give back.
       if (hold.status === "released" || hold.status === "expired") return [];
+
       if (hold.status === "settled") {
         return new HoldSettled({ holdId: hold.id, feature: hold.feature });
       }
+
       // A late release is a cleanup, not a charge: expiry does not refuse it.
       return [releaseEvent(state, hold, "released")];
     },
@@ -1238,8 +1377,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // deadline all record nothing.
       if (state._tag === "Unsubscribed") return [];
       const hold = holdOf(state, command.holdId);
+
       if (hold === null || hold.status !== "open") return [];
+
       if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(hold.expiresAt)) return [];
+
       // Releasing here is the same cleanup `ReleaseHold` performs, but the
       // reason is the deadline: the hold expired rather than being released.
       return [releaseEvent(state, hold, "expired")];
@@ -1247,14 +1389,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RecordProrationInvoice: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
       const proration = state.proration;
+
       // Only a positive `due` is money to collect; a credit is applied by the
       // next period, so there is nothing to invoice.
       if (proration === undefined || proration.due <= 0) {
         return new NoProrationDue({ account: id, reason: "none" });
       }
+
       if (state.prorationInvoice !== undefined) {
         return new NoProrationDue({ account: id, reason: "billed" });
       }
+
       return [
         new ProrationInvoiced({
           invoiceId: command.invoiceId,
@@ -1265,7 +1410,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     GrantCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (command.amount <= 0) return [];
+
       return [
         new CreditsGranted({
           amount: command.amount,
@@ -1277,6 +1424,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // A pack is bought with or without a plan: the pool can exist alone, and
       // a later subscribe carries it in. The purchase never creates a standing.
       if (command.amount <= 0) return [];
+
       return [
         new CreditsPurchased({
           tier: command.tier,
@@ -1297,6 +1445,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // The ceiling is the money the log knows: a refund cannot exceed what
       // this account was charged in its currency, minus what already went back.
       const refundable = refundableOf(state, command.currency);
+
       if (command.amount > refundable) {
         return new RefundExceedsCharged({
           currency: command.currency,
@@ -1305,6 +1454,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           requested: command.amount,
         });
       }
+
       return [
         new RefundRecorded({
           chargeId: command.chargeId,
@@ -1322,6 +1472,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // purchase that succeeded, not a fact about money. Recording nothing is
       // the honest answer; the purchase is already the log's record.
       if (command.tier.length === 0) return [];
+
       return [
         new TopUpFailed({
           tier: command.tier,
@@ -1333,24 +1484,65 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    ReverseRefund: (state, command, { commandId }) => {
+      // A non-positive reversal records nothing, like every other money command.
+      if (command.amount <= 0) return [];
+
+      const found = refundOfProviderId(state, command.refundId);
+
+      if (found === null) return new RefundNotFound({ refundId: command.refundId });
+
+      const { record } = found;
+      const reversed = record.reversed ?? 0;
+      const outstanding = record.amount - reversed;
+
+      // The cap is the refund, not the currency: two refunds of one charge are
+      // two facts, and reversing the second must not be refused because the
+      // first is still standing.
+      if (command.amount > outstanding) {
+        return new RefundReversalExceedsRefunded({
+          refundId: command.refundId,
+          refunded: record.amount,
+          reversed,
+          requested: command.amount,
+        });
+      }
+
+      return [
+        new RefundReversed({
+          refundId: command.refundId,
+          amount: command.amount,
+          currency: record.currency,
+          refundedAfter: (refundedOf(state)[record.currency] ?? 0) - command.amount,
+          ...(command.reason === undefined ? {} : { reason: command.reason }),
+          commandId,
+        }),
+      ];
+    },
     TopUpCooldownElapsed: (state, _command, { now }) => {
       // The deadline is scheduled, so an account with no cooldown and a fire
       // before the deadline are both ordinary states, not operator mistakes.
       if (state._tag !== "Subscribed") return [];
       const until = state.topUpCooldownUntil;
+
       if (until === undefined) return [];
+
       if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(until)) return [];
+
       return [new TopUpCooldownCleared()];
     },
     ConsumeCredits: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (isTerminalStatus(state.status)) {
         return new StandingEnded({ account: id, status: state.status });
       }
+
       if (command.amount <= 0) return [];
       // Credits an open hold reserved are not spendable here: settle still has
       // to bill them, and a negative pool is a state no read can explain.
       const reserved = reservedCreditsOf(state);
+
       if (command.amount > state.credits - reserved) {
         return new CreditExceedsBalance({
           balance: state.credits,
@@ -1358,6 +1550,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(reserved === 0 ? {} : { reserved }),
         });
       }
+
       return [
         new CreditsConsumed({
           amount: command.amount,
@@ -1367,12 +1560,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ScheduleTierChange: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       // A schedule only has a boundary to apply at if the standing still has
       // one. Scheduling on a terminal standing records a change no close will
       // ever read.
       if (isTerminalStatus(state.status)) {
         return new StandingEnded({ account: id, status: state.status });
       }
+
       // The payload is the catalog's terms and the close applies it from the log
       // alone, so it is checked here exactly as `ChangeTier` checks it. An
       // empty allowance is what a one-off pack carries: scheduling one would
@@ -1381,7 +1576,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (emptyAllowances(command.allowances)) {
         return new TierNotInCatalog({ tier: command.tier });
       }
+
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
+
       if (
         state.currency !== undefined &&
         priceCurrency !== undefined &&
@@ -1389,6 +1586,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ) {
         return new CurrencyMismatch({ expected: state.currency, actual: priceCurrency });
       }
+
       return [
         new TierChangeScheduled({
           tier: command.tier,
@@ -1405,50 +1603,66 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     WithdrawTierChange: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       // Nothing pending is a refusal rather than a no-op, for the same reason
       // `Resume` refuses: the caller asked to withdraw something that is not
       // there, and the log should not record an intent that never existed.
       if (state.pendingTier === undefined) return new NoTierChangeScheduled();
+
       return [new TierChangeWithdrawn({ tier: state.pendingTier.tier })];
     },
     ScheduleCancellation: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (state.status === "canceled" || state.status === "expired" || state.cancelAtPeriodEnd) {
         return new AlreadyCanceled();
       }
+
       return [new CancellationScheduled({ cancelAtPeriodEndAfter: true })];
     },
     Resume: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (!state.cancelAtPeriodEnd) return new NotScheduled();
+
       return [new CancellationWithdrawn({ cancelAtPeriodEndAfter: false })];
     },
     ClosePeriod: (state, command, { id, now }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (!canClosePeriod(state, command.periodEnd, now)) {
         return new PeriodNotClosed({ periodEnd: command.periodEnd, now });
       }
+
       return closePeriodEvents(state, command.periodEnd);
     },
     PeriodEnded: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
+
       if (!canClosePeriod(state, command.periodEnd, now)) return [];
+
       return closePeriodEvents(state, command.periodEnd);
     },
     ResetAllowance: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
       const allowance = state.allowances[command.feature];
+
       if (allowance === undefined) return [];
       const boundary = state.resetAt?.[command.feature];
+
       if (boundary === undefined) return [];
+
       // A boundary a later tier change replaced is stale: the new chain owns
       // the feature, and this command must not close the new window early.
       if (DateTime.toEpochMillis(boundary) !== DateTime.toEpochMillis(command.at)) return [];
+
       if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(boundary)) return [];
       const reset = resetOfFeature(state, command.feature, allowance);
+
       const releases = Object.values(state.holds)
         .filter((hold) => hold.status === "open" && hold.feature === command.feature)
         .map((hold) => releaseEvent(state, hold, "reset"));
+
       return [
         ...releases,
         new AllowanceReset({
@@ -1461,30 +1675,38 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     GraceElapsed: (state, _command, { now }) => {
       if (state._tag !== "Subscribed" || state.status !== "grace") return [];
+
       if (
         state.graceUntil === undefined ||
         DateTime.toEpochMillis(now) < DateTime.toEpochMillis(state.graceUntil)
       ) {
         return [];
       }
+
       return [new SubscriptionExpired({ statusAfter: "expired" })];
     },
     Expire: (state) => {
       if (state._tag !== "Subscribed") return new NotInGrace({ status: "none" });
+
       if (state.status === "expired") return [];
+
       if (state.status !== "grace") return new NotInGrace({ status: state.status });
+
       return [new SubscriptionExpired({ statusAfter: "expired" })];
     },
     ExtendTrial: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
       if (state.status !== "trialing") return new TrialNotActive();
       // `ExtendTrial` moves a deadline forward. A deadline that is not later
       // would shorten the trial and bring the period's close with it — the
       // opposite of the command's name — so it is refused rather than applied.
       const current = state.trialEndsAt ?? state.period.end;
+
       if (DateTime.toEpochMillis(command.trialEndsAt) <= DateTime.toEpochMillis(current)) {
         return new TrialDeadlineNotLater({ current, requested: command.trialEndsAt });
       }
+
       return [
         new TrialExtended({
           trialEndsAt: command.trialEndsAt,
@@ -1504,6 +1726,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }),
     TierChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
+
       const {
         price: _previousPrice,
         proration: _previousProration,
@@ -1513,11 +1736,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         topUp: _previousTopUp,
         ...rest
       } = state;
+
       // Every prorated change takes the next id, including an identical change
       // in the same period: the seq is what makes a second charge a second
       // charge rather than a retry of the first.
       const prorationSeq =
         event.proration === undefined ? (state.prorationSeq ?? 0) : (state.prorationSeq ?? 0) + 1;
+
       return {
         ...rest,
         tier: event.tier,
@@ -1537,6 +1762,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           Object.entries(event.allowances).flatMap(([feature, allowance]) => {
             if (!isQuantityGrant(allowance)) return [];
             const included = typeof allowance.included === "number" ? allowance.included : 0;
+
             return [
               [feature, quantityAfterTierChange(state.quantities?.[feature] ?? included, included)],
             ];
@@ -1606,6 +1832,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     UsageSettled: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const hold = holdOf(state, event.holdId);
+
       return {
         ...state,
         holds:
@@ -1621,6 +1848,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     UsageReleased: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const hold = holdOf(state, event.holdId);
+
       return {
         ...state,
         holds:
@@ -1639,6 +1867,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     PaymentRecorded: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const { dunningStartedAt: _finishedRun, ...rest } = state;
+
       return {
         ...rest,
         status: event.statusAfter,
@@ -1664,6 +1893,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     Recovered: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const { dunningStartedAt: _finishedRun, ...rest } = state;
+
       return {
         ...rest,
         status: event.statusAfter,
@@ -1687,6 +1917,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         event.price === undefined
           ? state.charged
           : chargedWith(state, event.price.currency, event.price.amount);
+
       if (state._tag !== "Subscribed") {
         return {
           ...state,
@@ -1696,9 +1927,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(charged === undefined ? {} : { charged }),
         };
       }
+
       // A purchase is the refill that was owed, so the standing stops reporting
       // a failure it has since made good on (ADR 0027).
       const { topUpFailure: _madeGood, ...rest } = state;
+
       return {
         ...rest,
         credits: event.balanceAfter,
@@ -1733,9 +1966,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             },
           }
         : state,
+    RefundReversed: (state, event) => ({
+      ...state,
+      // The headroom comes back by exactly what returned, so a refund the
+      // account is still owed is no longer refused by a refund that never
+      // settled (ADR 0030).
+      refunded: refundedWith(state, event.currency, event.refundedAfter),
+      refunds: reversedWith(state.refunds, event.refundId, event.amount),
+    }),
     TopUpCooldownCleared: (state) => {
       if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
       const { topUpCooldownUntil: _cleared, ...rest } = state;
+
       return rest;
     },
     CreditsConsumed: (state, event) =>
@@ -1769,6 +2011,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // field. Everything else — the tier, the counters, the pool — is what the
       // account already had.
       const { pendingTier: _withdrawn, ...rest } = state;
+
       return rest;
     },
     CancellationScheduled: (state, event) =>
@@ -1795,9 +2038,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         : state,
     AllowanceReset: (state, event) => {
       if (state._tag !== "Subscribed") return state;
+
       const resetAt = Object.fromEntries(
         Object.entries(state.resetAt ?? {}).filter(([feature]) => feature !== event.feature),
       );
+
       return {
         ...state,
         usage: { ...state.usage, [event.feature]: 0 },
@@ -1816,10 +2061,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     QuantityChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const allowance = state.allowances[event.feature];
+
       const remaining =
         allowance?.cap === undefined
           ? null
           : Math.max(0, (allowance.cap ?? 0) - event.quantityAfter);
+
       return {
         ...state,
         quantities: { ...state.quantities, [event.feature]: event.quantityAfter },
@@ -1837,7 +2084,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     QuantityProrationInvoiced: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const entry = state.quantityProrations?.[event.prorationId];
+
       if (entry === undefined) return state;
+
       return {
         ...state,
         quantityProrations: {
@@ -1849,6 +2098,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     UsageReset: (state, event) => {
       if (state._tag !== "Subscribed") return state;
       const kept = event.kept ?? {};
+
       // A kept feature keeps its usage, open holds and billing for the period;
       // everything else starts the next period at zero.
       return {
@@ -1900,6 +2150,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
   reply: {
     SetQuantity: (_state, events) => {
       const changed = events.find((event) => event._tag === "QuantityChanged");
+
       return changed?._tag === "QuantityChanged"
         ? {
             quantityAfter: changed.quantityAfter,
@@ -1909,12 +2160,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     SettleHold: (_state, events) => {
       const settled = events.find((event) => event._tag === "UsageSettled");
+
       return settled?._tag === "UsageSettled"
         ? { billed: settled.amount, released: settled.released }
         : { billed: 0, released: 0 };
     },
     ReleaseHold: (_state, events) => {
       const released = events.find((event) => event._tag === "UsageReleased");
+
       return released?._tag === "UsageReleased" ? { released: released.amount } : { released: 0 };
     },
     GrantCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
@@ -1928,6 +2181,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     rejects: [Forbidden],
     validate: Effect.fn(function* ({ key }) {
       const actor = yield* Actor;
+
       if (!mayActOn(actor, key.id)) {
         return yield* new Forbidden({
           account: key.id,

@@ -28,9 +28,11 @@ export const waitForProjection = (
   Effect.gen(function* () {
     if (view === null) return null;
     let row = yield* store.get(account);
+
     for (let attempt = 0; attempt < 500 && !sameRow(row, view); attempt++) {
       yield* Effect.sleep("10 millis");
       row = yield* store.get(account);
     }
+
     return row;
   });

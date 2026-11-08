@@ -12,6 +12,8 @@ export function build(packageDirectory: string): void {
     cwd: packageDirectory,
     stdio: "inherit",
   });
+
   if (result.error) throw result.error;
+
   if (result.status !== 0) process.exit(result.status ?? 1);
 }

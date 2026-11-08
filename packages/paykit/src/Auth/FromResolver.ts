@@ -58,7 +58,9 @@ export interface FromResolverOptions {
 
 /** The target a payload acts on, when it carries one. */
 const targetOf = (payload: unknown): string | null => {
+  // SAFETY: the payload is an untrusted request body; the guard reads its target before any schema decode.
   const target = (payload as { readonly target?: unknown } | null)?.target;
+
   return typeof target === "string" ? target : null;
 };
 
@@ -94,11 +96,14 @@ export const SessionFrom = <E, R>(
     Effect.gen(function* () {
       const context: Context.Context<R> = yield* Effect.context<R>();
       const source = options.source ?? "session";
+
       return (effect, request) =>
         Effect.gen(function* () {
           const actor = yield* resolve(request).pipe(Effect.provideContext(context), Effect.orDie);
+
           if (actor === null) return yield* new Unauthenticated({ source });
           const target = targetOf(request.payload);
+
           if (target !== null && !mayActOn(actor, target)) {
             return yield* new Forbidden({
               account: target,
@@ -107,6 +112,7 @@ export const SessionFrom = <E, R>(
               scope: "account",
             });
           }
+
           return yield* Effect.provideService(effect, Actor, actor);
         });
     }),
@@ -134,10 +140,13 @@ export const authenticate = <E = never, R = never>(
   options: FromResolverOptions = {},
 ): ((request: GuardRequest) => Effect.Effect<ActorValue, Unauthenticated, R>) => {
   const source = options.source ?? "session";
+
   return (request) =>
     Effect.gen(function* () {
       const actor = yield* resolve(request).pipe(Effect.orDie);
+
       if (actor === null) return yield* new Unauthenticated({ source });
+
       return actor;
     });
 };
@@ -179,10 +188,13 @@ export const AdminFrom = <E, R>(
     Effect.gen(function* () {
       const context: Context.Context<R> = yield* Effect.context<R>();
       const source = options.source ?? "session";
+
       return (effect, request) =>
         Effect.gen(function* () {
           const actor = yield* resolve(request).pipe(Effect.provideContext(context), Effect.orDie);
+
           if (actor === null) return yield* new Unauthenticated({ source });
+
           if (actor.kind !== "admin") {
             return yield* new Forbidden({
               account: actor.id,
@@ -191,6 +203,7 @@ export const AdminFrom = <E, R>(
               scope: "admin",
             });
           }
+
           return yield* Effect.provideService(effect, Actor, actor);
         });
     }),

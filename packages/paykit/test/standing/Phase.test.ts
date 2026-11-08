@@ -42,16 +42,19 @@ const edgesOf = (
   let state = initialSubscriptionState;
   let now = start;
   const edges: Array<readonly [StandingPhaseTag, StandingPhaseTag, StandingTransition]> = [];
+
   for (const [index, entry] of history.steps.entries()) {
     now = DateTime.add(now, { days: entry.advanceDays });
     const before = standingPhaseOf(state, now)._tag;
     const command = commandOf(entry.command, state, now);
     const transition = standingTransitionOf(command, state);
     const decision = decideAt(state, command, now, `phase-${index}`);
+
     if (!isAccepted(decision) || decision.length === 0) continue;
     state = evolveAt(state, decision, now, `phase-${index}`);
     edges.push([before, standingPhaseOf(state, now)._tag, transition]);
   }
+
   return edges;
 };
 
@@ -90,6 +93,7 @@ describe("standingPhaseOf", () => {
     const grace = walk(
       script(step({ _tag: "Subscribe", tier: "free" }), step({ _tag: "EnterGrace" })),
     ).state;
+
     const deadline = DateTime.add(start, { days: 7 });
     expect(standingPhaseOf(grace, start)).toEqual({
       _tag: "Grace",
@@ -111,6 +115,7 @@ describe("standingPhaseOf", () => {
         step({ _tag: "Expire" }),
       ),
     ).state;
+
     const canceled = walk(
       script(
         step({ _tag: "Subscribe", tier: "free" }),
@@ -118,6 +123,7 @@ describe("standingPhaseOf", () => {
         step({ _tag: "PeriodEnded" }, 40),
       ),
     ).state;
+
     expect(standingPhaseOf(expired, start)).toEqual({ _tag: "Expired" });
     expect(standingPhaseOf(canceled, DateTime.add(start, { days: 40 }))).toEqual({
       _tag: "Canceled",
@@ -152,6 +158,7 @@ describe("standingConditionsOf", () => {
     const canceledAtBoundary = walk(
       script(step({ _tag: "Subscribe", tier: "free" }), step({ _tag: "ScheduleCancellation" })),
     ).state;
+
     expect(standingConditionsOf(canceledAtBoundary, start).cancelAtPeriodEnd).toBe(true);
 
     const pendingTier: PendingTier = {
@@ -161,6 +168,7 @@ describe("standingConditionsOf", () => {
       creditsExpire: "period",
       rates: {},
     };
+
     const scheduled = { ...subscribedAt("free"), pendingTier };
     expect(standingConditionsOf(scheduled, start).pendingTier).toBe("pro");
   });
@@ -170,6 +178,7 @@ describe("standingConditionsOf", () => {
       ...subscribedAt("free"),
       topUpCooldownUntil: DateTime.add(start, { hours: 1 }),
     };
+
     expect(standingConditionsOf(open, start).topUpCooldown).toBe("open");
     expect(standingConditionsOf(open, DateTime.add(start, { hours: 2 })).topUpCooldown).toBe(
       "lapsed",
@@ -180,14 +189,18 @@ describe("standingConditionsOf", () => {
   it("counts an open hold and the subset whose deadline has passed", () => {
     const held = (expiresAt: DateTime.Utc) => {
       const state = subscribedAt("free");
+
       const command = new Hold({
         holdId: "hold-phase",
         feature: "messages",
         amount: 10,
         expiresAt,
       });
+
       const decision = decideAt(state, command, start, "hold-phase");
+
       if (!isAccepted(decision)) throw new Error("the fixture could not hold");
+
       return evolveAt(state, decision, start, "hold-phase");
     };
 
@@ -427,24 +440,29 @@ describe("STANDING_PHASE_TRANSITIONS", () => {
         Object.values(row).map((to) => `${from}->${to}`),
       ),
     );
+
     const fromEdges = STANDING_PHASE_EDGES.map((edge) => `${edge.from}->${edge.to}`);
     expect(new Set(fromEdges).size).toBe(fromEdges.length);
     expect([...fromTable].sort()).toEqual([...fromEdges].sort());
+
     for (const phase of tags) expect(isStandingPhaseEdge(phase, phase)).toBe(true);
   });
 
   it("is exactly the set of edges decide can walk", () => {
     const observed = new Set<string>();
+
     for (const testCase of cases) {
       const walked = edgesOf(testCase.steps);
       const last = walked.at(-1);
       expect(last === undefined ? null : [last[0], last[1]]).toEqual(testCase.edge);
+
       for (const [from, to, transition] of walked) {
         expect(nextStandingPhase(from, transition)).toBe(to);
         expect(isStandingPhaseEdge(from, to)).toBe(true);
         observed.add(`${from}->${to}`);
       }
     }
+
     expect([...observed].sort()).toEqual(
       STANDING_PHASE_EDGES.map((edge) => `${edge.from}->${edge.to}`).sort(),
     );
@@ -456,27 +474,33 @@ describe("STANDING_PHASE_TRANSITIONS", () => {
       (history) => {
         let state = initialSubscriptionState;
         let now = start;
+
         for (const [index, entry] of history.steps.entries()) {
           now = DateTime.add(now, { days: entry.advanceDays });
           const before = standingPhaseOf(state, now)._tag;
           const command = commandOf(entry.command, state, now);
           const transition = standingTransitionOf(command, state);
           const decision = decideAt(state, command, now, `generated-${index}`);
+
           if (!isAccepted(decision)) {
             if (standingPhaseOf(state, now)._tag !== before) return false;
             continue;
           }
+
           // An accepted command that records nothing is not a move: an early
           // `PeriodEnded` and a repeat `Expire` leave the phase where it was.
           if (decision.length === 0) {
             if (standingPhaseOf(state, now)._tag !== before) return false;
             continue;
           }
+
           state = evolveAt(state, decision, now, `generated-${index}`);
+
           if (nextStandingPhase(before, transition) !== standingPhaseOf(state, now)._tag) {
             return false;
           }
         }
+
         return true;
       },
       { runs: 60, size: 40 },

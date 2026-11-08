@@ -32,8 +32,10 @@ const requiredConditions = ["types", "bun", "default"] as const;
 /** The published conditions a development target derives; `undefined` when it is not source. */
 const publishedConditions = (target: unknown): Record<string, string> | undefined => {
   if (typeof target !== "string") return undefined;
+
   if (!target.startsWith("./src/") || !target.endsWith(".ts")) return undefined;
   const lib = `./lib/${target.slice("./src/".length, -".ts".length)}`;
+
   return { types: `${lib}.d.ts`, bun: target, default: `${lib}.js` };
 };
 
@@ -43,19 +45,26 @@ const exportProblems = (
   files: ReadonlyArray<string>,
 ): ReadonlyArray<string> => {
   const dev = raw.exports;
+  // SAFETY: package.json is JSON; the export map is validated field by field in this check.
   const publishConfig = raw.publishConfig as { exports?: unknown } | undefined;
   const published = publishConfig?.exports;
+
   if (typeof dev !== "object" || dev === null) return [`${dir}: no \`exports\` map`];
+
   if (typeof published !== "object" || published === null) {
     return [`${dir}: no \`publishConfig.exports\` map`];
   }
+
   const problems: Array<string> = [];
+  // SAFETY: package.json is JSON; the export map is validated field by field in this check.
   const devMap = dev as Record<string, unknown>;
+  // SAFETY: package.json is JSON; the export map is validated field by field in this check.
   const publishedMap = published as Record<string, unknown>;
 
   for (const key of Object.keys(devMap)) {
     if (!(key in publishedMap)) problems.push(`${dir}: \`publishConfig.exports\` has no "${key}"`);
   }
+
   for (const key of Object.keys(publishedMap)) {
     if (!(key in devMap)) {
       problems.push(
@@ -67,18 +76,24 @@ const exportProblems = (
   for (const [key, target] of Object.entries(devMap)) {
     const expected = publishedConditions(target);
     const actual = publishedMap[key];
+
     // A pass-through entry (`"./package.json"`) is published unchanged.
     if (expected === undefined) {
       if (typeof target === "string" && actual !== target) {
         problems.push(`${dir}: "${key}" publishes ${String(actual)}, expected ${target}`);
       }
+
       continue;
     }
+
     if (typeof actual !== "object" || actual === null) {
       problems.push(`${dir}: "${key}" is published as ${String(actual)}, expected its conditions`);
       continue;
     }
+
+    // SAFETY: package.json is JSON; the export map is validated field by field in this check.
     const conditions = actual as Record<string, unknown>;
+
     for (const condition of requiredConditions) {
       if (conditions[condition] !== expected[condition]) {
         problems.push(
@@ -86,10 +101,13 @@ const exportProblems = (
         );
       }
     }
+
     for (const [condition, value] of Object.entries(conditions)) {
       if (condition in expected) continue;
+
       // A condition this package adds (`worker`) may repeat a derived target,
       // but it may not point somewhere the dev map does not publish.
+      // SAFETY: package.json is JSON; the export map is validated field by field in this check.
       if (!Object.values(expected).includes(value as string)) {
         problems.push(`${dir}: "${key}".${condition} is ${String(value)}, none of its targets`);
       }
@@ -101,12 +119,15 @@ const exportProblems = (
       problems.push(`${dir}: "${key}" is a wildcard; declare each entry explicitly`);
       continue;
     }
+
     if (typeof target !== "string" || !target.startsWith("./")) continue;
     const file = target.slice(2);
+
     if (!files.includes(file)) {
       problems.push(`${dir}: "${key}" points at ${target}, which is not in the package`);
     }
   }
+
   return problems;
 };
 
@@ -126,6 +147,7 @@ const check = Effect.fn("Exports.check")(function* () {
   for (const pkg of publishable) {
     const files = yield* filesUnder(path.join(root, pkg.dir));
     const found = exportProblems(pkg, files);
+
     if (found.length > 0) {
       problems.push(...found);
       invalid.add(pkg.dir);
@@ -133,14 +155,18 @@ const check = Effect.fn("Exports.check")(function* () {
   }
 
   const examples = yield* workspacePackages(root, "examples");
+
   for (const { dir } of [...packages, ...examples]) {
     const files = yield* filesUnder(path.join(root, dir));
+
     for (const file of files) {
       // Build output and dependencies are not source.
       if (file.startsWith("lib/") || file.startsWith("node_modules/")) continue;
+
       if (!file.endsWith(".ts")) continue;
       const text = yield* fs.readFileString(path.join(root, dir, file));
       const match = internalImport.exec(text);
+
       if (match === null) continue;
       problems.push(`${dir}/${file} imports ${match[0]}: import through the export map`);
       invalid.add(dir);
@@ -149,11 +175,13 @@ const check = Effect.fn("Exports.check")(function* () {
 
   if (problems.length > 0) {
     yield* Console.error(problems.map((problem) => `  ${problem}`).join("\n"));
+
     return yield* new InvalidExports({
       message: `${problems.length} export problem(s) in ${invalid.size} package(s)`,
       dirs: [...invalid].sort(),
     });
   }
+
   yield* Console.log(
     `Checked ${publishable.length} packages: every declared entry resolves, and there is no wildcard.`,
   );

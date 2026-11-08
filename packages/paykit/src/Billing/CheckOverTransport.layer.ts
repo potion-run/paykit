@@ -21,6 +21,7 @@ export const CheckOverTransport = Layer.effect(
   Check,
   Effect.gen(function* () {
     const transport = yield* CheckTransport;
+
     return Effect.fn("Paykit.Check")(function* (account) {
       return Effect.fn("Paykit.Check.transport")(function* (request) {
         return yield* mapBindingFailure(toCheckError)(transport.check({ account, ...request }));

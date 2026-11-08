@@ -59,6 +59,7 @@ const httpClient = (server: { readonly fetch: never }) =>
     (request) =>
       Effect.gen(function* () {
         const web = yield* HttpClientRequest.toWeb(request);
+
         const served = yield* (
           server.fetch as unknown as Effect.Effect<
             HttpServerResponse.HttpServerResponse,
@@ -72,6 +73,7 @@ const httpClient = (server: { readonly fetch: never }) =>
           ),
           Effect.scoped,
         );
+
         return HttpClientResponse.fromWeb(request, HttpServerResponse.toWeb(served));
       }) as never,
   );
@@ -85,6 +87,7 @@ describe("the bindings over a real HTTP transport", () => {
       yield* subscribe({ account, tier: "free" });
 
       const server = yield* BillingApi;
+
       const overTheWire = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)).pipe(
         Layer.provide(BillingApi.layerClientHttp("http://billing.test/api")),
         Layer.provideMerge(base),
@@ -94,11 +97,13 @@ describe("the bindings over a real HTTP transport", () => {
 
       yield* Effect.gen(function* () {
         const trackUsage = yield* TrackUsage(account);
+
         const recorded = yield* trackUsage({
           feature: "messages",
           amount: 40,
           dedupeKey: "over-http-1",
         });
+
         expect(recorded.remaining).toBe(60);
         expect(recorded.used).toBe(40);
 
@@ -116,7 +121,9 @@ describe("the bindings over a real HTTP transport", () => {
         const refused = yield* Effect.exit(
           trackUsage({ feature: "messages", amount: 61, dedupeKey: "over-http-2" }),
         );
+
         expect(refused._tag).toBe("Failure");
+
         if (refused._tag === "Failure") {
           expect(String(refused.cause)).toContain("AllowanceExceeded");
         }
@@ -125,6 +132,7 @@ describe("the bindings over a real HTTP transport", () => {
       // Nothing else wrote: the refusal left the standing where it was.
       const subscription = yield* Subscription;
       const state = yield* subscription.state(Subscription.ref(account));
+
       if (state._tag !== "Subscribed") throw new Error("expected a standing");
       expect(state.usage.messages).toBe(40);
     }).pipe(Effect.provide(base)),

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@alchemy.run/test";
-import { Check, Paykit } from "@potion.run/paykit";
+import { Check, moneyRoutes, Paykit } from "@potion.run/paykit";
 import type { PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
-import { moneyRoutes, providerOf, worldOptions, type PolarEnv } from "../src/Billing.ts";
+import { providerOf, worldOptions, type PolarEnv } from "../src/Billing.ts";
 import { proPrice } from "../src/catalog.ts";
 
 const account = "acct_polar_example";
@@ -20,6 +20,7 @@ const recording = (asked: Array<Record<string, unknown>> = []): PolarClient => (
   createCheckoutSession: (request) =>
     Effect.sync(() => {
       asked.push(request);
+
       return { url: `https://polar.test/checkout/${request.productId}` };
     }),
   createCustomerSession: () => Effect.sync(() => ({ url: "https://polar.test/portal" })),
@@ -35,9 +36,11 @@ const world = Paykit.world(worldOptions(provider));
 const signed = (body: unknown): { headers: Record<string, string>; body: string } => {
   const payload = JSON.stringify(body);
   const timestamp = String(Math.floor(performance.timeOrigin + performance.now()) / 1000);
+
   const tag = new Bun.CryptoHasher("sha256", Buffer.from(secret.slice(6), "base64"))
     .update(`${"msg_polar_example"}.${timestamp}.${payload}`)
     .digest("base64");
+
   return {
     headers: {
       "webhook-id": "msg_polar_example",
@@ -75,6 +78,7 @@ describe("the Polar example", () => {
 
       const purchase = yield* routes.purchase(account, "pro");
       expect("url" in purchase).toBe(true);
+
       if ("url" in purchase) expect(purchase.url).toContain(env.POLAR_PRODUCT_PRO);
 
       const applied = yield* routes.deliver(signed(orderPaid()));
@@ -83,11 +87,13 @@ describe("the Polar example", () => {
 
       const check = yield* Check(account);
       let answer = yield* check({ feature: "messages", amount: 1 });
+
       // A view catches up just after the command commits.
       for (let attempt = 0; attempt < 500 && !answer.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
         answer = yield* check({ feature: "messages", amount: 1 });
       }
+
       expect(answer.allowed).toBe(true);
       expect(answer.remaining).toBe(2_000);
     }).pipe(Effect.provide(world)),
@@ -106,9 +112,11 @@ describe("the Polar example", () => {
   it.live("an event paykit does not model is acknowledged and ignored", () =>
     Effect.gen(function* () {
       const routes = yield* moneyRoutes(provider);
+
       const applied = yield* routes.deliver(
         signed({ type: "product.updated", data: { id: "prod_example" } }),
       );
+
       expect(applied).toEqual({ action: "ignored", eventId: null });
     }).pipe(Effect.provide(world)),
   );

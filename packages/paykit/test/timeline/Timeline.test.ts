@@ -9,6 +9,7 @@ import { CreditsPurchased } from "../../src/Subscription/PurchaseCredits.command
 import { PaymentRecorded } from "../../src/Subscription/RecordPayment.command.ts";
 import { TopUpFailed } from "../../src/Subscription/RecordTopUpFailure.command.ts";
 import { RefundRecorded } from "../../src/Subscription/Refund.command.ts";
+import { RefundReversed } from "../../src/Subscription/ReverseRefund.command.ts";
 import { UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
 import { SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -240,6 +241,7 @@ it("keeps a purchase made before any plan outside a period", () => {
     ),
     input(2, activated),
   ]);
+
   expect(timeline.periods.length).toBe(1);
   expect(timeline.entries[0]?.periodStart).toBeUndefined();
   expect(timeline.entries[1]?.periodStart).toEqual(start);
@@ -250,9 +252,49 @@ it("moves a trial's period end without inventing a billing entry", () => {
     input(1, activated),
     input(2, new TrialExtended({ trialEndsAt: monthAfterThat, periodEnd: monthAfterThat })),
   ]);
+
   expect(timeline.entries.map((entry) => entry.kind)).toEqual(["started"]);
   expect(timeline.periods[0]?.end).toEqual(monthAfterThat);
   expect(timeline.lastSeq).toBe(2);
+});
+
+it("records money coming back as its own entry, named by the refund it undoes", () => {
+  const timeline = timelineOf([
+    input(1, activated),
+    input(
+      2,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 1_900,
+        currency: "usd",
+        commandId: "refund-1",
+        refundedAfter: 1_900,
+      }),
+    ),
+    input(
+      3,
+      new RefundReversed({
+        refundId: "re_1",
+        amount: 1_900,
+        currency: "usd",
+        refundedAfter: 0,
+        reason: "ach_return",
+        commandId: "reverse-1",
+      }),
+    ),
+  ]);
+
+  expect(timeline.entries.map((entry) => entry.kind)).toEqual([
+    "started",
+    "refund",
+    "refund-reversed",
+  ]);
+  const returned = timeline.entries[2]!;
+  expect(returned.refundId).toBe("re_1");
+  expect(returned.charge).toBe(1_900);
+  expect(returned.currency).toBe("usd");
+  expect(returned.reason).toBe("ach_return");
 });
 
 it("has no entries before the first event", () => {
@@ -276,6 +318,7 @@ it("renders a refill that could not be bought as its own entry, with no money on
       }),
     ),
   ]);
+
   const entry = timeline.entries.at(-1);
   expect(entry?.kind).toBe("topup-failed");
   expect(entry?.tier).toBe("pack");

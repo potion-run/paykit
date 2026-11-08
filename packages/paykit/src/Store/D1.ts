@@ -17,6 +17,7 @@ export interface D1Like {
   batch(statements: ReadonlyArray<D1Prepared>): Promise<unknown>;
 }
 
+// SAFETY: D1 returns rows typed by the statement; the executor's generics are erased here and each store decodes its own row.
 const fail = (statement: string, cause: unknown): SqlError =>
   ({
     _tag: "SqlError",
@@ -93,6 +94,7 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
     Effect.tryPromise({
       try: () => {
         const statement = params.length === 0 ? d1.prepare(sql) : d1.prepare(sql).bind(...params);
+
         return statement.all<A>().then((result) => result.results ?? []);
       },
       catch: (cause) => fail(sql, cause),
@@ -109,11 +111,14 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
           : Effect.gen(function* () {
               const writes: Array<BufferedWrite> = [];
               const outcome = yield* Effect.exit(Effect.provideService(effect, InUnit, writes));
+
               if (outcome._tag === "Failure") {
                 // Nothing commits: the failed unit's writes are dropped.
                 return yield* Effect.failCause(outcome.cause);
               }
+
               yield* commit(writes);
+
               return outcome.value;
             }),
       ),
@@ -142,6 +147,9 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
       ),
   };
 
+  // SAFETY: the object composes the async half and the sync refusals into the
+  // one `SqlExecutor` contract; the spread hides nothing the interface does not
+  // name.
   return {
     ...async,
     dialect: "sqlite",
@@ -151,5 +159,5 @@ export const d1Executor = (d1: D1Like): SqlExecutor => {
     all: () => refused("all"),
     transaction: () => refused("transaction"),
     lock: () => {},
-  } as unknown as SqlExecutor;
+  } as SqlExecutor;
 };

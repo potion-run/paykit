@@ -24,10 +24,15 @@ export {
   resetEveryOf,
   unitPriceKey,
 } from "./Allowance.ts";
+
 export type { AllowanceInput, PriceBand, Pricing, PricingInput } from "./Allowance.ts";
+
 export { Catalog, catalog } from "./Catalog.ts";
+
 export type { CatalogInput } from "./Catalog.ts";
+
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
+
 export {
   CreditRateCards,
   CreditRates,
@@ -41,7 +46,9 @@ export {
   feature,
   rateCard,
 } from "./Feature.ts";
+
 export type { FeatureInput, RateCardInput } from "./Feature.ts";
+
 export {
   BillingUnits,
   PricedLine,
@@ -56,7 +63,9 @@ export {
   soleUnitPriceOf,
   unitsOf,
 } from "./Pricing.ts";
+
 export { Proration } from "./Proration.ts";
+
 export {
   AdditionalCurrency,
   CreditsExpire,
@@ -71,7 +80,9 @@ export {
   priceFor,
   tier,
 } from "./Tier.ts";
+
 export type { TierInput, TopUpTermsInput } from "./Tier.ts";
+
 export {
   BillingReadPage,
   BillingReadQuery,
@@ -82,11 +93,13 @@ export {
   MemoryBillingReadStore,
   queryRows,
 } from "./BillingReadStore.ts";
+
 export {
   BillingState,
   BillingStateView,
   initialBillingState,
 } from "./Subscription/BillingState.view.ts";
+
 export {
   Entitlements,
   EntitlementsState,
@@ -94,6 +107,7 @@ export {
   PricedUnits,
   initialEntitlements,
 } from "./Subscription/Entitlements.view.ts";
+
 export {
   AccountId,
   HoldRecord,
@@ -105,6 +119,7 @@ export {
   SubscriptionStatus,
   standingOf,
 } from "./Subscription/Subscription.state.ts";
+
 export {
   STANDING_PHASE_EDGES,
   STANDING_PHASE_TRANSITIONS,
@@ -123,18 +138,22 @@ export {
   standingPhaseTagOfStatus,
   standingTransitionOf,
 } from "./Subscription/StandingPhase.ts";
+
 export type {
   StandingPhaseEdge,
   StandingPhaseView,
   StandingTransition,
 } from "./Subscription/StandingPhase.ts";
+
 export {
   HOLD_STATUS_TRANSITIONS,
   HOLD_TRANSITIONS,
   holdTransitionOf,
   nextHoldStatus,
 } from "./Subscription/HoldPhase.ts";
+
 export type { HoldTransition } from "./Subscription/HoldPhase.ts";
+
 export {
   AccountEvent,
   TimelineEntry,
@@ -142,6 +161,7 @@ export {
   appendTimeline,
   initialTimeline,
 } from "./Timeline.ts";
+
 export { VerifyMismatch } from "./Verify.ts";
 
 export { AllowanceReset } from "./Subscription/ResetAllowance.command.ts";

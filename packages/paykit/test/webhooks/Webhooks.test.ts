@@ -28,6 +28,7 @@ const proTier = tier({
   price: { amount: 1900, currency: "usd", interval: "month" },
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
+
 const packTier = tier({
   id: "credits_1k",
   kind: "one_off",
@@ -35,6 +36,7 @@ const packTier = tier({
   credits: 1_000,
   grants: [],
 });
+
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, packTier] }));
 const pro = allowancesOf(testCatalog, "pro")!;
 const account = "acct_hook";
@@ -61,6 +63,7 @@ const state = stateOf(account);
 function stateOf(id: string) {
   return Effect.gen(function* () {
     const subscription = yield* Subscription;
+
     return yield* subscription.state(Subscription.ref(id));
   });
 }
@@ -91,6 +94,7 @@ describe("webhook edge", () => {
       const action = yield* handleWebhook(
         event({ id: "evt_1", kind: "checkout_completed", tier: "pro" }),
       );
+
       expect(action).toBe("activated");
       expect(yield* state).toMatchObject({ status: "active", tier: "pro" });
     }).pipe(run),
@@ -99,13 +103,17 @@ describe("webhook edge", () => {
   it.effect("a redelivered checkout is a replay, not a second activation", () =>
     Effect.gen(function* () {
       const subscription = yield* Subscription;
+
       const first = yield* handleWebhook(
         event({ id: "evt_dup", kind: "checkout_completed", tier: "pro" }),
       );
+
       const before = yield* subscription.state(Subscription.ref(account));
+
       const second = yield* handleWebhook(
         event({ id: "evt_dup", kind: "checkout_completed", tier: "pro" }),
       );
+
       const after = yield* subscription.state(Subscription.ref(account));
       expect(first).toBe("activated");
       expect(second).toBe("ignored");
@@ -118,6 +126,7 @@ describe("webhook edge", () => {
       yield* handleWebhook(
         event({ id: "evt_pack_stand", kind: "checkout_completed", tier: "pro" }),
       );
+
       const action = yield* handleWebhook(
         event({
           id: "evt_pack",
@@ -127,6 +136,7 @@ describe("webhook edge", () => {
           currency: "usd",
         }),
       );
+
       expect(action).toBe("purchased");
       expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
 
@@ -140,6 +150,7 @@ describe("webhook edge", () => {
           currency: "usd",
         }),
       );
+
       expect(redelivered).toBe("purchased");
       expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
     }).pipe(run),
@@ -150,9 +161,11 @@ describe("webhook edge", () => {
       yield* handleWebhook(
         event({ id: "evt_pack_checkout_stand", kind: "checkout_completed", tier: "pro" }),
       );
+
       const action = yield* handleWebhook(
         event({ id: "evt_pack_checkout", kind: "checkout_completed", tier: "credits_1k" }),
       );
+
       expect(action).toBe("purchased");
       const current = yield* state;
       expect(current).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
@@ -171,6 +184,7 @@ describe("webhook edge", () => {
       );
       const current = yield* subscription.state(Subscription.ref(account));
       expect(current._tag).toBe("Subscribed");
+
       if (current._tag === "Subscribed") {
         expect(current.status).toBe("grace");
         expect(current.dunningAttempts).toBe(1);
@@ -187,6 +201,7 @@ describe("webhook edge", () => {
       yield* handleWebhook(
         event({ id: "evt_fail_2", kind: "payment_failed", reason: "card_declined", graceUntil }),
       );
+
       const action = yield* handleWebhook(
         event({
           id: "evt_paid_2",
@@ -195,6 +210,7 @@ describe("webhook edge", () => {
           currency: "usd",
         }),
       );
+
       expect(action).toBe("recovered");
       expect(yield* state).toMatchObject({ status: "active" });
     }).pipe(run),
@@ -227,6 +243,7 @@ describe("webhook edge", () => {
       );
       const subscription = yield* Subscription;
       const before = yield* subscription.state(Subscription.ref(account));
+
       const action = yield* handleWebhook(
         event({
           id: "evt_paid_4",
@@ -235,6 +252,7 @@ describe("webhook edge", () => {
           currency: "usd",
         }),
       );
+
       expect(action).toBe("ignored");
       expect(yield* subscription.state(Subscription.ref(account))).toEqual(before);
     }).pipe(run),
@@ -245,7 +263,9 @@ describe("webhook edge", () => {
       const exit = yield* Effect.exit(
         handleWebhook(event({ id: "evt_missing", kind: "checkout_completed" })),
       );
+
       expect(exit._tag).toBe("Failure");
+
       if (exit._tag === "Failure") expect(String(exit.cause)).toContain("WebhookInvalid");
       expect(new WebhookInvalid({ event: "evt_missing", field: "tier" })._tag).toBe(
         "WebhookInvalid",
@@ -274,6 +294,7 @@ describe("webhook edge", () => {
       const subscription = yield* Subscription;
       const ref = Subscription.ref(account);
       const before = yield* subscription.state(ref);
+
       if (before._tag !== "Subscribed") throw new Error("the checkout did not activate");
       yield* subscription
         .send(ref, new TrackUsage({ feature: "messages", amount: 10 }), {
@@ -286,6 +307,7 @@ describe("webhook edge", () => {
         yield* handleWebhook(event({ id: "evt_reset_2", kind: "checkout_completed", tier: "pro" })),
       ).toBe("ignored");
       const after = yield* subscription.state(ref);
+
       if (after._tag !== "Subscribed") throw new Error("the standing disappeared");
       expect(after.usage.messages).toBe(10);
       expect(DateTime.toEpochMillis(after.period.start)).toBe(

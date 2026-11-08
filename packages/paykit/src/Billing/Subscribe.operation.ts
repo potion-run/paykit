@@ -57,13 +57,16 @@ const purchasePath = (
     if (provider.capabilities.has("checkout")) {
       return service.createCheckout({ account, tier, kind });
     }
+
     if (provider.capabilities.has("invoice")) {
       return service.createInvoice({ account, amount, currency });
     }
+
     return Effect.fail(
       new ProviderCapabilityMissing({ provider: provider.name, op: "createCheckout" }),
     );
   }
+
   return service
     .createCheckout({ account, tier, kind })
     .pipe(
@@ -103,24 +106,31 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
 
   return Effect.fn("Paykit.Subscribe.start")(function* (input: SubscribeInput) {
     const tier = tierOf(catalog, input.tier);
+
     if (tier === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
+
     const kind = tier.kind ?? "subscription";
+
     const resolvedPrice =
       tier.price === undefined
         ? undefined
         : input.currency === undefined
           ? tier.price
           : priceFor(tier.price, input.currency);
+
     if (tier.price !== undefined && resolvedPrice === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
+
     const ref = Subscription.ref(input.account);
+
     const anchored = {
       ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
       ...(input.currency === undefined ? {} : { currency: input.currency }),
     };
+
     const standing = yield* subscription.state(ref);
 
     // A pack is a purchase on any standing; a plan is not. Refuse before the
@@ -144,12 +154,16 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       if (kind === "one_off") {
         return yield* new TierNotInCatalog({ tier: input.tier });
       }
+
       const activation = subscribeInputOf(catalog, input.tier, anchored);
+
       if (activation === null) {
         return yield* new TierNotInCatalog({ tier: input.tier });
       }
+
       const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(activation)));
       yield* entitlements.query(ref, { atLeast: receipt });
+
       return { activated: true } as const satisfies SubscribeResult;
     }
 
@@ -160,7 +174,9 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     if (resolvedPrice === null) {
       return yield* new TierNotInCatalog({ tier: input.tier });
     }
+
     const price = resolvedPrice;
+
     // The standing says which provider this account already belongs to; a new
     // account starts on the router's fallback. One provider's layer is provided
     // for this call, because two providers are two services.
@@ -168,17 +184,21 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       onNone: () => null,
       onSome: (set) => providerFor(set, standing.refs),
     });
+
     const attempt = Effect.gen(function* () {
       const payments = yield* Effect.serviceOption(Payments);
       const provider = yield* Effect.serviceOption(PaymentsProvider);
+
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
           provider: chosen?.name ?? "none",
           op: "createCheckout",
         });
       }
+
       const service = Option.getOrThrow(payments);
       const providerName = chosen?.name ?? Option.getOrNull(provider)?.name ?? "provider";
+
       const purchase = yield* purchasePath(
         service,
         Option.getOrNull(provider),
@@ -188,6 +208,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
         price.amount,
         price.currency,
       );
+
       // The reference is stored before any standing exists, so a webhook that
       // activates the account can find the purchase it belongs to.
       const reference = "url" in purchase ? purchase.url : purchase.invoiceId;
@@ -196,8 +217,11 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
         new AttachProviderRef({ provider: providerName, refs: { checkout: reference } }),
         { commandId: `checkout:${input.account}:${tier.id}:${reference}` },
       );
+
+      // SAFETY: the purchase result is built by this operation; the cast names the public alias.
       return purchase as SubscribeResult;
     });
+
     return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
   });
 });

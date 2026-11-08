@@ -98,12 +98,15 @@ export const toBindingError =
  */
 export const callOptionsOf = (call: Option.Option<{ readonly headers?: Headers.Input }>) => {
   const headers = Option.isNone(call) ? {} : { headers: call.value.headers };
+
   return (commandId?: string) => (commandId === undefined ? headers : { commandId, ...headers });
 };
 
 /** The outcome of a command that no model reply can describe: the transport's. */
 export const transportMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
+  // SAFETY: a thrown value is untyped; this reads its `_tag` only when it has one.
   const tag = (error as { readonly _tag?: unknown } | null)?._tag;
+
   return typeof tag === "string" ? tag : String(error);
 };

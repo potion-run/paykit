@@ -48,6 +48,7 @@ const refusals = [
 
 /** Every refusal a trial start can answer. */
 export type StartTrialRefusal = InstanceType<(typeof refusals)[number]>;
+
 export type StartTrialError = BindingError<StartTrialRefusal>;
 
 /** Whether a failure is `StartTrial` refusing the request. */

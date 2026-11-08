@@ -86,6 +86,7 @@ describe("price declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.seats).toEqual([
       {
         feature: "seats",
@@ -98,10 +99,12 @@ describe("price declarations", () => {
 
   it("declares a meter and a metered price for each billable feature", () => {
     const usage = { amount: 2, currency: "usd" } as const;
+
     const [declaration] = priceDeclarations(
       { pro: { price: pro, usage: { messages: usage, seats: { amount: 5, currency: "usd" } } } },
       stage,
     );
+
     expect(declaration?.usage).toEqual([
       {
         feature: "messages",
@@ -132,6 +135,7 @@ describe("price declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.usage[0]?.unitPrice).toEqual({
       amount: 500,
       currency: "usd",
@@ -162,6 +166,7 @@ describe("price declarations", () => {
       },
       stage,
     );
+
     expect(declaration?.usage[0]?.unitPrice).toBe(undefined);
     expect(declaration?.usage[0]?.pricing).toEqual({
       _tag: "graduated",
@@ -175,6 +180,7 @@ describe("price declarations", () => {
 
   it("keeps a feature's meter name stable across tiers, and its metered key per tier", () => {
     const usage = { amount: 2, currency: "usd" } as const;
+
     const declarations = priceDeclarations(
       {
         pro: { price: pro, usage: { messages: usage } },
@@ -182,6 +188,7 @@ describe("price declarations", () => {
       },
       stage,
     );
+
     expect(declarations[0]?.usage[0]?.eventName).toBe(declarations[1]?.usage[0]?.eventName);
     expect(declarations[0]?.usage[0]?.lookupKey).not.toBe(declarations[1]?.usage[0]?.lookupKey);
   });
@@ -214,6 +221,7 @@ describe("the archive sweep", () => {
       ],
       stage,
     );
+
     expect(retired.map((price) => price.id)).toEqual(["price_scale"]);
   });
 
@@ -229,6 +237,7 @@ describe("the archive sweep", () => {
       ],
       stage,
     );
+
     expect(retired.map((price) => price.id)).toEqual(["price_seats"]);
   });
 
@@ -238,6 +247,7 @@ describe("the archive sweep", () => {
       [{ id: "price_preview", lookupKey: "paykit:preview:pro", active: true }],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 
@@ -252,6 +262,7 @@ describe("the archive sweep", () => {
       [{ id: "price_manual", lookupKey: null, active: true }],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 
@@ -261,6 +272,7 @@ describe("the archive sweep", () => {
       [{ id: "price_other", lookupKey: "paykit:production:pro", active: true }],
       stage,
     );
+
     expect(retired).toEqual([]);
   });
 });
@@ -273,6 +285,7 @@ describe("sold tiers", () => {
       seats: {},
       meters: { messages: "paykit_prod_messages" },
     };
+
     const unitPrice = { amount: 2, currency: "usd" };
     expect(soldTiers({ pro: { price: pro, usage: { messages: unitPrice } } }, sold)).toEqual({
       pro: {
@@ -292,6 +305,7 @@ describe("sold tiers", () => {
       seats: { pro: { seats: "paykit:prod:pro:seat:seats" } },
       meters: {},
     };
+
     const unitPrice = { amount: 1_000, currency: "usd" };
     expect(soldTiers({ pro: { price: pro, seats: { seats: unitPrice } } }, sold)).toEqual({
       pro: {
@@ -311,6 +325,7 @@ describe("sold tiers", () => {
       seats: {},
       meters: { messages: "paykit_prod_messages" },
     };
+
     const pricing = {
       _tag: "volume" as const,
       currency: "usd",
@@ -319,6 +334,7 @@ describe("sold tiers", () => {
         { upTo: "inf" as const, unitPrice: { amount: 2, currency: "usd" } },
       ] as const,
     };
+
     const joined = soldTiers({ pro: { price: pro, usage: { messages: pricing } } }, sold);
     expect(joined.pro?.usage?.messages).toEqual({
       pricing,

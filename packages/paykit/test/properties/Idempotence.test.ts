@@ -24,6 +24,7 @@ const freeTier = tier({
   id: "free",
   grants: [allowance(messages, { included: 100 })],
 });
+
 const proTier = tier({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
@@ -60,16 +61,19 @@ describe("idempotence", () => {
           commandId: "subscribe-1",
         },
       );
+
       const first = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 10, dedupeKey: "req-1" }),
         { commandId: "track-1" },
       );
+
       const second = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 10, dedupeKey: "req-1" }),
         { commandId: "track-1" },
       );
+
       expect(second.version).toBe(first.version);
       const state = yield* subscription.state(account);
       expect(state._tag === "Subscribed" ? state.usage.messages : -1).toBe(10);
@@ -120,16 +124,19 @@ describe("idempotence", () => {
           commandId: "subscribe-3",
         },
       );
+
       const first = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 7, dedupeKey: "req-7" }),
         { commandId: "track-7a" },
       );
+
       const second = yield* subscription.send(
         account,
         new TrackUsage({ feature: "messages", amount: 7, dedupeKey: "req-7" }),
         { commandId: "track-7b" },
       );
+
       expect(second.version).toBe(first.version);
       const state = yield* subscription.state(account);
       expect(state._tag === "Subscribed" ? state.usage.messages : -1).toBe(7);
@@ -145,9 +152,11 @@ describe("idempotence", () => {
     const accountOf = (script: typeof IdempotenceScript.Type): string => {
       const input = JSON.stringify(script);
       let hash = 2_166_136_261;
+
       for (let index = 0; index < input.length; index++) {
         hash = Math.imul(hash ^ input.charCodeAt(index), 16_777_619);
       }
+
       return `acct_idem_gen_${(hash >>> 0).toString(36)}`;
     };
 
@@ -157,6 +166,7 @@ describe("idempotence", () => {
         Effect.gen(function* () {
           const subscription = yield* Subscription;
           const account = Subscription.ref(accountOf(script));
+
           const accepted: Array<{
             readonly commandId: string;
             readonly command: { readonly _tag: string };
@@ -167,9 +177,11 @@ describe("idempotence", () => {
             const state = yield* subscription.state(account);
             const command = commandOf(plan, state, start);
             const commandId = `idem-${index}`;
+
             const result = yield* Effect.result(
               subscription.send(account, command as never, { commandId }),
             );
+
             if (Result.isFailure(result)) continue;
             accepted.push({ commandId, command, version: result.success.version });
           }
@@ -179,11 +191,14 @@ describe("idempotence", () => {
           // snapshot and the version must not move.
           for (const entry of accepted) {
             const before = yield* subscription.state(account);
+
             const again = yield* subscription.send(account, entry.command as never, {
               commandId: entry.commandId,
             });
+
             if (again.version !== entry.version) return false;
             const after = yield* subscription.state(account);
+
             if (JSON.stringify(canonical(before)) !== JSON.stringify(canonical(after))) {
               return false;
             }

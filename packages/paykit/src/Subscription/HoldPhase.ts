@@ -2,6 +2,7 @@ import { HoldStatus } from "./Subscription.state.ts";
 
 /** The moves a hold command can name. */
 export const HOLD_TRANSITIONS = ["hold", "settle", "release", "expire", "none"] as const;
+
 export type HoldTransition = (typeof HOLD_TRANSITIONS)[number];
 
 /**

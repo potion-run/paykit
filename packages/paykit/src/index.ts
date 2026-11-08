@@ -19,7 +19,9 @@ export {
   seats,
   storage_gb,
 } from "./Feature.ts";
+
 export type { FeatureInput, RateCardInput } from "./Feature.ts";
+
 export {
   Allowance,
   Allowances,
@@ -35,7 +37,9 @@ export {
   resetEveryOf,
   unitPriceKey,
 } from "./Allowance.ts";
+
 export type { AllowanceInput, PriceBand, Pricing, PricingInput } from "./Allowance.ts";
+
 export {
   BillingUnits,
   PricedLine,
@@ -52,7 +56,9 @@ export {
   unitAmountDecimalOf,
   unitsOf,
 } from "./Pricing.ts";
+
 export type { PricingValue } from "./Pricing.ts";
+
 export {
   AdditionalCurrency,
   CreditsExpire,
@@ -68,7 +74,9 @@ export {
   priceFor,
   tier,
 } from "./Tier.ts";
+
 export type { TierInput, TopUpTermsInput } from "./Tier.ts";
+
 export {
   Catalog,
   CatalogDuplicateAllowance,
@@ -133,7 +141,9 @@ export {
   tierOf,
   tierTermsOf,
 } from "./Catalog.ts";
+
 export type { CatalogInput } from "./Catalog.ts";
+
 export {
   CatalogPriceMismatch,
   MemoryStore,
@@ -146,9 +156,13 @@ export {
   validateProviderMappings,
   validateStack,
 } from "./Stack.ts";
+
 export type { Store, ValidateStackProps, ValidatedBillingStack } from "./Stack.ts";
+
 export { BillingStack } from "./BillingStack.ts";
+
 export type { BillingDeployment, BillingStackProps } from "./BillingStack.ts";
+
 export {
   BILLING_STACK_VERSION,
   BillingStack as BillingStackResource,
@@ -163,26 +177,39 @@ export {
   reconcileBillingStack,
   billingStackVersionOf,
 } from "./BillingStack.resource.ts";
+
 // The resource's shape, so a stack's inferred output is nameable from here. A
 // deploy that declares `Paykit.providers()` carries it in the stack's
 // requirements, and a declaration file cannot name it from `src/`.
 export type { BillingStackShape } from "./BillingStack.resource.ts";
+
 export { doctor } from "./Doctor.ts";
+
 export { Paykit } from "./Paykit.ts";
+
 export type { DoctorMismatch } from "./Doctor.ts";
+
 export { SqlEventLog } from "./Store/SqlEventLog.ts";
+
 export { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
+
 export type { SqlAggregateStoreOptions } from "./Store/SqlAggregateStore.ts";
+
 export {
   SqlPolicyStore,
   SqlProjectionStore,
   SqlStreamStore,
   SqlViewStore,
 } from "./Store/SqlConsumers.ts";
+
 export type { SqlConsumerOptions } from "./Store/SqlConsumers.ts";
+
 export { SqlPlatform, layerSqlPlatform } from "./Store/SqlPlatform.ts";
+
 export { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
+
 export type { SqlModelHost, SqlPlatformOptions } from "./Store/SqlPlatform.ts";
+
 export type {
   AppendInput,
   AppendResult,
@@ -191,7 +218,9 @@ export type {
   SqlEventLogOptions,
   StoredEventRow,
 } from "./Store/SqlEventLog.ts";
+
 export { SqlError, asyncOf } from "./Store/Sql.ts";
+
 export type {
   SqlAsyncExecutor,
   SqlDialect,
@@ -199,8 +228,11 @@ export type {
   SqlSyncExecutor,
   SqlValue,
 } from "./Store/Sql.ts";
+
 export { d1Executor } from "./Store/D1.ts";
+
 export type { D1Like, D1Prepared } from "./Store/D1.ts";
+
 export {
   MigrationError,
   MigrationHistoryConflictError,
@@ -210,6 +242,7 @@ export {
   migrationFiles,
   readMigrationFiles,
 } from "./Migrations/index.ts";
+
 export type {
   MigrationApplyError,
   MigrationFile,
@@ -224,6 +257,7 @@ export type {
  * views as queries, and every tenant verb as a command that refreshes them.
  */
 export * as Atom from "./Atom.ts";
+
 /**
  * The binding surface as one namespace: `Paykit.Billing.TrackUsage(account)`.
  * This is the SDK a request handler uses. Every tag here is a
@@ -261,6 +295,7 @@ export {
   Webhook,
   WithdrawTierChange,
 } from "./Billing/index.ts";
+
 export type {
   CancelError,
   CancelRequest,
@@ -335,6 +370,7 @@ export {
   Recover,
   Refund,
 } from "./Billing/index.ts";
+
 export type {
   EnterGraceRequest,
   ExtendTrialRequest,
@@ -348,20 +384,37 @@ export type {
 } from "./Billing/index.ts";
 
 export { BindingCall, BindingFailed } from "./Billing/Bindings.ts";
+
 export type { BindingError } from "./Billing/Bindings.ts";
 
 // The contracts the bindings answer with, and the pieces they do not own.
 export { CheckFailed, CheckStatus, CheckTransport, evaluateCheck, rowToState } from "./Check.ts";
+
 export { httpStatus } from "./HttpStatus.ts";
+
+export { handler, moneyRoutes } from "./Handler.ts";
+
+export type {
+  HandlerMount,
+  HandlerOptions,
+  HandlerRoute,
+  HandlerSurfaces,
+  MoneyRoutes,
+} from "./Handler.ts";
+
 export type { CheckInput, CheckResult } from "./Check.ts";
+
 export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
+
 export type { Proration as ProrationValue } from "./Proration.ts";
+
 export type {
   PreviewCommand,
   PreviewEvent,
   PreviewInput,
   PreviewResult,
 } from "./Billing/Preview.operation.ts";
+
 export {
   WEBHOOK_PHASES,
   WEBHOOK_TRANSITIONS,
@@ -372,7 +425,9 @@ export {
   WebhookSignatureInvalid,
   webhookActionOf,
 } from "./Webhooks.ts";
+
 export type { PaymentsWebhook, WebhookError, WebhookRequest } from "./Webhooks.ts";
+
 export {
   AccountEvent,
   TimelineCredits,
@@ -385,16 +440,22 @@ export {
   initialTimeline,
   timelineOf,
 } from "./Timeline.ts";
+
 export type { TimelineInput } from "./Timeline.ts";
+
 export {
   planChangeTier,
   purchaseCreditsInputOf,
   scheduleTierChangeInputOf,
   subscribeInputOf,
 } from "./TierCommand.ts";
+
 export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
+
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
+
 export type { PaykitCatalogClientError, PaykitCatalogClientOptions } from "./CatalogRpc.ts";
+
 export {
   CatalogUnavailable,
   PaykitCatalogClient,
@@ -402,8 +463,11 @@ export {
   PaykitCatalogRpcs,
   PaykitCatalogServer,
 } from "./CatalogRpc.ts";
+
 export { CatalogGuard, CatalogGuardLive, catalogMismatchOf } from "./CatalogGuard.ts";
+
 export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
+
 export {
   MissingProviderRef,
   OrphanProviderRef,
@@ -412,19 +476,30 @@ export {
   VerifyMismatch,
   verifyState,
 } from "./Verify.ts";
+
 export type { VerifyOptions } from "./Verify.ts";
 
 // ── 3. model ────────────────────────────────────────────────────────────────
 export { PaykitHandlers, PaykitModel, PaykitModel as Model } from "./Paykit.model.ts";
+
 export { world } from "./World.ts";
+
 export type { PaykitWorldOptions } from "./World.ts";
+
 export { BillingApi } from "./BillingApi.api.ts";
+
 export type { SubscribeInput, SubscribeResult } from "./Billing/Subscribe.operation.ts";
+
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
+
 export { Subscription, subscriptionRef } from "./Subscription/Subscription.aggregate.ts";
+
 export { allowsOne } from "./Subscription/Entitlements.view.ts";
+
 export type { JudgedFeature } from "./Subscription/Allowance.verdict.ts";
+
 export { ProrationMismatch } from "./Subscription/ProrationMismatch.rejection.ts";
+
 export {
   Period,
   Standing,
@@ -435,12 +510,14 @@ export {
   statusOf,
   topUpFailureOf,
 } from "./Subscription/Subscription.state.ts";
+
 export type {
   SubscribedState,
   SubscriptionState,
   TopUpFailureRecord,
   UnsubscribedState,
 } from "./Subscription/Subscription.state.ts";
+
 export {
   STANDING_PHASE_EDGES,
   STANDING_PHASE_TRANSITIONS,
@@ -459,18 +536,22 @@ export {
   standingPhaseTagOfStatus,
   standingTransitionOf,
 } from "./Subscription/StandingPhase.ts";
+
 export type {
   StandingPhaseEdge,
   StandingPhaseView,
   StandingTransition,
 } from "./Subscription/StandingPhase.ts";
+
 export {
   HOLD_STATUS_TRANSITIONS,
   HOLD_TRANSITIONS,
   holdTransitionOf,
   nextHoldStatus,
 } from "./Subscription/HoldPhase.ts";
+
 export type { HoldTransition } from "./Subscription/HoldPhase.ts";
+
 // ── auth ────────────────────────────────────────────────────────────────────
 export {
   Actor,
@@ -479,13 +560,21 @@ export {
   mayActOn,
   system,
 } from "./Auth/Actor.ts";
+
 export { ActorKind } from "./Auth/Actor.ts";
+
 export type { ActorValue } from "./Auth/Actor.ts";
+
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
+
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
+
 export { Admin, Session } from "./Auth/Guards.ts";
+
 export { AdminFrom, GuardsFrom, SessionFrom, authenticate } from "./Auth/FromResolver.ts";
+
 export type { ActorResolver, FromResolverOptions, GuardRequest } from "./Auth/FromResolver.ts";
+
 export {
   ACTOR_HEADER,
   InsecureAdminFromHeaders,
@@ -494,15 +583,21 @@ export {
   KIND_HEADER,
   actorFromHeaders,
 } from "./Auth/FromHeaders.ts";
+
 export { AccountId } from "./Subscription/Subscription.id.ts";
+
 export { AccountEvents } from "./Subscription/AccountEvents.stream.ts";
+
 export { AccountEventsProjection } from "./Subscription/AccountEventsProjection.ts";
+
 export { BillingRead } from "./Subscription/BillingRead.projection.ts";
+
 export {
   PeriodCloseUsage,
   billableLines,
   periodUsageCommandId,
 } from "./Subscription/PeriodCloseUsage.policy.ts";
+
 export {
   AutoTopUp,
   AutoTopUpConfig,
@@ -515,18 +610,24 @@ export {
   topUpFailureCommandId,
   TopUpPackUnresolved,
 } from "./Subscription/AutoTopUp.policy.ts";
+
 export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.policy.ts";
+
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
+
 export {
   ScheduleTierChange as ScheduleTierChangeCommand,
   TierChangeScheduled,
 } from "./Subscription/ScheduleTierChange.command.ts";
+
 export {
   NoTierChangeScheduled,
   TierChangeWithdrawn,
   WithdrawTierChange as WithdrawTierChangeCommand,
 } from "./Subscription/WithdrawTierChange.command.ts";
+
 export type { PendingTier } from "./Subscription/Subscription.state.ts";
+
 export {
   Dunning,
   DunningConfig,
@@ -535,8 +636,11 @@ export {
   dunningChargeCommandId,
   dunningRetryCommandId,
 } from "./Subscription/Dunning.policy.ts";
+
 export type { DunningTerms } from "./Subscription/Dunning.policy.ts";
+
 export { DunningRetry, DunningRetryDue } from "./Subscription/DunningRetry.command.ts";
+
 export {
   AccountOrder,
   BillingReadQuery,
@@ -548,10 +652,15 @@ export {
   BillingReadRow,
   queryRows,
 } from "./BillingReadStore.ts";
+
 export { BillingState } from "./Subscription/BillingState.view.ts";
+
 export { BillingStateView } from "./Subscription/BillingState.view.ts";
+
 export { Entitlements } from "./Subscription/Entitlements.view.ts";
+
 export { EntitlementsState } from "./Subscription/Entitlements.view.ts";
+
 export type { FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 
 // Events are public API: their names and fields are the contract.
@@ -559,10 +668,12 @@ export {
   SubscriptionActivated,
   Subscribe as SubscribeCommand,
 } from "./Subscription/Subscribe.command.ts";
+
 export {
   TrialStarted,
   StartTrial as StartTrialCommand,
 } from "./Subscription/StartTrial.command.ts";
+
 export {
   TierChanged,
   ChangeTier as ChangeTierCommand,
@@ -570,6 +681,7 @@ export {
   DowngradeBelowSpend,
   DowngradeBelowCeiling,
 } from "./Subscription/ChangeTier.command.ts";
+
 export {
   AllowanceExceeded,
   CreditExceeded,
@@ -580,6 +692,7 @@ export {
   TrackUsage as TrackUsageCommand,
   UsageRecorded,
 } from "./Subscription/TrackUsage.command.ts";
+
 export {
   HOLD_TTL_MINUTES,
   // The command; the binding of the same name comes from `./Hold.ts`.
@@ -591,56 +704,78 @@ export {
   UsageReserved,
   defaultHoldExpiry,
 } from "./Subscription/Hold.command.ts";
+
 export {
   SettleHold as SettleHoldCommand,
   UsageSettled,
 } from "./Subscription/SettleHold.command.ts";
+
 export {
   ReleaseHold as ReleaseHoldCommand,
   UsageReleased,
 } from "./Subscription/ReleaseHold.command.ts";
+
 export {
   PaymentRecorded,
   RecordPayment as RecordPaymentCommand,
 } from "./Subscription/RecordPayment.command.ts";
+
 export { CreditsPurchased } from "./Subscription/PurchaseCredits.command.ts";
+
 export {
   RecordTopUpFailure as RecordTopUpFailureCommand,
   TopUpFailed,
 } from "./Subscription/RecordTopUpFailure.command.ts";
+
 export {
   Refund as RefundCommand,
   RefundExceedsCharged,
   RefundRecorded,
 } from "./Subscription/Refund.command.ts";
+
+export {
+  RefundNotFound,
+  RefundReversed,
+  RefundReversalExceedsRefunded,
+  ReverseRefund as ReverseRefundCommand,
+} from "./Subscription/ReverseRefund.command.ts";
+
 export {
   TopUpCooldownCleared,
   TopUpCooldownElapsed,
 } from "./Subscription/TopUpCooldownElapsed.command.ts";
+
 export {
   PaymentFailed,
   RecordPaymentFailure as RecordPaymentFailureCommand,
 } from "./Subscription/RecordPaymentFailure.command.ts";
+
 export {
   AlreadyInGrace,
   EnterGrace as EnterGraceCommand,
   GraceEntered,
 } from "./Subscription/EnterGrace.command.ts";
+
 export { Recover as RecoverCommand, Recovered } from "./Subscription/Recover.command.ts";
+
 export {
   CreditsGranted,
   GrantCredits as GrantCreditsCommand,
 } from "./Subscription/GrantCredits.command.ts";
+
 export {
   ConsumeCredits as ConsumeCreditsCommand,
   CreditExceedsBalance,
   CreditsConsumed,
 } from "./Subscription/ConsumeCredits.command.ts";
+
 export {
   CancellationScheduled,
   ScheduleCancellation as ScheduleCancellationCommand,
 } from "./Subscription/ScheduleCancellation.command.ts";
+
 export { CancellationWithdrawn, Resume as ResumeCommand } from "./Subscription/Resume.command.ts";
+
 export {
   ClosePeriod,
   CreditsExpired,
@@ -648,35 +783,54 @@ export {
   PeriodNotClosed,
   UsageReset,
 } from "./Subscription/ClosePeriod.command.ts";
+
 export { Expire as ExpireCommand, SubscriptionExpired } from "./Subscription/Expire.command.ts";
+
 export { GraceElapsed } from "./Subscription/GraceElapsed.command.ts";
+
 export { DunningRetry as DunningRetryCommand } from "./Subscription/DunningRetry.command.ts";
+
 export { PeriodEnded } from "./Subscription/PeriodEnded.command.ts";
+
 export {
   ExtendTrial as ExtendTrialCommand,
   TrialExtended,
   TrialNotActive,
 } from "./Subscription/ExtendTrial.command.ts";
+
 export {
   AttachProviderRef,
   ProviderRefAttached,
 } from "./Subscription/AttachProviderRef.command.ts";
+
 export {
   NoProrationDue,
   ProrationInvoiced,
   RecordProrationInvoice,
 } from "./Subscription/RecordProrationInvoice.command.ts";
+
 export { AlreadyCanceled } from "./Subscription/AlreadyCanceled.rejection.ts";
+
 export { AlreadySubscribed } from "./Subscription/AlreadySubscribed.rejection.ts";
+
 export { CurrencyMismatch } from "./Subscription/CurrencyMismatch.rejection.ts";
+
 export { NotInGrace } from "./Subscription/NotInGrace.rejection.ts";
+
 export { NotScheduled } from "./Subscription/NotScheduled.rejection.ts";
+
 export { NotSubscribed } from "./Subscription/NotSubscribed.rejection.ts";
+
 export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
+
 export { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
+
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
+
 export { AllowanceReset, ResetAllowance } from "./Subscription/ResetAllowance.command.ts";
+
 export { FeatureNotConsumable } from "./Subscription/FeatureNotConsumable.rejection.ts";
+
 export {
   QuantityCapExceeded,
   QuantityChanged,
@@ -684,29 +838,41 @@ export {
   QuantityInvalid,
   SetQuantity,
 } from "./Subscription/SetQuantity.command.ts";
+
 export {
   NoQuantityProrationDue,
   QuantityProrationInvoiced,
   RecordQuantityProrationInvoice,
 } from "./Subscription/QuantityProration.command.ts";
+
 export { TrialDeadlineNotLater } from "./Subscription/TrialDeadlineNotLater.rejection.ts";
 
 // ── 4. providers ────────────────────────────────────────────────────────────
 export { PaymentsMemory as Memory } from "./PaymentsMemory.ts";
+
 export type { MemoryPayments, MemoryUsageReport } from "./PaymentsMemory.ts";
+
 export { PaymentsManual as Manual } from "./PaymentsManual.ts";
+
 export { PaymentsStripe, PaymentsStripe as Stripe } from "./PaymentsStripe.ts";
+
 export type {
   StripeBindings,
   StripeProps,
   StripeTier,
   StripeUsagePrice,
 } from "./PaymentsStripe.ts";
+
 export { encodeVendorPart } from "./VendorId.ts";
+
 export { Outbound, OutboundDeliveryError, OutboundEvents, outboundSignature } from "./Outbound.ts";
+
 export type { OutboundEndpoint, OutboundRequest } from "./Outbound.ts";
+
 export { PaymentsPolar, resolvePolarProductId } from "./PaymentsPolar.ts";
+
 export type { PolarBindings, PolarProductId, PolarProps, PolarTier } from "./PaymentsPolar.ts";
+
 export {
   PaymentCapability,
   PaymentCapabilities,
@@ -719,7 +885,11 @@ export {
   paymentsRouter,
   providerFor,
 } from "./Payments.ts";
+
 export type { ProviderSet } from "./Payments.ts";
+
 export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from "./Payments.ts";
+
 export { UsageLine } from "./Payments.ts";
+
 export type { PricedUnits } from "./Subscription/Entitlements.view.ts";

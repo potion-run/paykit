@@ -24,6 +24,7 @@ const refusals = [TierNotInCatalog, Unauthenticated, Forbidden] as const;
  * turn into a command.
  */
 export type PreviewRefusal = InstanceType<(typeof refusals)[number]>;
+
 export type PreviewError = BindingError<PreviewRefusal>;
 
 /** Whether a failure is `Preview` refusing the caller. */

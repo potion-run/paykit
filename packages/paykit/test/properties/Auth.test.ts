@@ -21,6 +21,7 @@ describe("authorization", () => {
       ({ kind, id, target }) => {
         const actor = { kind, id };
         const allowed = mayActOn(actor, target);
+
         return kind === "account" ? allowed === (id === target) : allowed;
       },
       { runs: 80, size: 12 },
@@ -37,12 +38,16 @@ describe("authorization", () => {
       ),
       ({ kind, id }) => {
         const headers: Record<string, string> = {};
+
         if (kind !== undefined) headers[KIND_HEADER] = kind;
+
         if (id !== undefined) headers[ACTOR_HEADER] = id;
         const actor = actorFromHeaders(headers);
 
         if (id === undefined) return actor === null;
+
         if (actor === null) return false;
+
         // Kind defaults to `account`; an explicit, valid kind survives.
         return actor.id === id && actor.kind === (kind ?? "account");
       },

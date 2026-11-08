@@ -64,6 +64,7 @@ const retunedTier = tier({
 const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [meteredTier, retunedTier] }),
 );
+
 const metered = allowancesOf(testCatalog, "metered")!;
 const retuned = allowancesOf(testCatalog, "retuned")!;
 const repriced = { amount: 3, currency: "usd" } as const;
@@ -135,6 +136,7 @@ it.effect("reports the closing period's billable units once, at the close", () =
   const player = PaymentsMemory();
   const story = storyWith(player);
   const commandId = periodUsageCommandId(start, monthLater);
+
   return Effect.gen(function* () {
     yield* story(
       ...subscribed,
@@ -182,6 +184,7 @@ it.effect("splits one period's report across the prices its units were recorded 
   const player = PaymentsMemory();
   const story = storyWith(player);
   const commandId = periodUsageCommandId(start, monthLater);
+
   return Effect.gen(function* () {
     yield* story(
       ...subscribed,
@@ -274,6 +277,7 @@ it.effect("splits one period's report across the prices its units were recorded 
 it.effect("reports nothing when the closing period used only its included units", () => {
   const player = PaymentsMemory();
   const story = storyWith(player);
+
   return Effect.gen(function* () {
     yield* story(
       ...subscribed,
@@ -303,6 +307,7 @@ it.effect("reports nothing when the closing period used only its included units"
 it.effect("reports nothing for an account with no vendor customer", () => {
   const player = PaymentsMemory();
   const story = storyWith(player);
+
   return Effect.gen(function* () {
     yield* story(
       Story.provide(Actor, system("test")),
@@ -363,6 +368,7 @@ it.effect("reports nothing for an account with no vendor customer", () => {
 
 it.effect("a provider without a meter fails the close instead of billing silently", () => {
   const story = storyWith(PaymentsManual());
+
   return story(
     ...subscribed,
     Story.when(account, new TrackUsage({ feature: "messages", amount: 150 })),

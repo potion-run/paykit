@@ -150,12 +150,14 @@ export interface MoneyOverflow {
  */
 export const moneyOverflowOf = (feature: JudgedFeature, amount: number): MoneyOverflow | null => {
   if (feature.moneyCap === undefined) return null;
+
   const promised = chargeOf(
     feature.pricing,
     feature.included,
     feature.used,
     amount + feature.reserved,
   );
+
   return feature.billed + promised > feature.moneyCap
     ? { cap: feature.moneyCap, billed: feature.billed, promised }
     : null;
@@ -201,40 +203,51 @@ export const capacityOf = (input: {
   readonly ask: Ask;
 }): Capacity => {
   const { standing, feature, ask } = input;
+
   if (standing === "blocked") return { _tag: "Standing", standing };
   const amount = ask.amount;
+
   // A quantity is bought, not spent: its ceiling is the cap, and the free grant
   // is a price boundary rather than a count that runs out.
   if (feature.quantity !== undefined) {
     if (feature.cap === undefined) return { _tag: "Allowed" };
     const headroom = feature.cap - feature.quantity;
+
     return amount > headroom
       ? { _tag: "Ceiling", cap: feature.cap, headroom, requested: amount }
       : { _tag: "Allowed" };
   }
+
   // A credit-priced feature spends the shared pool: its `remaining` is the pool
   // less every open hold, and one unit costs its card's rate. Its `included` is
   // `null`, so the counted rules below do not apply.
   if (feature.creditRates !== undefined) {
     const cost = amount * creditRateOf(feature.creditRates, ask);
     const available = feature.remaining ?? 0;
+
     return cost > available ? { _tag: "Credits", cost, available } : { _tag: "Allowed" };
   }
+
   // A cap is the ceiling, not the standing: at it the account is out of what it
   // bought, so this refuses while `standing` stays `good`.
   if (feature.cap !== undefined && feature.remaining !== null) {
     const headroom = feature.remaining + feature.cap - (feature.carried ?? 0);
+
     if (amount > headroom) {
       return { _tag: "Ceiling", cap: feature.cap, headroom, requested: amount };
     }
   }
+
   const money = moneyOverflowOf(feature, amount);
+
   if (money !== null) return { _tag: "Money", ...money };
+
   // A `null` remaining is an allowance that never runs out, and a flag is
   // granted rather than spent: neither has a count to run past.
   if (feature.overage === "block" && feature.remaining !== null && amount > feature.remaining) {
     return { _tag: "Remaining", requested: amount, remaining: feature.remaining };
   }
+
   return { _tag: "Allowed" };
 };
 
@@ -309,6 +322,7 @@ export const downgradeOf = (
   counters: ChangeCounters,
 ): Downgrade => {
   const { used, reserved, billed } = counters;
+
   if (
     allowance.overage === "block" &&
     allowance.included !== "unlimited" &&
@@ -321,10 +335,13 @@ export const downgradeOf = (
       ...(reserved === 0 ? {} : { reserved }),
     };
   }
+
   if (allowance.moneyCap !== undefined && billed > allowance.moneyCap) {
     return { _tag: "Spend", moneyCap: allowance.moneyCap, billed };
   }
+
   const ceiling = spendCeilingOf(allowance);
+
   if (ceiling !== null && used + reserved > ceiling) {
     return {
       _tag: "Ceiling",
@@ -333,5 +350,6 @@ export const downgradeOf = (
       ...(reserved === 0 ? {} : { reserved }),
     };
   }
+
   return { _tag: "Allowed" };
 };

@@ -63,6 +63,7 @@ export class AdminReadFailed extends Schema.TaggedError<AdminReadFailed>()("Admi
 
 /** Every way an admin read can fail before it returns a domain answer. */
 export const AdminReadError = Schema.Union([Unauthenticated, Forbidden, AdminReadFailed]);
+
 export type AdminReadError = typeof AdminReadError.Type;
 
 /** The events a preview can report. */
@@ -73,6 +74,7 @@ export const PreviewEvents = Schema.Union([
   TierChangeWithdrawn,
   CancellationScheduled,
 ]);
+
 export type PreviewEvents = typeof PreviewEvents.Type;
 
 /** The rejections a preview can report as data rather than a transport failure. */
@@ -89,6 +91,7 @@ export const PreviewRejection = Schema.Union([
   ProrationMismatch,
   CatalogMismatch,
 ]);
+
 export type PreviewRejection = typeof PreviewRejection.Type;
 
 /** What `decide` would record, in a form that can cross a wire. */
@@ -113,6 +116,7 @@ export const PreviewUnpredictable = Schema.TaggedStruct("unpredictable", {
 
 /** The wire form of `PreviewResult`. */
 export const PreviewAnswer = Schema.Union([PreviewAccepted, PreviewRejected, PreviewUnpredictable]);
+
 export type PreviewAnswer = typeof PreviewAnswer.Type;
 
 /**
@@ -127,6 +131,7 @@ export const HoldsAnswer = Schema.Struct({
   /** When the aggregate answered. A hold list is a snapshot, like the account list. */
   asOf: Schema.DateTimeUtc,
 });
+
 export type HoldsAnswer = typeof HoldsAnswer.Type;
 
 /** The vendor ids attached to one account, one entry per provider. */
@@ -137,6 +142,7 @@ export const ProviderRefsAnswer = Schema.Struct({
   /** When the aggregate answered. A refs list is a snapshot, like the holds list. */
   asOf: Schema.DateTimeUtc,
 });
+
 export type ProviderRefsAnswer = typeof ProviderRefsAnswer.Type;
 
 /** One currency's recurring revenue, from the rows and the catalog's prices. */
@@ -152,13 +158,19 @@ export const RevenueSummary = Schema.Struct({
   /** Recurring revenue already canceled or expired. */
   churned: Schema.Int,
 });
+
 export type RevenueSummary = typeof RevenueSummary.Type;
 
 export const TierCount = Schema.Struct({ tier: Schema.String, count: Schema.Int });
+
 export type TierCount = typeof TierCount.Type;
+
 export const StatusCount = Schema.Struct({ status: SubscriptionStatus, count: Schema.Int });
+
 export type StatusCount = typeof StatusCount.Type;
+
 export const StandingCount = Schema.Struct({ standing: Standing, count: Schema.Int });
+
 export type StandingCount = typeof StandingCount.Type;
 
 /** A cross-account read for the dashboard: counts by dimension and MRR by currency. */
@@ -170,6 +182,7 @@ export const BillingOverview = Schema.Struct({
   byTier: Schema.Array(TierCount),
   revenue: Schema.Array(RevenueSummary),
 });
+
 export type BillingOverview = typeof BillingOverview.Type;
 
 const STATUS_ORDER: ReadonlyArray<SubscriptionStatus> = [
@@ -179,11 +192,14 @@ const STATUS_ORDER: ReadonlyArray<SubscriptionStatus> = [
   "canceled",
   "expired",
 ];
+
 const STANDING_ORDER: ReadonlyArray<Standing> = ["good", "grace", "blocked"];
 
 const monthlyPriceOf = (row: BillingReadRow, catalog: Catalog): number => {
   const price = catalog.tiers.find((tier) => String(tier.id) === row.tier)?.price;
+
   if (price === undefined) return 0;
+
   return price.interval === "annual" ? Math.round(price.amount / 12) : price.amount;
 };
 
@@ -198,33 +214,41 @@ const overviewOf = (
   const statusCounts = new Map(STATUS_ORDER.map((status) => [status, 0]));
   const standingCounts = new Map(STANDING_ORDER.map((standing) => [standing, 0]));
   const tierCounts = new Map<string, number>(catalog.tiers.map((tier) => [String(tier.id), 0]));
+
   const revenue = new Map<
     string,
     { mrr: number; trialPipeline: number; atRisk: number; churned: number }
   >();
+
   for (const row of rows) {
     statusCounts.set(row.status, (statusCounts.get(row.status) ?? 0) + 1);
     standingCounts.set(row.standing, (standingCounts.get(row.standing) ?? 0) + 1);
     tierCounts.set(row.tier, (tierCounts.get(row.tier) ?? 0) + 1);
     const currency = priceCurrencyOf(row, catalog);
     const monthly = monthlyPriceOf(row, catalog);
+
     if (currency === undefined || monthly === 0) continue;
+
     const entry = revenue.get(currency) ?? {
       mrr: 0,
       trialPipeline: 0,
       atRisk: 0,
       churned: 0,
     };
+
     if (row.status === "active" || row.status === "grace") {
       entry.mrr += monthly;
+
       if (row.status === "grace") entry.atRisk += monthly;
     } else if (row.status === "trialing") {
       entry.trialPipeline += monthly;
     } else {
       entry.churned += monthly;
     }
+
     revenue.set(currency, entry);
   }
+
   return BillingOverview.make({
     asOf,
     accounts: rows.length,
@@ -253,15 +277,19 @@ const allRows = (
   Effect.gen(function* () {
     const rows: BillingReadRow[] = [];
     let after: string | undefined;
+
     for (;;) {
       const page = yield* list({
         take: MAX_PAGE,
         ...(after === undefined ? {} : { after }),
       });
+
       rows.push(...page.rows);
+
       if (page.next === null || page.next === after) break;
       after = page.next;
     }
+
     return rows;
   });
 
@@ -276,6 +304,7 @@ export const AdminPreviewInput = Schema.Struct({
   account: Schema.String,
   command: PreviewCommandSchema,
 });
+
 export type AdminPreviewInput = typeof AdminPreviewInput.Type;
 
 const previewRejectionOf = (value: unknown): PreviewRejection | null =>
@@ -289,15 +318,19 @@ const previewRejectionOf = (value: unknown): PreviewRejection | null =>
 export const previewAnswerOf = (result: PreviewResult): PreviewAnswer => {
   if (result._tag === "accepted") {
     const events: Array<PreviewEvents> = [];
+
     for (const event of result.events) {
       const decoded = Schema.decodeUnknownOption(PreviewEvents)(event);
+
       if (Option.isNone(decoded)) {
         return PreviewUnpredictable.make({
           reason: "the model produced a preview event the console cannot display",
         });
       }
+
       events.push(decoded.value);
     }
+
     return PreviewAccepted.make({
       state: result.state,
       events,
@@ -307,6 +340,7 @@ export const previewAnswerOf = (result: PreviewResult): PreviewAnswer => {
 
   if (result._tag === "rejected") {
     const rejection = previewRejectionOf(result.rejection);
+
     return rejection === null
       ? PreviewUnpredictable.make({ reason: "the model returned an unrecognized rejection" })
       : PreviewRejected.make({ rejection });
@@ -375,6 +409,7 @@ export const makeAdminReads = Effect.gen(function* () {
       Effect.gen(function* () {
         const state = yield* subscription.state(Subscription.ref(account));
         const holds = state._tag === "Subscribed" ? Object.values(state.holds) : [];
+
         return HoldsAnswer.make({
           account,
           // Newest first: an operator opens this panel to see what is still
@@ -390,6 +425,7 @@ export const makeAdminReads = Effect.gen(function* () {
     providerRefs: (account) =>
       Effect.gen(function* () {
         const state = yield* subscription.state(Subscription.ref(account));
+
         return ProviderRefsAnswer.make({
           account,
           refs: state.refs,
@@ -399,6 +435,7 @@ export const makeAdminReads = Effect.gen(function* () {
     overview: () =>
       Effect.gen(function* () {
         const rows = yield* allRows(list);
+
         return overviewOf(rows, catalog, DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
       }),
     catalog: () => Effect.succeed(catalog),
@@ -506,6 +543,7 @@ export const AdminReadsClient = (
     AdminReads,
     Effect.gen(function* () {
       const client = yield* RpcClient.make(AdminReadsRpcs);
+
       const call = <A>(
         effect: Effect.Effect<A, AdminReadError | RpcClientError.RpcClientError>,
       ): Effect.Effect<A, AdminReadError> =>

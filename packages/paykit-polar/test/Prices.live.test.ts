@@ -49,6 +49,7 @@ const live = Layer.mergeAll(
 );
 
 type VendorPrice = DistilledPolar.Product["prices"][number];
+
 type FixedPrice = {
   readonly price_amount: number;
   readonly price_currency: string;
@@ -63,6 +64,7 @@ const fixedPriceOf = (product: DistilledPolar.Product): FixedPrice | undefined =
 
 const byName = Effect.fn(function* (name: string) {
   const listed = yield* DistilledPolar.productsList({ limit: 100 });
+
   return listed.items
     .filter((product) => product.name === name)
     .sort((left, right) => right.created_at.localeCompare(left.created_at))
@@ -109,6 +111,7 @@ test.provider.skipIf(!hasToken)(
       const second = yield* stack.deploy(
         PolarPrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
       );
+
       expect(second.products.pro).not.toBe(productId);
 
       const replaced = yield* productNamed(name);
@@ -138,6 +141,7 @@ test.provider.skipIf(!hasToken)("creates a one-time product for a one-off pack",
         tiers: { credits: { price: { ...proPrice, amount: 9_900 }, kind: "one_off" } },
       }),
     );
+
     const product = yield* readProduct(sold.products.credits);
     expect(product.is_recurring).toBe(false);
     expect(product.recurring_interval).toBe(null);
@@ -163,6 +167,7 @@ test.provider.skipIf(!hasToken)(
       );
 
       const product = yield* readProduct(sold.products.pro);
+
       const metered = product.prices.find((price) => "meter_id" in price) as
         | {
             readonly meter_id: string;
@@ -170,13 +175,16 @@ test.provider.skipIf(!hasToken)(
             readonly price_currency: string;
           }
         | undefined;
+
       expect(metered?.unit_amount).toBe("2");
       expect(metered?.price_currency).toBe("usd");
 
       const listed = yield* DistilledPolar.metersList({ limit: 100 }).pipe(Effect.provide(live));
+
       const meter = listed.items.find(
         (candidate) => candidate.name === meterNameOf(stack.stage, "messages"),
       );
+
       expect(meter?.aggregation).toEqual({ func: "sum", property: "metadata.units" });
       expect(meter?.filter.clauses[0]).toMatchObject({
         property: "name",
@@ -238,12 +246,15 @@ test.provider.skipIf(!hasToken)(
       const sold = yield* stack.deploy(PolarPrices("Prices", { tiers }));
 
       const packageProduct = yield* readProduct(sold.products.package);
+
       const packagePrice = packageProduct.prices.find((price) => "meter_id" in price) as
         | { readonly unit_amount: string }
         | undefined;
+
       expect(packagePrice?.unit_amount).toBe("0.5");
 
       const ladderProduct = yield* readProduct(sold.products.ladder);
+
       const ladderPrice = ladderProduct.prices.find((price) => "meter_id" in price) as
         | {
             readonly amount_type: string;
@@ -256,6 +267,7 @@ test.provider.skipIf(!hasToken)(
             };
           }
         | undefined;
+
       expect(ladderPrice?.amount_type).toBe("metered_tiers");
       expect(ladderPrice?.tiers.type).toBe("graduated");
       expect(ladderPrice?.tiers.tiers).toEqual([
@@ -282,6 +294,7 @@ test.provider.skipIf(!hasToken)(
           },
         }),
       );
+
       expect(changed.products.ladder).not.toBe(sold.products.ladder);
       const previous = yield* readProduct(sold.products.ladder);
       expect(previous.id).toBe(sold.products.ladder);

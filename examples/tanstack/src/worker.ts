@@ -40,6 +40,7 @@ const forward = async (request: Request, env: Env): Promise<Response> => {
     "set-cookie",
     `${ACCOUNT_COOKIE}=${account}; Path=/; SameSite=Lax; HttpOnly${secure}`,
   );
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -56,6 +57,7 @@ const forward = async (request: Request, env: Env): Promise<Response> => {
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     const { pathname } = new URL(request.url);
+
     if (
       pathname === "/bootstrap" ||
       pathname === "/api/billing" ||
@@ -63,6 +65,7 @@ export default {
     ) {
       return forward(request, env);
     }
+
     return Promise.resolve(serverEntry.fetch(request));
   },
 };

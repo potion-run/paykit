@@ -40,12 +40,14 @@ const team = allowancesOf(testCatalog, "team")!;
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),
 });
+
 const account = Subscription.ref("acct_reset");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
 const monthLater = at("2030-02-01T00:00:00Z");
 const march = at("2030-03-01T00:00:00Z");
 const holdExpiry = DateTime.add(start, { minutes: 15 });
+
 // The seat hold outlives the period on purpose: `resets: "never"` keeps an
 // open hold across the close, and HoldSweep must not have released it first.
 const seatHoldExpiry = DateTime.add(start, { days: 90 });

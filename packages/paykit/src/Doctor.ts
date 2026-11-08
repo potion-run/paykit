@@ -10,8 +10,7 @@ import {
 } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 
-/** One account whose read model disagrees with the event log. */
-export interface DoctorMismatch {
+/** One account whose read model disagrees with the event log. */ export interface DoctorMismatch {
   readonly account: string;
   readonly stored: BillingReadRow | null;
   readonly rebuilt: BillingReadRow;
@@ -34,21 +33,28 @@ export const doctor = (log: SqlEventLog) =>
       ...(yield* log.accounts("Subscription")),
       ...(yield* log.readModelList()).map((row) => row.account),
     ]);
+
     const mismatches: Array<DoctorMismatch> = [];
+    const evolveHandlers: Readonly<Record<string, unknown>> = Entitlements.definition.evolve ?? {};
+
     for (const account of accounts) {
       const rows = yield* log.events("Subscription", account);
       let state: EntitlementsState = initialEntitlements;
       const commandIds: Array<string> = [];
+
       for (const row of rows) {
         commandIds.push(row.commandId);
         const event = yield* decodeEvent(row.event);
+
         if (event === null) continue;
-        const handler = (
-          Entitlements.definition.evolve as unknown as Record<
-            string,
-            (state: EntitlementsState, event: unknown, context: unknown) => EntitlementsState
-          >
-        )[event._tag];
+
+        // SAFETY: `event` was decoded by the definition whose `evolve` map is
+        // keyed by the same tag, so the handler's event parameter is the
+        // variant `event` decoded to.
+        const handler = evolveHandlers[event._tag] as
+          | ((state: EntitlementsState, event: unknown, context: unknown) => EntitlementsState)
+          | undefined;
+
         if (handler === undefined) continue;
         state = handler(state, event, {
           key: Subscription.ref(account),
@@ -65,12 +71,15 @@ export const doctor = (log: SqlEventLog) =>
           at: dateTimeFrom(row.at),
         });
       }
+
       const rebuilt = rowFromState(account, state);
       const stored = yield* log.readModel(account);
+
       if (!sameRow(stored, rebuilt)) {
         mismatches.push({ account, stored, rebuilt, commandIds });
       }
     }
+
     return mismatches;
   });
 
@@ -89,14 +98,21 @@ const decodeEvent = (
 ): Effect.Effect<{ readonly _tag: string } | null, Schema.SchemaError> =>
   Effect.gen(function* () {
     const raw = yield* Schema.decodeEffect(StoredEvent)(json);
+
     if (typeof raw !== "object" || raw === null) return null;
+    // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
     const tag = (raw as { readonly _tag?: unknown })._tag;
+
     if (typeof tag !== "string") return null;
     const cls = Subscription.definition.events.find((event) => event.tag === tag);
+
     if (cls === undefined) return null;
+    // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
     const codec = Schema.toCodecJson(cls as never) as Schema.ConstraintDecoder<unknown>;
+
     // `toCodecJson` decodes the JSON wire form, which is what the parse above
     // handed back: `decodeEffect` is the decoder for exactly that input.
+    // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
     return (yield* Schema.decodeEffect(codec)(raw)) as { readonly _tag: string };
   });
 
@@ -122,14 +138,19 @@ const rowFromState = (account: string, state: EntitlementsState): BillingReadRow
  */
 const canonicalJson = (value: unknown): string => {
   if (value === undefined) return "null";
+
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+
   if (value !== null && typeof value === "object") {
+    // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
     const entries = Object.entries(value as Readonly<Record<string, unknown>>)
       .filter(([, item]) => item !== undefined)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
+
     return `{${entries.join(",")}}`;
   }
+
   return JSON.stringify(value) ?? "null";
 };
 

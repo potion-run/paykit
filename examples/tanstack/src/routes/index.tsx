@@ -35,14 +35,17 @@ function Home() {
         const body = Option.getOrUndefined(
           Schema.decodeUnknownOption(BootstrapBody)(await response.json()),
         );
+
         if (!response.ok || body?.account === undefined) {
           throw new Error(body?.error ?? `bootstrap failed: ${response.status}`);
         }
+
         if (live) setAccount(body.account);
       })
       .catch((cause: unknown) => {
         if (live) setError(String(cause));
       });
+
     return () => {
       live = false;
     };
@@ -83,9 +86,11 @@ function Usage({ account }: Readonly<{ account: string }>) {
   const [answer, setAnswer] = useState<string | null>(null);
 
   const view = AsyncResult.isSuccess(entitlements) ? entitlements.value : null;
+
   const problem = AsyncResult.isFailure(entitlements)
     ? String(Cause.squash(entitlements.cause))
     : null;
+
   const messages = view?.features.messages;
 
   const run = (label: string, action: () => Promise<unknown>) => {

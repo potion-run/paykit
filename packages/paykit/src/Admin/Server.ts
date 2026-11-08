@@ -59,5 +59,6 @@ export const AdminConsoleServer = Effect.gen(function* () {
       ),
     ),
   );
+
   return yield* Effect.succeed(http);
 });

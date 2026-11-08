@@ -53,6 +53,7 @@ const billingHandlers = BillingState.definition.evolve as unknown as Record<
 const foldView = (view: EntitlementsState, events: ReadonlyArray<Event>): EntitlementsState =>
   events.reduce<EntitlementsState>((current, event) => {
     const handler = handlers[event._tag];
+
     return handler === undefined
       ? current
       : handler(current, event, { key: { id: propertyAccount } });
@@ -61,6 +62,7 @@ const foldView = (view: EntitlementsState, events: ReadonlyArray<Event>): Entitl
 const foldBilling = (view: BillingStateView, events: ReadonlyArray<Event>): BillingStateView =>
   events.reduce<BillingStateView>((current, event) => {
     const handler = billingHandlers[event._tag];
+
     return handler === undefined
       ? current
       : handler(current, event, { key: { id: propertyAccount } });
@@ -78,29 +80,46 @@ const sameDate = (left: DateTime.Utc | undefined, right: DateTime.Utc | undefine
  */
 const billingMatchesState = (state: SubscriptionState, view: BillingStateView): boolean => {
   if (state._tag !== "Subscribed") return true;
+
   if (view.account !== propertyAccount) return false;
+
   if (view.tier !== state.tier) return false;
+
   if (view.status !== state.status) return false;
+
   if (view.credits !== state.credits) return false;
+
   if (view.cancelAtPeriodEnd !== state.cancelAtPeriodEnd) return false;
+
   if (view.dunningAttempts !== state.dunningAttempts) return false;
+
   if (view.interval !== state.interval) return false;
+
   if (view.anchorTz !== state.period.anchorTz) return false;
+
   if (DateTime.toEpochMillis(view.periodStart) !== DateTime.toEpochMillis(state.period.start)) {
     return false;
   }
+
   if (DateTime.toEpochMillis(view.periodEnd) !== DateTime.toEpochMillis(state.period.end)) {
     return false;
   }
+
   if (view.currency !== state.currency) return false;
+
   if (!sameDate(view.trialEndsAt, state.trialEndsAt)) return false;
+
   if (!sameDate(view.graceUntil, state.graceUntil)) return false;
+
   if (JSON.stringify(view.price) !== JSON.stringify(state.price)) return false;
+
   if (JSON.stringify(view.proration) !== JSON.stringify(state.proration)) return false;
+
   // A scheduled change is on the page, so a page that trails it offers the wrong
   // action: "withdraw" with nothing to withdraw, or no way to leave a move the
   // account no longer wants.
   if (JSON.stringify(view.pendingTier) !== JSON.stringify(state.pendingTier)) return false;
+
   return view.prorationInvoice === state.prorationInvoice;
 };
 
@@ -110,6 +129,7 @@ const Probe = Schema.Struct({
   amount: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 50_000 }))),
   dimension: Schema.optionalKey(Schema.Literals(["default", "gpt-large"])),
 });
+
 type Probe = typeof Probe.Type;
 
 const Case = Schema.Struct({ script: Script, probe: Probe });
@@ -133,35 +153,53 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     // A credits-only account has no tier, but a purchase still created the
     // credit features from the catalog's rate cards.
     if (view.credits !== (state.credits ?? 0)) return false;
+
     for (const feature of Object.keys(state.rates ?? {})) {
       const entry = view.features[feature];
+
       if (entry === undefined) return false;
+
       if (entry.remaining !== (state.credits ?? 0)) return false;
+
       if (entry.used !== (state.usage?.[feature] ?? 0)) return false;
     }
+
     return true;
   }
+
   if (view.tier !== state.tier) return false;
+
   if (view.status !== state.status) return false;
+
   if (view.standing !== standingOf(state.status)) return false;
+
   if (view.credits !== state.credits) return false;
+
   if (view.cancelAtPeriodEnd !== state.cancelAtPeriodEnd) return false;
+
   if (view.dunningAttempts !== state.dunningAttempts) return false;
+
   if (DateTime.toEpochMillis(view.periodStart) !== DateTime.toEpochMillis(state.period.start)) {
     return false;
   }
+
   if (DateTime.toEpochMillis(view.periodEnd) !== DateTime.toEpochMillis(state.period.end)) {
     return false;
   }
 
   for (const [feature, allowance] of Object.entries(state.allowances)) {
     const entry = view.features[feature];
+
     if (entry === undefined) return false;
+
     if (entry.used !== usedOf(state, feature)) return false;
+
     if (entry.reserved !== reservedOf(state, feature)) return false;
+
     if (isFlagGrant(allowance)) {
       if (entry.remaining !== null) return false;
     } else if (entry.remaining !== remainingOf(state, feature)) return false;
+
     // Money is part of the standing: a read model that reports a bill the state
     // does not hold lets `check()` spend a cap the account already reached.
     if ((entry.billed ?? 0) !== billedOf(state, feature)) return false;
@@ -170,11 +208,16 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
   // A credit-priced feature shares one pool: its `remaining` is the pool less
   // every open hold, and its `reserved` is those holds' credits, not units.
   const heldCredits = reservedCreditsOf(state);
+
   for (const feature of Object.keys(state.rates)) {
     const entry = view.features[feature];
+
     if (entry === undefined) return false;
+
     if (entry.used !== usedOf(state, feature)) return false;
+
     if (entry.reserved !== heldCredits) return false;
+
     if (entry.remaining !== state.credits - heldCredits) return false;
   }
 
@@ -183,8 +226,11 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
   // counters to the state the write path folded.
   for (const [feature, entry] of Object.entries(view.features)) {
     const asked = evaluateCheck(view, { account: propertyAccount, feature, amount: 1 });
+
     if (asked.allowed !== entry.allowed) return false;
+
     if (asked.remaining !== entry.remaining) return false;
+
     if (asked.standing !== view.standing) return false;
   }
 
@@ -209,6 +255,7 @@ const agree = (
 ): boolean => {
   if (state._tag === "Subscribed") {
     const allowance = state.allowances[probe.feature];
+
     if (allowance !== undefined && isFlagGrant(allowance)) return true;
   }
 
@@ -225,6 +272,7 @@ const agree = (
     now,
     "probe-track",
   );
+
   if (asked.allowed !== isAccepted(tracked)) return false;
 
   // A hold is a standing operation; a credits-only account can track its pack
@@ -243,6 +291,7 @@ const agree = (
     now,
     "probe-hold",
   );
+
   return asked.allowed === isAccepted(held);
 };
 
@@ -255,20 +304,27 @@ describe("read and write agreement", () => {
         let view = initialEntitlements;
         let billing = initialBillingState;
         let now = start;
+
         if (!agree(state, view, probe, now)) return false;
+
         if (!viewMatchesState(state, view)) return false;
+
         if (!billingMatchesState(state, billing)) return false;
 
         for (const [index, step] of script.steps.entries()) {
           now = DateTime.add(now, { days: step.advanceDays });
           const command = commandOf(step.command, state, now);
           const decision = decideAt(state, command, now, `agreement-${index}`);
+
           if (!isAccepted(decision)) continue;
           state = evolveAt(state, decision, now, `agreement-${index}`);
           view = foldView(view, decision);
           billing = foldBilling(billing, decision);
+
           if (!viewMatchesState(state, view)) return false;
+
           if (!billingMatchesState(state, billing)) return false;
+
           if (!agree(state, view, probe, now)) return false;
         }
 
@@ -291,6 +347,7 @@ describe("a standing that goes blocked", () => {
     let state: SubscriptionState = initialSubscriptionState;
     let view = initialEntitlements;
     let now = start;
+
     const script = {
       steps: [
         { command: { _tag: "StartTrial", tier: "free", trialDays: 1 }, advanceDays: 0 },
@@ -303,6 +360,7 @@ describe("a standing that goes blocked", () => {
       now = DateTime.add(now, { days: step.advanceDays });
       const command = commandOf(step.command, state, now);
       const decision = decideAt(state, command, now, `blocked-${index}`);
+
       if (!isAccepted(decision)) throw new Error(`${step.command._tag} was refused`);
       state = evolveAt(state, decision, now, `blocked-${index}`);
       view = foldView(view, decision);
@@ -311,11 +369,15 @@ describe("a standing that goes blocked", () => {
     if (state._tag !== "Subscribed" || state.status !== "expired") {
       throw new Error("the script never expired the standing");
     }
+
     if (view.standing !== "blocked") throw new Error("the row did not go blocked");
     const features = Object.entries(view.features);
+
     if (features.length === 0) throw new Error("the row carries no features");
+
     for (const [feature, entry] of features) {
       if (entry.allowed !== false) throw new Error(`the row still allows ${feature}`);
+
       if (!viewMatchesState(state, view)) throw new Error(`the row disagrees about ${feature}`);
     }
   });

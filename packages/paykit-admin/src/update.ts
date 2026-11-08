@@ -80,6 +80,7 @@ import {
 
 const startList = (model: Model, filter: AccountFilter, after?: string): UpdateReturn => {
   const requestId = model.queryIds.sent;
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -153,6 +154,7 @@ const openAccount = (model: Model): AccountState | null => Option.getOrNull(mode
 const startHolds = (model: Model, account: AccountState): UpdateReturn => {
   const requestId = model.queryIds.sent;
   const previous = Option.getOrNull(account.holds);
+
   const next: HoldsState = HoldsStateSchema.make({
     requestId,
     account: account.id,
@@ -161,6 +163,7 @@ const startHolds = (model: Model, account: AccountState): UpdateReturn => {
     holds: previous?.holds ?? [],
     error: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -178,6 +181,7 @@ const startHolds = (model: Model, account: AccountState): UpdateReturn => {
 const startProviderRefs = (model: Model, account: AccountState): UpdateReturn => {
   const requestId = model.queryIds.sent;
   const previous = Option.getOrNull(account.providerRefs);
+
   const next: ProviderRefsState = ProviderRefsStateSchema.make({
     requestId,
     account: account.id,
@@ -186,6 +190,7 @@ const startProviderRefs = (model: Model, account: AccountState): UpdateReturn =>
     refs: previous?.refs ?? {},
     error: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -203,6 +208,7 @@ const startProviderRefs = (model: Model, account: AccountState): UpdateReturn =>
 const startOverview = (model: Model): UpdateReturn => {
   const requestId = model.queryIds.sent;
   const previous = Option.getOrNull(model.overview);
+
   const next: OverviewState = OverviewStateSchema.make({
     requestId,
     state: "Loading",
@@ -210,6 +216,7 @@ const startOverview = (model: Model): UpdateReturn => {
     overview: previous?.overview ?? Option.none(),
     error: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -230,6 +237,7 @@ const startPreview = (
   command: AdminPreviewInput["command"],
 ): UpdateReturn => {
   const requestId = model.queryIds.sent;
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -262,6 +270,7 @@ const startPreview = (
 /** Judge the account's standing against the deploy's catalog and provider. */
 const startVerify = (model: Model, account: AccountState): UpdateReturn => {
   const requestId = model.queryIds.sent;
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -292,6 +301,7 @@ const startVerify = (model: Model, account: AccountState): UpdateReturn => {
 /** Combine two updates that both produce commands, keeping the first's model as the base. */
 const andThen = (first: UpdateReturn, second: UpdateReturn): UpdateReturn => {
   const commands = [...(first.commands ?? []), ...(second.commands ?? [])];
+
   return commands.length === 0 ? { model: second.model } : { model: second.model, commands };
 };
 
@@ -307,7 +317,9 @@ const updateCurrentHolds = (
 ): UpdateReturn => {
   const account = openAccount(model);
   const current = account === null ? null : Option.getOrNull(account.holds);
+
   if (account === null || current === null || current.requestId !== requestId) return { model };
+
   return updateAccount(model, (value) =>
     modifyFields(value, { holds: () => Option.some(change(current)) }),
   );
@@ -320,7 +332,9 @@ const updateCurrentOverview = (
   change: (current: OverviewState) => OverviewState,
 ): UpdateReturn => {
   const current = Option.getOrNull(model.overview);
+
   if (current === null || current.requestId !== requestId) return { model };
+
   return { model: modifyFields(model, { overview: () => Option.some(change(current)) }) };
 };
 
@@ -332,7 +346,9 @@ const updateCurrentProviderRefs = (
 ): UpdateReturn => {
   const account = openAccount(model);
   const current = account === null ? null : Option.getOrNull(account.providerRefs);
+
   if (account === null || current === null || current.requestId !== requestId) return { model };
+
   return updateAccount(model, (value) =>
     modifyFields(value, { providerRefs: () => Option.some(change(current)) }),
   );
@@ -346,7 +362,9 @@ const updateCurrentPreview = (
 ): UpdateReturn => {
   const account = openAccount(model);
   const current = account === null ? null : Option.getOrNull(account.preview);
+
   if (account === null || current === null || current.requestId !== requestId) return { model };
+
   return updateAccount(model, (value) =>
     modifyFields(value, { preview: () => Option.some(change(current)) }),
   );
@@ -360,7 +378,9 @@ const updateCurrentVerify = (
 ): UpdateReturn => {
   const account = openAccount(model);
   const current = account === null ? null : Option.getOrNull(account.verify);
+
   if (account === null || current === null || current.requestId !== requestId) return { model };
+
   return updateAccount(model, (value) =>
     modifyFields(value, { verify: () => Option.some(change(current)) }),
   );
@@ -396,6 +416,7 @@ const send = (
 ) => {
   const catalog = Option.getOrNull(model.catalog);
   const args = { target, commandId, catalog, ...(currency === undefined ? {} : { currency }) };
+
   switch (intent.kind) {
     case "GrantCredits":
       return OperatorActions.GrantCredits.send({ ...args, intent });
@@ -431,6 +452,7 @@ type QuotedChange = Extract<ChangeTierQuote, { readonly _tag: "Quoted" }>;
 
 const quoteChangeTier = (model: Model, account: AccountState, tier: string): UpdateReturn => {
   const requestId = model.queryIds.sent;
+
   return {
     model: modifyFields(model, {
       queryIds: () => ({ sent: requestId + 1 }),
@@ -457,6 +479,7 @@ const applyChangeTier = (
   quote: QuotedChange,
 ): UpdateReturn => {
   const allocation = next(model.commandIds);
+
   const pending = PendingSchema.make({
     commandId: allocation.commandId,
     intent: { kind: "ChangeTier", tier: quote.tier },
@@ -464,6 +487,7 @@ const applyChangeTier = (
     reason: Option.none(),
     failure: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       commandIds: () => allocation.commandIds,
@@ -533,6 +557,7 @@ const applyRefund = (
   intent: Extract<AdminIntent, { readonly kind: "Refund" }>,
 ): UpdateReturn => {
   const allocation = next(model.commandIds);
+
   const pending = PendingSchema.make({
     commandId: allocation.commandId,
     intent,
@@ -540,6 +565,7 @@ const applyRefund = (
     reason: Option.none(),
     failure: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       commandIds: () => allocation.commandIds,
@@ -559,6 +585,7 @@ const applyRefund = (
 
 const submit = (model: Model, account: AccountState, draft: ActionDraft): UpdateReturn => {
   const parsed = parseDraft(draft);
+
   if (Result.isFailure(parsed)) {
     return {
       model: modifyFields(model, {
@@ -577,6 +604,7 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
   }
 
   const allocation = next(model.commandIds);
+
   const pending = PendingSchema.make({
     commandId: allocation.commandId,
     intent: parsed.success,
@@ -584,6 +612,7 @@ const submit = (model: Model, account: AccountState, draft: ActionDraft): Update
     reason: Option.none(),
     failure: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       commandIds: () => allocation.commandIds,
@@ -632,6 +661,7 @@ const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
   const account = route._tag === "Account" ? route.account : null;
   const open = openAccount(model);
   const sameAccount = open !== null && account !== null && open.id === account;
+
   const followed = modifyFields(model, {
     route: () => route,
     accounts: (accounts) => modifyFields(accounts, { filter: () => filter }),
@@ -642,27 +672,34 @@ const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
           ? Option.none()
           : Option.some(openedAccount(account)),
   });
+
   const listChanged =
     !sameFilter(filter, model.accounts.filter) || !samePage(after, afterOf(model.route));
+
   const listRead = listChanged
     ? startList(followed, filter, Option.getOrUndefined(after))
     : ({ model: followed } satisfies UpdateReturn);
+
   const overviewRead =
     route._tag === "Overview" && model.route._tag !== "Overview" ? startOverview(followed) : null;
+
   const base = overviewRead === null ? listRead : andThen(listRead, overviewRead);
   // A newly opened account has no holds or refs snapshot yet; the previous
   // account's state is gone, so there is nothing to preserve.
   const opened = sameAccount ? null : openAccount(base.model);
+
   if (opened === null) return base;
   const holdsRead = startHolds(base.model, opened);
   const afterHolds = openAccount(holdsRead.model);
   const refsRead = afterHolds === null ? null : startProviderRefs(holdsRead.model, afterHolds);
+
   return andThen(base, refsRead === null ? holdsRead : andThen(holdsRead, refsRead));
 };
 
 /** Follow a route and reflect it into the address bar. */
 const navigate = (model: Model, route: ConsoleRoute, history: "push" | "replace"): UpdateReturn => {
   const followed = applyRoute(model, route);
+
   return {
     model: followed.model,
     commands: [
@@ -686,10 +723,12 @@ const refresh = (model: Model): UpdateReturn => {
   if (model.route._tag === "Overview") return startOverview(model);
   const list = afterWrite(model);
   const account = openAccount(list.model);
+
   if (account === null) return list;
   const holds = startHolds(list.model, account);
   const afterHolds = openAccount(holds.model);
   const refs = afterHolds === null ? null : startProviderRefs(holds.model, afterHolds);
+
   return andThen(list, refs === null ? holds : andThen(holds, refs));
 };
 
@@ -717,9 +756,11 @@ type IncomingEvent = {
 const recordEvent = (model: Model, incoming: IncomingEvent): UpdateReturn => {
   if (Option.isNone(model.account)) return { model };
   const account = model.account.value;
+
   if (Array.some(account.events, (candidate) => candidate.seq === incoming.seq)) {
     return { model };
   }
+
   const nextAccount = modifyFields(account, {
     events: () =>
       [
@@ -741,20 +782,27 @@ const recordEvent = (model: Model, incoming: IncomingEvent): UpdateReturn => {
           }),
     cursor: () => Option.some(incoming.seq),
   });
+
   const nextModel = modifyFields(model, { account: () => Option.some(nextAccount) });
+
   const settled = Array.some(
     account.pending,
     (candidate) => candidate.commandId === incoming.commandId,
   )
     ? accepted(nextModel, incoming.commandId)
     : nextModel;
+
   // A hold event is the one thing the allowance view's `reserved` count
   // cannot date, so the panel re-reads the entity it folded away. A provider
   // ref attachment is the same kind of fact for the vendor ids.
   const opened = openAccount(settled);
+
   if (opened === null) return { model: settled };
+
   if (holdEvent(incoming.tag)) return startHolds(settled, opened);
+
   if (incoming.tag === "ProviderRefAttached") return startProviderRefs(settled, opened);
+
   return { model: settled };
 };
 
@@ -765,13 +813,16 @@ const updateDevTools = (
 
 const devToolsCommandId = (model: Model): string => {
   const commandId = model.devTools.commandId.trim();
+
   return commandId === "" ? "devtools_command" : commandId;
 };
 
 const recordDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
   const account = openAccount(model);
+
   if (account === null) return { model };
   const seq = nextEventSeq(account);
+
   const result = recordEvent(model, {
     seq,
     at: simulatedAt(seq),
@@ -783,10 +834,12 @@ const recordDevToolsEvent = (model: Model, event: { tag: string; body: string })
       onSome: (decoded) => ({ event: decoded }),
     }),
   });
+
   const next = updateDevTools(result.model, (devTools) => ({
     ...devTools,
     emitted: devTools.emitted + 1,
   }));
+
   return result.commands === undefined
     ? { model: next }
     : { model: next, commands: result.commands };
@@ -798,18 +851,22 @@ const recordDevToolsEvent = (model: Model, event: { tag: string; body: string })
  */
 const emitDevToolsEvent = (model: Model, event: { tag: string; body: string }): UpdateReturn => {
   const opened = openAccount(model) === null ? openDevToolsAccount(model) : { model };
+
   return andThen(opened, recordDevToolsEvent(opened.model, event));
 };
 
 /** Emit the whole table in order, one sequence number each. */
 const recordAllDevToolsEvents = (model: Model): UpdateReturn => {
   const account = openAccount(model);
+
   if (account === null) return { model };
   const startSeq = nextEventSeq(account);
   let current = model;
   const commands: Array<NonNullable<UpdateReturn["commands"]>[number]> = [];
+
   for (const [index, event] of devToolsEvents.entries()) {
     const seq = startSeq + index;
+
     const result = recordEvent(current, {
       seq,
       at: simulatedAt(seq),
@@ -821,19 +878,24 @@ const recordAllDevToolsEvents = (model: Model): UpdateReturn => {
         onSome: (decoded) => ({ event: decoded }),
       }),
     });
+
     current = result.model;
+
     if (result.commands !== undefined) commands.push(...result.commands);
   }
+
   const next = updateDevTools(current, (devTools) => ({
     ...devTools,
     emitted: devTools.emitted + devToolsEvents.length,
   }));
+
   return commands.length === 0 ? { model: next } : { model: next, commands };
 };
 
 /** Emit every lab event, opening the lab account first when none is open. */
 const emitAllDevToolsEvents = (model: Model): UpdateReturn => {
   const opened = openAccount(model) === null ? openDevToolsAccount(model) : { model };
+
   return andThen(opened, recordAllDevToolsEvents(opened.model));
 };
 
@@ -848,6 +910,7 @@ const seedTierOf = (model: Model): string =>
 
 const nonNegativeInt = (value: string): number | undefined => {
   const parsed = Number.parseInt(value, 10);
+
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
 };
 
@@ -857,16 +920,20 @@ const withUsage = (
 ): EntitlementsState => {
   if (usage === undefined) return entitlements;
   const first = Object.entries(entitlements.features)[0];
+
   if (first === undefined) return entitlements;
   const [featureId, feature] = first;
+
   const used =
     feature.included === null || feature.included === "unlimited"
       ? usage
       : Math.min(feature.included, usage);
+
   const remaining =
     feature.included === null || feature.included === "unlimited"
       ? null
       : Math.max(0, feature.included - used - feature.reserved);
+
   return {
     ...entitlements,
     features: { ...entitlements.features, [featureId]: { ...feature, used, remaining } },
@@ -878,7 +945,9 @@ const mergeRows = (
   additions: ReadonlyArray<BillingReadRow>,
 ): ReadonlyArray<BillingReadRow> => {
   const byAccount = new Map(rows.map((row) => [row.account, row]));
+
   for (const row of additions) byAccount.set(row.account, row);
+
   return [...byAccount.values()].toSorted((left, right) =>
     left.account.localeCompare(right.account),
   );
@@ -908,6 +977,7 @@ const rowOf = (
 /** Fill the open account's reads with a simulated standing, and list it locally. */
 const seedOpenSnapshot = (model: Model): UpdateReturn => {
   const account = openAccount(model);
+
   if (account === null) return { model };
   const at = simulatedAt(nextEventSeq(account));
   const tier = seedTierOf(model);
@@ -918,11 +988,14 @@ const seedOpenSnapshot = (model: Model): UpdateReturn => {
   const baseBilling = devToolsBilling(account.id, model.catalog, status, at, tier);
   const billing = credits === undefined ? baseBilling : { ...baseBilling, credits };
   const baseEntitlements = devToolsEntitlements(account.id, model.catalog, status, at, holds, tier);
+
   const entitlements = {
     ...withUsage(baseEntitlements, usage),
     ...(credits === undefined ? {} : { credits }),
   };
+
   const row = rowOf(account.id, tier, status, billing, entitlements);
+
   const holdsState = HoldsStateSchema.make({
     requestId: Option.getOrElse(
       Option.map(account.holds, (current) => current.requestId),
@@ -934,6 +1007,7 @@ const seedOpenSnapshot = (model: Model): UpdateReturn => {
     holds,
     error: Option.none(),
   });
+
   const refsState = ProviderRefsStateSchema.make({
     requestId: Option.getOrElse(
       Option.map(account.providerRefs, (current) => current.requestId),
@@ -945,6 +1019,7 @@ const seedOpenSnapshot = (model: Model): UpdateReturn => {
     refs: devToolsProviderRefs(account.id),
     error: Option.none(),
   });
+
   return {
     model: modifyFields(model, {
       devTools: (devTools) => ({
@@ -974,10 +1049,12 @@ const seedDevToolsSnapshot = (model: Model): UpdateReturn =>
 /** Seed a varied set of local accounts so lists, pies and metrics have a shape. */
 const seedDevToolsAccounts = (model: Model): UpdateReturn => {
   if (!model.devTools.isEnabled) return { model };
+
   const tiers = Option.match(model.catalog, {
     onNone: () => ["free"],
     onSome: (catalog) => catalog.tiers.map((tier) => String(tier.id)),
   });
+
   const statuses: ReadonlyArray<SubscriptionStatus> = [
     "active",
     "trialing",
@@ -992,7 +1069,9 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
     "grace",
     "active",
   ];
+
   const at = simulatedAt(1);
+
   const rows = Array.makeBy(12, (index) => {
     const account = AccountId.make(`acct_demo_${String(index + 1).padStart(2, "0")}`);
     const tier = tiers[index % tiers.length] ?? "free";
@@ -1000,10 +1079,12 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
     const credits = 100 + index * 75;
     const usage = 50 + index * 20;
     const atForAccount = DateTime.add(at, { days: index });
+
     const billing = {
       ...devToolsBilling(account, model.catalog, status, atForAccount, tier),
       credits,
     };
+
     const entitlements = {
       ...withUsage(
         devToolsEntitlements(account, model.catalog, status, atForAccount, [], tier),
@@ -1011,8 +1092,10 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
       ),
       credits,
     };
+
     return rowOf(account, tier, status, billing, entitlements);
   });
+
   return {
     model: modifyFields(model, {
       devTools: (devTools) => ({
@@ -1028,6 +1111,7 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
 /** Remove the locally seeded accounts from the list and the lab overlay. */
 const clearDevToolsAccounts = (model: Model): UpdateReturn => {
   const labAccounts = new Set(model.devTools.labRows.map((row) => row.account));
+
   return {
     model: modifyFields(model, {
       devTools: (devTools) => ({ ...devTools, labRows: [] }),
@@ -1050,12 +1134,15 @@ const newestEventSeq = (account: AccountState): number =>
 const openDevToolsAccount = (model: Model): UpdateReturn => {
   const requested = model.devTools.accountId.trim();
   const account = AccountId.make(requested === "" ? "acct_dev" : requested);
+
   const navigated = navigate(
     model,
     accountRoute(account, model.accounts.filter, afterOf(model.route)),
     "push",
   );
+
   const seeded = seedOpenSnapshot(navigated.model);
+
   return navigated.commands === undefined
     ? { model: seeded.model }
     : { model: seeded.model, commands: navigated.commands };
@@ -1300,6 +1387,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
           "FailedResume",
           ({ commandId, failure }) => {
             const typed = Schema.decodeOption(AdminFailure)(failure);
+
             return {
               model: settle(
                 model,
@@ -1320,10 +1408,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         Match.tag("SucceededChangeTier", ({ requestId, answer }) => {
           if (Option.isNone(model.account)) return { model };
           const account = model.account.value;
+
           return Match.value(answer).pipe(
             Match.withReturnType<UpdateReturn>(),
             Match.tag("quoted", ({ tier, proration }) => {
               const current = account.change;
+
               if (
                 Option.isNone(current) ||
                 current.value._tag !== "Quoting" ||
@@ -1332,6 +1422,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
               ) {
                 return { model };
               }
+
               return updateAccount(model, (value) =>
                 modifyFields(value, {
                   change: () => Option.some(ChangeTierQuoted.make({ requestId, tier, proration })),
@@ -1345,6 +1436,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 onSome: (value) =>
                   value._tag === "Applying" && value.tier === tier ? value.commandId : undefined,
               });
+
               const next =
                 commandId === undefined
                   ? model
@@ -1355,6 +1447,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                       Option.some("The amount moved; confirm the new quote."),
                       Option.some(AdminUnknown.make({})),
                     );
+
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   change: () => Option.some(ChangeTierQuoted.make({ requestId, tier, proration })),
@@ -1364,6 +1457,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             }),
             Match.tag("applied", ({ commandId, tier }) => {
               const next = settle(model, commandId, "Accepted", Option.none());
+
               const confirmed = updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
@@ -1371,6 +1465,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                   notice: () => Option.some(`Tier changed to ${tier}.`),
                 }),
               );
+
               return afterWrite(confirmed.model);
             }),
             Match.tag("rejected", ({ commandId, rejection }) => {
@@ -1384,6 +1479,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                       Option.some(rejection._tag),
                       Option.some(AdminRejected.make({ rejection })),
                     );
+
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
@@ -1403,6 +1499,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                       Option.some(reason),
                       Option.some(AdminUnknown.make({})),
                     );
+
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   ...(commandId === undefined ? { change: () => Option.none() } : {}),
@@ -1416,10 +1513,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         Match.tag("FailedChangeTier", ({ error }) => {
           if (Option.isNone(model.account)) return { model };
           const account = model.account.value;
+
           const commandId = Option.match(account.change, {
             onNone: () => undefined,
             onSome: (value) => (value._tag === "Applying" ? value.commandId : undefined),
           });
+
           const next =
             commandId === undefined
               ? model
@@ -1430,6 +1529,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                   Option.some(error._tag),
                   Option.some(AdminUnknown.make({})),
                 );
+
           return updateAccount(next, (value) =>
             modifyFields(value, {
               ...(commandId === undefined ? { change: () => Option.none() } : {}),
@@ -1448,6 +1548,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             Match.withReturnType<UpdateReturn>(),
             Match.tag("applied", ({ refundId, refunded, currency }) => {
               const next = settle(model, commandId, "Accepted", Option.none());
+
               const confirmed = updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
@@ -1455,6 +1556,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                     Option.some(`Refunded ${refundId}; ${currency} refunded so far: ${refunded}.`),
                 }),
               );
+
               return afterWrite(confirmed.model);
             }),
             Match.tag("rejected", ({ rejection }) => {
@@ -1465,6 +1567,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 Option.some(rejection._tag),
                 Option.some(AdminRpcRejected.make({ rejection })),
               );
+
               return updateAccount(next, (value) =>
                 modifyFields(value, {
                   draft: () => Option.none(),
@@ -1480,6 +1583,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 Option.some(reason),
                 Option.some(AdminUnknown.make({})),
               );
+
               return updateAccount(next, (value) =>
                 modifyFields(value, { notice: () => Option.some(reason) }),
               );
@@ -1495,6 +1599,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
             Option.some(error._tag),
             Option.some(AdminUnknown.make({})),
           );
+
           return updateAccount(next, (value) =>
             modifyFields(value, { notice: () => Option.some(`Refund failed: ${error._tag}`) }),
           );
@@ -1512,6 +1617,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ReceivedEntitlements: ({ state }) =>
       updateAccount(model, (account) => {
         if (Option.isSome(state) && state.value.account !== account.id) return account;
+
         return modifyFields(account, { entitlements: () => state });
       }),
 
@@ -1556,6 +1662,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClickedSubmitAction: () => {
       if (Option.isNone(model.account)) return { model };
       const account = model.account.value;
+
       return Option.match(account.draft, {
         onNone: () => ({ model }),
         onSome: (draft) => submit(model, account, draft),
@@ -1565,9 +1672,11 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClickedConfirmChangeTier: () => {
       if (Option.isNone(model.account)) return { model };
       const account = model.account.value;
+
       if (Option.isNone(account.change) || Option.isNone(account.draft)) return { model };
       const change = account.change.value;
       const draft = account.draft.value;
+
       if (
         change._tag !== "Quoted" ||
         draft.kind !== "ChangeTier" ||
@@ -1575,6 +1684,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ) {
         return { model };
       }
+
       return applyChangeTier(model, account, change);
     },
 
@@ -1586,10 +1696,12 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClickedRetryPending: ({ commandId }) => {
       if (Option.isNone(model.account)) return { model };
       const account = model.account.value;
+
       const pending = Array.findFirst(
         account.pending,
         (candidate) => candidate.commandId === commandId && candidate.status === "Unknown",
       );
+
       if (Option.isNone(pending)) return { model };
 
       const retried = modifyFields(model, {
@@ -1613,7 +1725,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       if (pending.value.intent.kind === "ChangeTier") {
         if (Option.isNone(account.change)) return { model };
         const change = account.change.value;
+
         if (change._tag !== "Applying" || change.commandId !== commandId) return { model };
+
         return {
           model: retried,
           commands: [
@@ -1658,6 +1772,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedPreview: ({ command }) => {
       const account = openAccount(model);
+
       return account === null ? { model } : startPreview(model, account, command);
     },
 
@@ -1666,6 +1781,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedVerify: () => {
       const account = openAccount(model);
+
       return account === null ? { model } : startVerify(model, account);
     },
 
@@ -1693,6 +1809,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     UpdatedDevToolsEventTag: ({ value }) => {
       if (!model.devTools.isEnabled) return { model };
       const event = devToolsEventOf(value);
+
       return {
         model: updateDevTools(model, (devTools) => ({
           ...devTools,
@@ -1720,6 +1837,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     UpdatedDevToolsSeedStatus: ({ value }) => {
       if (!model.devTools.isEnabled) return { model };
       const status = Schema.decodeUnknownOption(SubscriptionStatus)(value);
+
       return Option.isNone(status)
         ? { model }
         : {
@@ -1743,6 +1861,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     ClickedEmitDevToolsEvent: () => {
       if (!model.devTools.isEnabled) return { model };
       const event = devToolsEventOf(model.devTools.eventTag);
+
       return Option.isNone(event) ? { model } : emitDevToolsEvent(model, event.value);
     },
 
@@ -1760,6 +1879,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
 
     ClickedCatchUpDevToolsFeed: () => {
       if (!model.devTools.isEnabled) return { model };
+
       return updateAccount(model, (account) =>
         modifyFields(account, {
           feed: () => "Live",
@@ -1795,6 +1915,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       if (!model.devTools.isEnabled) return { model };
       const cleared = clearDevToolsAccounts(model);
       const reset = updateDevTools(cleared.model, (devTools) => ({ ...devTools, emitted: 0 }));
+
       return updateAccount(reset, (account) =>
         modifyFields(account, {
           events: () => [],

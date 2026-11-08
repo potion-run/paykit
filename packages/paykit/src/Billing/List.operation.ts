@@ -43,8 +43,10 @@ import {
  */
 export const listOperation = Effect.fn("Paykit.List")(function* () {
   const store = yield* BillingReadStore;
+
   return Effect.fn("Paykit.List.page")(function* (query?: BillingReadQuery) {
     const page = yield* store.list(query);
+
     return {
       ...page,
       asOf: DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
