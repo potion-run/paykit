@@ -40,6 +40,11 @@ export const RefundRecord = Schema.Struct({
   currency: Schema.String,
   /** The currency's refunded total after this refund. */
   refundedAfter: Schema.Int,
+  /**
+   * How much of this refund a provider has since reversed. Absent on a record
+   * written before reversals existed, and absent when none came back.
+   */
+  reversed: Schema.optionalKey(Schema.Int),
 });
 
 export type RefundRecord = typeof RefundRecord.Type;
@@ -512,6 +517,41 @@ export const refundableOf = (state: SubscriptionState, currency: string): number
  */
 export const refundOfCommand = (state: SubscriptionState, commandId: string): RefundRecord | null =>
   state.refunds?.[commandId] ?? null;
+
+/**
+ * The refund one provider id recorded, with the command that wrote it. The log
+ * keys refunds by the operator action (ADR 0019); a reversal arrives naming the
+ * provider's id, so it has to be found the other way round (ADR 0030).
+ */
+export const refundOfProviderId = (
+  state: SubscriptionState,
+  refundId: string,
+): { readonly commandId: string; readonly record: RefundRecord } | null => {
+  for (const [commandId, record] of Object.entries(state.refunds ?? {})) {
+    if (record.refundId === refundId) return { commandId, record };
+  }
+
+  return null;
+};
+
+/**
+ * Add what came back to one refund's record, found by its provider id. A refund
+ * the log does not hold is left alone rather than invented: `ReverseRefund`
+ * refuses that case before it reaches here.
+ */
+export const reversedWith = (
+  refunds: Readonly<Record<string, RefundRecord>> | undefined,
+  refundId: string,
+  amount: number,
+) => {
+  const found = Object.entries(refunds ?? {}).find(([, record]) => record.refundId === refundId);
+
+  if (found === undefined) return refunds ?? {};
+
+  const [commandId, record] = found;
+
+  return { ...refunds, [commandId]: { ...record, reversed: (record.reversed ?? 0) + amount } };
+};
 
 /** Add a charge to the fold, leaving every other currency alone. */
 export const chargedWith = (

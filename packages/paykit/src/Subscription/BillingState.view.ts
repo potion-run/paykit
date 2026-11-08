@@ -257,6 +257,13 @@ export class BillingState extends Domain.View("BillingState", {
         { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
         context,
       ),
+    // A reversal lowers the same fold, so the page's "refunded" is the money
+    // that is actually back rather than everything ever acknowledged.
+    RefundReversed: (view, event, context): BillingStateView =>
+      withAccount(
+        { ...view, refunded: refundedWith(view, event.currency, event.refundedAfter) },
+        context,
+      ),
     PaymentFailed: (view, event, context): BillingStateView =>
       withAccount(
         {

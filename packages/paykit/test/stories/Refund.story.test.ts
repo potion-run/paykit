@@ -20,6 +20,12 @@ import {
   RefundExceedsCharged,
   RefundRecorded,
 } from "../../src/Subscription/Refund.command.ts";
+import {
+  RefundNotFound,
+  RefundReversed,
+  RefundReversalExceedsRefunded,
+  ReverseRefund,
+} from "../../src/Subscription/ReverseRefund.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { tier } from "../../src/Tier.ts";
@@ -227,5 +233,157 @@ it.effect("records nothing for a non-positive refund", () =>
       new Refund({ chargeId: "ch_1", refundId: "re_1", amount: 0, currency: "usd" }),
     ),
     Story.view(BillingState, account, { charged: { usd: 4_900 } }),
+  ),
+);
+
+it.effect("a reversal puts the headroom back, so the money owed can still go back", () =>
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(
+      account,
+      new Refund({ chargeId: "ch_1", refundId: "re_1", amount: 4_900, currency: "usd" }),
+    ),
+    Story.then(
+      account,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 4_900,
+        currency: "usd",
+        commandId: "story:7",
+        refundedAfter: 4_900,
+      }),
+    ),
+    // The provider reverses it: the money never left, and the page that says
+    // 4,900 went back is now wrong (ADR 0027).
+    Story.when(
+      account,
+      new ReverseRefund({ refundId: "re_1", amount: 4_900, reason: "ach_return" }),
+    ),
+    Story.then(
+      account,
+      new RefundReversed({
+        refundId: "re_1",
+        amount: 4_900,
+        currency: "usd",
+        refundedAfter: 0,
+        reason: "ach_return",
+        commandId: "story:9",
+      }),
+    ),
+    Story.view(BillingState, account, { charged: { usd: 4_900 }, refunded: { usd: 0 } }),
+    // The ceiling is the truth again, so the same charge can go back properly.
+    Story.when(
+      account,
+      new Refund({ chargeId: "ch_1", refundId: "re_2", amount: 4_900, currency: "usd" }),
+    ),
+    Story.then(
+      account,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_2",
+        amount: 4_900,
+        currency: "usd",
+        commandId: "story:12",
+        refundedAfter: 4_900,
+      }),
+    ),
+    // Money moved twice; the credits the pack bought are still the account's.
+    Story.view(Entitlements, account, { credits: 5_100 }),
+  ),
+);
+
+it.effect("a reversal larger than the refund it names is refused", () =>
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(
+      account,
+      new Refund({ chargeId: "ch_1", refundId: "re_1", amount: 4_000, currency: "usd" }),
+    ),
+    Story.then(
+      account,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 4_000,
+        currency: "usd",
+        commandId: "story:7",
+        refundedAfter: 4_000,
+      }),
+    ),
+    Story.when(account, new ReverseRefund({ refundId: "re_1", amount: 4_001 })),
+    Story.rejected(
+      new RefundReversalExceedsRefunded({
+        refundId: "re_1",
+        refunded: 4_000,
+        reversed: 0,
+        requested: 4_001,
+      }),
+    ),
+  ),
+);
+
+it.effect("a reversal of a refund the log does not hold is refused", () =>
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(account, new ReverseRefund({ refundId: "re_missing", amount: 100 })),
+    Story.rejected(new RefundNotFound({ refundId: "re_missing" })),
+  ),
+);
+
+it.effect("reverses a refund in two parts, and refuses a third", () =>
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(
+      account,
+      new Refund({ chargeId: "ch_1", refundId: "re_1", amount: 1_000, currency: "usd" }),
+    ),
+    Story.then(
+      account,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 1_000,
+        currency: "usd",
+        commandId: "story:7",
+        refundedAfter: 1_000,
+      }),
+    ),
+    Story.when(account, new ReverseRefund({ refundId: "re_1", amount: 400 })),
+    Story.then(
+      account,
+      new RefundReversed({
+        refundId: "re_1",
+        amount: 400,
+        currency: "usd",
+        refundedAfter: 600,
+        commandId: "story:9",
+      }),
+    ),
+    Story.when(account, new ReverseRefund({ refundId: "re_1", amount: 600 })),
+    Story.then(
+      account,
+      new RefundReversed({
+        refundId: "re_1",
+        amount: 600,
+        currency: "usd",
+        refundedAfter: 0,
+        commandId: "story:11",
+      }),
+    ),
+    // All 1,000 is back, so there is nothing left of this refund to reverse.
+    Story.when(account, new ReverseRefund({ refundId: "re_1", amount: 1 })),
+    Story.rejected(
+      new RefundReversalExceedsRefunded({
+        refundId: "re_1",
+        refunded: 1_000,
+        reversed: 1_000,
+        requested: 1,
+      }),
+    ),
   ),
 );

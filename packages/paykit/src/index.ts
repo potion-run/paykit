@@ -734,6 +734,13 @@ export {
 } from "./Subscription/Refund.command.ts";
 
 export {
+  RefundNotFound,
+  RefundReversed,
+  RefundReversalExceedsRefunded,
+  ReverseRefund as ReverseRefundCommand,
+} from "./Subscription/ReverseRefund.command.ts";
+
+export {
   TopUpCooldownCleared,
   TopUpCooldownElapsed,
 } from "./Subscription/TopUpCooldownElapsed.command.ts";

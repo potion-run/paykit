@@ -281,6 +281,17 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({}),
   },
   {
+    tag: "RefundReversed",
+    body: body({
+      refundId: "re_dev_1",
+      amount: 1_900,
+      currency: "usd",
+      refundedAfter: 0,
+      reason: "ach_return",
+      commandId: "reverse_dev_1",
+    }),
+  },
+  {
     tag: "TopUpFailed",
     body: body({
       tier: "credits_100k",

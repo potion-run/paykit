@@ -33,6 +33,7 @@ export const TimelineKind = Schema.Literals([
   "payment-failed",
   "topup-failed",
   "refund",
+  "refund-reversed",
   "proration",
   "period",
 ]);
@@ -547,6 +548,21 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
         ...stamped(input, periodOf),
         kind: "payment-failed",
         reason: event.reason,
+      };
+
+      return appended(timeline, entry);
+    }
+
+    case "RefundReversed": {
+      // Money coming back is its own fact, and not a negative refund: the amount
+      // that returned, named by the refund it undoes (ADR 0030).
+      const entry: TimelineEntry = {
+        ...stamped(input, periodOf),
+        kind: "refund-reversed",
+        charge: event.amount,
+        currency: event.currency,
+        refundId: event.refundId,
+        ...(event.reason === undefined ? {} : { reason: event.reason }),
       };
 
       return appended(timeline, entry);

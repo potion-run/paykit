@@ -18,7 +18,7 @@ import type { WebhookRequest } from "./Webhooks.ts";
  *
  * `Paykit.handler` uses it; a deployment that mounts its own paths gets the same
  * pair rather than a copy of it, which is what happened in two examples before
- * ADR 0028.
+ * ADR 0029.
  *
  * ### Selling a tier and applying a delivery
  * **Example:** The checkout and webhook pair for one provider

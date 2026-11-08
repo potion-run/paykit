@@ -16,7 +16,7 @@ import { billingOnSql } from "./SqlBilling.ts";
  * Four of them are `Paykit.handler`: the tenant Api, the console, `/checkout`
  * and `/webhooks/*`. The fifth is `/mcp`, which is this example's own — it is a
  * web handler rather than an Effect fetch, so it arrives as a route the handler
- * tries before the built-ins (ADR 0028).
+ * tries before the built-ins (ADR 0029).
  *
  * Every service this reaches is resolved from the world `serve` provides, so a
  * route cannot answer from a second copy of the model.

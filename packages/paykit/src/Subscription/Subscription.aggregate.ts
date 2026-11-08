@@ -85,6 +85,12 @@ import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.t
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
+import {
+  RefundNotFound,
+  RefundReversed,
+  RefundReversalExceedsRefunded,
+  ReverseRefund,
+} from "./ReverseRefund.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
 import {
@@ -135,6 +141,8 @@ import {
   remainingOf,
   refundedOf,
   refundedWith,
+  refundOfProviderId,
+  reversedWith,
   refundableOf,
   closingHold,
   reservedCreditsOf,
@@ -575,6 +583,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     GrantCredits,
     PurchaseCredits,
     Refund,
+    ReverseRefund,
     RecordTopUpFailure,
     TopUpCooldownElapsed,
     ConsumeCredits,
@@ -1475,6 +1484,41 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    ReverseRefund: (state, command, { commandId }) => {
+      // A non-positive reversal records nothing, like every other money command.
+      if (command.amount <= 0) return [];
+
+      const found = refundOfProviderId(state, command.refundId);
+
+      if (found === null) return new RefundNotFound({ refundId: command.refundId });
+
+      const { record } = found;
+      const reversed = record.reversed ?? 0;
+      const outstanding = record.amount - reversed;
+
+      // The cap is the refund, not the currency: two refunds of one charge are
+      // two facts, and reversing the second must not be refused because the
+      // first is still standing.
+      if (command.amount > outstanding) {
+        return new RefundReversalExceedsRefunded({
+          refundId: command.refundId,
+          refunded: record.amount,
+          reversed,
+          requested: command.amount,
+        });
+      }
+
+      return [
+        new RefundReversed({
+          refundId: command.refundId,
+          amount: command.amount,
+          currency: record.currency,
+          refundedAfter: (refundedOf(state)[record.currency] ?? 0) - command.amount,
+          ...(command.reason === undefined ? {} : { reason: command.reason }),
+          commandId,
+        }),
+      ];
+    },
     TopUpCooldownElapsed: (state, _command, { now }) => {
       // The deadline is scheduled, so an account with no cooldown and a fire
       // before the deadline are both ordinary states, not operator mistakes.
@@ -1922,6 +1966,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             },
           }
         : state,
+    RefundReversed: (state, event) => ({
+      ...state,
+      // The headroom comes back by exactly what returned, so a refund the
+      // account is still owed is no longer refused by a refund that never
+      // settled (ADR 0030).
+      refunded: refundedWith(state, event.currency, event.refundedAfter),
+      refunds: reversedWith(state.refunds, event.refundId, event.amount),
+    }),
     TopUpCooldownCleared: (state) => {
       if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
       const { topUpCooldownUntil: _cleared, ...rest } = state;

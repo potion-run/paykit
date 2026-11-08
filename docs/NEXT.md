@@ -51,9 +51,9 @@ a TanStack Start app on Alchemy, with the purchase operation left in the Worker 
 provider.
 
 A deployment serves itself with `Paykit.handler`, which mounts the four paths every deployment has
-and leaves the rest to `routes`. Two facts the log used to lose are recorded now: `TopUpFailed`,
+and leaves the rest to `routes`. Two money facts the log used to lose are recorded now: `TopUpFailed`,
 when a provider will not collect a refill, and `RefundReversed`, when a provider takes a refund back.
-Both move no counter — they are evidence — and both fold into the timeline.
+Both are evidence that moves no counter, and both fold into the timeline.
 
 The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
@@ -116,9 +116,12 @@ standing no command could leave until the period reset.
   runs the in-process binding, `AdminRefundClient` is the browser half, and the console offers the
   action whenever a currency still has money to send back — even for a terminal standing, because a
   refund is money, not a move on the standing. The Api layer still cannot move money; the Worker that
-  serves `AdminConsoleServer` must be the one provided `Paykit.Refund`. What is left is a
-  `RefundFailed` event for a provider that later reverses a refund, and a refund that revokes credits
-  in the same call.
+  serves `AdminConsoleServer` must be the one provided `Paykit.Refund`. A refund the provider later
+  reverses is its own fact ([ADR 0030](./adr/0030-a-reversed-refund-is-a-second-fact.md)):
+  `ReverseRefund` writes `RefundReversed`, capped by the refund it names rather than by the currency,
+  and `refunded` moves down so the headroom comes back. What is left is a console action for it —
+  which is the gate `paykit-admin` already enforces, since its coverage test will not let the command
+  onto the operator Api without one — and a refund that revokes credits in the same call.
 - **Banded and package prices** are no longer local-only: [ADR
   0024](./adr/0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md) makes
   `usagePrices` the provider contract and maps a package to Stripe's

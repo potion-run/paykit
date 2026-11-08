@@ -1,4 +1,4 @@
-# 0028 — The request handler is a primitive, so the path table is written once
+# 0029 — The request handler is a primitive, so the path table is written once
 
 - **Status:** Accepted
 - **Date:** 2026-11-08
