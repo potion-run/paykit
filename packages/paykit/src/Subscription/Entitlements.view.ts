@@ -308,6 +308,51 @@ const withEntityFeature = (
   });
 };
 
+/**
+ * The money plane is the customer's, so every scope's row carries the same
+ * `billed` and `priced`: `check()` for an entity reads the total `decide`
+ * judges its money ceiling with. A reset clears them together too.
+ */
+const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
+  if (view.entities === undefined) return view;
+
+  return {
+    ...view,
+    entities: Object.fromEntries(
+      Object.entries(view.entities).map(([id, entity]) => [
+        id,
+        {
+          ...entity,
+          features: Object.fromEntries(
+            Object.entries(entity.features).map(([feature, row]) => {
+              const customer = view.features[feature];
+
+              if (customer === undefined) return [feature, row];
+
+              const { billed: _previousBilled, priced: _previousPriced, ...rest } = row;
+              const billed = customer.billed ?? 0;
+
+              const synced: FeatureEntitlement = {
+                ...rest,
+                ...(customer.billed === undefined ? {} : { billed: customer.billed }),
+                ...(customer.priced === undefined ? {} : { priced: customer.priced }),
+              };
+
+              return [
+                feature,
+                {
+                  ...synced,
+                  allowed: allowsOne(view.standing, judgedOf(synced, { billed })),
+                },
+              ];
+            }),
+          ),
+        },
+      ]),
+    ),
+  };
+};
+
 /** Set the customer's pooled row's remaining to the pool the event recorded. */
 const withPoolRow = (
   view: EntitlementsState,
@@ -318,24 +363,43 @@ const withPoolRow = (
 
   if (value === undefined) return view;
 
-  return { ...view, features: { ...view.features, [feature]: { ...value, remaining } } };
+  return {
+    ...view,
+    features: { ...view.features, [feature]: rowWithRemaining(view.standing, value, remaining) },
+  };
 };
 
 /** The row a scope starts with when a transfer credits a feature it never had. */
 const rowFromTransfer = (
+  standing: Standing,
   event: { readonly feature: string; readonly amount: number; readonly interval: string },
   grant: FeatureEntitlement["grants"],
+): FeatureEntitlement => {
+  const base: FeatureEntitlement = {
+    included: 0,
+    used: 0,
+    reserved: 0,
+    remaining: event.amount,
+    carried: 0,
+    allowed: false,
+    overage: "block",
+    resets: "never",
+    resetsAt: null,
+    ...(grant === undefined ? {} : { grants: grant }),
+  };
+
+  return { ...base, allowed: allowsOne(standing, judgedOf(base, {})) };
+};
+
+/** The same row with a new count, rejudged against the standing. */
+const rowWithRemaining = (
+  standing: Standing,
+  value: FeatureEntitlement,
+  remaining: number,
 ): FeatureEntitlement => ({
-  included: 0,
-  used: 0,
-  reserved: 0,
-  remaining: event.amount,
-  carried: 0,
-  allowed: true,
-  overage: "block",
-  resets: "never",
-  resetsAt: null,
-  ...(grant === undefined ? {} : { grants: grant }),
+  ...value,
+  remaining,
+  allowed: allowsOne(standing, judgedOf(value, { remaining })),
 });
 
 export const initialEntitlements: EntitlementsState = {
@@ -439,23 +503,38 @@ export class Entitlements extends Domain.View("Entitlements", {
       for (const returned of event.returned) {
         const current = features[returned.feature];
 
+        const grant =
+          returned.kind === "grant" && returned.grantId !== undefined
+            ? {
+                id: returned.grantId,
+                granted: returned.amount,
+                remaining: returned.amount,
+                ...(returned.expiresAt === undefined ? {} : { expiresAt: returned.expiresAt }),
+              }
+            : undefined;
+
         features[returned.feature] =
           current === undefined
             ? {
                 ...rowFromTransfer(
+                  view.standing,
                   {
                     feature: returned.feature,
                     amount: returned.amount,
                     interval: returned.interval,
                   },
-                  undefined,
+                  grant === undefined ? undefined : [grant],
                 ),
                 remaining: returned.amount,
                 resets: returned.interval === "never" ? "never" : "month",
               }
             : {
-                ...current,
-                remaining: (current.remaining ?? 0) + returned.amount,
+                ...rowWithRemaining(
+                  view.standing,
+                  current,
+                  (current.remaining ?? 0) + returned.amount,
+                ),
+                ...(grant === undefined ? {} : { grants: [...(current.grants ?? []), grant] }),
               };
       }
 
@@ -498,10 +577,11 @@ export class Entitlements extends Domain.View("Entitlements", {
       const sourceRow = (value: FeatureEntitlement | undefined): FeatureEntitlement =>
         value === undefined
           ? rowFromTransfer(
+              view.standing,
               { feature: event.feature, interval: event.interval, amount: event.fromAfter },
               undefined,
             )
-          : { ...value, remaining: event.fromAfter };
+          : rowWithRemaining(view.standing, value, event.fromAfter);
 
       const targetRow = (value: FeatureEntitlement | undefined): FeatureEntitlement => {
         const grants =
@@ -519,12 +599,12 @@ export class Entitlements extends Domain.View("Entitlements", {
 
         return value === undefined
           ? rowFromTransfer(
+              view.standing,
               { feature: event.feature, interval: event.interval, amount: event.toAfter },
               grants,
             )
           : {
-              ...value,
-              remaining: event.toAfter,
+              ...rowWithRemaining(view.standing, value, event.toAfter),
               ...(grants === undefined ? {} : { grants }),
             };
       };
@@ -548,36 +628,40 @@ export class Entitlements extends Domain.View("Entitlements", {
       }
 
       return withAccount(
-        {
-          ...view,
-          tier: event.tier,
-          plans,
-          status: "trialing",
-          standing: "good",
-          periodStart: event.periodStart,
-          periodEnd: event.periodEnd,
-          cancelAtPeriodEnd: false,
-          dunningAttempts: 0,
-          credits: event.credits,
-          prepaidCredits: event.prepaidCredits ?? 0,
-          ...(event.resetAt === undefined ? {} : { resetAt: event.resetAt }),
-          features: featuresOf(
-            event.allowances,
-            event.rates,
-            event.credits,
-            // A fresh standing holds nothing; a grant carried from a previous
-            // standing is not usage, and `featuresOf` keeps it.
-            0,
-            view.features,
-            remaining,
-            event.periodEnd,
-            "good",
-            false,
-            event.resetAt,
-            view.billingControls,
+        withStanding(
+          {
+            ...view,
+            tier: event.tier,
             plans,
-          ),
-        },
+            status: "trialing",
+            standing: "good",
+            periodStart: event.periodStart,
+            periodEnd: event.periodEnd,
+            cancelAtPeriodEnd: false,
+            dunningAttempts: 0,
+            credits: event.credits,
+            prepaidCredits: event.prepaidCredits ?? 0,
+            ...(event.resetAt === undefined ? {} : { resetAt: event.resetAt }),
+            features: featuresOf(
+              event.allowances,
+              event.rates,
+              event.credits,
+              // A fresh standing holds nothing; a grant carried from a previous
+              // standing is not usage, and `featuresOf` keeps it.
+              0,
+              view.features,
+              remaining,
+              event.periodEnd,
+              "good",
+              false,
+              event.resetAt,
+              view.billingControls,
+              plans,
+            ),
+          },
+          "trialing",
+          "good",
+        ),
         context,
       );
     },
@@ -593,36 +677,40 @@ export class Entitlements extends Domain.View("Entitlements", {
       }
 
       return withAccount(
-        {
-          ...view,
-          tier: event.tier,
-          plans,
-          status: "active",
-          standing: "good",
-          periodStart: event.periodStart,
-          periodEnd: event.periodEnd,
-          cancelAtPeriodEnd: false,
-          dunningAttempts: 0,
-          ...(event.currency === undefined ? {} : { currency: event.currency }),
-          credits: event.credits,
-          prepaidCredits: event.prepaidCredits ?? 0,
-          features: featuresOf(
-            event.allowances,
-            event.rates,
-            event.credits,
-            // A fresh standing holds nothing; a grant carried from a previous
-            // standing is not usage, and `featuresOf` keeps it.
-            0,
-            view.features,
-            remaining,
-            event.periodEnd,
-            "good",
-            false,
-            undefined,
-            view.billingControls,
+        withStanding(
+          {
+            ...view,
+            tier: event.tier,
             plans,
-          ),
-        },
+            status: "active",
+            standing: "good",
+            periodStart: event.periodStart,
+            periodEnd: event.periodEnd,
+            cancelAtPeriodEnd: false,
+            dunningAttempts: 0,
+            ...(event.currency === undefined ? {} : { currency: event.currency }),
+            credits: event.credits,
+            prepaidCredits: event.prepaidCredits ?? 0,
+            features: featuresOf(
+              event.allowances,
+              event.rates,
+              event.credits,
+              // A fresh standing holds nothing; a grant carried from a previous
+              // standing is not usage, and `featuresOf` keeps it.
+              0,
+              view.features,
+              remaining,
+              event.periodEnd,
+              "good",
+              false,
+              undefined,
+              view.billingControls,
+              plans,
+            ),
+          },
+          "active",
+          "good",
+        ),
         context,
       );
     },
@@ -641,7 +729,10 @@ export class Entitlements extends Domain.View("Entitlements", {
           event.entity,
           featuresOf(
             mergeAllowances(plans),
-            mergeRates(plans),
+            // Credits are one pool per customer (ADR 0002) and an entity
+            // reaches them through a pooled item, never as its own source
+            // (ADR 0040 §6). A credit row on a scope would be a second pool.
+            {},
             view.credits,
             heldOf(entity.features),
             entity.features,
@@ -675,7 +766,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       const plans = withPlan(view.plans, planRowOf(event, event.versionAfter ?? 1));
 
       return withAccount(
-        {
+        syncEntityBilled({
           ...rest,
           tier: event.tier,
           plans,
@@ -703,7 +794,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             plans,
           ),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
-        },
+        }),
         context,
       );
     },
@@ -721,33 +812,84 @@ export class Entitlements extends Domain.View("Entitlements", {
         // event then moves the customer's one row and only that.
         if (feature === undefined) {
           return withAccount(
-            event.poolAfter === undefined
-              ? view
-              : withPoolRow(view, event.feature, event.poolAfter),
+            syncEntityBilled(
+              event.poolAfter === undefined
+                ? view
+                : withPoolRow(view, event.feature, event.poolAfter),
+            ),
             context,
           );
         }
 
         const updated = withEntityFeature(view, event.entity, event.feature, (value) => {
           const row = value ?? feature;
+          const billed = event.billedAfter ?? row.billed ?? 0;
 
           return {
             ...row,
             used: event.usedAfter,
             remaining: event.remainingAfter,
             ...(grants === undefined ? {} : { grants: [...grants] }),
+            ...(event.billedAfter === undefined ? {} : { billed: event.billedAfter }),
+            ...(linesOfEvent(event).length === 0
+              ? {}
+              : {
+                  priced: linesOfEvent(event).reduce(
+                    (fold, line) => pricedAfter(fold, line),
+                    row.priced,
+                  ),
+                }),
             allowed: allowsOne(
               view.standing,
-              judgedOf(row, { used: event.usedAfter, remaining: event.remainingAfter }),
+              judgedOf(row, {
+                billed,
+                used: event.usedAfter,
+                remaining: event.remainingAfter,
+              }),
             ),
           };
         });
 
         // A draw on the shared pool moves the customer's one row, never a copy.
-        return withAccount(
+        const pooled =
           event.poolAfter === undefined
             ? updated
-            : withPoolRow(updated, event.feature, event.poolAfter),
+            : withPoolRow(updated, event.feature, event.poolAfter);
+
+        // The money plane is the customer's: a scoped charge raises `billed`
+        // there, so the customer's row carries the new total even though the
+        // units were the scope's own.
+        const customer = pooled.features[event.feature];
+
+        if (customer === undefined || event.billedAfter === undefined) {
+          return withAccount(syncEntityBilled(pooled), context);
+        }
+
+        const lines = linesOfEvent(event);
+
+        return withAccount(
+          syncEntityBilled({
+            ...pooled,
+            features: {
+              ...pooled.features,
+              [event.feature]: {
+                ...customer,
+                billed: event.billedAfter,
+                ...(lines.length === 0
+                  ? {}
+                  : {
+                      priced: lines.reduce(
+                        (fold, line) => pricedAfter(fold, line),
+                        customer.priced,
+                      ),
+                    }),
+                allowed: allowsOne(
+                  pooled.standing,
+                  judgedOf(customer, { billed: event.billedAfter }),
+                ),
+              },
+            },
+          }),
           context,
         );
       }
@@ -776,7 +918,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       }
 
       return withAccount(
-        {
+        syncEntityBilled({
           ...view,
           credits: event.creditsAfter,
           prepaidCredits: Math.max(0, Math.min(view.prepaidCredits ?? 0, event.creditsAfter)),
@@ -812,7 +954,7 @@ export class Entitlements extends Domain.View("Entitlements", {
               };
             })(),
           },
-        },
+        }),
         context,
       );
     },
@@ -1113,18 +1255,25 @@ export class Entitlements extends Domain.View("Entitlements", {
 
         const feature: FeatureEntitlement =
           existing === undefined
-            ? {
-                included: 0,
-                used: 0,
-                reserved: 0,
-                remaining: event.remainingAfter,
-                carried: 0,
-                allowed: true,
-                overage: "block",
-                resets: "never",
-                resetsAt: null,
-                grants: [grant],
-              }
+            ? (() => {
+                const base: FeatureEntitlement = {
+                  included: 0,
+                  used: 0,
+                  reserved: 0,
+                  remaining: event.remainingAfter,
+                  carried: 0,
+                  allowed: false,
+                  overage: "block",
+                  resets: "never",
+                  resetsAt: null,
+                  grants: [grant],
+                };
+
+                return {
+                  ...base,
+                  allowed: allowsOne(view.standing, judgedOf(base, {})),
+                };
+              })()
             : {
                 ...existing,
                 remaining: event.remainingAfter,
@@ -1298,7 +1447,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       const { [event.feature]: _previous, ...resetAt } = view.resetAt ?? {};
 
       return withAccount(
-        {
+        syncEntityBilled({
           ...view,
           ...(event.resetAt === null
             ? {}
@@ -1324,13 +1473,13 @@ export class Entitlements extends Domain.View("Entitlements", {
               ),
             },
           },
-        },
+        }),
         context,
       );
     },
     UsageReset: (view, event, context): EntitlementsState =>
       withAccount(
-        {
+        syncEntityBilled({
           ...view,
           features: Object.fromEntries(
             Object.entries(view.features).map(([feature, value]) => {
@@ -1396,7 +1545,7 @@ export class Entitlements extends Domain.View("Entitlements", {
               ];
             }),
           ),
-        },
+        }),
         context,
       ),
     // A scheduled change is a fact about the next period, so it moves nothing
@@ -1777,14 +1926,35 @@ const withStanding = (
   view: EntitlementsState,
   status: SubscriptionStatus,
   standing: Standing,
-): EntitlementsState => ({
-  ...view,
-  status,
-  standing,
-  features: Object.fromEntries(
-    Object.entries(view.features).map(([feature, value]) => [feature, rejudged(value, standing)]),
-  ),
-});
+): EntitlementsState =>
+  syncEntityBilled({
+    ...view,
+    status,
+    standing,
+    features: Object.fromEntries(
+      Object.entries(view.features).map(([feature, value]) => [feature, rejudged(value, standing)]),
+    ),
+    // An entity's rows carry the same judgement, so a standing that goes blocked
+    // cannot leave a scope offering work the write path refuses.
+    ...(view.entities === undefined
+      ? {}
+      : {
+          entities: Object.fromEntries(
+            Object.entries(view.entities).map(([id, entity]) => [
+              id,
+              {
+                ...entity,
+                features: Object.fromEntries(
+                  Object.entries(entity.features).map(([feature, value]) => [
+                    feature,
+                    rejudged(value, standing),
+                  ]),
+                ),
+              },
+            ]),
+          ),
+        }),
+  });
 
 /**
  * Move the shared pool and its held credits together, so every credit-priced

@@ -438,9 +438,30 @@ export const pooledSourceOf = (
     prepaidCredits: state.prepaidCredits,
   });
 
-  const source = balance.breakdown.find((row) => row.kind === "plan");
+  // The pool is the customer's plan item plus whatever a close carried or an
+  // archive returned to it. A standalone grant is its own source, not the
+  // shared one, so it is not summed here (ADR 0040 §4).
+  const pooled = balance.breakdown.filter((row) => row.kind === "plan" || row.kind === "rollover");
+  const source = pooled[0];
 
-  return source === undefined ? null : { ...source, scope: CUSTOMER_SCOPE, pooled: true };
+  if (source === undefined) return null;
+
+  const unlimited = pooled.some((row) => row.remaining === null);
+
+  const granted = pooled.some((row) => row.granted === null)
+    ? null
+    : pooled.reduce((sum, row) => sum + (row.granted ?? 0), 0);
+
+  const remaining = unlimited ? null : pooled.reduce((sum, row) => sum + (row.remaining ?? 0), 0);
+
+  return {
+    ...source,
+    scope: CUSTOMER_SCOPE,
+    pooled: true,
+    granted,
+    remaining,
+    usage: pooled.reduce((sum, row) => sum + row.usage, 0),
+  };
 };
 
 /**

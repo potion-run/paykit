@@ -779,16 +779,25 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
 const judgedOf = (
   state: SubscribedState,
   feature: string,
-  over: { readonly remaining?: number | null; readonly carried?: number } = {},
+  over: {
+    readonly remaining?: number | null;
+    readonly carried?: number;
+    readonly reserved?: number;
+  } = {},
 ): JudgedFeature => {
   const allowance = allowancesOf(state)[feature];
   const rates = ratesOf(state)[feature];
   const included = allowance?.included ?? null;
   const remaining = over.remaining === undefined ? availableOf(state, feature) : over.remaining;
   const used = usedOf(state, feature);
+
   // A credit-priced feature shares one pool: its `reserved` is the credits
-  // every open hold kept out, not the units held on this feature.
-  const reserved = rates === undefined ? reservedOf(state, feature) : reservedCreditsOf(state);
+  // every open hold kept out, not the units held on this feature. An entity
+  // scope owns no holds — they belong to the customer — so it reserves none of
+  // its own cap; a pooled draw is already lowered on the pool itself.
+  const reserved =
+    over.reserved ?? (rates === undefined ? reservedOf(state, feature) : reservedCreditsOf(state));
+
   const spendLimit = spendLimitOf(state, feature);
 
   // The write path knows `included`, a read model knows `carried`; the ceiling
@@ -1819,7 +1828,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         standing: standingOf(state.status),
         feature: judgedOf(scoped, command.feature, {
           ...(shared === undefined ? {} : { remaining: shared }),
-          ...(command.entity === undefined ? {} : { carried: 0 }),
+          ...(command.entity === undefined ? {} : { carried: 0, reserved: 0 }),
         }),
         ask: {
           amount: command.amount,
