@@ -1266,7 +1266,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       const scoped = scopeStateOf(current, command.entity);
       const requestedVersion = command.version ?? INITIAL_PLAN_VERSION;
-      const heldVersion = scoped.plans[command.tier]?.version;
+      const heldVersion = scoped.plans?.[command.tier]?.version;
 
       // A deploy that is older than the state it serves must not write the
       // older generation over the newer one (ADR 0047 §5).
@@ -1452,7 +1452,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }
 
         const requestedVersion = move.version ?? INITIAL_PLAN_VERSION;
-        const heldVersion = current.plans[move.tier]?.version;
+        const heldVersion = current.plans?.[move.tier]?.version;
 
         if (heldVersion !== undefined && heldVersion > requestedVersion) {
           return new PlanVersionStale({
@@ -3099,7 +3099,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
 
       const requestedVersion = command.version ?? INITIAL_PLAN_VERSION;
-      const heldVersion = state.plans[command.tier]?.version;
+      const heldVersion = state.plans?.[command.tier]?.version;
 
       if (heldVersion !== undefined && heldVersion > requestedVersion) {
         return new PlanVersionStale({
