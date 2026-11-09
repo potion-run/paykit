@@ -16,6 +16,13 @@ import {
 } from "../../src/Subscription/Entitlements.view.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
+  allowancesOf,
+  currencyOf,
+  intervalOf,
+  pendingPlanOf,
+  planIdOf,
+  priceOf,
+  ratesOf,
   initialSubscriptionState,
   billedOf,
   remainingOf,
@@ -83,7 +90,7 @@ const billingMatchesState = (state: SubscriptionState, view: BillingStateView): 
 
   if (view.account !== propertyAccount) return false;
 
-  if (view.tier !== state.tier) return false;
+  if (view.tier !== planIdOf(state)) return false;
 
   if (view.status !== state.status) return false;
 
@@ -93,7 +100,7 @@ const billingMatchesState = (state: SubscriptionState, view: BillingStateView): 
 
   if (view.dunningAttempts !== state.dunningAttempts) return false;
 
-  if (view.interval !== state.interval) return false;
+  if (view.interval !== intervalOf(state)) return false;
 
   if (view.anchorTz !== state.period.anchorTz) return false;
 
@@ -105,20 +112,27 @@ const billingMatchesState = (state: SubscriptionState, view: BillingStateView): 
     return false;
   }
 
-  if (view.currency !== state.currency) return false;
+  if (view.currency !== currencyOf(state)) return false;
 
   if (!sameDate(view.trialEndsAt, state.trialEndsAt)) return false;
 
   if (!sameDate(view.graceUntil, state.graceUntil)) return false;
 
-  if (JSON.stringify(view.price) !== JSON.stringify(state.price)) return false;
+  if (JSON.stringify(view.price) !== JSON.stringify(priceOf(state))) return false;
 
   if (JSON.stringify(view.proration) !== JSON.stringify(state.proration)) return false;
 
   // A scheduled change is on the page, so a page that trails it offers the wrong
   // action: "withdraw" with nothing to withdraw, or no way to leave a move the
   // account no longer wants.
-  if (JSON.stringify(view.pendingTier) !== JSON.stringify(state.pendingTier)) return false;
+  if ((view.pendingTier?.tier ?? null) !== (pendingPlanOf(state)?.planId ?? null)) return false;
+
+  if (
+    DateTime.toEpochMillis(view.pendingTier?.at ?? DateTime.makeUnsafe(0)) !==
+    DateTime.toEpochMillis(pendingPlanOf(state)?.at ?? DateTime.makeUnsafe(0))
+  ) {
+    return false;
+  }
 
   return view.prorationInvoice === state.prorationInvoice;
 };
@@ -167,7 +181,7 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     return true;
   }
 
-  if (view.tier !== state.tier) return false;
+  if (view.tier !== planIdOf(state)) return false;
 
   if (view.status !== state.status) return false;
 
@@ -187,7 +201,7 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
     return false;
   }
 
-  for (const [feature, allowance] of Object.entries(state.allowances)) {
+  for (const [feature, allowance] of Object.entries(allowancesOf(state))) {
     const entry = view.features[feature];
 
     if (entry === undefined) return false;
@@ -209,7 +223,7 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
   // every open hold, and its `reserved` is those holds' credits, not units.
   const heldCredits = reservedCreditsOf(state);
 
-  for (const feature of Object.keys(state.rates)) {
+  for (const feature of Object.keys(ratesOf(state))) {
     const entry = view.features[feature];
 
     if (entry === undefined) return false;
@@ -258,7 +272,7 @@ const agree = (
   now: DateTime.Utc,
 ): boolean => {
   if (state._tag === "Subscribed") {
-    const allowance = state.allowances[probe.feature];
+    const allowance = allowancesOf(state)[probe.feature];
 
     if (allowance !== undefined && isFlagGrant(allowance)) return true;
   }

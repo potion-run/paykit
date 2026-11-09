@@ -4,6 +4,8 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { planItemsOf, planOf } from "../../src/Catalog.ts";
 import {
+  allowancesOf,
+  priceOf as statePriceOf,
   initialSubscriptionState,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -94,7 +96,7 @@ describe("pricing", () => {
 
             if (changed === undefined) return false;
 
-            if (!same(changed.priceBefore, before.price)) return false;
+            if (!same(changed.priceBefore, statePriceOf(before))) return false;
 
             if (!same(changed.priceAfter, priceOf(plan.tier))) return false;
           } else {
@@ -108,15 +110,16 @@ describe("pricing", () => {
 
           if (plan._tag === "ChangeTier") expectedPrice = priceOf(plan.tier);
 
-          if (!same(after.price, expectedPrice)) return false;
+          if (!same(statePriceOf(after), expectedPrice)) return false;
 
-          if (plan._tag === "PeriodEnded" && !same(after.price, before.price)) return false;
+          if (plan._tag === "PeriodEnded" && !same(statePriceOf(after), statePriceOf(before)))
+            return false;
         }
 
         // The state and the log agree, prices included.
         if (!same(canonical(state), canonical(foldAt(committed, now)))) return false;
 
-        return same(subscribed(state).price, expectedPrice);
+        return same(statePriceOf(subscribed(state)), expectedPrice);
       },
       { runs: 60, size: 40 },
     ),
@@ -142,7 +145,7 @@ describe("pricing", () => {
         if (!isAccepted(opened)) return false;
         let state = evolveAt(initialSubscriptionState, opened, start, "free");
 
-        if (subscribed(state).price !== undefined) return false;
+        if (statePriceOf(subscribed(state)) !== undefined) return false;
 
         const changed = decideAt(
           state,
@@ -154,7 +157,8 @@ describe("pricing", () => {
         if (!isAccepted(changed)) return false;
         state = evolveAt(state, changed, start, "upgrade");
 
-        if (!same(subscribed(state).price, planOf(testCatalog, priced)?.price)) return false;
+        if (!same(statePriceOf(subscribed(state)), planOf(testCatalog, priced)?.price))
+          return false;
 
         const downgraded = decideAt(
           state,
@@ -166,9 +170,9 @@ describe("pricing", () => {
         if (!isAccepted(downgraded)) return false;
         state = evolveAt(state, downgraded, start, "downgrade");
 
-        if (subscribed(state).price !== undefined) return false;
+        if (statePriceOf(subscribed(state)) !== undefined) return false;
 
-        return same(subscribed(state).allowances, free);
+        return same(allowancesOf(subscribed(state)), free);
       },
       { runs: 20 },
     ),

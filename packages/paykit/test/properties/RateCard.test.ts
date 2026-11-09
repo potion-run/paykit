@@ -17,6 +17,7 @@ import { prorate } from "../../src/Proration.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
 import { SettleHold, UsageSettled } from "../../src/Subscription/SettleHold.command.ts";
+import { priceOf } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
@@ -292,7 +293,7 @@ describe("the rate an event was priced at is the rate it records", () => {
 
         const proration =
           prorate({
-            from: withHold.price,
+            from: priceOf(withHold),
             to: next.price,
             period: withHold.period,
             at: start,

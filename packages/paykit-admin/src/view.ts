@@ -11,6 +11,7 @@ import {
   AccountId,
   outstandingRefundOf,
   standingPhaseOfView,
+  planIdOf,
 } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
 import * as Match from "effect/Match";
@@ -1883,7 +1884,7 @@ const previewAnswerView = (preview: PreviewState, h: HtmlBuilder<Message>): Html
             [h.Class("pk-muted")],
             [
               state._tag === "Subscribed"
-                ? `Result: ${state.status} on ${state.tier}`
+                ? `Result: ${state.status} on ${planIdOf(state)}`
                 : "Result: no standing",
             ],
           ),

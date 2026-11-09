@@ -168,16 +168,26 @@ to the sources behind a count, and this model is which plan occupies which slot 
 
 | Action | Source | Move it makes |
 | --- | --- | --- |
-| `attach` | `Subscribe`, `ChangeTier` | a new plan or a replacement in the plan's group |
-| `addAddOn` | the add-on branch of an attach operation | sets the add-on beside every group |
-| `schedulePlan` | `ScheduleTierChange` | appends a future, ordered phase |
-| `withdrawPhase` | `WithdrawTierChange` | drops a phase that has not fired |
-| `applyPhase` | the scheduler at a phase's `startsAt` | moves one group, at that instant |
+| `attach` | `Subscribe`, `ChangeTier` (`plans` is the plan set; `withPlan` replaces a group's row) | a new plan or a replacement in the plan's group |
+| `addAddOn` | the add-on branch of an attach operation (`addOn` on the plan) | sets the add-on beside every group |
+| `schedulePlan` | `ScheduleTierChange` (`PlanChangeScheduled` carries `at`) | appends a future, ordered phase |
+| `withdrawPhase` | `WithdrawTierChange` (drops the head phase) | drops a phase that has not fired |
+| `applyPhase` | `ClosePeriod` / `PeriodEnded` applies every phase due at the boundary, in order | moves one group, at that instant |
 | `cancelGroup` | `ScheduleCancellation` | a cancellation waiting for the boundary |
 | `uncancelGroup` | `Resume` | withdraws the cancellation, not the dropped phases |
 | `cancelNow` | `CancelImmediately` | the same resolution, performed now |
 | `close` | `ClosePeriod`, `PeriodEnded` | resolves pending cancellations, rolls the period, ends an empty account |
 | `tick` | the platform clock | stops at a due phase and at the boundary |
+
+The code now carries the state this model names: `SubscribedState.plans` is one row per active plan
+(`PlanRow`: plan id, group, add-on flag, allowances, pool grant, expiry rule, top-up line, rate
+cards, cadence, currency, price) and `SubscribedState.schedule` is the ordered phase list the old
+`pendingTier` became. `applyPhase` is applied by the close, which is the one scheduler the code has
+today; the phase's own instant is checked when it is scheduled (`PlanPhaseNotFuture`). A phase for a
+group the account does not have yet adds that group's row at the boundary. The two consequences the
+model does not state are the interim ones: an account still holds **one** allowance per feature, so
+two plans that grant the same feature merge their `included` counts rather than reporting two
+sources (`PlanSet.mergeAllowances`), and `addOn` is carried by the row, not by a second command.
 
 | Invariant | What it says | ADR |
 | --- | --- | --- |

@@ -18,6 +18,7 @@ import {
   subscribedIn,
   testCatalog as generatedCatalog,
 } from "../properties/Arbitraries.ts";
+import { withSoldPlan } from "../support/Plans.ts";
 
 const messages = feature({ id: "messages", name: "Messages" });
 
@@ -175,11 +176,10 @@ describe("planChangeTier", () => {
 
     const state = subscribedIn(multiCurrency, "pro");
 
-    const eur = {
-      ...state,
+    const eur = withSoldPlan(state, {
       currency: "eur",
       price: { amount: 1_900, currency: "eur", interval: "month" as const },
-    };
+    });
 
     const plan = planChangeTier(multiCurrency, "scale", eur, start);
     expect(plan?.input.price).toEqual({ amount: 9_900, currency: "eur", interval: "month" });

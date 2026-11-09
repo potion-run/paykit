@@ -120,6 +120,12 @@ export {
   SubscribedState,
   SubscriptionState,
   SubscriptionStatus,
+  addOnsOf,
+  allowancesOf,
+  pendingPlanOf,
+  planIdOf,
+  planRowsOf,
+  scheduleOf,
   standingOf,
 } from "./Subscription/Subscription.state.ts";
 

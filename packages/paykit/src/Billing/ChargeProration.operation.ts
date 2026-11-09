@@ -6,6 +6,7 @@ import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from
 import { NoProrationDue } from "../Subscription/RecordProrationInvoice.command.ts";
 import { RecordProrationInvoice } from "../Subscription/RecordProrationInvoice.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { planIdOf } from "../Subscription/Subscription.state.ts";
 
 /** Which account's unbilled tier change to collect. */
 export interface ChargeProrationInput {
@@ -84,7 +85,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
     // before the field existed falls back to the money and period it moved.
     const changeId =
       state.prorationId === undefined
-        ? `${input.account}:${state.tier}:${state.period.start.epochMilliseconds}:${proration.due}:${proration.currency}`
+        ? `${input.account}:${planIdOf(state)}:${state.period.start.epochMilliseconds}:${proration.due}:${proration.currency}`
         : `${input.account}:${state.period.start.epochMilliseconds}:${state.prorationId}`;
 
     // The invoice is collected by the provider the standing already belongs to.

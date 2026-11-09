@@ -3,8 +3,10 @@ import { isQuantityGrant, pricingOf, type Allowances } from "../Allowance.ts";
 import type { CreditRateCards } from "../Feature.ts";
 import { currencyOfPricing } from "../Pricing.ts";
 import type { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import { DEFAULT_PLAN_GROUP } from "./PlanSet.ts";
 import {
   chargedWith,
+  currencyOf,
   includedRemainingOf,
   nextResetAt,
   periodTiedReset,
@@ -104,6 +106,10 @@ export const carriedPrepaidOf = (
 /** The terms an activation records, as a command carries them. */
 export interface ActivationInput<S extends SubscriptionStatus = SubscriptionStatus> {
   readonly tier: string;
+  /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+  readonly group?: string;
+  /** Whether the plan stacks beside every group instead of filling one. */
+  readonly addOn?: boolean;
   readonly allowances: Allowances;
   /** The whole pool the event records: the grant plus any pack carried in. */
   readonly credits: number;
@@ -146,6 +152,10 @@ export const resetWindowsOf = (
 /** The fields an activation event records, in the shape both events share. */
 export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStatus> {
   readonly tier: string;
+  /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+  readonly group?: string;
+  /** Whether the plan stacks beside every group instead of filling one. */
+  readonly addOn?: boolean;
   readonly allowances: Allowances;
   readonly remaining: Record<string, number | null>;
   readonly credits: number;
@@ -203,6 +213,13 @@ export const activationOf = <S extends SubscriptionStatus>(
 
   return {
     tier: input.tier,
+    // A plan in the default group is the log's ordinary case and stays
+    // unwritten, so an activation recorded before plan groups existed decodes
+    // to the same shape an ordinary one does (ADR 0039 §1).
+    ...(input.group === undefined || input.group === DEFAULT_PLAN_GROUP
+      ? {}
+      : { group: input.group }),
+    ...(input.addOn === true ? { addOn: true } : {}),
     allowances: input.allowances,
     remaining: startingRemaining(input.allowances),
     credits: input.credits,
@@ -228,6 +245,10 @@ export const activationOf = <S extends SubscriptionStatus>(
  */
 export interface StandingGrant {
   readonly tier: string;
+  /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+  readonly group?: string;
+  /** Whether the plan stacks beside every group instead of filling one. */
+  readonly addOn?: boolean;
   readonly allowances: Allowances;
   readonly remaining: Record<string, number | null>;
   readonly credits: number;
@@ -301,30 +322,40 @@ export const standingFrom = (
     }
   }
 
+  // A trial event has no interval and an activation always does; a tier with no
+  // price and no unit prices keeps the currency the account already had.
+  const currency =
+    grant.currency ?? (previous._tag === "Subscribed" ? currencyOf(previous) : undefined);
+
   return {
     _tag: "Subscribed",
-    tier: grant.tier,
+    plans: {
+      [grant.tier]: {
+        planId: grant.tier,
+        group: grant.group ?? DEFAULT_PLAN_GROUP,
+        addOn: grant.addOn ?? false,
+        allowances: grant.allowances,
+        // The row states the plan's own pool grant; the event's `credits` is the
+        // whole pool, which includes a pack the account already bought.
+        credits: grant.credits - (grant.prepaidCredits ?? 0),
+        creditsExpire: grant.creditsExpire,
+        ...(grant.topUp === undefined ? {} : { topUp: grant.topUp }),
+        rates: grant.rates,
+        interval: grant.interval ?? grant.price?.interval ?? "month",
+        ...(currency === undefined ? {} : { currency }),
+        ...(grant.price === undefined ? {} : { price: grant.price }),
+      },
+    },
+    schedule: [],
     status: grant.statusAfter,
     period: {
       start: grant.periodStart,
       end: grant.periodEnd,
       anchorTz: grant.anchorTz,
     },
-    interval: grant.interval ?? grant.price?.interval ?? "month",
     cancelAtPeriodEnd: false,
     credits: grant.credits,
     prepaidCredits: grant.prepaidCredits ?? 0,
-    creditsExpire: grant.creditsExpire,
-    ...(grant.topUp === undefined ? {} : { topUp: grant.topUp }),
-    rates: grant.rates,
-    // A trial event has no interval and an activation always does; a tier with
-    // no price and no unit prices keeps the currency the account already had.
-    ...(grant.currency === undefined
-      ? previous._tag === "Subscribed" && previous.currency !== undefined
-        ? { currency: previous.currency }
-        : {}
-      : { currency: grant.currency }),
-    ...(grant.price === undefined ? {} : { price: grant.price }),
     ...(grant.price === undefined || grant.chargeId === undefined
       ? {}
       : { charged: chargedWith(previous, grant.price.currency, grant.price.amount) }),
@@ -335,7 +366,6 @@ export const standingFrom = (
     remaining,
     holds: {},
     ...(grants === undefined ? {} : { grants }),
-    allowances: grant.allowances,
     quantities: startingQuantities(grant.allowances),
     refs: previous.refs,
     ...(previous.billingControls === undefined

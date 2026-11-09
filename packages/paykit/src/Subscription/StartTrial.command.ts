@@ -16,6 +16,12 @@ import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 /** The account's trial began and its first period is open. */
 export class TrialStarted extends Domain.Event("TrialStarted", {
   tier: Schema.String,
+  /** The group the plan fills; absent means the default group. */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether the plan stacks beside every group instead of filling one. */
+  addOn: Schema.optionalKey(Schema.Boolean),
+  /** The cadence the plan was bought with. */
+  interval: Schema.optionalKey(Schema.Literals(["month", "annual"])),
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   /** The credit pool this trial grants. */

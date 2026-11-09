@@ -14,6 +14,8 @@ import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import {
+  priceOf,
+  ratesOf,
   creditRateOf,
   initialSubscriptionState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -593,7 +595,7 @@ describe("a hold's captured rate", () => {
         const repriced = planTermsOf(after, "pro")!;
 
         const proration = prorate({
-          from: state.price,
+          from: priceOf(state),
           to: repriced.price,
           period: { start: state.period.start, end: state.period.end },
           at: start,
@@ -613,7 +615,7 @@ describe("a hold's captured rate", () => {
         if (!isAccepted(changed)) return false;
         state = evolveAt(state, changed, start, "reprice") as SubscribedState;
 
-        if (creditRateOf(state.rates["ai"]!, { dimension: "default" }) !== 10) return false;
+        if (creditRateOf(ratesOf(state)["ai"]!, { dimension: "default" }) !== 10) return false;
 
         if (settled > held) return true;
         const creditsBefore = state.credits;

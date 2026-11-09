@@ -4,6 +4,8 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { isFlagGrant, type Allowance } from "../../src/Allowance.ts";
 import {
+  allowancesOf,
+  ratesOf,
   billedOf,
   includedRemainingOf,
   initialSubscriptionState,
@@ -53,7 +55,7 @@ const updateBases = (
         if (state._tag !== "Subscribed") break;
 
         for (const feature of Object.keys(reset.remaining)) {
-          const allowance = state.allowances[feature];
+          const allowance = allowancesOf(state)[feature];
 
           if (allowance === undefined) continue;
           const included = includedRemainingOf(allowance);
@@ -97,7 +99,7 @@ const invariantsHold = (
 
   if (prepaid < 0 || prepaid > state.credits) return false;
 
-  for (const [feature, allowance] of Object.entries(state.allowances)) {
+  for (const [feature, allowance] of Object.entries(allowancesOf(state))) {
     const used = usedOf(state, feature);
     const reserved = reservedOf(state, feature);
     const remaining = remainingOf(state, feature);
@@ -145,7 +147,7 @@ const invariantsHold = (
     if (base !== undefined && base !== null && used + reserved + remaining !== base) return false;
   }
 
-  for (const feature of Object.keys(state.rates)) {
+  for (const feature of Object.keys(ratesOf(state))) {
     if (usedOf(state, feature) < 0) return false;
   }
 

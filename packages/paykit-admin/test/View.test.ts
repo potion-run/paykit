@@ -84,6 +84,20 @@ const render = (value: Model) => view(value, inertHtml as unknown as HtmlBuilder
 const billing = {
   account: account,
   tier: "pro",
+  plans: {
+    pro: {
+      planId: "pro",
+      group: "default",
+      addOn: false,
+      allowances: {},
+      credits: 0,
+      creditsExpire: "period" as const,
+      rates: {},
+      interval: "month" as const,
+      currency: "usd",
+    },
+  },
+  schedule: [],
   status: "active" as const,
   periodStart: at,
   periodEnd: at,

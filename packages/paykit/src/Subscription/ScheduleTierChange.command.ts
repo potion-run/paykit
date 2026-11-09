@@ -5,16 +5,37 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
+import { PlanPhaseNamesAddOn } from "./PlanPhaseNamesAddOn.rejection.ts";
+import { PlanPhaseNotFuture } from "./PlanPhaseNotFuture.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { PendingTier } from "./Subscription.state.ts";
 
-/** The standing will move to `tier` at the close of the current period. */
-export class PlanChangeScheduled extends Domain.Event("PlanChangeScheduled", PendingTier.fields) {}
+/** The standing will move to `tier` at `at`, carrying the terms it needs there. */
+export class PlanChangeScheduled extends Domain.Event("PlanChangeScheduled", {
+  tier: Schema.String,
+  /**
+   * The group the phase moves. Absent means the default group, which is also
+   * what a phase recorded before plan groups existed decodes to.
+   */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether the plan stacks beside every group instead of filling one. */
+  addOn: Schema.optionalKey(Schema.Boolean),
+  allowances: Allowances,
+  price: Schema.optionalKey(Price),
+  /** The pool this plan grants when the phase is the plan a boundary lands on. */
+  credits: Schema.Int,
+  creditsExpire: CreditsExpire,
+  topUp: Schema.optionalKey(TopUpTerms),
+  rates: CreditRateCards,
+  interval: Schema.optionalKey(Interval),
+  currency: Schema.optionalKey(Schema.String),
+  /** When the phase starts. The scheduler applies it at this instant. */
+  at: Schema.DateTimeUtc,
+}) {}
 
 /**
  * Move to another tier when the period ends, rather than now.
@@ -39,6 +60,15 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The group the phase moves; absent means the default group. */
+    group: Schema.optionalKey(Schema.String),
+    /** Whether the plan is an add-on rather than a group's plan. */
+    addOn: Schema.optionalKey(Schema.Boolean),
+    /**
+     * When the phase starts. Absent means the close of the current period, the
+     * only boundary a caller has to know about (ADR 0039 §3).
+     */
+    at: Schema.optionalKey(Schema.DateTimeUtc),
     allowances: Allowances,
     price: Schema.optionalKey(Price),
     credits: Schema.Int,
@@ -47,6 +77,14 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
     rates: CreditRateCards,
   },
   events: [PlanChangeScheduled],
-  rejects: [NotSubscribed, StandingEnded, PlanNotInCatalog, CurrencyMismatch, CatalogMismatch],
+  rejects: [
+    NotSubscribed,
+    StandingEnded,
+    PlanNotInCatalog,
+    PlanPhaseNotFuture,
+    PlanPhaseNamesAddOn,
+    CurrencyMismatch,
+    CatalogMismatch,
+  ],
   middleware: [Session, CatalogGuard],
 }) {}

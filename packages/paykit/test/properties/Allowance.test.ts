@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { planItemsOf } from "../../src/Catalog.ts";
 import {
+  allowancesOf,
   initialSubscriptionState,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -44,7 +45,7 @@ const activated = (tier: TierName): SubscribedState => {
   const state = evolveAt(initialSubscriptionState, decision, start, "subscribe");
 
   if (state._tag !== "Subscribed") throw new Error("Subscribe did not activate a standing");
-  expect(allowances).toEqual(state.allowances);
+  expect(allowances).toEqual(allowancesOf(state));
 
   return state;
 };
@@ -62,7 +63,7 @@ describe("allowance", () => {
       Arbitrary.schema(UsageScript),
       (script) => {
         let state = activated(script.tier);
-        const allowance = state.allowances.messages;
+        const allowance = allowancesOf(state).messages;
 
         if (allowance === undefined) return false;
         // Read the shape off the generated allowance rather than off the tier

@@ -16,6 +16,7 @@ import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 import { Verify, verifyState } from "../../src/Verify.ts";
+import { planRow } from "../support/Plans.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
 
@@ -37,20 +38,23 @@ const account = "acct_verify";
 const subscribed = (tierId: string, state?: Partial<SubscriptionState>): SubscriptionState =>
   ({
     _tag: "Subscribed",
-    tier: tierId,
+    plans: {
+      [tierId]: planRow(tierId, {
+        allowances: tierId === "free" ? free : pro,
+        ...(tierId === "pro" ? { price: proPrice, currency: "usd" } : {}),
+      }),
+    },
+    schedule: [],
     status: "active",
     period: {
       start: new Date("2030-01-01T00:00:00Z"),
       end: new Date("2030-02-01T00:00:00Z"),
       anchorTz: "UTC",
     },
-    interval: "month",
     cancelAtPeriodEnd: false,
     credits: 0,
     usage: {},
     remaining: {},
-    reserved: {},
-    allowances: {},
     refs: {},
     trialUsed: false,
     dedupeKeys: {},

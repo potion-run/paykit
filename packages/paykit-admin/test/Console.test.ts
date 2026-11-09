@@ -109,6 +109,21 @@ const opened = (): Model => {
 const billing: BillingStateView = {
   account: account,
   tier: "pro",
+  plans: {
+    pro: {
+      planId: "pro",
+      group: "default",
+      addOn: false,
+      allowances: {},
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+      interval: "month",
+      currency: "usd",
+      price: { amount: 1900, currency: "usd", interval: "month" },
+    },
+  },
+  schedule: [],
   status: "active" as const,
   periodStart: at,
   periodEnd: at,

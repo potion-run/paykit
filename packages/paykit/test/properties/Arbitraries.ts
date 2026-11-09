@@ -31,6 +31,7 @@ import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
+  priceOf as statePriceOf,
   initialSubscriptionState,
   SubscriptionState,
   type SubscribedState,
@@ -283,7 +284,7 @@ export const prorationFor = (state: SubscriptionState, tierId: TierName, now: Da
   if (state._tag !== "Subscribed") return undefined;
 
   const priced = prorate({
-    from: state.price,
+    from: statePriceOf(state),
     to: priceOf(tierId),
     period: { start: state.period.start, end: state.period.end },
     at: now,

@@ -63,7 +63,10 @@ describe("Subscribe purchase path", () => {
       const subscribe = yield* Subscribe(account);
       const started = yield* subscribe({ tier: "free" });
       expect(started).toEqual({ activated: true });
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free" });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { free: { planId: "free", group: "default", addOn: false } },
+      });
     }).pipe(withMemory),
   );
 
@@ -74,7 +77,10 @@ describe("Subscribe purchase path", () => {
       const refused = yield* Effect.flip(subscribe({ tier: "free" }));
       expect(refused._tag).toBe("AlreadySubscribed");
       // The first standing is untouched.
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free" });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { free: { planId: "free", group: "default", addOn: false } },
+      });
     }).pipe(withMemory),
   );
 
@@ -134,7 +140,11 @@ describe("Subscribe purchase path", () => {
 
       // The checkout is a purchase, not a second standing: the account is
       // still on the free tier until the provider reports the payment.
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free", credits: 0 });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { free: { planId: "free" } },
+        credits: 0,
+      });
 
       const action = yield* completeCheckout({
         id: "evt_pack_1",
@@ -144,7 +154,11 @@ describe("Subscribe purchase path", () => {
       });
 
       expect(action).toBe("purchased");
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "free", credits: 1_000 });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { free: { planId: "free" } },
+        credits: 1_000,
+      });
     }).pipe(withMemory),
   );
 
@@ -172,7 +186,7 @@ describe("Subscribe purchase path", () => {
       yield* subscribe({ tier: "free" });
       expect(yield* state).toMatchObject({
         _tag: "Subscribed",
-        tier: "free",
+        plans: { free: { planId: "free" } },
         credits: 1_000,
         prepaidCredits: 1_000,
       });

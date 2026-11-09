@@ -96,7 +96,7 @@ describe("webhook edge", () => {
       );
 
       expect(action).toBe("activated");
-      expect(yield* state).toMatchObject({ status: "active", tier: "pro" });
+      expect(yield* state).toMatchObject({ status: "active", plans: { pro: { planId: "pro" } } });
     }).pipe(run),
   );
 
@@ -138,7 +138,11 @@ describe("webhook edge", () => {
       );
 
       expect(action).toBe("purchased");
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { pro: { planId: "pro" } },
+        credits: 1_000,
+      });
 
       // A redelivery is the same command id, so it records nothing again.
       const redelivered = yield* handleWebhook(
@@ -152,7 +156,11 @@ describe("webhook edge", () => {
       );
 
       expect(redelivered).toBe("purchased");
-      expect(yield* state).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
+      expect(yield* state).toMatchObject({
+        _tag: "Subscribed",
+        plans: { pro: { planId: "pro" } },
+        credits: 1_000,
+      });
     }).pipe(run),
   );
 
@@ -168,7 +176,11 @@ describe("webhook edge", () => {
 
       expect(action).toBe("purchased");
       const current = yield* state;
-      expect(current).toMatchObject({ _tag: "Subscribed", tier: "pro", credits: 1_000 });
+      expect(current).toMatchObject({
+        _tag: "Subscribed",
+        plans: { pro: { planId: "pro" } },
+        credits: 1_000,
+      });
     }).pipe(run),
   );
 

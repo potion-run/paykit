@@ -900,6 +900,10 @@ export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
 
 export { PlanNotInCatalog } from "./Subscription/PlanNotInCatalog.rejection.ts";
 
+export { PlanPhaseNotFuture } from "./Subscription/PlanPhaseNotFuture.rejection.ts";
+
+export { PlanPhaseNamesAddOn } from "./Subscription/PlanPhaseNamesAddOn.rejection.ts";
+
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 
 export { PlanItemReset, ResetAllowance } from "./Subscription/ResetAllowance.command.ts";

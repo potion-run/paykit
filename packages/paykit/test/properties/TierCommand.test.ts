@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { prorate } from "../../src/Proration.ts";
-import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
+import { priceOf, initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 import {
   planChangeTier,
@@ -147,7 +147,7 @@ describe("tier command builders", () => {
           const quote =
             state._tag === "Subscribed"
               ? prorate({
-                  from: state.price,
+                  from: priceOf(state),
                   to: terms.price,
                   period: { start: state.period.start, end: state.period.end },
                   at,

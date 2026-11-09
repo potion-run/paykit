@@ -6,6 +6,7 @@ import { CatalogService } from "./CatalogService.ts";
 import { PaymentCapability, PaymentsProvider, PaymentsRouter, providerFor } from "./Payments.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
+import { planIdOf } from "./Subscription/Subscription.state.ts";
 
 /**
  * A priced tier is in force but the account carries no vendor reference for
@@ -94,7 +95,8 @@ export const verifyState = (
     return carriesRef ? [new OrphanProviderRef({ account, provider: Object.keys(refs)[0]! })] : [];
   }
 
-  const tier = planOf(catalog, state.tier);
+  const sold = planIdOf(state);
+  const tier = sold === "" ? null : planOf(catalog, sold);
 
   if (tier === null) return [];
 

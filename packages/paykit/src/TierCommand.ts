@@ -4,6 +4,7 @@ import { type Catalog, planTermsOf, type PlanTerms } from "./Catalog.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
+import { currencyOf, priceOf } from "./Subscription/Subscription.state.ts";
 import type { CreditsExpire, Price, TopUpTerms } from "./Tier.ts";
 
 /**
@@ -92,7 +93,7 @@ export const subscribeInputOf = (
  * ### Scheduling a move from the catalog
  * **Example:** The payload a console sends for the boundary
  * ```typescript
- * const input = scheduleTierChangeInputOf(catalog, "pro", standing.currency);
+ * const input = scheduleTierChangeInputOf(catalog, "pro", currencyOf(standing));
  * if (input !== null) yield* new ScheduleTierChange(input);
  * ```
  *
@@ -188,7 +189,7 @@ export const planChangeTier = (
   const terms = planTermsOf(
     catalog,
     tierId,
-    state._tag === "Subscribed" ? state.currency : undefined,
+    state._tag === "Subscribed" ? currencyOf(state) : undefined,
   );
 
   if (terms === null || terms.kind === "one_off") return null;
@@ -196,7 +197,7 @@ export const planChangeTier = (
   const proration =
     state._tag === "Subscribed"
       ? prorate({
-          from: state.price,
+          from: priceOf(state),
           to: terms.price,
           period: { start: state.period.start, end: state.period.end },
           at,

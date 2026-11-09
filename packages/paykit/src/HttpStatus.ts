@@ -28,6 +28,8 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
   switch (error._tag) {
     // The request names something the deploy does not have.
     case "PlanNotInCatalog":
+    case "PlanPhaseNotFuture":
+    case "PlanPhaseNamesAddOn":
     case "WebhookInvalid":
     case "CatalogInvalid":
     case "CatalogMismatch":
