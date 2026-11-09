@@ -31,7 +31,15 @@ import { RetiredProducts } from "../src/RetiredProducts.ts";
 const accessToken = process.env.POLAR_ACCESS_TOKEN;
 const hasToken = accessToken !== undefined && accessToken !== "";
 
+/**
+ * This case runs in **its own stage**, which is what makes its sweep safe: the
+ * sweep archives every sellable product of its stage that its catalog does not
+ * declare, so sharing a stage with `Prices.live.test.ts` would have it archive
+ * that file's tiers — and a product another file created between the two sweeps
+ * would make the second one non-empty and the idempotence assertion flaky.
+ */
 const { test } = Test.make({
+  stage: `${process.env.ALCHEMY_TEST_STAGE ?? "test_runner"}_retired`,
   providers: polarProviders({
     accessToken: Redacted.make(accessToken ?? ""),
     server: "sandbox",
