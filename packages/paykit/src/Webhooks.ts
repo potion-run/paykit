@@ -6,6 +6,10 @@ import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
 import { planOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
+import {
+  PendingActivationMissing,
+  PendingActivationStale,
+} from "./Subscription/PendingActivation.ts";
 import { PlanNotInCatalog } from "./Subscription/PlanNotInCatalog.rejection.ts";
 import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
@@ -230,10 +234,41 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
 
-        const activation = subscribeInputOf(catalog, event.tier, {
-          ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
-          ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
-        });
+        // The quote a checkout stored is the deal, not the catalog's defaults:
+        // a hosted purchase names the plan and not the negotiated allowances
+        // (ADR 0042 §1). A quote for another plan is stale; a custom plan with
+        // no quote cannot be activated from the catalog without recording a
+        // deal nobody agreed to.
+        const pending = state.pendingActivation;
+
+        if (pending !== undefined && pending.tier !== event.tier) {
+          return yield* new PendingActivationStale({
+            account: event.account,
+            tier: event.tier,
+            pendingTier: pending.tier,
+          });
+        }
+
+        if (pending === undefined && sold?.custom === true) {
+          return yield* new PendingActivationMissing({
+            account: event.account,
+            tier: event.tier,
+          });
+        }
+
+        const activation =
+          pending === undefined
+            ? subscribeInputOf(catalog, event.tier, {
+                ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
+                ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
+              })
+            : {
+                ...pending,
+                ...((pending.anchorTz ?? event.anchorTz) === undefined
+                  ? {}
+                  : { anchorTz: pending.anchorTz ?? event.anchorTz }),
+                ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
+              };
 
         if (activation === null) {
           return yield* new PlanNotInCatalog({ tier: event.tier });

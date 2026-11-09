@@ -906,7 +906,10 @@ const BillingCore = Layer.mergeAll(
           const scoped = scopeStateOf(state, request.entityId);
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
 
-          const plan = planChangeTier(catalog, request.tier, scoped, now);
+          const plan =
+            state._tag === "Subscribed"
+              ? planChangeTier(catalog, request.tier, scoped, now, request.price)
+              : null;
 
           if (plan === null) {
             return yield* bound(toChangeTierError)(
@@ -917,7 +920,7 @@ const BillingCore = Layer.mergeAll(
           // A bespoke set is judged by the same guard a wire caller meets, so
           // the in-process move and the Api move refuse the same things
           // (ADR 0041 §6).
-          const granted = withGrants(catalog, plan.input, request.grants);
+          const granted = withGrants(catalog, plan.input, request.grants, request.price);
           const mismatch = granted.mismatch;
 
           if (mismatch !== null) {
@@ -964,7 +967,9 @@ const BillingCore = Layer.mergeAll(
           const scheduled = scheduleTierChangeInputOf(
             catalog,
             request.tier,
-            state._tag === "Subscribed" ? currencyOf(state) : undefined,
+            request.price === undefined && state._tag === "Subscribed"
+              ? currencyOf(state)
+              : undefined,
           );
 
           if (scheduled === null) {
@@ -973,7 +978,7 @@ const BillingCore = Layer.mergeAll(
             );
           }
 
-          const granted = withGrants(catalog, scheduled, request.grants);
+          const granted = withGrants(catalog, scheduled, request.grants, request.price);
           const mismatch = granted.mismatch;
 
           if (mismatch !== null) {
@@ -1085,6 +1090,7 @@ const BillingCore = Layer.mergeAll(
               ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
               ...(request.currency === undefined ? {} : { currency: request.currency }),
               ...(request.grants === undefined ? {} : { grants: request.grants }),
+              ...(request.price === undefined ? {} : { price: request.price }),
             }),
           );
         });

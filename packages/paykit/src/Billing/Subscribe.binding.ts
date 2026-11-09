@@ -7,8 +7,8 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { type PaymentError, PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
 import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import type { Price } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
-import { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 import type { SubscribeResult } from "./Subscribe.operation.ts";
 
 /**
@@ -26,17 +26,21 @@ export interface SubscribeRequest {
   readonly currency?: string;
   /**
    * The plan items a custom plan is sold with, when they differ from the
-   * catalog's defaults (ADR 0041). A priced plan refuses a bespoke set: its
-   * activation is the provider's, and the webhook rebuilds it from the catalog.
+   * catalog's defaults (ADR 0041). A priced plan carries them through the
+   * checkout as a pending activation (ADR 0042 §1).
    */
   readonly grants?: ReadonlyArray<Allowance>;
+  /**
+   * The price a custom plan was negotiated at. Omitted means the catalog's
+   * price for `currency`; stated, it is the deal (ADR 0042 §3).
+   */
+  readonly price?: Price;
 }
 
 const refusals = [
   AlreadySubscribed,
   PlanNotInCatalog,
   CatalogMismatch,
-  PlanOperationUnsupported,
   PaymentDeclined,
   ProviderCapabilityMissing,
   Unauthenticated,

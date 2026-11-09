@@ -17,6 +17,7 @@ import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import { PendingActivation } from "./PendingActivation.ts";
 import { PlanCancellations } from "./PlanCancellation.ts";
 import {
   DEFAULT_PLAN_GROUP,
@@ -308,6 +309,13 @@ export type Entities = typeof Entities.Type;
  */
 export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   refs: Refs,
+  /**
+   * The terms a hosted purchase quoted, until its completion activates them
+   * (ADR 0042 §1). A checkout is opened before a standing exists, so the quote
+   * lives on the unsubscribed state too; `AttachProviderRef` writes it and the
+   * activation drops it.
+   */
+  pendingActivation: Schema.optionalKey(PendingActivation),
   /** Credits a one-off pack bought before any plan existed. */
   credits: Schema.optionalKey(Schema.Int),
   /** The part of that pool a pack bought; with no plan, all of it. */
@@ -494,6 +502,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    */
   quantityProrations: Schema.optionalKey(Schema.Record(Schema.String, QuantityProration)),
   refs: Refs,
+  /**
+   * The terms a hosted purchase quoted, until its completion activates them
+   * (ADR 0042 §1). It sits beside `refs` because it belongs to the same
+   * purchase; a new checkout overwrites it, and an activation drops it.
+   */
+  pendingActivation: Schema.optionalKey(PendingActivation),
   trialUsed: Schema.Boolean,
   dedupeKeys: Schema.Record(Schema.String, Schema.Boolean),
   dunningAttempts: Schema.Int,

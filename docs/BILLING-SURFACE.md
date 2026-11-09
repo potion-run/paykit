@@ -43,12 +43,12 @@ documented billing surface, not a second implementation.
 | Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
 | Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
 | Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
-| Add-ons | `plans` plus `schedule`, `multiAttach` / `multiUpdate`, `addAddOn`, group cancellation (ADR 0039) | shipped |
+| Add-ons | `plans` plus `schedule`, `multiAttach` / `multiUpdate`, `addAddOn`, group cancellation, a bespoke custom add-on (ADRs 0039, 0042) | shipped |
 | Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
 | Entity plans | `EntityId`, `ScopeState` per entity, `entityId` on `ChangeTier`, `Attach`, `Update` and previews (ADR 0040) | shipped |
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `Entities` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | shipped — the model, reads, bindings, layers, Api commands, `Atom` verbs and the SQL-backed entity list |
-| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants })` (ADR 0041) | shipped — the quote rides the command; a priced first activation through a checkout is refused until a pending activation can carry it |
+| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout (ADRs 0041, 0042) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote and the webhook activates exactly it |
 | Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
@@ -97,10 +97,12 @@ documented billing surface, not a second implementation.
    `BillingReadRow.entities`), the `0002_entities` column, `Paykit.Entities` and
    `Paykit.TransferBalance` with their layers, `entityId` on `Balances` / `Attach` / `Update` /
    previews, the four tenant Api commands and the `Atom` verbs and mutations.
-3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a
-   plan may declare `custom: true`, and the guard accepts a bespoke allowance set that is
-   structurally valid. What remains is carrying quoted terms across a checkout, a bespoke add-on
-   (which needs the per-plan balance source) and a negotiated price.
+3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md),
+   [ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md)): a plan may
+   declare `custom: true`, the guard accepts a structurally valid bespoke set, a hosted checkout
+   carries its quote as a pending activation, a custom add-on stacks, and a negotiated price is the
+   operation's explicit override. What remains is a custom plan as a group's fallback and a quote
+   keyed by provider reference if concurrent checkouts must be told apart.
 4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
    is new data, not a migration of existing subscribers.
 5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a

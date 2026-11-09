@@ -1,6 +1,6 @@
 # 0041 — A custom plan is a catalog opt-in, and its grants are defaults
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §1–3
 - **Date:** 2026-11-11
 - **Follows:** [0001](./0001-catalog-states-the-pricing-model.md), [0006](./0006-postpaid-usage-is-a-unit-price-in-the-catalog.md), [0035](./0035-plans-plan-items-and-balance-sources.md), [0038](./0038-customer-controls-are-state.md), [0039](./0039-one-plan-per-group-and-add-ons-stack.md)
 
@@ -62,8 +62,8 @@ For a plan with `custom: true`, `catalogMismatchOf` accepts an allowance set whe
 Everything else is compared exactly as it is today, for both kinds of plan: the plan exists, the
 price matches (including the currency the command states), and `credits`, `creditsExpire`, `topUp`
 and `rates` match. A non-custom plan keeps the exact-set rule and its `CatalogMismatch`. A custom
-plan's *price* is still the catalog's: a bespoke deal changes what a customer is allowed to use, not
-what the deployment charges for the plan.
+plan's *price* is still the catalog's by default: a bespoke deal changes what a customer is allowed
+to use, and a negotiated price is the operation's explicit override ([0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §3).
 
 **4. The bespoke allowances travel on the command and into the event.** No allowance is looked up
 inside `decide`. `Subscribe`, `ChangeTier` and `ScheduleTierChange` already carry `allowances`, and
@@ -73,7 +73,9 @@ already sold, and the read model (`BillingState.plans`, `Entitlements`, `Balance
 allowances the event granted rather than the ones the catalog now states. This ADR adds no event
 field and renames none.
 
-**5. A custom plan is base-only.** The catalog refuses three combinations, each with its own tag:
+**5. A custom plan is base-only.** The catalog refused three combinations when this ADR was written.
+[0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §2 reopens the add-on refusal;
+the other two stand.
 
 - `custom` on a `kind: "one_off"` pack (`CatalogCustomPack`). A pack grants nothing, so there is no
   allowance to make bespoke.
@@ -128,6 +130,9 @@ with proration, which never touches a checkout), and a phase scheduled for the b
 were frozen when it was scheduled. Carrying quoted terms across a checkout is the next slice; this
 ADR records the gap rather than papering it with the catalog's defaults.
 
+> **Amended by [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §1.** The quote
+> now rides the provider reference as a pending activation, and `custom_plan_checkout` is gone.
+
 **8. A later deploy cannot rewrite a deal, and a removed plan does not delete one.** A catalog deploy
 changes what the next command may state:
 
@@ -148,6 +153,9 @@ ordinary plan whose allowances came from a request instead of a catalog row. No 
 mutant or command-coverage row is added, because no command and no decision changed.
 
 ## Consequences
+
+> [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) removes
+> `CatalogCustomAddOn`; the other two refusals stand.
 
 - `Plan.custom` is one schema field, and the catalog gains three refusals: `CatalogCustomPack`,
   `CatalogCustomAddOn`, `CatalogCustomDefaultPlan`.
@@ -190,6 +198,9 @@ mutant or command-coverage row is added, because no command and no decision chan
   A plan row that disagreed with its event would be two records of one deal.
 
 ## What would reopen this
+
+The first three below were reopened and decided by
+[0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md).
 
 - **Bespoke add-ons.** Reopening §5 needs the per-plan balance source
   ([ADR 0035](./0035-plans-plan-items-and-balance-sources.md) §4) so a stacked bespoke item has its

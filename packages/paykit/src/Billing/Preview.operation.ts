@@ -23,6 +23,7 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
 import { currencyOf } from "../Subscription/Subscription.state.ts";
 import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
+import type { Price } from "../Tier.ts";
 import {
   planChangeTier,
   scheduleTierChangeInputOf,
@@ -37,17 +38,21 @@ export type PreviewCommand =
       readonly kind: "subscribe";
       readonly tier: string;
       readonly grants?: ReadonlyArray<Allowance>;
+      /** The negotiated price a custom plan is quoted at (ADR 0042 §3). */
+      readonly price?: Price;
     }
   | {
       readonly kind: "changeTier";
       readonly tier: string;
       readonly entityId?: EntityId;
       readonly grants?: ReadonlyArray<Allowance>;
+      readonly price?: Price;
     }
   | {
       readonly kind: "scheduleTierChange";
       readonly tier: string;
       readonly grants?: ReadonlyArray<Allowance>;
+      readonly price?: Price;
     }
   | { readonly kind: "withdrawTierChange" }
   | { readonly kind: "cancel" }
@@ -158,7 +163,7 @@ const commandOf = (
     const subscribed = subscribeInputOf(catalog, input.tier);
 
     if (subscribed === null) return null;
-    const granted = withGrants(catalog, subscribed, input.grants);
+    const granted = withGrants(catalog, subscribed, input.grants, input.price);
 
     return granted.mismatch === null
       ? { command: new Subscribe(granted.input) }
@@ -169,21 +174,21 @@ const commandOf = (
     const scheduled = scheduleTierChangeInputOf(
       catalog,
       input.tier,
-      state._tag === "Subscribed" ? currencyOf(state) : undefined,
+      input.price === undefined && state._tag === "Subscribed" ? currencyOf(state) : undefined,
     );
 
     if (scheduled === null) return null;
-    const granted = withGrants(catalog, scheduled, input.grants);
+    const granted = withGrants(catalog, scheduled, input.grants, input.price);
 
     return granted.mismatch === null
       ? { command: new ScheduleTierChange(granted.input) }
       : { mismatch: granted.mismatch };
   }
 
-  const plan = planChangeTier(catalog, input.tier, state, now);
+  const plan = planChangeTier(catalog, input.tier, state, now, input.price);
 
   if (plan === null) return null;
-  const granted = withGrants(catalog, plan.input, input.grants);
+  const granted = withGrants(catalog, plan.input, input.grants, input.price);
 
   return granted.mismatch === null
     ? {

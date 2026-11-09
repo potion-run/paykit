@@ -32,6 +32,7 @@ import {
   type AccountId,
 } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
+import { completeCheckout, handleWebhook } from "../../src/Webhooks.ts";
 import { evolveAt } from "../properties/Arbitraries.ts";
 
 const seats = feature({ id: "seats", name: "Seats", kind: "non_consumable" });
@@ -39,9 +40,10 @@ const sso = feature({ id: "sso", name: "SSO", kind: "flag" });
 
 /**
  * `bespoke` is a free custom plan, so its first activation is the model's own
- * command; `enterprise` is a priced custom plan, so its first activation would
- * be a provider checkout. `free` is the fixed plan a bespoke set must not be
- * accepted on (ADR 0041).
+ * command; `enterprise` is a priced custom plan, so its first activation goes
+ * through a provider checkout carrying the quote (ADR 0042 §1). `free` is the
+ * fixed plan a bespoke set must not be accepted on, and `rider` is a bespoke
+ * add-on that stacks beside any base plan (ADR 0042 §2).
  */
 const testCatalog = Effect.runSync(
   catalog({
@@ -70,6 +72,13 @@ const testCatalog = Effect.runSync(
         price: { amount: 49_900, currency: "usd", interval: "month" },
         credits: 9_000,
         grants: [allowance(messages, { included: 10_000, overage: "bill" })],
+      }),
+      tier({
+        id: "rider",
+        custom: true,
+        addOn: true,
+        credits: 0,
+        grants: [grant(sso)],
       }),
     ],
   }),
@@ -200,6 +209,34 @@ describe("a custom plan", () => {
     }).pipe(Effect.provide(world)),
   );
 
+  it.live("previews the quote a priced checkout would record", () =>
+    Effect.gen(function* () {
+      const previewAttach = yield* PreviewAttach(account);
+      const price = { amount: 1_234_00, currency: "usd", interval: "annual" } as const;
+
+      const preview = yield* previewAttach({ planId: "enterprise", grants: deal, price });
+
+      expect(preview.outcome).toBe("checkout");
+      expect(preview.preview?._tag).toBe("accepted");
+
+      if (preview.preview?._tag !== "accepted") return;
+
+      // The preview runs the same command and guard the completion will, so a
+      // priced bespoke deal is shown rather than refused (ADR 0042 §1).
+      expect(preview.preview.events.map((event) => event._tag)).toEqual(["SubscriptionActivated"]);
+      expect(
+        preview.preview.state._tag === "Subscribed"
+          ? preview.preview.state.plans.enterprise?.allowances.messages?.included
+          : undefined,
+      ).toBe(40_000);
+      expect(
+        preview.preview.state._tag === "Subscribed"
+          ? preview.preview.state.plans.enterprise?.price?.amount
+          : undefined,
+      ).toBe(price.amount);
+    }).pipe(Effect.provide(world)),
+  );
+
   it("refuses a bespoke item that does not decode at the request boundary", () => {
     // An item that is not an `Allowance` is a schema failure, not a refusal: no
     // command is ever built, so there is nothing for the guard to judge
@@ -243,23 +280,174 @@ describe("a custom plan", () => {
     }).pipe(Effect.provide(world)),
   );
 
-  it.live("refuses a priced custom plan through a checkout", () =>
+  it.live("carries the bespoke quote through a priced checkout", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      const started = yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        idempotencyKey: "custom-checkout",
+      });
+
+      expect(started.outcome).toBe("checkout");
+      expect(started.paymentUrl).toContain("checkout");
+
+      // The quote is stored with the provider reference, before a standing
+      // exists: the webhook has nothing else to activate from (ADR 0042 §1).
+      const pending = yield* stateOf;
+
+      if (pending._tag !== "Unsubscribed") throw new Error("expected no standing yet");
+
+      expect(pending.pendingActivation?.tier).toBe("enterprise");
+      expect(pending.pendingActivation?.allowances.messages?.included).toBe(40_000);
+      expect(pending.pendingActivation?.allowances.seats?.included).toBe(25);
+
+      const action = yield* completeCheckout({
+        id: "evt_custom_checkout",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+      });
+
+      expect(action).toBe("activated");
+
+      const row = yield* planRowOf;
+      expect(row?.planId).toBe("enterprise");
+      expect(row?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
+      expect(row?.plans.enterprise?.allowances.sso?.kind).toBe("flag");
+
+      // The completion spent the quote; a later delivery has no terms to reuse.
+      const after = yield* stateOf;
+      expect(after._tag === "Subscribed" ? after.pendingActivation : "missing").toBeUndefined();
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("refuses a custom completion with no quoted terms", () =>
+    Effect.gen(function* () {
+      const refused = yield* completeCheckout({
+        id: "evt_custom_missing",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+      }).pipe(Effect.flip);
+
+      expect(refused._tag).toBe("PendingActivationMissing");
+      expect(yield* planRowOf).toBe(null);
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("refuses a completion whose quote belongs to another plan", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        idempotencyKey: "custom-stale",
+      });
+
+      const refused = yield* completeCheckout({
+        id: "evt_custom_stale",
+        provider: "memory",
+        account,
+        tier: "bespoke",
+      }).pipe(Effect.flip);
+
+      expect(refused._tag).toBe("PendingActivationStale");
+      expect(yield* planRowOf).toBe(null);
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("records a negotiated price through the purchase path", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+      // The catalog sells this plan in USD; the deal is negotiated in EUR, which
+      // a negotiated price decides for itself (ADR 0042 §3).
+      const price = { amount: 1_234_00, currency: "eur", interval: "annual" } as const;
+
+      const started = yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        price,
+        idempotencyKey: "custom-price",
+      });
+
+      // The vendor's checkout sells the catalog's price object; an invoice is
+      // the purchase path that takes the amount the deal states (ADR 0042 §3).
+      expect(started.outcome).toBe("invoiced");
+      expect(started.invoiceId).toBeDefined();
+
+      const pending = yield* stateOf;
+
+      if (pending._tag !== "Unsubscribed") throw new Error("expected no standing yet");
+
+      expect(pending.pendingActivation?.price?.amount).toBe(price.amount);
+
+      yield* handleWebhook({
+        id: "evt_custom_price",
+        provider: "memory",
+        kind: "payment_succeeded",
+        account,
+        tier: "enterprise",
+        amount: price.amount,
+        currency: price.currency,
+      });
+
+      const row = yield* planRowOf;
+      expect(row?.plans.enterprise?.price?.amount).toBe(price.amount);
+      expect(row?.plans.enterprise?.price?.currency).toBe("eur");
+      expect(row?.plans.enterprise?.price?.interval).toBe("annual");
+      expect(row?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("refuses a negotiated price on a plan that is not custom", () =>
     Effect.gen(function* () {
       const attach = yield* Attach(account);
 
       const refused = yield* attach({
-        planId: "enterprise",
-        grants: deal,
-        idempotencyKey: "custom-checkout",
+        planId: "free",
+        price: { amount: 1_00, currency: "usd", interval: "month" },
+        idempotencyKey: "custom-fixed-price",
       }).pipe(Effect.flip);
 
-      expect(refused._tag).toBe("PlanOperationUnsupported");
-
-      if (refused._tag === "PlanOperationUnsupported") {
-        expect(refused.reason).toBe("custom_plan_checkout");
-      }
-
+      expect(refused._tag).toBe("CatalogMismatch");
       expect(yield* planRowOf).toBe(null);
+    }).pipe(Effect.provide(world)),
+  );
+});
+
+describe("a bespoke add-on", () => {
+  it.live("stacks beside the base plan with the items the catalog never declared", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({ planId: "free", idempotencyKey: "addon-base" });
+
+      const added = yield* attach({
+        planId: "rider",
+        grants: [
+          allowance(seats, {
+            included: 5,
+            overage: "bill",
+            unitPrice: { amount: 900, currency: "usd" },
+          }),
+        ],
+        idempotencyKey: "addon-rider",
+      });
+
+      expect(added.outcome).toBe("changed");
+
+      const row = yield* planRowOf;
+      expect(row?.planId).toBe("free");
+      expect(row?.plans.rider?.addOn).toBe(true);
+      expect(row?.plans.rider?.allowances.seats?.included).toBe(5);
+      // The base plan is untouched and both sources are spendable beside each
+      // other; a per-plan breakdown is the read-model follow-up (ADR 0042 §2).
+      expect(row?.plans.free?.allowances.messages?.included).toBe(100);
+      expect(row?.allowances.messages?.included).toBe(100);
+      expect(row?.allowances.seats?.included).toBe(5);
     }).pipe(Effect.provide(world)),
   );
 });
@@ -300,6 +488,43 @@ describe("a custom plan change", () => {
       expect(back?.allowances.messages?.included).toBe(100);
       expect(back?.allowances.sso).toBeUndefined();
       expect(back?.allowances.seats).toBeUndefined();
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("moves to a custom plan at a negotiated price", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({ planId: "free", idempotencyKey: "price-move-free" });
+
+      const moved = yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        price: { amount: 1_234_00, currency: "usd", interval: "annual" },
+        idempotencyKey: "price-move-enterprise",
+      });
+
+      expect(moved.outcome).toBe("changed");
+      // The event carries the price the move was sold at, and the plan row
+      // folds it back out of the log (ADR 0042 §3).
+      expect(moved.proration?.due).toBeGreaterThan(0);
+
+      const row = yield* planRowOf;
+      expect(row?.plans.enterprise?.price?.amount).toBe(1_234_00);
+      expect(row?.plans.enterprise?.price?.interval).toBe("annual");
+      expect(row?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
+
+      // Renegotiating only the price on the same plan is a move, not a replay.
+      const repriced = yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        price: { amount: 2_000_00, currency: "usd", interval: "annual" },
+        planSchedule: "immediate",
+        idempotencyKey: "price-move-repriced",
+      });
+
+      expect(repriced.outcome).toBe("changed");
+      expect((yield* planRowOf)?.plans.enterprise?.price?.amount).toBe(2_000_00);
     }).pipe(Effect.provide(world)),
   );
 

@@ -6,11 +6,8 @@ import * as Schema from "effect/Schema";
  * caller is allowed to ask, and the composition the operation needs has not
  * landed yet.
  *
- * `custom_plan_checkout` is the custom-plan case (ADR 0041 §7): a bespoke
- * allowance set travels on the command, and a hosted checkout's activation is
- * rebuilt from the catalog when the provider's webhook lands, so the negotiated
- * items would be replaced by the plan's defaults. The deal is still sold as an
- * immediate move or a scheduled phase, which never cross a checkout.
+ * A bespoke deal across a hosted checkout is no longer here: the quoted terms
+ * ride the provider reference and the completion activates them (ADR 0042 §1).
  */
 export class PlanOperationUnsupported extends Schema.TaggedError<PlanOperationUnsupported>()(
   "PlanOperationUnsupported",

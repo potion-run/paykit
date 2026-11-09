@@ -70,6 +70,7 @@ export {
   TopUpTerms,
   TopUpThreshold,
   priceFor,
+  samePrice,
 } from "./Tier.ts";
 
 export type { TopUpTermsInput } from "./Tier.ts";
@@ -128,7 +129,6 @@ export {
   CatalogRateCardOnQuantity,
   CatalogCarryOverNeverResets,
   CatalogCarryWithoutCarry,
-  CatalogCustomAddOn,
   CatalogCustomDefaultPlan,
   CatalogCustomPack,
   CatalogCustomizeWithoutVariant,
@@ -949,6 +949,14 @@ export {
   AttachProviderRef,
   ProviderRefAttached,
 } from "./Subscription/AttachProviderRef.command.ts";
+
+export {
+  PendingActivation,
+  PendingActivationMissing,
+  PendingActivationStale,
+} from "./Subscription/PendingActivation.ts";
+
+export type { PendingActivationRefusal } from "./Subscription/PendingActivation.ts";
 
 export {
   NoProrationDue,

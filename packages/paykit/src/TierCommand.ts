@@ -64,12 +64,17 @@ export interface GrantedPlanInput<A> {
  * them for a fixed plan is refused by the guard's exact-match rule, not by a
  * second check here (ADR 0041 §6).
  *
+ * A `price` is the negotiated price a custom plan was sold at (ADR 0042 §3).
+ * It replaces the catalog's price on the command, and the guard accepts it only
+ * for a plan the catalog opted into bespoke terms; on any other plan the price
+ * must match the catalog exactly.
+ *
  * ### Attaching a bespoke deal
- * **Example:** A plan with negotiated items
+ * **Example:** A plan with negotiated items and a negotiated price
  * ```typescript
  * const plan = planChangeTier(catalog, "enterprise", state, now);
  * if (plan !== null) {
- *   const granted = withGrants(catalog, plan.input, request.grants);
+ *   const granted = withGrants(catalog, plan.input, request.grants, request.price);
  *   if (granted.mismatch !== null) return yield* granted.mismatch;
  *   yield* subscription.send(ref, new ChangeTier(granted.input), { commandId });
  * }
@@ -81,12 +86,13 @@ export const withGrants = <A extends TierGrantInput>(
   catalog: Catalog,
   terms: A,
   grants: ReadonlyArray<Allowance> | undefined,
+  price?: Price,
 ): GrantedPlanInput<A> => {
-  if (grants === undefined) return { input: terms, mismatch: null };
+  if (grants === undefined && price === undefined) return { input: terms, mismatch: null };
 
   const allowances: Record<string, Allowance> = {};
 
-  for (const grant of grants) {
+  for (const grant of grants ?? []) {
     // A repeated feature would silently collapse to whichever item came last,
     // and the two items may disagree about the ceiling or the price.
     if (allowances[grant.feature] !== undefined) {
@@ -105,7 +111,11 @@ export const withGrants = <A extends TierGrantInput>(
     allowances[grant.feature] = grant;
   }
 
-  const input = { ...terms, allowances };
+  const input = {
+    ...terms,
+    ...(grants === undefined ? {} : { allowances }),
+    ...(price === undefined ? {} : { price }),
+  };
 
   return { input, mismatch: catalogMismatchOf(catalog, input) };
 };
@@ -254,23 +264,29 @@ export const planChangeTier = (
   tierId: string,
   state: SubscriptionState,
   at: DateTime.Utc,
+  price?: Price,
 ): ChangeTierPlan | null => {
   // The standing's currency is what the account was sold in. A move that
   // resolved the tier's base price instead would quote (and later guard) a
-  // different currency than the one the standing carries.
+  // different currency than the one the standing carries. A negotiated price
+  // states its own currency, so the catalog's table is not consulted for it.
   const terms = planTermsOf(
     catalog,
     tierId,
-    state._tag === "Subscribed" ? currencyOf(state) : undefined,
+    price === undefined && state._tag === "Subscribed" ? currencyOf(state) : undefined,
   );
 
   if (terms === null || terms.kind === "one_off") return null;
+
+  // A negotiated price is the deal the move is quoted at; the catalog's price
+  // is only its default (ADR 0042 §3).
+  const soldPrice = price ?? terms.price;
 
   const proration =
     state._tag === "Subscribed"
       ? prorate({
           from: priceOf(state),
-          to: terms.price,
+          to: soldPrice,
           period: { start: state.period.start, end: state.period.end },
           at,
         })
@@ -279,6 +295,7 @@ export const planChangeTier = (
   return {
     input: {
       ...grantOf(tierId, terms),
+      ...(price === undefined ? {} : { price }),
       ...(proration === null ? {} : { proration }),
     },
     proration,

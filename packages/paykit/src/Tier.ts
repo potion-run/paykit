@@ -39,6 +39,18 @@ export const Price = Schema.Struct({
 export type Price = typeof Price.Type;
 
 /**
+ * Whether two resolved prices state the same deal: amount, currency and
+ * cadence. The additional-currency table is a catalog convenience, not part of
+ * a price that has already been resolved.
+ */
+export const samePrice = (left: Price | undefined, right: Price | undefined): boolean =>
+  left === undefined || right === undefined
+    ? left === right
+    : left.amount === right.amount &&
+      left.currency === right.currency &&
+      left.interval === right.interval;
+
+/**
  * A price in the currency a caller asks for, or `null` when the tier does not
  * sell in it. The base currency is always available; an additional one only
  * when the catalog states it.
@@ -225,6 +237,8 @@ export const Tier = Schema.Struct({
    * means the plan is fixed: `grants` is exactly what any customer may hold
    * under it. A custom plan's `grants` are the defaults a caller gets when it
    * states none, and the shape a bespoke set is judged against (ADR 0041).
+   * A custom plan may be an add-on: it is the same opt-in, stacked beside the
+   * group's plan (ADR 0042 §2).
    */
   custom: Schema.optionalKey(Schema.Boolean),
   /**
@@ -278,7 +292,8 @@ export interface SubscriptionTierInput {
   /**
    * Whether a customer may hold bespoke allowances under this plan (ADR 0041).
    * It is the deployment's opt-in, so it is stated here, once, and not on a
-   * request.
+   * request. An add-on may state it: a bespoke add-on stacks beside every
+   * group just like a catalog one (ADR 0042 §2).
    */
   readonly custom?: boolean;
   /** The base tier this one is a named alternative of. */

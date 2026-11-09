@@ -31,6 +31,8 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     case "PlanPhaseNotFuture":
     case "PlanPhaseNamesAddOn":
     case "WebhookInvalid":
+    case "PendingActivationMissing":
+    case "PendingActivationStale":
     case "CatalogInvalid":
     case "CatalogMismatch":
     case "NotSubscribed":

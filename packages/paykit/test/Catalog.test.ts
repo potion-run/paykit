@@ -12,7 +12,6 @@ import {
   CatalogCreditGrantInvalid,
   CatalogCreditRateInvalid,
   CatalogCreditRateMissing,
-  CatalogCustomAddOn,
   CatalogCustomDefaultPlan,
   CatalogCustomPack,
   CatalogDuplicateAllowance,
@@ -718,11 +717,12 @@ describe("catalog", () => {
     }
   });
 
-  it("accepts a custom plan, and refuses the three shapes it cannot be", () => {
+  it("accepts a custom plan and a custom add-on, and refuses the two shapes it cannot be", () => {
     // A custom plan is a plan with one extra sentence: its grants are the quote,
     // not the ceiling (ADR 0041). The sentence cannot apply to a pack (nothing
-    // is granted), an add-on (nothing may stack a bespoke set) or a group's
-    // fallback (which has to be the catalogue's terms).
+    // is granted) or a group's fallback (which has to be the catalogue's
+    // terms). An add-on may state it: a bespoke add-on stacks beside every
+    // group (ADR 0042 §2).
     const custom = tier({
       id: "enterprise",
       custom: true,
@@ -754,6 +754,14 @@ describe("catalog", () => {
       grants: [allowance(messages, { included: 10 })],
     });
 
+    const acceptedAddOn = defineCatalog({ features: [messages], tiers: [addOn] });
+    expect(Result.isSuccess(acceptedAddOn)).toBe(true);
+
+    if (Result.isSuccess(acceptedAddOn)) {
+      expect(planOf(acceptedAddOn.success, "rider")?.custom).toBe(true);
+      expect(planOf(acceptedAddOn.success, "rider")?.addOn).toBe(true);
+    }
+
     const fallback = tier({
       id: "floor",
       custom: true,
@@ -770,7 +778,6 @@ describe("catalog", () => {
     };
 
     refuses(pack, CatalogCustomPack);
-    refuses(addOn, CatalogCustomAddOn);
     refuses(fallback, CatalogCustomDefaultPlan);
   });
 

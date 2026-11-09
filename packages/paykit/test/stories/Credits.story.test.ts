@@ -521,9 +521,13 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       49_000,
     );
 
-    // The release is a write; wait for the projection the read-model edge folds
-    // before comparing it with the in-process check.
-    yield* waitForProjection(store, account.id, Option.getOrNull(yield* entitlements.query(ref)));
+    // The read model trails the release until the projection catches up, so
+    // wait for the row before asking the edge to price the same request.
+    const row = yield* waitForProjection(
+      store,
+      account.id,
+      Option.getOrNull(yield* entitlements.query(ref)),
+    );
 
     // The row carries the card and the pool, so the edge prices it the same way.
     const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
@@ -534,12 +538,6 @@ it.live("check prices a request from the pool, by dimension, on every read path"
         dimension: "gpt-large",
       }),
     ).toEqual(refused);
-
-    const row = yield* waitForProjection(
-      store,
-      account.id,
-      Option.getOrNull(yield* entitlements.query(ref)),
-    );
 
     expect(row?.credits).toBe(49_000);
     expect(row?.features.ai?.creditRates).toEqual({

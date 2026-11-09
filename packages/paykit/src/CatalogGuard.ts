@@ -236,21 +236,27 @@ export const catalogMismatchOf = (
     }
   }
 
-  const expectedPrice = priceKey(
-    tier.price === undefined
-      ? undefined
-      : (priceFor(tier.price, input.price?.currency ?? tier.price.currency) ?? undefined),
-  );
+  // A custom plan may be sold at a negotiated price: the catalog's price is its
+  // default, and a stated price is the deal the command carries and the event
+  // records. Every other plan, and a custom plan that states no price, is held
+  // to the catalog exactly (ADR 0042 §3).
+  if (tier.custom !== true || input.price === undefined) {
+    const expectedPrice = priceKey(
+      tier.price === undefined
+        ? undefined
+        : (priceFor(tier.price, input.price?.currency ?? tier.price.currency) ?? undefined),
+    );
 
-  const actualPrice = priceKey(input.price);
+    const actualPrice = priceKey(input.price);
 
-  if (expectedPrice !== actualPrice) {
-    return new CatalogMismatch({
-      tier: tier.id,
-      field: "price",
-      expected: expectedPrice,
-      actual: actualPrice,
-    });
+    if (expectedPrice !== actualPrice) {
+      return new CatalogMismatch({
+        tier: tier.id,
+        field: "price",
+        expected: expectedPrice,
+        actual: actualPrice,
+      });
+    }
   }
 
   // The credit terms decide what a request costs and when the pool runs out,
@@ -321,9 +327,12 @@ export const catalogMismatchOf = (
  * A plan the catalog declares with `custom: true` is the one exception, and it
  * is the catalogue's choice rather than the caller's (ADR 0041): its `grants`
  * are a default, so a bespoke set is accepted when every item is one the
- * catalog could have declared for that plan. The price and the credit terms are
- * compared exactly for a custom plan too, so a bespoke deal changes what a
- * customer may use, never what the deployment charges.
+ * catalog could have declared for that plan. Its price may likewise be the
+ * negotiated price the command states, because a custom plan is where a
+ * deployment opted into deals the catalog cannot enumerate (ADR 0042 §3). The
+ * credit terms are still compared exactly for a custom plan, so a bespoke deal
+ * changes what a customer may use and pay, never the pool or the rates the
+ * deployment's catalog states.
  *
  * A catalog-owning sender — `Paykit.Subscribe`, the webhook translator — builds
  * the command from `CatalogService` and never needs this guard. It exists for
