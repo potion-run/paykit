@@ -25,6 +25,8 @@ export class BillingApi extends Domain.Api("BillingApi", {
     "ScheduleTierChange",
     "WithdrawTierChange",
     "ScheduleCancellation",
+    "CancelGroup",
+    "UncancelGroup",
     "Resume",
   ],
   views: ["Entitlements", "BillingState"],

@@ -100,6 +100,9 @@ export const Paykit = {
   // runtime — the tenant surface, one binding per command
   Attach: Billing.Attach,
   Update: Billing.Update,
+  AddAddOn: Billing.AddAddOn,
+  MultiAttach: Billing.MultiAttach,
+  MultiUpdate: Billing.MultiUpdate,
   PreviewAttach: Billing.PreviewAttach,
   PreviewUpdate: Billing.PreviewUpdate,
   Check: Billing.Check,

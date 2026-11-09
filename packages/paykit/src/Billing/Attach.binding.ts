@@ -115,6 +115,12 @@ export const UpdateRequest = Schema.Struct({
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   /** A cancellation, an uncancel, or neither. */
   cancelAction: Schema.optionalKey(CancelAction),
+  /**
+   * The group the cancellation or uncancel names. Absent means the whole
+   * standing, which is the account-wide cancellation a single-group deployment
+   * uses (ADR 0039 §5).
+   */
+  cancelGroup: Schema.optionalKey(Schema.String),
   /** The retry key, which is also the command id of every command this makes. */
   idempotencyKey: Schema.String,
   /** A charge id for an immediate cancellation; omitted means the latest plan charge. */
@@ -164,6 +170,8 @@ export const PreviewUpdateRequest = Schema.Struct({
   planId: Schema.optionalKey(Schema.String),
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   cancelAction: Schema.optionalKey(CancelAction),
+  /** The group the cancellation or uncancel names; absent means the standing. */
+  cancelGroup: Schema.optionalKey(Schema.String),
 });
 
 export type PreviewUpdateRequest = typeof PreviewUpdateRequest.Type;
@@ -475,10 +483,15 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
   if (request.cancelAction === "cancel_end_of_cycle") {
     const cancel = yield* deps.scheduleCancellation(account);
 
-    yield* cancel({ dedupeKey: `${request.idempotencyKey}:cancel` });
+    yield* cancel({
+      dedupeKey: `${request.idempotencyKey}:cancel`,
+      ...(request.cancelGroup === undefined ? {} : { group: request.cancelGroup }),
+    });
 
-    // A cancellation wins the boundary, so a pending plan change is withdrawn.
-    if (state.schedule.length > 0) {
+    // A group cancellation drops that group's phases in the same command, so
+    // only the whole-account path has a phase to withdraw. A cancellation wins
+    // the boundary, so a pending plan change is withdrawn.
+    if (request.cancelGroup === undefined && state.schedule.length > 0) {
       const withdraw = yield* deps.withdrawTierChange(account);
 
       yield* withdraw({ dedupeKey: `${request.idempotencyKey}:withdraw` }).pipe(
@@ -492,7 +505,7 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
   if (request.cancelAction === "uncancel") {
     let found = false;
 
-    if (state.schedule.length > 0) {
+    if (request.cancelGroup === undefined && state.schedule.length > 0) {
       const withdraw = yield* deps.withdrawTierChange(account);
 
       yield* withdraw({ dedupeKey: `${request.idempotencyKey}:withdraw` }).pipe(
@@ -501,7 +514,15 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
       found = true;
     }
 
-    if (state.cancelAtPeriodEnd) {
+    if (request.cancelGroup !== undefined) {
+      const resume = yield* deps.resume(account);
+
+      yield* resume({
+        dedupeKey: `${request.idempotencyKey}:resume`,
+        group: request.cancelGroup,
+      });
+      found = true;
+    } else if (state.cancelAtPeriodEnd) {
       const resume = yield* deps.resume(account);
 
       yield* resume({ dedupeKey: `${request.idempotencyKey}:resume` });
@@ -629,9 +650,16 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
   }
 
   if (request.cancelAction === "cancel_end_of_cycle") {
-    previews.push(yield* preview({ command: { kind: "cancel" } }));
+    previews.push(
+      yield* preview({
+        command:
+          request.cancelGroup === undefined
+            ? { kind: "cancel" }
+            : { kind: "cancelGroup", group: request.cancelGroup },
+      }),
+    );
 
-    if (state.schedule.length > 0) {
+    if (request.cancelGroup === undefined && state.schedule.length > 0) {
       previews.push(yield* preview({ command: { kind: "withdrawTierChange" } }));
     }
   }
@@ -639,7 +667,7 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
   if (request.cancelAction === "uncancel") {
     let found = false;
 
-    if (state.schedule.length > 0) {
+    if (request.cancelGroup === undefined && state.schedule.length > 0) {
       previews.push(yield* preview({ command: { kind: "withdrawTierChange" } }));
       found = true;
     }

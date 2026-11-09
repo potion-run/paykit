@@ -191,13 +191,16 @@ The next work is the API migration, not another command. The order is:
    and `decide` share it; an alert is `UsageAlertFired`, evidence that never refuses. The write is
    canonical and idempotent (`normalizeBillingControls` / `controlsKey`), and it works before a
    plan exists because the command carries the catalog's `features` facts past `CatalogGuard`.
-6. **Multiple plans and schedules — state and phases landed.** [ADR
+6. **Multiple plans and schedules — landed.** [ADR
    0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt` became the plan set
    in `SubscribedState` (`plans` plus `schedule`), one row per active plan, an add-on stacking beside
-   every group, and a close that applies the phases due at the boundary in order. Remaining:
-   `multiAttach` / `multiUpdate` as one operation and one command id, one balance source per plan in
-   `Balance.breakdown`, the `isDefault`-aware cancel/uncancel commands, a scheduled `applyPhase` at
-   the phase's own instant, and an `addAddOn` binding.
+   every group, and a close that applies the phases due at the boundary in order. `ChangePlans`
+   carries several moves, cancellations and uncancels under one command id; `Balance.breakdown`
+   reports one plan source per plan; `CancelGroup` / `UncancelGroup` resolve a group to its
+   `isDefault` plan or leave it empty; `ApplyPlanPhase` fires at the phase's own instant and
+   `PlanPhaseSchedule` schedules it; `AddAddOn` is the named verb. `multiAttach` / `multiUpdate`,
+   `MultiAttach` / `MultiUpdate` layers and the `Attach`/`Update` group-aware cancellation carry it
+   to the binding surface.
 7. **Entities and transfer — state, commands and reads landed.** The ADR
    ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` decide a child
    scope, a pooled plan item, `billing.transfer` and the archive. The implementation is in:
@@ -249,12 +252,15 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   pending phase) and `Customer.plans` is the set, not one row. Implemented in
   `packages/paykit` with `test/billing/PlanSet.test.ts` beside `test/subscribe/ScheduledTierChange.test.ts`;
   ADR [0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) is the record.
-- Remaining from the plan-set slice: `multiAttach`/`multiUpdate` as one operation and one command id
-  (the state and the close already accept their result), a per-plan balance source so two plans that
-  grant one feature report two `Balance.breakdown` lines instead of a merged count, the
-  `isDefault`-aware `cancelGroup`/`uncancelGroup` commands (today cancellation is still the
-  standing-level `cancelAtPeriodEnd` that ends the account), a scheduled `applyPhase` command that
-  fires at the phase's own instant rather than at the close, and an `addAddOn` operation binding.
+- Landed: the rest of the plan-set slice. `ChangePlans` is one transaction and one command id for
+  several moves, phases, group cancellations and uncancels; `MultiAttach` / `MultiUpdate` bind it.
+  `Balance.breakdown` reports a plan row per plan through `FeatureEntitlement.planSources`, so two
+  plans that grant one feature no longer merge into one count. `CancelGroup` / `UncancelGroup` are
+  `isDefault`-aware (`DefaultPlanNotCancelable`, `PlanGroupEmpty`) and drop the group's phases;
+  `Attach`/`Update` and `Preview` carry `cancelGroup`. `ApplyPlanPhase` applies the named phase at
+  its own instant and `PlanPhaseSchedule` schedules it; the close still applies overdue phases.
+  `AddAddOn` is the named add-on verb. Tests: `test/billing/PlanSetMulti.test.ts` and
+  `test/billing/PlanSetBindings.test.ts`.
 - Landed: the entity model and its implementation. `entities.qnt` and its 14 scenarios are green;
   ADR [0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md) decides a child scope, a pooled plan
   item, the transfer and the archive. The code has `ScopeState`/`EntityRecord` on both state tags,

@@ -121,6 +121,15 @@ export interface BalanceFeature {
   readonly billed?: number;
   /** The customer's money ceiling for this feature this period, in minor units. */
   readonly spendLimit?: number;
+  /**
+   * The plans that grant this feature, one entry each. A balance reports one
+   * plan source per entry instead of one merged plan count (ADR 0035 §4).
+   */
+  readonly planSources?: ReadonlyArray<{
+    readonly planId: string;
+    readonly included: Included;
+    readonly resets?: string;
+  }>;
   readonly quantity?: number;
   /** Whether the customer's item is pooled: one source every entity draws on. */
   readonly pooled?: boolean;
@@ -255,10 +264,39 @@ export const balanceOfFeature = (
   }
 
   // A seat is bought and occupied. Its grant is the purchase, its usage is the
-  // occupancy, and its remaining may be negative (ADR 0036).
+  // occupancy, and its remaining may be negative (ADR 0036). A plan set splits
+  // the purchase by the plan that contributes it, so a seat granted by two
+  // plans reports two sources rather than one merged purchase.
   if (feature.kind === "non_consumable") {
     const purchased = feature.quantity ?? 0;
     const occupied = feature.used ?? 0;
+    const planRows = feature.planSources ?? [];
+    const remainingTotal = Math.max(0, feature.remaining ?? 0);
+
+    let purchasedLeft = purchased;
+    let remainingLeft = remainingTotal;
+
+    const sources: Array<BalanceSource> =
+      planRows.length === 0
+        ? [planSource(featureId, feature, tier, purchased, feature.remaining, occupied, scope)]
+        : planRows.map((row, index) => {
+            const included = typeof row.included === "number" ? row.included : 0;
+            const last = index === planRows.length - 1;
+            const granted = last ? purchasedLeft : Math.min(purchasedLeft, included);
+            const remaining = last ? remainingLeft : Math.min(remainingLeft, Math.max(0, granted));
+            purchasedLeft -= granted;
+            remainingLeft -= remaining;
+
+            return planSource(
+              featureId,
+              { ...feature, resets: row.resets ?? feature.resets },
+              row.planId,
+              granted,
+              remaining,
+              granted - remaining,
+              scope,
+            );
+          });
 
     return {
       customerId,
@@ -270,9 +308,7 @@ export const balanceOfFeature = (
       unlimited: false,
       overageAllowed: feature.overage !== "block",
       nextResetAt: null,
-      breakdown: [
-        planSource(featureId, feature, tier, purchased, feature.remaining, occupied, scope),
-      ],
+      breakdown: sources,
       purchased,
       occupied,
       ...(spendLimit === undefined ? {} : { spendLimit }),
@@ -286,23 +322,45 @@ export const balanceOfFeature = (
   // The plan and rollover are the total less the grants; a grant is the last
   // source a spend reaches. A grant-only feature has no plan part at all.
   const planPart = Math.max(0, (feature.remaining ?? 0) - grantsTotal);
-  const planRemaining = Math.min(planPart, planIncluded);
-  const rollover = Math.max(0, planPart - planRemaining);
+  const planRemaining = unlimited ? null : Math.min(planPart, planIncluded);
+  const rollover = planRemaining === null ? 0 : Math.max(0, planPart - planRemaining);
+
+  const planRows: ReadonlyArray<{
+    readonly planId: string;
+    readonly included: Included | null;
+    readonly resets?: string;
+  }> =
+    feature.planSources !== undefined && feature.planSources.length > 0
+      ? feature.planSources
+      : planIncluded === 0 && !unlimited
+        ? []
+        : [{ planId: tier, included: feature.included ?? null }];
+
+  let remainingLeft = planRemaining ?? 0;
+
+  const planSources: Array<BalanceSource> = planRows.map((row, index) => {
+    const included = row.included;
+    const last = index === planRows.length - 1;
+    const granted = typeof included === "number" ? included : null;
+
+    const remaining =
+      granted === null ? null : last ? remainingLeft : Math.min(remainingLeft, granted);
+
+    if (remaining !== null) remainingLeft -= remaining;
+
+    return planSource(
+      featureId,
+      { ...feature, resets: row.resets ?? feature.resets },
+      row.planId,
+      granted,
+      remaining,
+      granted === null || remaining === null ? 0 : granted - remaining,
+      scope,
+    );
+  });
 
   const sources: Array<BalanceSource> = [
-    ...(planIncluded === 0
-      ? []
-      : [
-          planSource(
-            featureId,
-            feature,
-            tier,
-            planIncluded,
-            planRemaining,
-            planIncluded - planRemaining,
-            scope,
-          ),
-        ]),
+    ...planSources,
     ...(rollover === 0
       ? []
       : [

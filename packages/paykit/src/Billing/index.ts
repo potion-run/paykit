@@ -58,6 +58,29 @@ export {
 } from "./Attach.binding.ts";
 
 export {
+  AddAddOn,
+  AddAddOnInProcess,
+  AddAddOnRequest,
+  type AddAddOnError,
+  type AddAddOnResult,
+  type AddAddOnVerb,
+} from "./AddAddOn.binding.ts";
+
+export {
+  MultiAttach,
+  MultiAttachInProcess,
+  MultiAttachRequest,
+  MultiPlanRequestPlan,
+  MultiUpdate,
+  MultiUpdateInProcess,
+  MultiUpdateRequest,
+  type MultiPlanError,
+  type MultiPlanResult,
+  type MultiAttachVerb,
+  type MultiUpdateVerb,
+} from "./MultiPlan.binding.ts";
+
+export {
   Check,
   CheckLockKeyMissing,
   type CheckError,

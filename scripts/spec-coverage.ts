@@ -97,6 +97,8 @@ const SPEC_COVERAGE = {
     plans: ["cancelAtBoundary"],
     schedules: ["cancelGroup"],
   },
+  CancelGroup: { plans: ["cancelAtBoundary"], schedules: ["cancelGroup"] },
+  UncancelGroup: { plans: ["uncancel"], schedules: ["uncancelGroup"] },
   Resume: { standing: ["resume"], plans: ["uncancel"], schedules: ["uncancelGroup"] },
   ScheduleTierChange: {
     standing: ["scheduleTier"],
@@ -118,6 +120,11 @@ const SPEC_COVERAGE = {
     schedules: ["attach", "addAddOn"],
     entities: ["attachPlan"],
   },
+  ChangePlans: {
+    plans: ["attach", "cancelAtBoundary", "uncancel"],
+    schedules: ["attach", "addAddOn", "schedulePlan", "cancelGroup", "uncancelGroup"],
+  },
+  ApplyPlanPhase: { plans: ["attach"], schedules: ["applyPhase"] },
   DunningRetry: { standing: ["dunningRung"] },
 
   // ── the clocks and the quantity ────────────────────────────────────────────
@@ -191,10 +198,7 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   plans: ["init", "step", "tick", "cancelImmediately"],
   balances: ["init", "step", "tick"],
   controls: ["init", "step", "tick", "block", "unblock"],
-  // A phase is applied by the scheduler that runs at its `startsAt`, the way a
-  // rung is fired by the retry policy; the command that owns it lands with the
-  // implementation, and until then it is the clock's own transition.
-  schedules: ["init", "step", "tick", "applyPhase"],
+  schedules: ["init", "step", "tick"],
   entities: ["init", "step", "tick"],
   money: ["init", "step"],
 };

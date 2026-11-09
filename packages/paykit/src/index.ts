@@ -696,10 +696,41 @@ export type { AutoTopUpPack, AutoTopUpTerms } from "./Subscription/AutoTopUp.pol
 
 export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 
+export { PlanPhaseSchedule } from "./Subscription/PlanPhaseSchedule.policy.ts";
+
+export { ApplyPlanPhase } from "./Subscription/ApplyPlanPhase.command.ts";
+
 export {
   ScheduleTierChange as ScheduleTierChangeCommand,
   PlanChangeScheduled,
 } from "./Subscription/ScheduleTierChange.command.ts";
+
+export { ChangePlans, PlanMove } from "./Subscription/ChangePlans.command.ts";
+
+export { AddAddOn, AddAddOnInProcess } from "./Billing/AddAddOn.binding.ts";
+
+export {
+  MultiAttach,
+  MultiAttachInProcess,
+  MultiUpdate,
+  MultiUpdateInProcess,
+} from "./Billing/MultiPlan.binding.ts";
+
+export { PlanGroupOccupied } from "./Subscription/PlanGroupOccupied.rejection.ts";
+
+export { PlanPhaseAtSameInstant } from "./Subscription/PlanPhaseAtSameInstant.rejection.ts";
+
+export {
+  CancelGroup,
+  DefaultPlanNotCancelable,
+  GroupCancellationScheduled,
+  GroupCancellationWithdrawn,
+  PlanCancellation,
+  PlanCancellationRequest,
+  PlanGroupCanceled,
+  PlanGroupEmpty,
+  UncancelGroup,
+} from "./Subscription/CancelGroup.command.ts";
 
 export {
   NoTierChangeScheduled,

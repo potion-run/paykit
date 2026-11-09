@@ -521,6 +521,10 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       49_000,
     );
 
+    // The release is a write; wait for the projection the read-model edge folds
+    // before comparing it with the in-process check.
+    yield* waitForProjection(store, account.id, Option.getOrNull(yield* entitlements.query(ref)));
+
     // The row carries the card and the pool, so the edge prices it the same way.
     const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
     expect(
