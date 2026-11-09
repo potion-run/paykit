@@ -17,8 +17,7 @@ standing's price, so the units recorded before the change are billed at the pric
 them. Nothing in the log says which unit was priced at which price, because `UsageRecorded` carries
 `charge` (money) but not the price identity.
 
-[`spec/PaykitReportSplit.tla`](../../spec/PaykitReportSplit.tla) models the close this needs and
-settles two questions before any code: the free grant belongs to the period rather than to the
+Two questions were settled before any code: the free grant belongs to the period rather than to the
 price, and a report has to be able to name the price it is about.
 
 ## Decision

@@ -50,9 +50,8 @@ shows. Only what it means narrows, and its doc comment says so.
 
 **A price change is what this unlocks.** With the gate narrowed, a mid-period `ChangeTier` to a tier
 with a different `unitPrice` reaches the standing, `UsageRecorded` keeps recording the price each unit
-was taken at, and the close reports the period in two lines. That is the behaviour
-`spec/PaykitReportSplit.tla` models, and the story
-`splits one period's report across the prices its units were recorded at` is its test.
+was taken at, and the close reports the period in two lines. That is the behaviour the story
+`splits one period's report across the prices its units were recorded at` tests.
 
 ## What it does not decide
 

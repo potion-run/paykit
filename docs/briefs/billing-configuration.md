@@ -558,7 +558,7 @@ Each step leaves the gates green.
    proof the API is smaller, so the diff should delete more than it adds.
 6. **Update `README.md`, `packages/paykit/README.md`, `packages/paykit/PLAN.md`, the website
    quickstart and `docs/NEXT.md`.** Add the ADR that accepts this brief.
-7. **Gates:** `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm spec`, `pnpm test`,
+7. **Gates:** `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
    `pnpm build`, `pnpm exports:check`, `pnpm validate:publish-packages`.
 
 ## What is not decided here

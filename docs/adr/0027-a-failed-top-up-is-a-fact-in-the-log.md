@@ -86,8 +86,7 @@ standing is not where that fact belongs.
   policy, not an event.
 - **A charge that succeeded but whose credits never recorded.** That is the crash between a side
   effect and its record — the case the outbox and the crossing-keyed `PurchaseCredits` already
-  handle, and the case [`spec/PaykitAutoTopUp.tla`](../../spec/PaykitAutoTopUp.tla) models. A
-  `TopUpFailed` is written only when the provider call itself failed.
+  handle. A `TopUpFailed` is written only when the provider call itself failed.
 - **Un-reviewable money.** A failed refund keeps the same shape and gets the same treatment when it
   lands, which [the refund brief](../briefs/refund.md) already names as `RefundFailed`.
 
