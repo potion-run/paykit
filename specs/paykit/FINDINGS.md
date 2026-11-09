@@ -3,7 +3,7 @@
 **Status:** review only for code; the behavioral decisions are recorded. F4 and F7 now point at
 [0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md) and
 [0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md), and the models have been
-updated to the new rules. The four models in this directory are green (`pnpm spec`,
+updated to the new rules. The nine models in this directory are green (`pnpm spec`,
 `pnpm spec:test`, `pnpm spec:mutants`); the remaining findings are places where
 `src/Subscription` does not implement the rule the model states.
 
@@ -35,6 +35,13 @@ Severity is about customer money or a state no later command can explain, not ab
 | F10 | A pending tier survives terminal expiry | low |
 | F11 | Grace accepts a deadline at or before `now` | low |
 | F12 | A cancellation and a pending tier both apply at the same close | low |
+
+**Current status (2026-11).** F4, F5 and F7 are fixed by [ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md),
+[ADR 0031](../../docs/adr/0031-a-failed-top-up-retries-on-a-budget.md) and
+[ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). F2 is partly fixed: the
+proration identity landed (the command names it and refuses a second invoice), while the amount and
+currency are still trusted and the invoice is not added to `charged`. F1, F3, F6 and F8–F12 remain
+open; F6 is a one-line reset of `topUpAttempts` in the `PlanChanged` fold.
 
 ---
 

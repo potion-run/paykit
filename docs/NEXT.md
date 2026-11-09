@@ -98,9 +98,12 @@ lands modelled or with a written reason. Three spend-path findings are still rec
 fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
-are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md); they are review, not yet fixed.
+are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md). F4, F5 and F7 are fixed by later
+ADRs, F2's proration identity landed (the command names it and refuses a second invoice), and F1,
+F3, F6 and F8–F12 are still open; F2's amount/currency trust and its missing `charged` are open too.
+The file records which is which.
 
-The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
+The first seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
 (credits are a unit of account, one pool per account), [0003](./adr/0003-the-deploy-provisions-the-vendor.md)
 (identity in the vendor's own field, replace on change, never delete), [0004](./adr/0004-a-hold-is-one-call-and-an-id.md)
@@ -246,8 +249,11 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   `ReverseRefund` writes `RefundReversed`, capped by the refund it names rather than by the currency,
   and `refunded` moves down so the headroom comes back. It is on the operator Api with the screen
   behind it: `BillingState` carries `refunds`, the console's refunds panel shows what each one
-  returned, and a row with money left opens a pre-filled reversal. What is left is a refund that
-  revokes credits in the same call.
+  returned, and a row with money left opens a pre-filled reversal. `Refund` also takes
+  `revokeCredits` ([ADR 0032](./adr/0032-a-refund-may-revoke-credits-in-one-call.md)): the money and
+  the pool move in one command, capped by the refund it names, and the console sends it. The next
+  money decision is a `RefundFailed` fact for a provider that accepts the request and fails the refund
+  later ([ADR 0019](./adr/0019-a-refund-names-the-charge-it-reverses.md) names it).
 - **Banded and package prices** are no longer local-only: [ADR
   0024](./adr/0024-a-vendor-meter-can-carry-a-package-and-a-ladder.md) makes
   `usagePrices` the provider contract and maps a package to Stripe's
@@ -284,9 +290,11 @@ line — `{ threshold, cooldown?, pack? }` — so a tier states when it refills,
 which pack, and the deployment's `Paykit.autoTopUp({ pack, cooldown })` is the fallback for a tier
 that names neither; [ADR 0027](./adr/0027-a-failed-top-up-is-a-fact-in-the-log.md) records
 `TopUpFailed` when the provider refuses both the saved method and the invoice, carries it on the
-standing as `topUpFailure`, renders it on the timeline, and leaves the cooldown to retry it. What is
-left is a retry budget rather than a cooldown window (a count on the standing and its own refusal),
-and a deployment that wants paging on consecutive failures.
+standing as `topUpFailure`, renders it on the timeline, and leaves the cooldown to retry it. The
+retry budget landed as [ADR 0031](./adr/0031-a-failed-top-up-retries-on-a-budget.md): the standing
+counts consecutive failures in `topUpAttempts`, a `RetryTopUp` rung is scheduled at the failure's own
+time, and a rung that no longer matches the count records nothing. What remains is a deployment's own
+paging on consecutive failures, which reads `topUpAttempts` and `topUpFailure` from the read model.
 
 **A usage timeline** is done ([ADR
 0014](./adr/0014-a-usage-timeline-is-a-fold-over-the-account-log.md)): `timelineOf` /

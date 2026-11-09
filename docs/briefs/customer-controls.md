@@ -26,11 +26,13 @@ the product this API is modelled after.
 
 ## Status
 
-Design only — this pane writes no `packages/**`, no `specs/**` and no `*.command.ts`. What is
-checked here: the shape in `Customer.ts` today, where the ceiling is judged
-(`Allowance.verdict.ts`, `Subscription.aggregate.ts`), how the top-up line is read
-(`Subscription.state.ts`, `AutoTopUp.policy.ts`), and how a binding and its layer compose
-(`Billing/Balances.binding.ts`, `Billing/Balances.layer.ts`).
+Landed. [ADR 0038](../adr/0038-customer-controls-are-state.md), `controls.qnt` and its scenarios,
+`SetBillingControls`, `Paykit.Customers(account)`, `SpendLimitExceeded`, `UsageAlertFired`,
+`Balance.spendLimit`, `BillingState.billingControls` / `alertsFired` and `Atom.updateBillingControls`
+are on `main`. The independent review is [customer-controls-review.md](./customer-controls-review.md);
+its actionable findings are fixed on `main` (an unsubscribed top-up line, credit-priced alerts,
+`Check`'s lock refusal, the customers re-read, required request fields, HTTP 400, the SQL row and
+`controlsKey`), and the design nits are recorded in the ADR.
 
 The gap is one line: `Customer.billingControls` is declared
 (`packages/paykit/src/Customer.ts:52`) and exported (`Read.ts:181`, `index.ts:89`), and nothing in

@@ -135,14 +135,17 @@ paykit.balances.finalize({ lockId, action, overrideValue? })
   (`GrantBalance`) creates a lifetime or expiring grant; `BalanceExpiry` schedules `ExpireGrant`
   at its deadline. A close and a plan change leave every grant alone, and `Balance.breakdown`
   reports plan, rollover and grant sources.
-- **Remaining.** A resetting standalone grant is an add-on plan item (Phase 5). Customer-level
-  controls — auto top-up, spend limits and usage alerts — and `controls.qnt` are the next model.
+- **Remaining.** A resetting standalone grant is an add-on plan item (Phase 5). Customer controls
+  landed in [ADR 0038](../adr/0038-customer-controls-are-state.md) and
+  [`controls.qnt`](../../specs/paykit/controls.qnt); the plan set is modelled in
+  [ADR 0039](../adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt`, and its
+  implementation is the next TypeScript slice.
 - Model gate: `balances.qnt`; conservation, deduction order, rollover caps, lifetime survival and
-  expiry. `controls.qnt` is still to be written.
+  expiry. `controls.qnt` landed with ADR 0038.
 - Exit for the sources half: `Balance.breakdown` is real; `credits` and `prepaidCredits` are still
   derived compatibility fields for the credit pool.
 
-### Phase 5 — multiple plans and schedules
+### Phase 5 — multiple plans and schedules (model landed, implementation in progress)
 
 - One active plan per `group`; add-ons stack; different groups stack.
 - `PlanSchedule` with phases; `createSchedule`, `multiAttach`, `multiUpdate`; default plan on
@@ -151,9 +154,10 @@ paykit.balances.finalize({ lockId, action, overrideValue? })
   no activation after cancel.
 - Exit: an account can hold a plan plus add-ons and a multi-phase schedule.
 
-### Phase 6 — entities and transfer
+### Phase 6 — entities and transfer (model and brief landed)
 
 - `EntityId` on every operation; entity-scoped plans and balances; pooled items roll up.
+- Brief: [entities-and-transfer.md](./entities-and-transfer.md).
 - `entities.create/get/list/update`, `billing.transfer`.
 - Model gate: `entities.qnt`; entity scope, pooled rollup, transfer conservation.
 - Exit: a parent customer can have child entities with their own plans and balances.
