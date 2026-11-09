@@ -29,6 +29,7 @@ import {
   type StandingResult,
 } from "./Billing/Cancel.binding.ts";
 import { Check, type CheckError, type CheckRequest } from "./Billing/Check.binding.ts";
+import { BillingCommands, BillingCommandsClient } from "./Billing/Commands.rpc.ts";
 import {
   ConsumeCredits,
   type ConsumeCreditsError,
@@ -91,9 +92,6 @@ import {
   type TransferBalanceResult,
 } from "./Billing/TransferBalance.binding.ts";
 import { BillingApi } from "./BillingApi.api.ts";
-import { catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
-import { PaykitCatalogClient, type PaykitCatalogClientError } from "./CatalogRpc.ts";
-import { CatalogService, catalogLayer } from "./CatalogService.ts";
 import type { CheckResult } from "./Check.ts";
 import type { Customer, Entity } from "./Customer.ts";
 import { type BillingStateView } from "./Subscription/BillingState.view.ts";
@@ -152,10 +150,10 @@ export type BillingAtomVerb =
 /** The service key of the paykit Api client the layer provides. */
 export type BillingClient = Domain.Api.ClientKey<"BillingApi">;
 
-/** The services a built atom runtime carries: the Api client, the catalog, and every tenant verb. */
+/** The services a built atom runtime carries: the Api client, the server join, and every tenant verb. */
 export type BillingAtomServices =
   | BillingClient
-  | CatalogService
+  | BillingCommands
   | Balances
   | GrantBalance
   | Check
@@ -191,41 +189,31 @@ export interface BillingAtomBaseOptions {
 }
 
 /**
- * `make` over a layer you built: the transport and the catalog, built once. A
- * test uses `BillingApi.layerClientInProcess`; a deployment with a custom
- * transport uses this form.
+ * `make` over a layer you built: the transport and the server join, built once.
+ * A test uses `BillingApi.layerClientInProcess` and `BillingCommandsLive`; a
+ * deployment with a custom transport uses this form.
  */
 export interface BillingAtomLayerOptions<E = never> extends BillingAtomBaseOptions {
-  readonly layer: Layer.Layer<BillingClient | CatalogService, E, never>;
+  readonly layer: Layer.Layer<BillingClient | BillingCommands, E, never>;
 }
 
 /**
- * `make` over an HTTP Api: the common browser case. `make` builds the catalog
- * layer and the Api client, and provides `FetchHttpClient` unless one is given.
+ * `make` over an HTTP Api: the common browser case. `make` builds the Api and
+ * server-command clients, and provides `FetchHttpClient` unless one is given.
  */
 export interface BillingAtomUrlOptions extends BillingAtomBaseOptions {
   /** The base URL of the served `BillingApi`, e.g. `/api/billing`. */
   readonly url: string;
   /**
-   * The catalog the deploy sells, when the client already holds it — a Worker
-   * sharing the deploy's own config module, or a test.
-   *
-   * Omit it in a browser: the client then reads the deploy's catalog from
-   * `url` once, through {@link PaykitCatalogClient}. A bundled second copy is a
-   * drift hazard — a stale asset joins terms the server's guard refuses with
-   * `CatalogMismatch` — so the served value is the one the model was built with.
+   * Where the deploy serves its server-expanded commands. Defaults to
+   * `${url}/commands`, which is where `Paykit.handler` mounts them.
    */
-  readonly catalog?: CatalogInput;
-  /**
-   * Where the deploy serves its catalog, when it does not sit at
-   * `${url}/catalog`. Only read when `catalog` is omitted.
-   */
-  readonly catalogUrl?: string;
+  readonly commandsUrl?: string;
   /** The HTTP client to use. Defaults to `FetchHttpClient.layer`. */
   readonly httpClient?: Layer.Layer<HttpClient.HttpClient>;
 }
 
-/** What `make` needs: either a layer or an HTTP Api and its catalog. */
+/** What `make` needs: a layer, or an HTTP Api and the URL of its server-expanded commands. */
 export type BillingAtomOptions<E = never> = BillingAtomLayerOptions<E> | BillingAtomUrlOptions;
 
 /** The atoms one paykit client exposes. */
@@ -449,7 +437,8 @@ const entitiesAtom = <E>(
  * import * as PaykitAtom from "@potion.run/paykit/Atom";
  * import * as AsyncResult from "effect/reactivity/AsyncResult";
  *
- * // No catalog: `make` reads the deploy's own from `/api/billing/catalog`.
+ * // No catalog: `startTrial` and `scheduleTierChange` name a plan, and the
+ * // deployment expands it with the catalog its model was built with.
  * export const billing = PaykitAtom.make({
  *   url: "/api/billing",
  * });
@@ -480,49 +469,38 @@ const entitiesAtom = <E>(
  */
 const clientLayer = (
   options: BillingAtomUrlOptions,
-): Layer.Layer<BillingClient | CatalogService, BillingAtomClientError, never> => {
+): Layer.Layer<BillingClient | BillingCommands, never, never> => {
   const httpClient = options.httpClient ?? FetchHttpClient.layer;
 
-  const catalogService =
-    options.catalog === undefined
-      ? PaykitCatalogClient(options.catalogUrl ?? `${options.url}/catalog`)
-      : Layer.unwrap(Effect.map(catalog(options.catalog), (parsed) => catalogLayer(parsed)));
-
   return Layer.mergeAll(
-    catalogService.pipe(Layer.provide(httpClient)),
+    BillingCommandsClient(options.commandsUrl ?? `${options.url}/commands`).pipe(
+      Layer.provide(httpClient),
+    ),
     BillingApi.layerClientHttp(options.url).pipe(Layer.provide(httpClient)),
   );
 };
 
-/**
- * What building a client can fail with before it answers anything: a catalog
- * this build cannot validate, a deploy that does not serve one, and — when the
- * catalog is served — the session the read needs.
- */
-export type BillingAtomClientError = CatalogError | PaykitCatalogClientError;
+/** What building a URL client can fail with: nothing; both clients are built lazily. */
+export type BillingAtomClientError = never;
 
-export const make = <E = never>(
-  options: BillingAtomOptions<E>,
-): BillingAtoms<E | BillingAtomClientError> => {
+export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E> => {
   const chosen = "layer" in options ? options.layer : clientLayer(options);
 
-  // SAFETY: the served catalog adds a failure to the layer's channel that the
-  // local one does not have, so the union is cast once here rather than
-  // repeated at every atom below.
-  const layer = chosen as Layer.Layer<BillingClient | CatalogService, E | BillingAtomClientError>;
+  // SAFETY: both `make` forms name the same two services, and `clientLayer`
+  // returns exactly that union for the URL form.
+  const layer = chosen as Layer.Layer<BillingClient | BillingCommands, E, never>;
 
   const factory = options.runtime ?? Atom.runtime;
 
   const built = factory(
-    // `provideMerge` keeps the Api client and the catalog on the runtime, so an
-    // application query — and a test that seeds a standing — can reach them
+    // `provideMerge` keeps the Api client and the server join on the runtime, so
+    // an application query — and a test that seeds a standing — can reach them
     // without rebuilding the transport.
     BillingApiLayer.pipe(Layer.provideMerge(layer)),
   );
 
-  // SAFETY: `provideMerge` keeps the catalog the layer built on the runtime, so
-  // the runtime's services are the client and the catalog both.
-  const runtime = built as Atom.AtomRuntime<BillingAtomServices, E | CatalogError>;
+  // SAFETY: `provideMerge` keeps the clients the layer built on the runtime.
+  const runtime = built as Atom.AtomRuntime<BillingAtomServices, E>;
 
   const withAccount = (account: string) =>
     factory.withReactivity(["paykit", accountReactivityKey(account)]);
@@ -533,46 +511,43 @@ export const make = <E = never>(
   // SAFETY: the Api client decodes a rejection into the schema `Instance<...>`
   // form; the public alias names the same class a caller matches, so the cast
   // keeps the atom's error channel readable at the call site.
-  const entitlements = Atom.family(
-    (account: string): BillingQuery<EntitlementsState, E | CatalogError> =>
-      Atom.withServerValueInitial(
-        entitlementsAtom(runtime, account) as BillingQuery<EntitlementsState, E | CatalogError>,
-      ).pipe(withAccount(account)),
+  const entitlements = Atom.family((account: string): BillingQuery<EntitlementsState, E> =>
+    Atom.withServerValueInitial(
+      entitlementsAtom(runtime, account) as BillingQuery<EntitlementsState, E>,
+    ).pipe(withAccount(account)),
   );
 
   // A balance is a read of the entitlement view: one query, mapped, so the
   // atom and `check` cannot describe different state.
-  const balances = Atom.family(
-    (account: string): BillingQuery<ReadonlyArray<Balance>, E | CatalogError> =>
-      Atom.map(entitlements(account), (result) =>
-        AsyncResult.map(result, (state) => (state === null ? [] : balancesOf(state))),
-      ),
+  const balances = Atom.family((account: string): BillingQuery<ReadonlyArray<Balance>, E> =>
+    Atom.map(entitlements(account), (result) =>
+      AsyncResult.map(result, (state) => (state === null ? [] : balancesOf(state))),
+    ),
   );
 
-  const billing = Atom.family((account: string): BillingQuery<BillingStateView, E | CatalogError> =>
+  const billing = Atom.family((account: string): BillingQuery<BillingStateView, E> =>
     Atom.withServerValueInitial(
       // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
-      billingAtom(runtime, account) as BillingQuery<BillingStateView, E | CatalogError>,
+      billingAtom(runtime, account) as BillingQuery<BillingStateView, E>,
     ).pipe(withAccount(account)),
   );
 
-  const customer = Atom.family((account: string): BillingQuery<Customer, E | CatalogError> =>
+  const customer = Atom.family((account: string): BillingQuery<Customer, E> =>
     Atom.withServerValueInitial(
       // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
-      customerAtom(runtime, account) as BillingQuery<Customer, E | CatalogError>,
+      customerAtom(runtime, account) as BillingQuery<Customer, E>,
     ).pipe(withAccount(account)),
   );
 
-  const entities = Atom.family(
-    (account: string): BillingQuery<ReadonlyArray<Entity>, E | CatalogError> =>
-      Atom.withServerValueInitial(
-        // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
-        entitiesAtom(runtime, account) as BillingQuery<ReadonlyArray<Entity>, E | CatalogError>,
-      ).pipe(withAccount(account)),
+  const entities = Atom.family((account: string): BillingQuery<ReadonlyArray<Entity>, E> =>
+    Atom.withServerValueInitial(
+      // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
+      entitiesAtom(runtime, account) as BillingQuery<ReadonlyArray<Entity>, E>,
+    ).pipe(withAccount(account)),
   );
 
   /**
-   * One command over a bound verb. The binding joins the catalog and waits for
+   * One command over a bound verb. The binding sends the command and waits for
    * the view; the atom only adds the request and the invalidation.
    */
   const command =
@@ -586,7 +561,7 @@ export const make = <E = never>(
         BillingAtomServices
       >,
     ) =>
-    (account: string): BillingMutation<Request, Result, Error, E | CatalogError> =>
+    (account: string): BillingMutation<Request, Result, Error, E> =>
       runtime.fn(
         (request: Request) =>
           Effect.gen(function* () {
@@ -600,7 +575,7 @@ export const make = <E = never>(
   // `check` answers a question; it writes nothing, so it invalidates nothing.
   // It is still a command atom because the amount is part of the request.
   const check = Atom.family(
-    (account: string): BillingMutation<CheckRequest, CheckResult, CheckError, E | CatalogError> =>
+    (account: string): BillingMutation<CheckRequest, CheckResult, CheckError, E> =>
       runtime.fn((request: CheckRequest) =>
         Effect.gen(function* () {
           const bound = yield* Check(account);
@@ -624,9 +599,7 @@ export const make = <E = never>(
   ) => Atom.family((account: string) => command(verb, service)(account));
 
   const createBalance = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<BalanceCreateRequest, Balance, BalancesError, E | CatalogError> =>
+    (account: string): BillingMutation<BalanceCreateRequest, Balance, BalancesError, E> =>
       runtime.fn(
         (request: BalanceCreateRequest) =>
           Effect.gen(function* () {
@@ -639,9 +612,7 @@ export const make = <E = never>(
   );
 
   const updateBalance = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<BalanceUpdateRequest, Balance, BalancesError, E | CatalogError> =>
+    (account: string): BillingMutation<BalanceUpdateRequest, Balance, BalancesError, E> =>
       runtime.fn(
         (request: BalanceUpdateRequest) =>
           Effect.gen(function* () {
@@ -654,9 +625,7 @@ export const make = <E = never>(
   );
 
   const finalizeBalance = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<BalanceFinalizeRequest, Balance, BalancesError, E | CatalogError> =>
+    (account: string): BillingMutation<BalanceFinalizeRequest, Balance, BalancesError, E> =>
       runtime.fn(
         (request: BalanceFinalizeRequest) =>
           Effect.gen(function* () {
@@ -669,9 +638,7 @@ export const make = <E = never>(
   );
 
   const createEntity = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<EntityCreateRequest, Entity, EntitiesError, E | CatalogError> =>
+    (account: string): BillingMutation<EntityCreateRequest, Entity, EntitiesError, E> =>
       runtime.fn(
         (request: EntityCreateRequest) =>
           Effect.gen(function* () {
@@ -684,9 +651,7 @@ export const make = <E = never>(
   );
 
   const updateEntity = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<EntityUpdateRequest, Entity, EntitiesError, E | CatalogError> =>
+    (account: string): BillingMutation<EntityUpdateRequest, Entity, EntitiesError, E> =>
       runtime.fn(
         (request: EntityUpdateRequest) =>
           Effect.gen(function* () {
@@ -699,9 +664,7 @@ export const make = <E = never>(
   );
 
   const archiveEntity = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<EntityArchiveRequest, Entity, EntitiesError, E | CatalogError> =>
+    (account: string): BillingMutation<EntityArchiveRequest, Entity, EntitiesError, E> =>
       runtime.fn(
         (request: EntityArchiveRequest) =>
           Effect.gen(function* () {
@@ -716,12 +679,7 @@ export const make = <E = never>(
   const transferBalance = Atom.family(
     (
       account: string,
-    ): BillingMutation<
-      TransferBalanceRequest,
-      TransferBalanceResult,
-      TransferBalanceError,
-      E | CatalogError
-    > =>
+    ): BillingMutation<TransferBalanceRequest, TransferBalanceResult, TransferBalanceError, E> =>
       runtime.fn(
         (request: TransferBalanceRequest) =>
           Effect.gen(function* () {
@@ -734,9 +692,7 @@ export const make = <E = never>(
   );
 
   const updateBillingControls = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<CustomerUpdateRequest, Customer, CustomersError, E | CatalogError> =>
+    (account: string): BillingMutation<CustomerUpdateRequest, Customer, CustomersError, E> =>
       runtime.fn(
         (request: CustomerUpdateRequest) =>
           Effect.gen(function* () {
@@ -749,9 +705,7 @@ export const make = <E = never>(
   );
 
   const createCustomer = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<CustomerRequest, Customer, CustomersError, E | CatalogError> =>
+    (account: string): BillingMutation<CustomerRequest, Customer, CustomersError, E> =>
       runtime.fn(
         (request: CustomerRequest) =>
           Effect.gen(function* () {
@@ -764,9 +718,7 @@ export const make = <E = never>(
   );
 
   const getOrCreateCustomer = Atom.family(
-    (
-      account: string,
-    ): BillingMutation<CustomerRequest, Customer, CustomersError, E | CatalogError> =>
+    (account: string): BillingMutation<CustomerRequest, Customer, CustomersError, E> =>
       runtime.fn(
         (request: CustomerRequest) =>
           Effect.gen(function* () {

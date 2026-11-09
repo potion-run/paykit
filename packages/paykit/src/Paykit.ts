@@ -159,6 +159,10 @@ export const Paykit = {
   // runtime — the four layers
   BillingInProcess: Billing.BillingInProcess,
   BillingApiLayer: Billing.BillingApiLayer,
+  BillingCommands: Billing.BillingCommands,
+  BillingCommandsClient: Billing.BillingCommandsClient,
+  BillingCommandsLive: Billing.BillingCommandsLive,
+  BillingCommandsServer: Billing.BillingCommandsServer,
   BalancesLive: Billing.BalancesLive,
   CustomersLive: Billing.CustomersLive,
   EntitiesLive: Billing.EntitiesLive,

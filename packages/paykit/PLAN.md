@@ -822,7 +822,7 @@ else. The root `pnpm typecheck` builds every package through project references,
 - **A missing capability is not a fabricated decline.** A client that cannot refund declares no
   `refund` capability, and asking for one fails with `ProviderCapabilityMissing`. Nothing pretends
   a card was declined.
-- **A catalog-derived command needs the catalog.** `Subscribe`, `ChangeTier` and `StartTrial` carry
-  their own allowances and price. `CatalogGuard` refuses a mismatch, but it cannot invent a missing
-  price, so an Api client must send the fields the catalog implies. `tierCommand()` in the example is
-  the shape to copy; a generated client would be better.
+- **A catalog-derived command needs the catalog.** A direct `BillingApi` command carries its own
+  allowances and price, and `CatalogGuard` refuses a mismatch but cannot invent a missing price.
+  The runtime bindings resolve that join on the deployment through `BillingCommands` instead (ADR
+  0048); a caller that bypasses it still sends the fields the catalog implies.

@@ -4,6 +4,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { BillingCommandsServer } from "./Billing/Commands.rpc.ts";
 import {
   Attach,
   AttachRequest,
@@ -105,6 +106,8 @@ export interface HandlerMount {
   readonly webhooks?: string;
   /** The plan-operation paths. Defaults to `/plans`. */
   readonly plans?: string;
+  /** The server-expanded tenant commands. Defaults to `${tenant}/commands`. */
+  readonly commands?: string;
 }
 
 /** Which Api surfaces a handler mounts. Defaults to `"both"`. */
@@ -136,7 +139,7 @@ export interface HandlerOptions {
 const text = (body: string, status: number) => HttpServerResponse.text(body, { status });
 
 /**
- * The five paths every paykit deployment serves, as one request handler.
+ * The built-in paths every paykit deployment serves, as one request handler.
  *
  * The handler builds no world: it requires `BillingApi` and `BillingAdminApi`
  * and never constructs them, so the process that provides the world is the one
@@ -144,12 +147,12 @@ const text = (body: string, status: number) => HttpServerResponse.text(body, { s
  * whose bindings exist only inside a request — a D1 binding, on Cloudflare —
  * keeps its `Effect.provide` at the call site.
  *
- * A refusal answers `Paykit.httpStatus`, so the five examples cannot disagree
+ * A refusal answers `Paykit.httpStatus`, so the examples cannot disagree
  * about what a `PlanNotInCatalog` or a spent `RefundExceedsCharged` returns. A
  * delivery answers 202 whether or not it recorded anything, because a provider
  * should not retry an event paykit does not model.
  *
- * ### A Worker's five paths
+ * ### A Worker's paths
  * **Example:** The tenant Api, the console, checkout and webhooks
  * ```typescript
  * const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
@@ -174,6 +177,7 @@ export const handler = (options: HandlerOptions = {}) =>
   Effect.gen(function* () {
     const surfaces = options.surfaces ?? "both";
     const tenant = surfaces === "tenant" || surfaces === "both" ? yield* BillingApi : null;
+    const commands = tenant === null ? null : yield* BillingCommandsServer;
     const admin = surfaces === "admin" || surfaces === "both" ? yield* BillingAdminApi : null;
     const money = options.provider === undefined ? null : yield* moneyRoutes(options.provider);
     const accountOf = options.accountOf ?? (() => null);
@@ -182,12 +186,15 @@ export const handler = (options: HandlerOptions = {}) =>
     const previewAttach = Option.getOrNull(yield* Effect.serviceOption(PreviewAttach));
     const previewUpdate = Option.getOrNull(yield* Effect.serviceOption(PreviewUpdate));
 
+    const tenantPath = options.mount?.tenant ?? "/api";
+
     const mount = {
-      tenant: options.mount?.tenant ?? "/api",
+      tenant: tenantPath,
       admin: options.mount?.admin ?? "/admin",
       checkout: options.mount?.checkout ?? "/checkout",
       webhooks: options.mount?.webhooks ?? "/webhooks",
       plans: options.mount?.plans ?? "/plans",
+      commands: options.mount?.commands ?? `${tenantPath}/commands`,
     };
 
     return Effect.fn("Paykit.handler")(function* (request: HttpServerRequest.HttpServerRequest) {
@@ -199,6 +206,10 @@ export const handler = (options: HandlerOptions = {}) =>
       for (const route of options.routes ?? []) {
         if (route.path === path) return yield* route.handle(request);
       }
+
+      // The catalog join sits under the tenant path, so it is checked before
+      // the Api's prefix catches its own subpath.
+      if (commands !== null && path.startsWith(mount.commands)) return yield* commands;
 
       if (tenant !== null && path.startsWith(mount.tenant)) return yield* tenant.fetch;
 

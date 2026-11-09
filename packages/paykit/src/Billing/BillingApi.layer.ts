@@ -2,23 +2,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { balanceOfScope, emptyBalance } from "../Balance.ts";
 import { BillingApi } from "../BillingApi.api.ts";
-import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { CUSTOMER_SCOPE, EntityId, entityScope } from "../Customer.ts";
 import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
-import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { scheduleTierChangeInputOf, subscribeInputOf, withGrants } from "../TierCommand.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { BindingCall, callOptionsOf, mapBindingFailure, type ReceiptRef } from "./Bindings.ts";
-import {
-  Resume,
-  ScheduleCancellation,
-  defaultPlanFor,
-  toCancelError,
-  toResumeError,
-} from "./Cancel.binding.ts";
+import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
+import { BillingCommands } from "./Commands.rpc.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import {
   CreateCustomer,
@@ -38,11 +30,7 @@ import {
   toWithdrawTierChangeError,
   WithdrawTierChange,
 } from "./ScheduleTierChange.binding.ts";
-import {
-  SetBillingControls,
-  controlFeaturesOf,
-  toSetBillingControlsError,
-} from "./SetBillingControls.binding.ts";
+import { SetBillingControls, toSetBillingControlsError } from "./SetBillingControls.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
@@ -60,12 +48,16 @@ const bound = mapBindingFailure;
  * and its reply decoding turns a rejection back into the class a caller
  * matches.
  *
- * The layer is **protocol-agnostic**: it resolves `BillingApi.Client`, and the
- * deployment picks the protocol beside it.
+ * The layer is **protocol-agnostic**: it resolves `BillingApi.Client` for the
+ * commands the Api serves directly, and `BillingCommands` for the four whose
+ * catalog terms the deployment joins. The deployment picks the protocol beside
+ * each.
  *
  * ```typescript
- * Layer.provide(BillingApi, BillingApi.layerClientInProcess)   // same host
- * Layer.provide(BillingApi, BillingApi.layerClientHttp(url))   // another service
+ * Layer.provide(BillingApi, BillingApi.layerClientInProcess)          // same host
+ * Layer.provide(BillingCommands, BillingCommandsLive)                 // same host
+ * Layer.provide(BillingApi, BillingApi.layerClientHttp(url))          // another service
+ * Layer.provide(BillingCommands, BillingCommandsClient(`${url}/commands`))
  * ```
  *
  * Read-your-write survives the transport: every verb reads `Entitlements` with
@@ -253,37 +245,24 @@ const BillingApiCore = Layer.mergeAll(
   Layer.effect(
     SetBillingControls,
     Effect.gen(function* () {
-      const client = yield* BillingApi.Client;
-      const catalog = yield* CatalogService;
+      const commands = yield* BillingCommands;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return Effect.fn("Paykit.SetBillingControls")(function* (account) {
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.SetBillingControls.set")(function* (request) {
-          const receipt = yield* bound(toSetBillingControlsError)(
-            client.SetBillingControls(
-              id,
+          return yield* bound(toSetBillingControlsError)(
+            commands.setBillingControls(
               {
+                target: id,
                 ...(request.billingControls === undefined
                   ? {}
                   : { billingControls: request.billingControls }),
-                features: controlFeaturesOf(catalog, request.billingControls),
               },
-              options(),
+              { headers: options().headers },
             ),
           );
-
-          const view = yield* bound(toSetBillingControlsError)(
-            client.BillingState.get(id, { atLeast: receipt, ...options() }),
-          );
-
-          const billingControls = view?.billingControls;
-
-          return {
-            ...(billingControls === undefined ? {} : { billingControls }),
-            view: view ?? null,
-          };
         });
       });
     }),
@@ -639,8 +618,7 @@ const BillingApiCore = Layer.mergeAll(
   Layer.effect(
     ScheduleCancellation,
     Effect.gen(function* () {
-      const client = yield* BillingApi.Client;
-      const catalog = yield* CatalogService;
+      const commands = yield* BillingCommands;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return Effect.fn("Paykit.ScheduleCancellation")(function* (account) {
@@ -649,31 +627,16 @@ const BillingApiCore = Layer.mergeAll(
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.ScheduleCancellation.schedule")(function* (request) {
-          const fallback =
-            request.group === undefined ? undefined : defaultPlanFor(catalog, request.group);
-
-          const receipt = yield* bound(toCancelError)(
-            request.group === undefined
-              ? // An inputless command takes its options third: input, then options.
-                client.ScheduleCancellation(id, {}, options(request.dedupeKey))
-              : client.CancelGroup(
-                  id,
-                  {
-                    group: request.group,
-                    ...(fallback === undefined ? {} : { fallback }),
-                  },
-                  options(request.dedupeKey),
-                ),
+          return yield* bound(toCancelError)(
+            commands.scheduleCancellation(
+              {
+                target: id,
+                ...(request.group === undefined ? {} : { group: request.group }),
+                dedupeKey: request.dedupeKey,
+              },
+              { headers: options(request.dedupeKey).headers },
+            ),
           );
-
-          const view = yield* bound(toCancelError)(
-            client.BillingState.get(id, { atLeast: receipt, ...options() }),
-          );
-
-          return {
-            cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false,
-            ...(request.group === undefined ? {} : { group: request.group }),
-          };
         });
       });
     }),
@@ -708,14 +671,13 @@ const BillingApiCore = Layer.mergeAll(
       });
     }),
   ),
-  // The catalog joins the payload here, exactly as the in-process layer does:
-  // a caller names the tier and `CatalogGuard` sees a command that agrees with
-  // the deploy.
+  // The catalog join belongs to the deployment now: a caller names the tier,
+  // and `BillingCommands` expands it with the catalog the Worker was built
+  // with before the model sees a command.
   Layer.effect(
     ScheduleTierChange,
     Effect.gen(function* () {
-      const client = yield* BillingApi.Client;
-      const catalog = yield* CatalogService;
+      const commands = yield* BillingCommands;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return Effect.fn("Paykit.ScheduleTierChange")(function* (account) {
@@ -724,32 +686,18 @@ const BillingApiCore = Layer.mergeAll(
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.ScheduleTierChange.schedule")(function* (request) {
-          const scheduled = scheduleTierChangeInputOf(catalog, request.tier);
-
-          if (scheduled === null) {
-            return yield* bound(toScheduleTierChangeError)(
-              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
-            );
-          }
-
-          // The catalog joins the payload here as it does in process, and a
-          // bespoke set is judged by the same guard the Api runs (ADR 0041).
-          const granted = withGrants(catalog, scheduled, request.grants, request.price);
-          const mismatch = granted.mismatch;
-
-          if (mismatch !== null) {
-            return yield* bound(toScheduleTierChangeError)(Effect.fail(mismatch));
-          }
-
-          const receipt = yield* bound(toScheduleTierChangeError)(
-            client.ScheduleTierChange(id, granted.input, options(request.dedupeKey)),
+          return yield* bound(toScheduleTierChangeError)(
+            commands.scheduleTierChange(
+              {
+                target: id,
+                tier: request.tier,
+                ...(request.grants === undefined ? {} : { grants: request.grants }),
+                ...(request.price === undefined ? {} : { price: request.price }),
+                dedupeKey: request.dedupeKey,
+              },
+              { headers: options(request.dedupeKey).headers },
+            ),
           );
-
-          const view = yield* bound(toScheduleTierChangeError)(
-            client.BillingState.get(id, { atLeast: receipt, ...options() }),
-          );
-
-          return { pendingTier: view?.pendingTier?.tier ?? null };
         });
       });
     }),
@@ -782,8 +730,7 @@ const BillingApiCore = Layer.mergeAll(
   Layer.effect(
     StartTrial,
     Effect.gen(function* () {
-      const client = yield* BillingApi.Client;
-      const catalog = yield* CatalogService;
+      const commands = yield* BillingCommands;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return Effect.fn("Paykit.StartTrial")(function* (account) {
@@ -792,34 +739,19 @@ const BillingApiCore = Layer.mergeAll(
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.StartTrial.begin")(function* (request) {
-          const grant = subscribeInputOf(catalog, request.tier, {
-            ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
-            ...(request.currency === undefined ? {} : { currency: request.currency }),
-          });
-
-          if (grant === null) {
-            return yield* bound(toStartTrialError)(
-              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
-            );
-          }
-
-          const receipt = yield* bound(toStartTrialError)(
-            client.StartTrial(
-              id,
-              { ...grant, trialEndsAt: request.trialEndsAt },
-              options(request.dedupeKey),
+          return yield* bound(toStartTrialError)(
+            commands.startTrial(
+              {
+                target: id,
+                tier: request.tier,
+                trialEndsAt: request.trialEndsAt,
+                ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
+                ...(request.currency === undefined ? {} : { currency: request.currency }),
+                dedupeKey: request.dedupeKey,
+              },
+              { headers: options(request.dedupeKey).headers },
             ),
           );
-
-          const view = yield* bound(toStartTrialError)(
-            client.BillingState.get(id, { atLeast: receipt, ...options() }),
-          );
-
-          return {
-            tier: view?.tier ?? request.tier,
-            status: view?.status ?? "trialing",
-            trialEndsAt: view?.trialEndsAt ?? null,
-          };
         });
       });
     }),

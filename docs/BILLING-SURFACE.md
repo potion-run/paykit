@@ -41,6 +41,7 @@ documented billing surface, not a second implementation.
 | Rollovers | `carryOver` / `carryCap`, `balances.qnt` | shipped |
 | Proration | `Proration`, `ChargeProration`, `ChargeQuantityProration` | shipped |
 | Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
+| Plan commands over the Api | `BillingCommandsRpcs`, `Paykit.BillingCommandsServer`, `Atom.make({ url })` | shipped — the client names a plan, the deployment joins it (ADR 0048) |
 | Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
 | Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
 | Add-ons | `plans` plus `schedule`, `multiAttach` / `multiUpdate`, `addAddOn`, group cancellation, a bespoke custom add-on (ADRs 0039, 0042) | shipped |
@@ -120,6 +121,10 @@ documented billing surface, not a second implementation.
    `Payments.setupPayment` and the `"setup"` capability are on the port, `Paykit.SetupPayment(account)`
    is the in-process operation binding, Stripe opens a setup-mode Checkout Session and Polar a
    customer session. The provider hosts the page; the log records nothing.
+7. **The Api join** — shipped ([ADR 0048](./adr/0048-the-api-names-a-plan-and-the-deployment-joins-it.md)):
+   `BillingCommandsRpcs` takes a plan id and the deployment expands it with `CatalogService` before
+   the model `send`; `BillingApiLayer` resolves `BillingCommands`, `Paykit.handler` mounts the surface
+   at `${tenant}/commands`, and `Atom.make({ url })` reads no catalog.
 
 Nothing on the deployment plane is "missing": a library that grew an edge cache, a chat formatter or
 a marketplace adapter would be a second product.

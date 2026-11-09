@@ -18,6 +18,7 @@ import { Page } from "./Page.ts";
  * - `/api/auth/*` — Better Auth's own sign-up, sign-in and session routes.
  * - `/api/*`      — `BillingApi`, the tenant surface, gated by the Better Auth
  *                   session. The account is the signed-in user's id.
+ * - `/api/commands` — the plan commands the deployment expands from its catalog.
  * - `/admin/*`    — `BillingAdminApi`, reachable only when the session's user is
  *                   named in `PAYKIT_ADMIN_EMAILS`.
  * - `/checkout`   — the purchase path, which also derives the account from the
@@ -31,6 +32,7 @@ export const serve = Effect.gen(function* () {
   const auth = yield* Auth;
   const resolve = yield* SessionResolver;
   const tenant = yield* BillingApi;
+  const commands = yield* Paykit.BillingCommandsServer;
   const admin = yield* BillingAdminApi;
   const subscribeOf = yield* Paykit.Subscribe;
 
@@ -45,7 +47,10 @@ export const serve = Effect.gen(function* () {
       if (path === "/api/auth" || path.startsWith("/api/auth/")) return yield* auth.fetch;
 
       // The Session middleware resolves the cookie and pins an account actor to
-      // its own id. The Admin middleware requires an admin actor.
+      // its own id. The Admin middleware requires an admin actor. The commands
+      // route sits under the Api's prefix and is checked first.
+      if (path.startsWith("/api/commands")) return yield* commands;
+
       if (path.startsWith("/api")) return yield* tenant.fetch;
 
       if (path.startsWith("/admin")) return yield* admin.fetch;

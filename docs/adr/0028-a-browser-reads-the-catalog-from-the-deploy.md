@@ -1,6 +1,6 @@
 # 0028 — A browser reads the catalog from the deploy
 
-- **Status:** Accepted
+- **Status:** Accepted; decision 3 is superseded by [0048](./0048-the-api-names-a-plan-and-the-deployment-joins-it.md)
 - **Date:** 2026-11-07
 - **Follows:** [0001](./0001-catalog-states-the-pricing-model.md), [0003](./0003-the-deploy-provisions-the-vendor.md), [0026](./0026-a-tier-states-its-whole-top-up-line.md)
 

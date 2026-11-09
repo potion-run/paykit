@@ -43,6 +43,10 @@ it("exports the four groups from the package root", () => {
   expect(Billing.GrantCredits.key).toBe("Paykit.GrantCredits");
   expect(Billing.BillingInProcess).toBeDefined();
   expect(Billing.BillingApiLayer).toBeDefined();
+  expect(Billing.BillingCommands.key).toBe("paykit/BillingCommands");
+  expect(Billing.BillingCommandsLive).toBeDefined();
+  expect(Billing.BillingCommandsServer).toBeDefined();
+  expect(typeof Billing.BillingCommandsClient).toBe("function");
   expect(Billing.BillingAdminInProcess).toBeDefined();
   expect(Billing.BillingAdminApiLayer).toBeDefined();
   expect(Paykit.Paykit.Billing).toBe(Billing);

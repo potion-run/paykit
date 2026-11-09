@@ -18,6 +18,7 @@ import { allowance } from "../src/Allowance.ts";
 import * as PaykitAtom from "../src/Atom.ts";
 import { InsecureDevGuards } from "../src/Auth/FromHeaders.ts";
 import { BindingCall } from "../src/Billing/Bindings.ts";
+import { BillingCommandsClient, BillingCommandsLive } from "../src/Billing/Commands.rpc.ts";
 import { BillingApi } from "../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../src/BillingReadStore.ts";
 import { catalog, planTermsOf } from "../src/Catalog.ts";
@@ -62,10 +63,15 @@ const World = Layer.mergeAll(
 );
 
 /** The in-process Api client the atom runtime is built on, with the account's headers. */
-const ClientLayer = BillingApi.layerClientInProcess.pipe(
-  Layer.provide(World),
-  Layer.provideMerge(catalogLayer(testCatalog)),
-  Layer.provideMerge(Layer.succeed(BindingCall, { headers: actorHeader })),
+const ClientLayer = Layer.mergeAll(
+  BillingApi.layerClientInProcess.pipe(
+    Layer.provide(World),
+    Layer.provideMerge(catalogLayer(testCatalog)),
+    Layer.provideMerge(Layer.succeed(BindingCall, { headers: actorHeader })),
+  ),
+  // The server-side join the Api layer resolves. It is built from the same
+  // model, so this test's client never reads a catalog copy of its own.
+  BillingCommandsLive.pipe(Layer.provide(World), Layer.provideMerge(catalogLayer(testCatalog))),
 );
 
 /**
@@ -322,7 +328,9 @@ it.live("the atom client speaks the Api's HTTP protocol", () =>
     // the Api's Session guard refuses it over the wire; the atom decodes the
     // refusal into the class a caller matches, not a transport error.
     const HttpAtoms = Layer.mergeAll(
-      catalogLayer(testCatalog),
+      BillingCommandsClient("http://billing.test/api/commands").pipe(
+        Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient(server))),
+      ),
       BillingApi.layerClientHttp("http://billing.test/api").pipe(
         Layer.provide(Layer.succeed(HttpClient.HttpClient, httpClient(server))),
         Layer.provideMerge(
