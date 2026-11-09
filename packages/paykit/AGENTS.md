@@ -258,6 +258,10 @@ The recommended runtime surface is plan operations, not one verb per command: `b
 `Billing` barrel are the advanced surface. A public operation folds the money step in; a caller
 must not have to call a second verb to collect a proration.
 
+A customer exists before it buys: `Paykit.Customers(account).create` records the identity a billing
+page shows, `getOrCreate` is the idempotent sign-up path, and `CustomerCreated` is a latch no
+billing decision reads (`CreateCustomer`, ADR 0045).
+
 Tenant and admin are two `Api`s over one model, with different middleware and different blast
 radius. `Foldkit.make(BillingAdminApi)` derives the console — do not hand-write command plumbing
 around it.
@@ -478,7 +482,10 @@ const world = Layer.mergeAll(
 - **Webhooks translate at the edge**, into our events, with the provider's event id as the
   `commandId` so a redelivery is a replay, not a second charge. `Webhook()` is that edge as a
   binding — the model's services resolved once, an event applied per delivery — so a route builds
-  it beside its other bindings instead of re-resolving the model on every call.
+  it beside its other bindings instead of re-resolving the model on every call. A hosted purchase
+  carries its quote keyed by the vendor reference (`PendingQuote`), so concurrent checkouts keep
+  their own terms and a completion that names none while several are held is
+  `PendingActivationAmbiguous` (ADR 0044).
 - **A refund is a fact about money, capped by the log.** `Refund` records `RefundRecorded`
   (`chargeId`, `refundId`, `amount`, `currency`, `refundedAfter`, `commandId`), and the ceiling is
   what the log recorded as charged per currency — `PaymentRecorded`, `CreditsPurchased.price`,
