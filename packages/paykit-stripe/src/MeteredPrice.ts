@@ -314,6 +314,7 @@ export const MeteredPriceProvider = () =>
           recurring: { interval: news.interval, usage_type: "metered", meter: news.meter },
           ...(news.pricing._tag === "unit"
             ? {
+                billing_scheme: "per_unit",
                 unit_amount: news.pricing.unitPrice.amount,
                 ...(transform === undefined ? {} : { transform_quantity: transform }),
               }
