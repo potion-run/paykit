@@ -105,7 +105,7 @@ export const PaymentsMemory = (): MemoryPayments => {
             const id = `co_${next()}`;
             checkouts.set(id, { account, tier });
 
-            return { url: `https://paykit.memory/checkout/${id}` };
+            return { url: `https://paykit.memory/checkout/${id}`, reference: id };
           }),
         createInvoice: ({
           account,

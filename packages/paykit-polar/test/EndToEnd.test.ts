@@ -55,7 +55,7 @@ const polarClient = (asked: Array<Record<string, unknown>> = []): PolarClient =>
     Effect.sync(() => {
       asked.push(request as never);
 
-      return { url: `https://polar.test/checkout/${request.productId}` };
+      return { url: `https://polar.test/checkout/${request.productId}`, reference: "ord_e2e" };
     }),
   createCustomerSession: (request) =>
     Effect.sync(() => {

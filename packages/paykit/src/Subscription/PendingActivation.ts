@@ -40,6 +40,25 @@ export const PendingActivation = Schema.Struct({
 export type PendingActivation = typeof PendingActivation.Type;
 
 /**
+ * One quote, keyed by the vendor reference of the purchase it was quoted for.
+ * The reference is the vendor's own id — a Stripe checkout session or invoice
+ * id, a Polar checkout or order id — never a URL (ADR 0044 §1).
+ */
+export const PendingQuote = Schema.Struct({
+  /** The vendor's id for the purchase these terms were quoted for. */
+  reference: Schema.String,
+  /** The terms the purchase quoted. */
+  terms: PendingActivation,
+});
+
+export type PendingQuote = typeof PendingQuote.Type;
+
+/** Every quote an account holds, keyed by the vendor reference of its purchase. */
+export const PendingActivations = Schema.Record(Schema.String, PendingActivation);
+
+export type PendingActivations = typeof PendingActivations.Type;
+
+/**
  * A completion arrived for a custom plan whose quoted terms are not on the
  * account. The activation cannot fall back to the catalog: its defaults are a
  * different deal at the same price (ADR 0042 §1).
@@ -66,5 +85,22 @@ export class PendingActivationStale extends Schema.TaggedError<PendingActivation
   },
 ) {}
 
+/**
+ * A completion named no quote and the account holds more than one. The edge
+ * cannot tell which purchase it completes, and activating either would contract
+ * for terms nobody bought (ADR 0044 §1).
+ */
+export class PendingActivationAmbiguous extends Schema.TaggedError<PendingActivationAmbiguous>()(
+  "PendingActivationAmbiguous",
+  {
+    account: Schema.String,
+    /** Every reference the account holds, sorted, so the refusal is stable. */
+    references: Schema.Array(Schema.String),
+  },
+) {}
+
 /** Every refusal a completion can answer about the quote it found. */
-export type PendingActivationRefusal = PendingActivationMissing | PendingActivationStale;
+export type PendingActivationRefusal =
+  | PendingActivationMissing
+  | PendingActivationStale
+  | PendingActivationAmbiguous;

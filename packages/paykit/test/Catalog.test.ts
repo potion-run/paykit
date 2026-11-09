@@ -12,8 +12,8 @@ import {
   CatalogCreditGrantInvalid,
   CatalogCreditRateInvalid,
   CatalogCreditRateMissing,
-  CatalogCustomDefaultPlan,
   CatalogCustomPack,
+  CatalogDefaultOnAddOn,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
@@ -720,9 +720,9 @@ describe("catalog", () => {
   it("accepts a custom plan and a custom add-on, and refuses the two shapes it cannot be", () => {
     // A custom plan is a plan with one extra sentence: its grants are the quote,
     // not the ceiling (ADR 0041). The sentence cannot apply to a pack (nothing
-    // is granted) or a group's fallback (which has to be the catalogue's
-    // terms). An add-on may state it: a bespoke add-on stacks beside every
-    // group (ADR 0042 §2).
+    // is granted). An add-on may state it: a bespoke add-on stacks beside every
+    // group (ADR 0042 §2). A custom plan may be a group's fallback: a
+    // cancellation re-grants the catalog's terms, not a bespoke set (ADR 0043).
     const custom = tier({
       id: "enterprise",
       custom: true,
@@ -766,6 +766,23 @@ describe("catalog", () => {
       id: "floor",
       custom: true,
       isDefault: true,
+      credits: 500,
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      grants: [allowance(messages, { included: 10 })],
+    });
+
+    const acceptedFallback = defineCatalog({ features: [messages], tiers: [fallback] });
+    expect(Result.isSuccess(acceptedFallback)).toBe(true);
+
+    if (Result.isSuccess(acceptedFallback)) {
+      expect(planOf(acceptedFallback.success, "floor")?.custom).toBe(true);
+      expect(planOf(acceptedFallback.success, "floor")?.isDefault).toBe(true);
+    }
+
+    const defaultAddOn = tier({
+      id: "rider-default",
+      addOn: true,
+      isDefault: true,
       grants: [allowance(messages, { included: 10 })],
     });
 
@@ -778,7 +795,9 @@ describe("catalog", () => {
     };
 
     refuses(pack, CatalogCustomPack);
-    refuses(fallback, CatalogCustomDefaultPlan);
+    // An add-on stacks beside every group and fills no slot, so it can never be
+    // the fallback a cancellation lands on, custom or not (ADR 0043).
+    refuses(defaultAddOn, CatalogDefaultOnAddOn);
   });
 
   it("carries `custom` through the public plan constructor and a variant", () => {
@@ -806,6 +825,36 @@ describe("catalog", () => {
 
     if (Result.isSuccess(declared)) {
       expect(planOf(declared.success, "enterprise_annual")?.custom).toBe(true);
+    }
+  });
+
+  it("does not inherit `isDefault` from a variant's base", () => {
+    // A variant of a custom default plan is legal, and it is the same plan at
+    // another price. `isDefault` is stated per plan, so the variant does not
+    // become a second fallback for the group (ADR 0043).
+    const base = tier({
+      id: "floor",
+      custom: true,
+      isDefault: true,
+      credits: 500,
+      price: { amount: 4_900, currency: "usd", interval: "month" },
+      grants: [allowance(messages, { included: 10 })],
+    });
+
+    const annual = tier({
+      id: "floor_annual",
+      variantOf: "floor",
+      customize: { price: { amount: 49_000, currency: "usd", interval: "annual" } },
+      grants: [],
+    });
+
+    const declared = defineCatalog({ features: [messages], tiers: [base, annual] });
+    expect(Result.isSuccess(declared)).toBe(true);
+
+    if (Result.isSuccess(declared)) {
+      expect(planOf(declared.success, "floor_annual")?.custom).toBe(true);
+      expect(planOf(declared.success, "floor_annual")?.isDefault).toBeUndefined();
+      expect(planOf(declared.success, "floor")?.isDefault).toBe(true);
     }
   });
 });

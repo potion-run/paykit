@@ -1,6 +1,6 @@
 # 0041 — A custom plan is a catalog opt-in, and its grants are defaults
 
-- **Status:** Accepted, amended by [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §1–3
+- **Status:** Accepted, amended by [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §1–3 and [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) §5
 - **Date:** 2026-11-11
 - **Follows:** [0001](./0001-catalog-states-the-pricing-model.md), [0006](./0006-postpaid-usage-is-a-unit-price-in-the-catalog.md), [0035](./0035-plans-plan-items-and-balance-sources.md), [0038](./0038-customer-controls-are-state.md), [0039](./0039-one-plan-per-group-and-add-ons-stack.md)
 
@@ -74,8 +74,9 @@ allowances the event granted rather than the ones the catalog now states. This A
 field and renames none.
 
 **5. A custom plan is base-only.** The catalog refused three combinations when this ADR was written.
-[0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §2 reopens the add-on refusal;
-the other two stand.
+[0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) §2 reopens the add-on refusal,
+and [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) reopens the fallback refusal; the pack
+refusal stands.
 
 - `custom` on a `kind: "one_off"` pack (`CatalogCustomPack`). A pack grants nothing, so there is no
   allowance to make bespoke.
@@ -84,9 +85,12 @@ the other two stand.
   ([ADR 0035](./0035-plans-plan-items-and-balance-sources.md) §4). A bespoke add-on needs the balance
   ledger to report one source per plan before "how much is left" has an answer; until then a
   bespoke deal is a group's plan.
-- `custom` with `isDefault: true` (`CatalogCustomDefaultPlan`). `isDefault` is the plan a
-  cancellation falls back to ([ADR 0039](./0039-one-plan-per-group-and-add-ons-stack.md) §5). A
-  fallback is the catalogue's terms by definition; a bespoke set is not a fallback anyone quoted.
+- `custom` with `isDefault: true` (`CatalogCustomDefaultPlan`). **Reopened and accepted by
+  [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) §5.** `isDefault` is the plan a
+  cancellation falls back to ([ADR 0039](./0039-one-plan-per-group-and-add-ons-stack.md) §5), and
+  the fallback row is still the catalogue's terms: `defaultPlanFor` resolves it from `planTermsOf`,
+  so a cancellation re-grants the catalog's grants, not the bespoke set a customer held. An add-on
+  cannot be a group's default (`CatalogDefaultOnAddOn`), because it fills no slot.
 
 A variant inherits `custom` from its base and does not state it: a variant of a custom plan is the
 same negotiated plan at another price, and a non-custom base cannot grow a bespoke child.
@@ -155,10 +159,13 @@ mutant or command-coverage row is added, because no command and no decision chan
 ## Consequences
 
 > [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) removes
-> `CatalogCustomAddOn`; the other two refusals stand.
+> `CatalogCustomAddOn`, and [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) removes
+> `CatalogCustomDefaultPlan`; the pack refusal stands.
 
-- `Plan.custom` is one schema field, and the catalog gains three refusals: `CatalogCustomPack`,
-  `CatalogCustomAddOn`, `CatalogCustomDefaultPlan`.
+- `Plan.custom` is one schema field, and the catalog gained three refusals: `CatalogCustomPack`,
+  `CatalogCustomAddOn`, `CatalogCustomDefaultPlan`. [0042](./0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md)
+  removed `CatalogCustomAddOn`; [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) removed
+  `CatalogCustomDefaultPlan` and added `CatalogDefaultOnAddOn`.
 - `defineCatalog`'s per-grant loop becomes `allowanceFaultOf`, one function used by both the catalog
   and the guard, so the structural rules cannot drift between what a deploy validates and what a
   bespoke request must satisfy. `catalogFactsOf` derives the declared features, their kinds and the
@@ -205,8 +212,9 @@ The first three below were reopened and decided by
 - **Bespoke add-ons.** Reopening §5 needs the per-plan balance source
   ([ADR 0035](./0035-plans-plan-items-and-balance-sources.md) §4) so a stacked bespoke item has its
   own `Balance.breakdown` row, and a merge rule that says what two bespoke items for one feature mean.
-- **A custom plan as a group's fallback.** Reopening §5's `isDefault` refusal needs a rule for what a
-  cancellation re-grants when the fallback's allowances were never catalog data.
+- **A custom plan as a group's fallback.** Reopened and decided by
+  [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md): a cancellation re-grants the catalog's
+  terms, never a bespoke set, and an add-on cannot be a default.
 - **A bespoke deal sold through a checkout.** Reopening §7 needs the quoted terms to ride the
   provider reference (or a pending activation) until the webhook can read them back.
 - **Negotiation as a first-class record.** A `CustomPlan` entity with an approver, a source quote and

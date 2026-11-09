@@ -374,10 +374,15 @@ are the example's job.
   activates exactly that quote (a missing or stale quote is `PendingActivationMissing` /
   `PendingActivationStale`); a bespoke add-on is a custom `addOn` plan that stacks through the same
   attach path; and a negotiated price is the operation's explicit override, with the event carrying
-  it. A custom plan is still refused as a pack or a group's `isDefault`. The brief is
-  [custom-plans](./briefs/custom-plans.md); what remains is the per-plan balance source (one
-  `Balance.breakdown` row per add-on and a single spend shape per feature), a custom fallback, and a
-  quote keyed by provider reference if concurrent checkouts must be distinguished.
+  it. [ADR 0043](./adr/0043-a-custom-plan-may-be-a-groups-fallback.md) lets a custom plan be a
+  group's `isDefault` — a cancellation re-grants the catalog's terms, never a bespoke set — and
+  refuses an add-on default; [ADR
+  0044](./adr/0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md) keys a quote by the
+  provider reference of its purchase, so concurrent checkouts keep their own terms and a completion
+  that names no quote while several are held is `PendingActivationAmbiguous`. A custom plan is still
+  refused as a pack. The brief is [custom-plans](./briefs/custom-plans.md); what remains is the
+  per-plan balance source (one `Balance.breakdown` row per add-on and a single spend shape per
+  feature).
 
 ### 3. The configuration surface
 

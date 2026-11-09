@@ -75,7 +75,15 @@ export const PaymentCapabilities = Schema.Array(PaymentCapability);
 export const Payments = Domain.ExternalSystem("Payments", {
   createCheckout: {
     args: { account: Schema.String, tier: Schema.String, kind: TierKind },
-    success: { url: Schema.String },
+    success: {
+      url: Schema.String,
+      /**
+       * The vendor's own id for the checkout session, when it can name one. It
+       * is what a webhook completion quotes back to find the terms that were
+       * sold (ADR 0044 §1); a provider that cannot name one omits it.
+       */
+      reference: Schema.optionalKey(Schema.String),
+    },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
   createInvoice: {
@@ -171,7 +179,7 @@ export interface PaymentsService {
     readonly tier: string;
     /** A subscription opens a period; a one-off pack is a single payment. */
     readonly kind: TierKind;
-  }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  }) => Effect.Effect<{ readonly url: string; readonly reference?: string }, PaymentError>;
   readonly createInvoice: (args: {
     readonly account: string;
     readonly amount: number;

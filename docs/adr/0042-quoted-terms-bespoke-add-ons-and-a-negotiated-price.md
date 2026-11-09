@@ -1,6 +1,6 @@
 # 0042 — Quoted terms, bespoke add-ons and a negotiated price
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [0044](./0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md) §1
 - **Date:** 2026-11-12
 - **Follows:** [0035](./0035-plans-plan-items-and-balance-sources.md), [0039](./0039-one-plan-per-group-and-add-ons-stack.md), [0041](./0041-a-custom-plan-is-a-catalog-opt-in.md)
 - **Amends:** [0041](./0041-a-custom-plan-is-a-catalog-opt-in.md) §3 (price), §5 (add-ons), §7 (checkout)
@@ -41,6 +41,10 @@ and a provider event that names another plan is refused rather than activated ag
 terms. `PlanOperationUnsupported({ reason: "custom_plan_checkout" })` is removed: the operation it
 described now has a path.
 
+> **Amended by [0044](./0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md) §1.** The quote
+> is now a map keyed by the provider reference of the purchase it was quoted for, so concurrent
+> checkouts keep their own terms and a completion activates the purchase it names.
+
 **2. A custom add-on is an `addOn` plan with a bespoke set.**
 `custom: true` beside `addOn: true` is accepted. `CatalogCustomAddOn` is removed. The guard's custom
 branch already judges the set structurally, and an add-on is a plan: the same rule accepts its
@@ -52,8 +56,9 @@ The merge remains the interim single-source rule: two plans that grant one featu
 count. The per-plan balance source is landing separately. Until it does, `Balance.breakdown` reports
 the merged plan source, not one row per add-on; that is a read-model follow-up, not a guard or attach
 gap. A feature two plans grant with different spend shapes is likewise the merge rule's follow-up.
-`custom` with `isDefault: true` stays refused (`CatalogCustomDefaultPlan`): a fallback is the
-catalogue's terms.
+`custom` with `isDefault: true` stays refused (`CatalogCustomDefaultPlan`) in this ADR: a fallback
+is the catalogue's terms. [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md) reopens it — a
+fallback is still the catalogue's terms, because `defaultPlanFor` never reads a bespoke set.
 
 **3. A negotiated price is a price on the custom plan operation, not catalog data.**
 `custom: true` is the deployment's opt-in, so the same opt-in permits the operation to state a
@@ -132,11 +137,12 @@ or price negotiation, so no action, invariant, mutant or coverage row is added.
 - **The per-plan balance source.** `Balance.breakdown` should report one source per plan, and the
   merge should refuse two different spend shapes for one feature rather than letting the first plan
   state the rules silently.
-- **A quote that must survive several concurrent checkouts.** The current record is one quote per
-  account, so the latest purchase wins and an older one is stale. A record keyed by the provider
-  reference would need the reference on the webhook event.
+- **A quote that must survive several concurrent checkouts.** Reopened and decided by
+  [0044](./0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md): the quote is keyed by the
+  provider reference of its purchase, and the webhook event names that reference.
 - **A negotiated price as a versioned resource.** Today the price is history as soon as the event
   is written; a price that must be re-quoted or approved is a deployment workflow with its own
   record.
-- **A custom plan as a group's fallback.** Still needs a rule for what a cancellation re-grants
-  when the fallback's allowances were never catalog data.
+- **A custom plan as a group's fallback.** Reopened and decided by
+  [0043](./0043-a-custom-plan-may-be-a-groups-fallback.md): a cancellation re-grants the catalog's
+  terms, never a bespoke set.

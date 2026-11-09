@@ -64,7 +64,7 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         success_url: request.successUrl,
         return_url: request.returnUrl,
       }).pipe(
-        Effect.map((checkout) => ({ url: String(checkout.url) })),
+        Effect.map((checkout) => ({ url: String(checkout.url), reference: checkout.id })),
         Effect.mapError(declined("createCheckoutSession")),
         Effect.provide(live),
       ),

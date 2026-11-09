@@ -86,6 +86,7 @@ describe("Stripe webhooks", () => {
         provider: "stripe",
         kind: "checkout_completed",
         account: "acct_1",
+        reference: "cs_1",
         tier: "pro",
         amount: 1900,
         currency: "usd",
@@ -99,6 +100,9 @@ describe("Stripe webhooks", () => {
       const event = Option.getOrThrow(yield* webhook(request({ body: invoice("invoice.paid") })));
       expect(event.kind).toBe("payment_succeeded");
       expect(event.tier).toBe("pro");
+      // An invoice-paid event names the invoice, which is how a negotiated
+      // price bought through an invoice finds its quote (ADR 0044 §1).
+      expect(event.reference).toBe("in_1");
       expect(event.amount).toBe(8000);
       expect(event.currency).toBe("usd");
     }),
@@ -136,6 +140,7 @@ describe("Stripe webhooks", () => {
       );
 
       expect(event.kind).toBe("subscription_canceled");
+      expect(event.reference).toBe("sub_1");
       expect(event.tier).toBe("pro");
     }),
   );

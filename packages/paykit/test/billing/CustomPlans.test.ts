@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,8 +9,9 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { allowance, grant, type Allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
-import { Attach, AttachRequest, PreviewAttach } from "../../src/Billing/Attach.binding.ts";
+import { Attach, AttachRequest, PreviewAttach, Update } from "../../src/Billing/Attach.binding.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
@@ -22,6 +24,7 @@ import { catalogLayer } from "../../src/CatalogService.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
+import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
@@ -29,7 +32,9 @@ import {
   initialSubscriptionState,
   pendingPlanOf,
   planIdOf,
+  planOfGroup,
   type AccountId,
+  type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 import { completeCheckout, handleWebhook } from "../../src/Webhooks.ts";
@@ -79,6 +84,25 @@ const testCatalog = Effect.runSync(
         addOn: true,
         credits: 0,
         grants: [grant(sso)],
+      }),
+      // A group whose fallback is itself custom, and a non-default plan in that
+      // group a customer can hold with bespoke terms. A cancellation re-grants
+      // the floor's catalog terms, never the bespoke set (ADR 0043).
+      tier({
+        id: "team-floor",
+        group: "team",
+        isDefault: true,
+        custom: true,
+        price: { amount: 9_900, currency: "usd", interval: "month" },
+        credits: 1_500,
+        grants: [allowance(messages, { included: 5_000, overage: "bill" })],
+      }),
+      tier({
+        id: "team-pro",
+        group: "team",
+        custom: true,
+        credits: 4_000,
+        grants: [allowance(messages, { included: 20_000, overage: "bill" })],
       }),
     ],
   }),
@@ -298,10 +322,11 @@ describe("a custom plan", () => {
       const pending = yield* stateOf;
 
       if (pending._tag !== "Unsubscribed") throw new Error("expected no standing yet");
+      const quote = Object.values(pending.pendingActivations ?? {})[0];
 
-      expect(pending.pendingActivation?.tier).toBe("enterprise");
-      expect(pending.pendingActivation?.allowances.messages?.included).toBe(40_000);
-      expect(pending.pendingActivation?.allowances.seats?.included).toBe(25);
+      expect(quote?.tier).toBe("enterprise");
+      expect(quote?.allowances.messages?.included).toBe(40_000);
+      expect(quote?.allowances.seats?.included).toBe(25);
 
       const action = yield* completeCheckout({
         id: "evt_custom_checkout",
@@ -317,9 +342,10 @@ describe("a custom plan", () => {
       expect(row?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
       expect(row?.plans.enterprise?.allowances.sso?.kind).toBe("flag");
 
-      // The completion spent the quote; a later delivery has no terms to reuse.
+      // The completion spent every quote: one account has one standing, so the
+      // other concurrent checkouts are moot (ADR 0044 §1).
       const after = yield* stateOf;
-      expect(after._tag === "Subscribed" ? after.pendingActivation : "missing").toBeUndefined();
+      expect(after.pendingActivations).toBeUndefined();
     }).pipe(Effect.provide(world)),
   );
 
@@ -382,14 +408,20 @@ describe("a custom plan", () => {
 
       if (pending._tag !== "Unsubscribed") throw new Error("expected no standing yet");
 
-      expect(pending.pendingActivation?.price?.amount).toBe(price.amount);
+      const quote = Object.values(pending.pendingActivations ?? {})[0];
 
+      expect(quote?.price?.amount).toBe(price.amount);
+      expect(pending.pendingActivations?.[started.invoiceId!]).toBeDefined();
+
+      // The invoice id is the reference, so the completion names the purchase
+      // it paid for rather than relying on there being only one quote.
       yield* handleWebhook({
         id: "evt_custom_price",
         provider: "memory",
         kind: "payment_succeeded",
         account,
         tier: "enterprise",
+        reference: started.invoiceId,
         amount: price.amount,
         currency: price.currency,
       });
@@ -655,5 +687,203 @@ describe("a custom plan over the Api", () => {
       expect(replayed.plans.bespoke?.allowances.messages?.included).toBe(40_000);
       expect(replayed.plans.bespoke?.allowances.sso?.kind).toBe("flag");
     }).pipe(Effect.provide(apiWorld)),
+  );
+});
+
+const otherDeal: ReadonlyArray<Allowance> = [
+  allowance(messages, { included: 60_000, overage: "bill" }),
+  grant(sso),
+];
+
+describe("a custom plan as a group's fallback", () => {
+  const context = Context.make(Actor, system("test"));
+
+  it.live("re-grants the catalog's terms, not the bespoke set the customer held", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+      const update = yield* Update(account);
+
+      // The customer holds bespoke terms on a non-default plan in the group.
+      const attached = yield* attach({
+        planId: "team-pro",
+        grants: deal,
+        idempotencyKey: "fallback-start",
+      });
+
+      expect(attached.outcome).toBe("activated");
+
+      const held = yield* stateOf;
+
+      if (held._tag !== "Subscribed") throw new Error("expected a subscribed standing");
+
+      expect(held.plans["team-pro"]?.allowances.messages?.included).toBe(40_000);
+
+      yield* update({
+        cancelAction: "cancel_end_of_cycle",
+        cancelGroup: "team",
+        idempotencyKey: "fallback-cancel",
+      });
+
+      // The cancellation freezes the fallback from the catalog: the floor's
+      // grants, price and credits, not the deal the customer held (ADR 0043).
+      const canceled = yield* stateOf;
+
+      if (canceled._tag !== "Subscribed") throw new Error("expected a subscribed standing");
+
+      const fallback = canceled.cancellations?.team?.fallback;
+
+      expect(fallback?.planId).toBe("team-floor");
+      expect(fallback?.allowances.messages?.included).toBe(5_000);
+      expect(fallback?.allowances.seats).toBeUndefined();
+      expect(fallback?.price?.amount).toBe(9_900);
+      expect(fallback?.credits).toBe(1_500);
+
+      // The boundary applies the frozen row; it needs no catalog and cannot
+      // recover the bespoke set (ADR 0039 §5, ADR 0043).
+      const at = canceled.period.end;
+
+      const verdict = Subscription.predict(canceled, new ClosePeriod({ periodEnd: at }), {
+        id: ref.id,
+        now: at,
+        context,
+      });
+
+      if (verdict._tag !== "Accepted") throw new Error("expected the boundary to land");
+
+      const boundary = verdict.state as SubscribedState;
+      const landed = planOfGroup(boundary, "team");
+
+      expect(landed?.planId).toBe("team-floor");
+      expect(landed?.allowances.messages?.included).toBe(5_000);
+      expect(landed?.allowances.seats).toBeUndefined();
+      expect(landed?.price?.amount).toBe(9_900);
+      expect(landed?.credits).toBe(1_500);
+    }).pipe(Effect.provide(world)),
+  );
+});
+
+describe("a quote keyed by its purchase", () => {
+  it.live("activates the quote the completion names, and clears every quote", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      const older = yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        idempotencyKey: "quote-older",
+      });
+
+      const newer = yield* attach({
+        planId: "enterprise",
+        grants: otherDeal,
+        idempotencyKey: "quote-newer",
+      });
+
+      expect(older.outcome).toBe("checkout");
+      expect(newer.outcome).toBe("checkout");
+
+      const held = yield* stateOf;
+
+      if (held._tag !== "Unsubscribed") throw new Error("expected no standing yet");
+
+      const quotes = held.pendingActivations ?? {};
+
+      expect(Object.keys(quotes)).toHaveLength(2);
+
+      // The reference is the vendor's id, not the hosted URL.
+      const stored = held.refs.memory?.checkout;
+      expect(stored).toBeDefined();
+      expect(stored?.startsWith("https://")).toBe(false);
+
+      const olderReference = Object.entries(quotes).find(
+        ([, quote]) => quote.allowances.messages?.included === 40_000,
+      )?.[0];
+
+      expect(olderReference).toBeDefined();
+
+      // Completing the older purchase activates the older quote, even though a
+      // newer checkout was opened after it (ADR 0044 §1).
+      const action = yield* completeCheckout({
+        id: "evt_quote_older",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+        reference: olderReference,
+      });
+
+      expect(action).toBe("activated");
+
+      const row = yield* planRowOf;
+      expect(row?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
+      expect(row?.plans.enterprise?.allowances.sso?.kind).toBe("flag");
+
+      const after = yield* stateOf;
+      expect(after.pendingActivations).toBeUndefined();
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("refuses a custom completion that names a quote the account does not hold", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({
+        planId: "enterprise",
+        grants: deal,
+        idempotencyKey: "quote-unknown",
+      });
+
+      const refused = yield* completeCheckout({
+        id: "evt_quote_unknown",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+        reference: "co_missing",
+      }).pipe(Effect.flip);
+
+      expect(refused._tag).toBe("PendingActivationMissing");
+      expect(yield* planRowOf).toBe(null);
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("refuses a completion that names no quote while two are held", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({ planId: "enterprise", grants: deal, idempotencyKey: "ambiguous-older" });
+      yield* attach({ planId: "enterprise", grants: otherDeal, idempotencyKey: "ambiguous-newer" });
+
+      const refused = yield* completeCheckout({
+        id: "evt_quote_ambiguous",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+      }).pipe(Effect.flip);
+
+      expect(refused._tag).toBe("PendingActivationAmbiguous");
+
+      if (refused._tag === "PendingActivationAmbiguous") {
+        expect(refused.references).toHaveLength(2);
+      }
+
+      expect(yield* planRowOf).toBe(null);
+    }).pipe(Effect.provide(world)),
+  );
+
+  it.live("activates the one quote an older adapter can name without a reference", () =>
+    Effect.gen(function* () {
+      const attach = yield* Attach(account);
+
+      yield* attach({ planId: "enterprise", grants: deal, idempotencyKey: "quote-compat" });
+
+      const action = yield* completeCheckout({
+        id: "evt_quote_compat",
+        provider: "memory",
+        account,
+        tier: "enterprise",
+      });
+
+      expect(action).toBe("activated");
+      expect((yield* planRowOf)?.plans.enterprise?.allowances.messages?.included).toBe(40_000);
+    }).pipe(Effect.provide(world)),
   );
 });
