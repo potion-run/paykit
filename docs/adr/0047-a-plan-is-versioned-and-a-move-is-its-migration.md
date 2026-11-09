@@ -116,9 +116,9 @@ model has no previous deploy to compare with.
   (the `Entitlements` plan rows carry it too, because they share `PlanRow`).
 - `SubscriptionActivated.version`, `PlanChanged.versionBefore` / `versionAfter`,
   `PlanChangeScheduled.version` and `PendingActivation.version`; absent means 1.
-- `planRedealOf(catalog, row, { grants, price })` is the one rule for "is attaching this plan a
-  replay or a new deal". `Attach` and `PreviewAttach` call it; it is exported because it is the
-  classification, not an implementation detail.
+- `planRedealOf(catalog, row, { grants, price })` is the one internal rule for "is attaching this
+  plan a replay or a new deal"; `Attach` and `PreviewAttach` both call it, so the two cannot
+  disagree.
 - `CatalogMismatch` can name `field: "version"`.
 - `PlanVersionOutdated`, `PlanVersionAhead` and `PlanVersionDrift` join `VerifyMismatch`;
   `PlanVersionStale` is the command refusal for a backwards move.
