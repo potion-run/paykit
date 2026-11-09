@@ -33,7 +33,8 @@ re-open it. This pane writes no `packages/**`, no `specs/**` and no `docs/adr/**
 
 ## Status
 
-The ADR and the model are in; the TypeScript is not. The gap, checked against the tree:
+The ADR, the model and the TypeScript surface are in. The table below records the gap this
+slice started from; it is not the current state. [NEXT](../NEXT.md) carries the remaining rows.
 
 | Claim | Evidence |
 | --- | --- |

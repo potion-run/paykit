@@ -27,6 +27,8 @@ export class PlanOperationUnsupported extends Schema.TaggedError<PlanOperationUn
       "multi_plan_on_inactive",
       "multi_plan_quantity",
       "not_an_add_on",
+      "entity_on_scheduled_change",
+      "entity_on_unsubscribed_customer",
     ]),
   },
 ) {}

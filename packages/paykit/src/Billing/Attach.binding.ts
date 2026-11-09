@@ -10,16 +10,23 @@ import { asSystem } from "../Auth/Actor.ts";
 import { planItemsOf, planOf, planTermsOf, type Catalog } from "../Catalog.ts";
 import { sameAllowances } from "../CatalogGuard.ts";
 import { CatalogService } from "../CatalogService.ts";
+import { EntityId } from "../Customer.ts";
 import { Payments, ProviderCapabilityMissing, type PaymentsService } from "../Payments.ts";
 import { unusedFraction } from "../Proration.ts";
 import type { Proration } from "../Proration.ts";
 import { CancelImmediately } from "../Subscription/CancelImmediately.command.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { refundableOf } from "../Subscription/Subscription.state.ts";
+import {
+  entityOf,
+  refundableOf,
+  scopeStateOf,
+  type SubscriptionState,
+} from "../Subscription/Subscription.state.ts";
 import { planIdOf, priceOf, currencyOf } from "../Subscription/Subscription.state.ts";
-import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
 import type { CancelVerb, ResumeVerb } from "./Cancel.binding.ts";
 import { Resume, ScheduleCancellation } from "./Cancel.binding.ts";
 import type { ChangeTierVerb } from "./ChangeTier.binding.ts";
@@ -64,6 +71,8 @@ export type ProrationBehavior = typeof ProrationBehavior.Type;
 export const AttachRequest = Schema.Struct({
   /** The plan to buy or move to. */
   planId: Schema.String,
+  /** The entity scope to attach it to; absent means the customer's own scope. */
+  entityId: Schema.optionalKey(EntityId),
   /**
    * The plan items a custom plan is sold with, when they differ from the
    * catalog's defaults. Omitted means the plan's `grants` (ADR 0041 §6).
@@ -111,6 +120,8 @@ export type CancelAction = typeof CancelAction.Type;
 export const UpdateRequest = Schema.Struct({
   /** The plan to update; omitted means the only active plan. */
   planId: Schema.optionalKey(Schema.String),
+  /** The entity scope to update; absent means the customer's own scope. */
+  entityId: Schema.optionalKey(EntityId),
   /** Quantities to set on a non-consumable feature. */
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   /** A cancellation, an uncancel, or neither. */
@@ -148,6 +159,8 @@ export interface UpdateResult {
 /** What a caller asks `previewAttach` to show. */
 export const PreviewAttachRequest = Schema.Struct({
   planId: Schema.String,
+  /** The entity scope the move would write; absent means the customer. */
+  entityId: Schema.optionalKey(EntityId),
   /** The bespoke items a custom plan is quoted at, when any. */
   grants: Schema.optionalKey(Schema.Array(Allowance)),
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
@@ -168,6 +181,8 @@ export interface PreviewAttachResult {
 /** What a caller asks `previewUpdate` to show. */
 export const PreviewUpdateRequest = Schema.Struct({
   planId: Schema.optionalKey(Schema.String),
+  /** The entity scope the update would write; absent means the customer. */
+  entityId: Schema.optionalKey(EntityId),
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   cancelAction: Schema.optionalKey(CancelAction),
   /** The group the cancellation or uncancel names; absent means the standing. */
@@ -190,6 +205,7 @@ interface QuantityRequest {
   readonly featureQuantities?: ReadonlyArray<FeatureQuantity>;
   readonly idempotencyKey: string;
   readonly prorationBehavior?: ProrationBehavior;
+  readonly entityId?: EntityId;
 }
 
 interface AttachDeps {
@@ -248,6 +264,28 @@ const grantsOf = (request: {
 }): { readonly grants?: ReadonlyArray<Allowance> } =>
   request.grants === undefined ? {} : { grants: request.grants };
 
+/**
+ * The refusal a named scope earns before a plan operation reads or writes it.
+ * An entity is created first; a write never invents a detached scope.
+ */
+const entityRefusalOf = (
+  state: SubscriptionState,
+  entityId: EntityId | undefined,
+  account: string,
+): EntityUnknown | EntityArchived | null => {
+  if (entityId === undefined) return null;
+  const record = entityOf(state, entityId);
+
+  if (record === undefined) return new EntityUnknown({ account, entityId });
+
+  return record.status === "archived"
+    ? new EntityArchived({
+        entityId,
+        archivedAt: record.archivedAt ?? record.createdAt,
+      })
+    : null;
+};
+
 const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   deps: AttachDeps,
   account: string,
@@ -262,17 +300,32 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   if (tier === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const state = yield* deps.subscription.state(Subscription.ref(account));
+  const refusal = entityRefusalOf(state, request.entityId, account);
+
+  if (refusal !== null) return yield* refusal;
+
+  const scoped = scopeStateOf(state, request.entityId);
 
   const terms = planTermsOf(
     deps.catalog,
     request.planId,
-    state._tag === "Subscribed" ? currencyOf(state) : undefined,
+    state._tag === "Subscribed" ? currencyOf(scoped) : undefined,
   );
 
   if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const kind = tier.kind ?? "subscription";
   const grants = grantsOf(request);
+
+  // A child scope holds a plan beside the customer's standing. It cannot open
+  // the customer's standing and it is not a checkout: the customer attaches
+  // first, then the entity.
+  if (request.entityId !== undefined && (!isActive(state) || kind === "one_off")) {
+    return yield* new PlanOperationUnsupported({
+      planId: request.planId,
+      reason: "entity_on_unsubscribed_customer",
+    });
+  }
 
   // A one-off plan is a purchase, not a standing change.
   if (kind === "one_off") {
@@ -341,6 +394,13 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   const immediate = upgrade || request.planSchedule === "immediate";
 
   if (!immediate) {
+    if (request.entityId !== undefined) {
+      return yield* new PlanOperationUnsupported({
+        planId: request.planId,
+        reason: "entity_on_scheduled_change",
+      });
+    }
+
     if (request.featureQuantities !== undefined && request.featureQuantities.length > 0) {
       return yield* new PlanOperationUnsupported({
         planId: request.planId,
@@ -364,6 +424,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   const changed = yield* changeTier({
     tier: request.planId,
     dedupeKey: request.idempotencyKey,
+    ...(request.entityId === undefined ? {} : { entityId: request.entityId }),
     ...grants,
   });
 
@@ -398,6 +459,7 @@ const applyQuantities = Effect.fn("Paykit.Attach.quantities")(function* (
     const changed = yield* setQuantity({
       feature: quantity.featureId,
       quantity: quantity.quantity,
+      ...(request.entityId === undefined ? {} : { entityId: request.entityId }),
       dedupeKey: key,
     });
 
@@ -419,9 +481,14 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
 
   if (state._tag !== "Subscribed") return yield* new NotSubscribed({ account });
 
-  const planId = request.planId ?? planIdOf(state);
+  const refusal = entityRefusalOf(state, request.entityId, account);
 
-  if (request.planId !== undefined && request.planId !== planIdOf(state)) {
+  if (refusal !== null) return yield* refusal;
+
+  const scoped = scopeStateOf(state, request.entityId);
+  const planId = request.planId ?? planIdOf(scoped);
+
+  if (request.planId !== undefined && request.planId !== planIdOf(scoped)) {
     return yield* new PlanOperationUnsupported({ planId: request.planId, reason: "no_change" });
   }
 
@@ -551,6 +618,11 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   if (tier === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const state = yield* deps.subscription.state(Subscription.ref(account));
+  const refusal = entityRefusalOf(state, request.entityId, account);
+
+  if (refusal !== null) return yield* refusal;
+
+  const scoped = scopeStateOf(state, request.entityId);
   const preview = yield* deps.preview(account);
   const kind = tier.kind ?? "subscription";
   const grants = grantsOf(request);
@@ -565,6 +637,13 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
     return yield* new PlanOperationUnsupported({
       planId: request.planId,
       reason: "custom_plan_checkout",
+    });
+  }
+
+  if (request.entityId !== undefined && (!isActive(state) || kind === "one_off")) {
+    return yield* new PlanOperationUnsupported({
+      planId: request.planId,
+      reason: "entity_on_unsubscribed_customer",
     });
   }
 
@@ -594,15 +673,22 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   const terms = planTermsOf(
     deps.catalog,
     request.planId,
-    state._tag === "Subscribed" ? currencyOf(state) : undefined,
+    state._tag === "Subscribed" ? currencyOf(scoped) : undefined,
   );
 
   if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
-  const upgrade = amountOf(terms.price) > amountOf(priceOf(state));
+  const upgrade = amountOf(terms.price) > amountOf(priceOf(scoped));
   const immediate = upgrade || request.planSchedule === "immediate";
 
   if (!immediate) {
+    if (request.entityId !== undefined) {
+      return yield* new PlanOperationUnsupported({
+        planId: request.planId,
+        reason: "entity_on_scheduled_change",
+      });
+    }
+
     if (request.featureQuantities !== undefined && request.featureQuantities.length > 0) {
       return yield* new PlanOperationUnsupported({
         planId: request.planId,
@@ -623,7 +709,14 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   return {
     outcome: "changed",
     planId: request.planId,
-    preview: yield* preview({ command: { kind: "changeTier", tier: request.planId, ...grants } }),
+    preview: yield* preview({
+      command: {
+        kind: "changeTier",
+        tier: request.planId,
+        ...(request.entityId === undefined ? {} : { entityId: request.entityId }),
+        ...grants,
+      },
+    }),
   } as const satisfies PreviewAttachResult;
 });
 
@@ -636,9 +729,14 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
 
   if (state._tag !== "Subscribed") return yield* new NotSubscribed({ account });
 
-  const planId = request.planId ?? planIdOf(state);
+  const refusal = entityRefusalOf(state, request.entityId, account);
 
-  if (request.planId !== undefined && request.planId !== planIdOf(state)) {
+  if (refusal !== null) return yield* refusal;
+
+  const scoped = scopeStateOf(state, request.entityId);
+  const planId = request.planId ?? planIdOf(scoped);
+
+  if (request.planId !== undefined && request.planId !== planIdOf(scoped)) {
     return yield* new PlanOperationUnsupported({ planId: request.planId, reason: "no_change" });
   }
 
@@ -689,6 +787,7 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
           kind: "setQuantity",
           feature: quantity.featureId,
           quantity: quantity.quantity,
+          ...(request.entityId === undefined ? {} : { entityId: request.entityId }),
         },
       }),
     );

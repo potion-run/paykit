@@ -2,6 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { EntityId } from "../../src/Customer.ts";
 import { migrate } from "../../src/Migrations/index.ts";
 import { SqlError, type SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlEventLog, type AppendInput } from "../../src/Store/SqlEventLog.ts";
@@ -297,6 +298,51 @@ describe("SqlEventLog", () => {
       expect(read?.features.sso?.remaining).toBeNull();
       expect(read?.features.sso?.included).toBe(1);
       expect(read).toEqual(flagged);
+    }),
+  );
+
+  it.effect("round-trips each entity's own rows through the 0002 column", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+
+      const withEntities = {
+        ...readModelRow,
+        entities: {
+          ent_a: {
+            id: EntityId.make("ent_a"),
+            name: "Support",
+            status: "attached" as const,
+            createdAt: at,
+            features: {
+              messages: readModelRow.features.messages,
+            },
+          },
+          ent_b: {
+            id: EntityId.make("ent_b"),
+            status: "archived" as const,
+            createdAt: at,
+            archivedAt: later,
+            features: {},
+          },
+        },
+      };
+
+      yield* log.upsertReadModel(withEntities);
+      const read = yield* log.readModel("acct_1");
+
+      // The customer's own rows stay once; each entity's own rows and lifecycle
+      // survive the JSON column, and the pool is not copied into an entity.
+      expect(read?.features.messages?.included).toBe(100);
+      expect(read?.entities?.ent_a?.name).toBe("Support");
+      expect(read?.entities?.ent_a?.features.messages?.remaining).toBe(100);
+      expect(read?.entities?.ent_b?.status).toBe("archived");
+      expect(read?.entities?.ent_b?.archivedAt).toEqual(later);
+      expect(read).toEqual(withEntities);
+
+      // A row written before the column existed reads as "no entity was ever
+      // created", not as an empty list that would hide a backfill.
+      yield* log.upsertReadModel(readModelRow);
+      expect((yield* log.readModel("acct_1"))?.entities).toBeUndefined();
     }),
   );
 

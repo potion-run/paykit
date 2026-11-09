@@ -313,6 +313,12 @@ export {
   Customers,
   CustomersLive,
   CustomersRead,
+  Entities,
+  EntitiesLive,
+  EntitiesRead,
+  TransferBalance,
+  TransferBalanceLive,
+  TransferBalanceWrite,
   SetBillingControls,
   GrantBalance,
   BillingInProcess,
@@ -355,8 +361,15 @@ export type {
   BalanceCreateRequest,
   BalanceFinalizeRequest,
   BalanceGetRequest,
+  BalanceListRequest,
   BalanceNotFound,
   BalanceUpdateRequest,
+  EntitiesError,
+  EntitiesRefusal,
+  EntitiesVerb,
+  TransferBalanceError,
+  TransferBalanceRefusal,
+  TransferBalanceVerb,
   CancelError,
   GrantBalanceError,
   GrantBalanceRefusal,
@@ -424,6 +437,17 @@ export type {
   WebhookVerb,
   WithdrawTierChangeError,
   WithdrawTierChangeVerb,
+} from "./Billing/index.ts";
+
+// The entity request schemas are public values, not only types: a caller can
+// decode the same shape the binding validates.
+export {
+  EntityArchiveRequest,
+  EntityCreateRequest,
+  EntityUpdateRequest,
+  TransferBalanceRequest,
+  TransferBalanceResult,
+  TransferCrossCustomer,
 } from "./Billing/index.ts";
 
 // The operator surface, on its own layers. Deliberately not flat: an operator

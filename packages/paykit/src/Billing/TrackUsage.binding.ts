@@ -2,8 +2,11 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
-import { type Balance, balanceOf, emptyBalance } from "../Balance.ts";
+import { type Balance, balanceOfScope, emptyBalance } from "../Balance.ts";
+import { CUSTOMER_SCOPE, EntityId, entityScope } from "../Customer.ts";
 import type { EntitlementsState } from "../Subscription/Entitlements.view.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { SpendLimitExceeded } from "../Subscription/SpendLimitExceeded.rejection.ts";
 import {
   AllowanceExceeded,
@@ -22,6 +25,8 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 export interface TrackUsageRequest {
   /** The feature the work was measured in. */
   readonly featureId: string;
+  /** The entity scope that spent the units; absent means the customer. */
+  readonly entityId?: EntityId;
   /** How many units it used. */
   readonly value: number;
   /** Which rate prices it, for a credit-priced feature. Omitted means `"default"`. */
@@ -61,13 +66,20 @@ export const usageOutcome = (
   account: string,
   request: TrackUsageRequest,
 ): TrackUsageResult => {
-  const balance = state === null ? null : balanceOf(state, request.featureId);
+  const balance =
+    state === null ? null : balanceOfScope(state, request.featureId, request.entityId);
 
   return {
     customerId: account,
     featureId: request.featureId,
     value: request.value,
-    balance: balance ?? emptyBalance(account, request.featureId),
+    balance:
+      balance ??
+      emptyBalance(
+        account,
+        request.featureId,
+        request.entityId === undefined ? CUSTOMER_SCOPE : entityScope(request.entityId),
+      ),
   };
 };
 
@@ -76,6 +88,8 @@ export const usageOutcome = (
  * caller may correct the request and send it again with the same `idempotencyKey`.
  */
 const refusals = [
+  EntityUnknown,
+  EntityArchived,
   AllowanceExceeded,
   StandingBlocksUsage,
   FeatureNotMetered,

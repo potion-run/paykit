@@ -23,6 +23,7 @@ import { MemoryBillingReadStore } from "../src/BillingReadStore.ts";
 import { catalog, planTermsOf } from "../src/Catalog.ts";
 import { CatalogGuardLive } from "../src/CatalogGuard.ts";
 import { catalogLayer } from "../src/CatalogService.ts";
+import { EntityId } from "../src/Customer.ts";
 import { messages } from "../src/Feature.ts";
 import { PaykitHandlers, PaykitModel as Model } from "../src/Paykit.model.ts";
 import { PaymentsManual } from "../src/PaymentsManual.ts";
@@ -224,6 +225,45 @@ it.live("check is a command atom, so the amount is part of the question", () =>
     const refused = yield* valueOf(yield* settled(registry, check));
     expect(refused.allowed).toBe(false);
     expect(refused.balance.remaining).toBe(5);
+  }),
+);
+
+it.live("entity mutations refresh the account's entity list", () =>
+  Effect.gen(function* () {
+    const billing = PaykitAtom.make({ layer: ClientLayer });
+    const registry = AtomRegistry.make();
+    const entities = billing.entities(account);
+
+    yield* seedStanding(registry, billing);
+    const unmountEntities = registry.mount(entities);
+    yield* Effect.addFinalizer(() => Effect.sync(unmountEntities));
+
+    expect(yield* valueOf(yield* settled(registry, entities))).toEqual([]);
+
+    const createEntity = billing.createEntity(account);
+    const unmountCreate = registry.mount(createEntity);
+    yield* Effect.addFinalizer(() => Effect.sync(unmountCreate));
+    registry.set(createEntity, {
+      entityId: EntityId.make("ent_atom"),
+      name: "Atom team",
+    });
+    const created = yield* valueOf(yield* settled(registry, createEntity));
+    expect(created.name).toBe("Atom team");
+
+    const listed = yield* valueOf(yield* settled(registry, entities));
+    expect(listed?.map((entity) => entity.id)).toEqual(["ent_atom"]);
+
+    const archiveEntity = billing.archiveEntity(account);
+    const unmountArchive = registry.mount(archiveEntity);
+    yield* Effect.addFinalizer(() => Effect.sync(unmountArchive));
+    registry.set(archiveEntity, {
+      entityId: EntityId.make("ent_atom"),
+      idempotencyKey: "archive-atom",
+    });
+    yield* valueOf(yield* settled(registry, archiveEntity));
+
+    const archived = yield* valueOf(yield* settled(registry, entities));
+    expect(archived?.map((entity) => entity.status)).toEqual(["archived"]);
   }),
 );
 

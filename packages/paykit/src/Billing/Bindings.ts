@@ -56,6 +56,16 @@ export class BindingCall extends Context.Service<
 >()("paykit/BindingCall") {}
 
 /**
+ * The part of a command receipt a read waits on: the stream and the version it
+ * committed. An in-process send returns the whole receipt; an Api reply carries
+ * only these two, and both are enough for `atLeast`.
+ */
+export interface ReceiptRef {
+  readonly stream: string;
+  readonly version: number;
+}
+
+/**
  * Everything a binding can fail with: the model's refusal, a write whose read
  * landed late, or a binding that never reached the model. Keeping them apart is
  * the point — only the first says the charge did not happen.

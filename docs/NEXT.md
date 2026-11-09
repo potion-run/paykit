@@ -32,8 +32,9 @@ Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-s
 `capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The plan set is in
 the standing: [ADR 0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt`
 became `plans` plus `schedule`, one row per active plan and ordered phases, with the close applying
-the phases due at the boundary. The entity scope is still modelled ahead of its code: `entities.qnt`
-with [ADR 0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md). Custom plans landed beside them
+the phases due at the boundary. The entity scope landed with `entities.qnt` and
+[ADR 0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md): `Paykit.Entities`, its scoped
+balance reads, the four commands and `Paykit.TransferBalance` are the surface. Custom plans landed beside them
 ([ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a plan may declare `custom: true`, and
 a bespoke allowance set travels on the plan command and into the event.
 
@@ -202,7 +203,7 @@ The next work is the API migration, not another command. The order is:
    `PlanPhaseSchedule` schedules it; `AddAddOn` is the named verb. `multiAttach` / `multiUpdate`,
    `MultiAttach` / `MultiUpdate` layers and the `Attach`/`Update` group-aware cancellation carry it
    to the binding surface.
-7. **Entities and transfer — state, commands and reads landed.** The ADR
+7. **Entities and transfer — landed.** The ADR
    ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` decide a child
    scope, a pooled plan item, `billing.transfer` and the archive. The implementation is in:
    `ScopeState` / `EntityRecord` sit on both state tags with their own plan set and sources;
@@ -212,10 +213,14 @@ The next work is the API migration, not another command. The order is:
    attached scope's plan and leaves its lifetime grants. The reads carry the scope: `Balance.scope`,
    `BalanceSource.scope` / `pooled`, `balanceOfEntity`, `Entitlements.entities`,
    `BillingStateView.entities`, `Customer.entities`, `BillingReadRow.entities` and the additive
-   `0002_entities` migration. Tests: `test/billing/Entities.test.ts`, `test/billing/Transfer.test.ts`.
-   Remaining from the slice: `Paykit.Entities` and `Paykit.TransferBalance` bindings/layers,
-   `entityId` on the `Balances` / `Attach` bindings, the `Atom` verbs, `check` over the Api for an
-   entity, and the generated property/SQL/binding tests the brief lists.
+   `0002_entities` migration. The surface is in too: `Paykit.Entities` and
+   `Paykit.TransferBalance` with their layers, `entityId` on `Balances`, `Attach`, `Update` and the
+   previews, the four Api commands, `Atom.entities` / `createEntity` / `updateEntity` /
+   `archiveEntity` / `transferBalance`, and `check` for a scope over both transports. Tests:
+   `test/billing/Entities.test.ts`, `test/billing/Transfer.test.ts`,
+   `test/billing/EntitySurface.test.ts` and `test/sql/SqlEventLog.test.ts`.
+   Remaining from the slice: the generated property tests and per-scope `Agreement`/`Idempotence`
+   rows the brief lists; those are coverage for the surface, not another shape.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
 the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated
@@ -267,9 +272,9 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   item, the transfer and the archive. The code has `ScopeState`/`EntityRecord` on both state tags,
   the four commands (`AttachEntity`, `UpdateEntity`, `ArchiveEntity`, `TransferBalance`), `entity`
   on the four scoped commands, the per-scope close, and the scoped read model down to the
-  `0002_entities` SQL column. Remaining: the `Entities` / `TransferBalance` bindings and layers,
-  `entityId` on the `Balances` / `Attach` bindings, the `Atom` verbs, and the brief's property,
-  SQL and binding test rows.
+  `0002_entities` SQL column. The `Entities` / `TransferBalance` bindings and layers, `entityId` on
+  `Balances` / `Attach` / `Update` / previews, the `Atom` verbs and the Api/SQL tests landed after
+  it; the remaining rows are the property generators.
 
 ### 1. The remaining surfaces
 

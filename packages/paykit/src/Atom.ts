@@ -40,6 +40,13 @@ import {
   type CustomerUpdateRequest,
   type CustomersError,
 } from "./Billing/Customers.binding.ts";
+import {
+  Entities,
+  type EntitiesError,
+  type EntityArchiveRequest,
+  type EntityCreateRequest,
+  type EntityUpdateRequest,
+} from "./Billing/Entities.binding.ts";
 import { GrantBalance } from "./Billing/GrantBalance.binding.ts";
 import { Hold, type HoldError, type HoldRequest, type HoldResult } from "./Billing/Hold.binding.ts";
 import {
@@ -76,12 +83,18 @@ import {
   type TrackUsageRequest,
   type TrackUsageResult,
 } from "./Billing/TrackUsage.binding.ts";
+import {
+  TransferBalance,
+  type TransferBalanceError,
+  type TransferBalanceRequest,
+  type TransferBalanceResult,
+} from "./Billing/TransferBalance.binding.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
 import { PaykitCatalogClient, type PaykitCatalogClientError } from "./CatalogRpc.ts";
 import { CatalogService, catalogLayer } from "./CatalogService.ts";
 import type { CheckResult } from "./Check.ts";
-import type { Customer } from "./Customer.ts";
+import type { Customer, Entity } from "./Customer.ts";
 import { type BillingStateView } from "./Subscription/BillingState.view.ts";
 import { type EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
@@ -127,7 +140,11 @@ export type BillingAtomVerb =
   | "scheduleTierChange"
   | "withdrawTierChange"
   | "updateBillingControls"
-  | "startTrial";
+  | "startTrial"
+  | "createEntity"
+  | "updateEntity"
+  | "archiveEntity"
+  | "transferBalance";
 
 /** The service key of the paykit Api client the layer provides. */
 export type BillingClient = Domain.Api.ClientKey<"BillingApi">;
@@ -149,6 +166,8 @@ export type BillingAtomServices =
   | ScheduleTierChange
   | WithdrawTierChange
   | Customers
+  | Entities
+  | TransferBalance
   | SetBillingControls
   | StartTrial;
 
@@ -217,6 +236,8 @@ export interface BillingAtoms<E = never> {
   readonly balances: (account: string) => BillingQuery<ReadonlyArray<Balance>, E>;
   /** The customer's plans and the controls it states over them. */
   readonly customer: (account: string) => BillingQuery<Customer, E>;
+  /** Every child scope this customer attached, archived ones included. */
+  readonly entities: (account: string) => BillingQuery<ReadonlyArray<Entity>, E>;
   /**
    * Ask whether an amount is allowed. A command atom because the amount is
    * part of the question: write the request, read the answer. The `entitlements`
@@ -277,6 +298,22 @@ export interface BillingAtoms<E = never> {
   readonly startTrial: (
     account: string,
   ) => BillingMutation<StartTrialRequest, StartTrialResult, StartTrialError, E>;
+  /** Create a child scope, idempotent by its entity id. */
+  readonly createEntity: (
+    account: string,
+  ) => BillingMutation<EntityCreateRequest, Entity, EntitiesError, E>;
+  /** Rename a child scope; an equal name records nothing. */
+  readonly updateEntity: (
+    account: string,
+  ) => BillingMutation<EntityUpdateRequest, Entity, EntitiesError, E>;
+  /** Archive a child scope and return its unspent own sources to the customer. */
+  readonly archiveEntity: (
+    account: string,
+  ) => BillingMutation<EntityArchiveRequest, Entity, EntitiesError, E>;
+  /** Move units between two scopes of one customer. */
+  readonly transferBalance: (
+    account: string,
+  ) => BillingMutation<TransferBalanceRequest, TransferBalanceResult, TransferBalanceError, E>;
 }
 
 /** The key every query for one account registers, so one mutation refreshes them all. */
@@ -358,6 +395,24 @@ const customerAtom = <E>(
 
   // SAFETY: the same runtime atom as `entitlementsAtom`, for the same reason.
   return atom as Atom.Atom<AsyncResult.AsyncResult<Customer | null, BillingAtomRemoteError | E>>;
+};
+
+const entitiesAtom = <E>(
+  runtime: Atom.AtomRuntime<BillingAtomServices, E>,
+  account: string,
+): Atom.Atom<AsyncResult.AsyncResult<ReadonlyArray<Entity>, BillingAtomRemoteError | E>> => {
+  const atom = runtime.atom(
+    Effect.gen(function* () {
+      const entities = yield* Entities(account);
+
+      return yield* entities.list();
+    }),
+  );
+
+  // SAFETY: the same runtime atom as `entitlementsAtom`, for the same reason.
+  return atom as Atom.Atom<
+    AsyncResult.AsyncResult<ReadonlyArray<Entity>, BillingAtomRemoteError | E>
+  >;
 };
 
 /**
@@ -496,6 +551,14 @@ export const make = <E = never>(
     ).pipe(withAccount(account)),
   );
 
+  const entities = Atom.family(
+    (account: string): BillingQuery<ReadonlyArray<Entity>, E | CatalogError> =>
+      Atom.withServerValueInitial(
+        // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
+        entitiesAtom(runtime, account) as BillingQuery<ReadonlyArray<Entity>, E | CatalogError>,
+      ).pipe(withAccount(account)),
+  );
+
   /**
    * One command over a bound verb. The binding joins the catalog and waits for
    * the view; the atom only adds the request and the invalidation.
@@ -593,6 +656,71 @@ export const make = <E = never>(
       ),
   );
 
+  const createEntity = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<EntityCreateRequest, Entity, EntitiesError, E | CatalogError> =>
+      runtime.fn(
+        (request: EntityCreateRequest) =>
+          Effect.gen(function* () {
+            const entities = yield* Entities(account);
+
+            return yield* entities.create(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.createEntity) },
+      ),
+  );
+
+  const updateEntity = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<EntityUpdateRequest, Entity, EntitiesError, E | CatalogError> =>
+      runtime.fn(
+        (request: EntityUpdateRequest) =>
+          Effect.gen(function* () {
+            const entities = yield* Entities(account);
+
+            return yield* entities.update(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.updateEntity) },
+      ),
+  );
+
+  const archiveEntity = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<EntityArchiveRequest, Entity, EntitiesError, E | CatalogError> =>
+      runtime.fn(
+        (request: EntityArchiveRequest) =>
+          Effect.gen(function* () {
+            const entities = yield* Entities(account);
+
+            return yield* entities.archive(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.archiveEntity) },
+      ),
+  );
+
+  const transferBalance = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<
+      TransferBalanceRequest,
+      TransferBalanceResult,
+      TransferBalanceError,
+      E | CatalogError
+    > =>
+      runtime.fn(
+        (request: TransferBalanceRequest) =>
+          Effect.gen(function* () {
+            const transfer = yield* TransferBalance(account);
+
+            return yield* transfer(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.transferBalance) },
+      ),
+  );
+
   const updateBillingControls = Atom.family(
     (
       account: string,
@@ -614,6 +742,7 @@ export const make = <E = never>(
     billing,
     balances,
     customer,
+    entities,
     check,
     createBalance,
     updateBillingControls,
@@ -629,5 +758,9 @@ export const make = <E = never>(
     scheduleTierChange: motion("scheduleTierChange", ScheduleTierChange),
     withdrawTierChange: motion("withdrawTierChange", WithdrawTierChange),
     startTrial: motion("startTrial", StartTrial),
+    createEntity,
+    updateEntity,
+    archiveEntity,
+    transferBalance,
   };
 };
