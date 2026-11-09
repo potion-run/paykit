@@ -47,18 +47,6 @@ const customerOf = (account: string, view: BillingStateView | null): Customer =>
     };
   });
 
-  // A view built before the plan set carries one tier and no rows. The package
-  // is unpublished, but a read should still answer rather than lose a plan.
-  if (plans.length === 0 && view !== null && view.tier.length > 0) {
-    plans.push({
-      planId: PlanId.make(view.tier),
-      status: view.status,
-      ...(view.pendingTier === undefined
-        ? {}
-        : { scheduledPlanId: PlanId.make(view.pendingTier.tier) }),
-    });
-  }
-
   return {
     id: CustomerId.make(account),
     plans,
