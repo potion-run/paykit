@@ -6,6 +6,7 @@ import type { Customer, CustomerPlan } from "../Customer.ts";
 import { PlanId } from "../Plan.ts";
 import type { BillingStateView } from "../Subscription/BillingState.view.ts";
 import { mapBindingFailure } from "./Bindings.ts";
+import { CreateCustomer, type CustomerRequest } from "./CreateCustomer.binding.ts";
 import { Customers, type CustomersError, toCustomersError } from "./Customers.binding.ts";
 import { SetBillingControls } from "./SetBillingControls.binding.ts";
 
@@ -49,6 +50,9 @@ const customerOf = (account: string, view: BillingStateView | null): Customer =>
 
   return {
     id: CustomerId.make(account),
+    ...(view?.customer?.name === undefined ? {} : { name: view.customer.name }),
+    ...(view?.customer?.email === undefined ? {} : { email: view.customer.email }),
+    ...(view?.customer?.createdAt === undefined ? {} : { createdAt: view.customer.createdAt }),
     plans,
     ...(view?.billingControls === undefined ? {} : { billingControls: view.billingControls }),
     // The entity list is the same read `Paykit.Entities(account).list()` serves;
@@ -65,10 +69,14 @@ const customerOf = (account: string, view: BillingStateView | null): Customer =>
 };
 
 /**
- * The customer surface: the record a billing page shows and the one write a
- * support agent makes. It adds no state of its own: `get` reads the billing
- * view, and `update` writes `SetBillingControls` and reads the view it waited
- * for, so a caller cannot see a customer the model has not recorded.
+ * The customer surface: the record a billing page shows and the writes a caller
+ * makes over it. It adds no state of its own: `get` reads the billing view, and
+ * every write sends its command and reads the view it waited for, so a caller
+ * cannot see a customer the model has not recorded.
+ *
+ * `create` records the identity and `getOrCreate` is the idempotent sign-up
+ * path — a read, and the same create only when the record is absent — so the
+ * two verbs keep distinct meanings (ADR 0045).
  *
  * ### Changing a customer's ceiling
  * **Example:** Cap and alert in one call
@@ -91,9 +99,20 @@ export const CustomersLive = Layer.effect(
   Effect.gen(function* () {
     const read = yield* CustomersRead;
     const setControls = yield* SetBillingControls;
+    const createCustomer = yield* CreateCustomer;
 
     const viewOf = (account: string) =>
       mapBindingFailure<CustomersError>(toCustomersError)(read.view(account));
+
+    // The create answers the view it waited for. Reading again would race the
+    // projection and could report the customer before this write.
+    const created = (account: string, request: CustomerRequest) =>
+      Effect.gen(function* () {
+        const create = yield* createCustomer(account);
+        const result = yield* create(request);
+
+        return customerOf(account, result.view);
+      });
 
     return Effect.fn("Paykit.Customers")(function* (account) {
       return {
@@ -101,6 +120,18 @@ export const CustomersLive = Layer.effect(
           const view = yield* viewOf(account);
 
           return customerOf(account, view);
+        }),
+        create: Effect.fn("Paykit.Customers.create")(function* (request) {
+          return yield* created(account, request);
+        }),
+        getOrCreate: Effect.fn("Paykit.Customers.getOrCreate")(function* (request) {
+          const view = yield* viewOf(account);
+
+          // An existing customer is answered untouched: this is the sign-up
+          // path, not a second way to state an identity (ADR 0045).
+          if (view?.customer !== undefined) return customerOf(account, view);
+
+          return yield* created(account, request);
         }),
         update: Effect.fn("Paykit.Customers.update")(function* (request) {
           const write = yield* setControls(account);

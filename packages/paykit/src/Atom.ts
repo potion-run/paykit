@@ -35,6 +35,7 @@ import {
   type ConsumeCreditsRequest,
   type ConsumeCreditsResult,
 } from "./Billing/ConsumeCredits.binding.ts";
+import type { CreateCustomer, CustomerRequest } from "./Billing/CreateCustomer.binding.ts";
 import {
   Customers,
   type CustomerUpdateRequest,
@@ -140,6 +141,8 @@ export type BillingAtomVerb =
   | "scheduleTierChange"
   | "withdrawTierChange"
   | "updateBillingControls"
+  | "createCustomer"
+  | "getOrCreateCustomer"
   | "startTrial"
   | "createEntity"
   | "updateEntity"
@@ -166,6 +169,7 @@ export type BillingAtomServices =
   | ScheduleTierChange
   | WithdrawTierChange
   | Customers
+  | CreateCustomer
   | Entities
   | TransferBalance
   | SetBillingControls
@@ -256,6 +260,14 @@ export interface BillingAtoms<E = never> {
   readonly updateBillingControls: (
     account: string,
   ) => BillingMutation<CustomerUpdateRequest, Customer, CustomersError, E>;
+  /** Record the customer's identity, and answer the customer it left. */
+  readonly createCustomer: (
+    account: string,
+  ) => BillingMutation<CustomerRequest, Customer, CustomersError, E>;
+  /** The customer as it stands, created with these details when it has none. */
+  readonly getOrCreateCustomer: (
+    account: string,
+  ) => BillingMutation<CustomerRequest, Customer, CustomersError, E>;
   /** Set seat occupancy, and answer the feature's balance. */
   readonly updateBalance: (
     account: string,
@@ -736,6 +748,36 @@ export const make = <E = never>(
       ),
   );
 
+  const createCustomer = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<CustomerRequest, Customer, CustomersError, E | CatalogError> =>
+      runtime.fn(
+        (request: CustomerRequest) =>
+          Effect.gen(function* () {
+            const customers = yield* Customers(account);
+
+            return yield* customers.create(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.createCustomer) },
+      ),
+  );
+
+  const getOrCreateCustomer = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<CustomerRequest, Customer, CustomersError, E | CatalogError> =>
+      runtime.fn(
+        (request: CustomerRequest) =>
+          Effect.gen(function* () {
+            const customers = yield* Customers(account);
+
+            return yield* customers.getOrCreate(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.getOrCreateCustomer) },
+      ),
+  );
+
   return {
     runtime,
     entitlements,
@@ -746,6 +788,8 @@ export const make = <E = never>(
     check,
     createBalance,
     updateBillingControls,
+    createCustomer,
+    getOrCreateCustomer,
     updateBalance,
     finalizeBalance,
     trackUsage: motion("trackUsage", TrackUsage),

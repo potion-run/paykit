@@ -370,6 +370,10 @@ export const standingFrom = (
     ...(previous.billingControls === undefined
       ? {}
       : { billingControls: previous.billingControls }),
+    // The identity belongs to the customer, not the standing: an activation
+    // replaces the plan but not the record the customer wrote about itself
+    // (ADR 0045).
+    ...(previous.customer === undefined ? {} : { customer: previous.customer }),
     trialUsed: options.trialUsed,
     dedupeKeys: {},
     dunningAttempts: 0,

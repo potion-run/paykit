@@ -1523,6 +1523,10 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     // An alert is evidence: no feature's count, allowance or pool moves.
     UsageAlertFired: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // The identity a customer records is a latch no entitlement reads: it
+    // moves no count, allowance or pool, and the view emits it only so the
+    // read-model projection sees the whole log (ADR 0045).
+    CustomerCreated: (view, _event, context): EntitlementsState => withAccount(view, context),
     // A refill that could not be bought moved no credit: the pool and every
     // counter are exactly where the crossing left them. The view still emits it
     // so the read-model projection sees the whole log.

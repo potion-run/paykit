@@ -12,7 +12,7 @@ import {
   type Pricing,
   type Resets,
 } from "../Allowance.ts";
-import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
+import { BillingControls, CustomerDetails, EntityId, EntityStatus } from "../Customer.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -342,6 +342,12 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
    */
   billingControls: Schema.optionalKey(BillingControls),
   /**
+   * The identity the customer recorded about itself, before or after it bought
+   * anything. It is a latch: no billing decision reads it, and a plan change, a
+   * close and a cancellation leave it where it was (ADR 0045).
+   */
+  customer: Schema.optionalKey(CustomerDetails),
+  /**
    * The child scopes under this customer, beside the customer's own scope. An
    * entity is a partition of this one aggregate, so it lives here rather than
    * in a stream of its own (ADR 0040 §2). It exists before a plan can: a scope
@@ -451,6 +457,13 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * alone, because they belong to the customer and not to the plan (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The identity the customer recorded about itself: its name, its email and
+   * when the record was made. A plan change, a close and a cancellation leave
+   * it where it was, because it belongs to the customer, not to the plan
+   * (ADR 0045).
+   */
+  customer: Schema.optionalKey(CustomerDetails),
   /**
    * The child scopes under this customer, each with its own plan set and
    * sources (ADR 0040 §2–3). An entity is skipped by a close once archived:

@@ -102,6 +102,18 @@ export {
 export { CustomersLive, CustomersRead } from "./Customers.layer.ts";
 
 export {
+  CreateCustomer,
+  CustomerRequest,
+  createCustomerCommandId,
+  isCreateCustomerRefusal,
+  toCreateCustomerError,
+  type CreateCustomerError,
+  type CreateCustomerRefusal,
+  type CreateCustomerResult,
+  type CreateCustomerVerb,
+} from "./CreateCustomer.binding.ts";
+
+export {
   SetBillingControls,
   type SetBillingControlsError,
   type SetBillingControlsRefusal,

@@ -9,6 +9,7 @@ import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.comm
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
+import { CreateCustomer } from "../../src/Subscription/CreateCustomer.command.ts";
 import { DunningRetry } from "../../src/Subscription/DunningRetry.command.ts";
 import { EnterGrace } from "../../src/Subscription/EnterGrace.command.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
@@ -202,6 +203,13 @@ export const DedupeKey = Schema.optionalKey(Schema.Literals(["req-a", "req-b", "
 export const HoldId = Schema.Literals(["hold-a", "hold-b", "hold-c"]);
 
 /**
+ * The identities a generated script may record. Two of them are enough: a
+ * repeated draw is the equal-details no-op and the other draw is
+ * `CustomerExists` (ADR 0045).
+ */
+export const CustomerIdentity = Schema.Literals(["ada", "grace"]);
+
+/**
  * One high-level command a script may ask for. A plan is converted to the real
  * command against the current state, because some commands carry values only
  * the state can know (a `ChangeTier` proration, a `ClosePeriod` boundary).
@@ -248,6 +256,7 @@ export const CommandPlan = Schema.Union([
     enabled: Schema.Boolean,
     threshold: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
   }),
+  Schema.TaggedStruct("CreateCustomer", { identity: CustomerIdentity }),
 ]);
 
 export type CommandPlan = typeof CommandPlan.Type;
@@ -415,6 +424,11 @@ export const commandOf = (
           },
         },
         features: {},
+      });
+    case "CreateCustomer":
+      return new CreateCustomer({
+        name: plan.identity,
+        email: `${plan.identity}@example.com`,
       });
   }
 };

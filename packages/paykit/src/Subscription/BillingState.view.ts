@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
+import { BillingControls, CustomerDetails, EntityId, EntityStatus } from "../Customer.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
@@ -215,6 +215,12 @@ export const BillingStateView = Schema.Struct({
    * leave them alone (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The identity the customer recorded: its name, its email and when it was
+   * created. Absent until a create records one, so a page shows the record it
+   * has rather than a name it guessed (ADR 0045).
+   */
+  customer: Schema.optionalKey(CustomerDetails),
   /** The alerts this period has recorded, oldest first. */
   alertsFired: Schema.optionalKey(Schema.Array(AlertFiredView)),
   /**
@@ -818,6 +824,20 @@ export class BillingState extends Domain.View("BillingState", {
         context,
       );
     },
+    // The identity is a latch on the customer: created once, and left alone
+    // by every later event (ADR 0045).
+    CustomerCreated: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          customer: {
+            ...(event.name === undefined ? {} : { name: event.name }),
+            ...(event.email === undefined ? {} : { email: event.email }),
+            createdAt: event.at,
+          },
+        },
+        context,
+      ),
     // An alert moves no page counter. It is a row in `alertsFired`, so an
     // operator sees the crossing and a console can say "90% used, paged at 80%".
     UsageAlertFired: (view, event, context): BillingStateView =>

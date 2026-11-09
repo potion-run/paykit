@@ -20,6 +20,11 @@ import {
 } from "./Cancel.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import {
+  CreateCustomer,
+  createCustomerCommandId,
+  toCreateCustomerError,
+} from "./CreateCustomer.binding.ts";
 import { toCustomersError } from "./Customers.binding.ts";
 import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
 import { toEntitiesError } from "./Entities.binding.ts";
@@ -277,6 +282,45 @@ const BillingApiCore = Layer.mergeAll(
 
           return {
             ...(billingControls === undefined ? {} : { billingControls }),
+            view: view ?? null,
+          };
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    CreateCustomer,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return Effect.fn("Paykit.CreateCustomer")(function* (account) {
+        // The Api speaks branded account ids; a binding takes the id as it
+        // arrives and brands it once, here, through the aggregate's own ref.
+        const id = Subscription.ref(account).id;
+
+        return Effect.fn("Paykit.CreateCustomer.record")(function* (request) {
+          const commandId = request.dedupeKey ?? createCustomerCommandId(account, request);
+
+          const receipt = yield* bound(toCreateCustomerError)(
+            client.CreateCustomer(
+              id,
+              {
+                ...(request.name === undefined ? {} : { name: request.name }),
+                ...(request.email === undefined ? {} : { email: request.email }),
+              },
+              options(commandId),
+            ),
+          );
+
+          const view = yield* bound(toCreateCustomerError)(
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
+          );
+
+          const customer = view?.customer;
+
+          return {
+            ...(customer === undefined ? {} : { customer }),
             view: view ?? null,
           };
         });

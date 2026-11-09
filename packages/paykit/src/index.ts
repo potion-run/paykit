@@ -97,6 +97,7 @@ export {
   CUSTOMER_SCOPE,
   Customer,
   CustomerAutoTopUp,
+  CustomerDetails,
   CustomerId,
   CustomerPlan,
   CustomerSpendLimit,
@@ -313,6 +314,7 @@ export {
   Customers,
   CustomersLive,
   CustomersRead,
+  CreateCustomer,
   Entities,
   EntitiesLive,
   EntitiesRead,
@@ -348,6 +350,10 @@ export {
 export type {
   BalancesError,
   BalancesRefusal,
+  CreateCustomerError,
+  CreateCustomerRefusal,
+  CreateCustomerResult,
+  CreateCustomerVerb,
   CustomersError,
   CustomersRefusal,
   CustomersVerb,
@@ -439,9 +445,10 @@ export type {
   WithdrawTierChangeVerb,
 } from "./Billing/index.ts";
 
-// The entity request schemas are public values, not only types: a caller can
-// decode the same shape the binding validates.
+// The request schemas are public values, not only types: a caller can decode
+// the same shape the binding validates.
 export {
+  CustomerRequest,
   EntityArchiveRequest,
   EntityCreateRequest,
   EntityUpdateRequest,
@@ -1014,6 +1021,13 @@ export {
   ControlsFeatureUnknown,
   SetBillingControls as SetBillingControlsCommand,
 } from "./Subscription/SetBillingControls.command.ts";
+
+export {
+  CreateCustomer as CreateCustomerCommand,
+  CustomerCreated,
+} from "./Subscription/CreateCustomer.command.ts";
+
+export { CustomerExists } from "./Subscription/CustomerExists.rejection.ts";
 
 export { SpendLimitExceeded } from "./Subscription/SpendLimitExceeded.rejection.ts";
 

@@ -326,6 +326,14 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "CustomerCreated",
+    body: body({
+      name: "Ada",
+      email: "ada@example.com",
+      at: "2030-01-01T00:00:00Z",
+    }),
+  },
+  {
     tag: "UsageAlertFired",
     body: body({
       feature: "messages",

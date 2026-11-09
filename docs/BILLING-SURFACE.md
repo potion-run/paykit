@@ -50,7 +50,7 @@ documented billing surface, not a second implementation.
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `Entities` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | shipped — the model, reads, bindings, layers, Api commands, `Atom` verbs and the SQL-backed entity list |
 | Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout (ADRs 0041, 0042) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote and the webhook activates exactly it |
 | Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
-| Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
+| Creating customers | `CreateCustomer` records a name and an email before a plan exists; `Customers.create` / `getOrCreate` write and read it (ADR 0045) | shipped |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
 | Checking access | `Check` | shipped |
 | Tracking usage | `TrackUsage` | shipped |
@@ -105,8 +105,10 @@ documented billing surface, not a second implementation.
    keyed by provider reference if concurrent checkouts must be told apart.
 4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
    is new data, not a migration of existing subscribers.
-5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a
-   controls write; the verb and its read belong in the library.
+5. **`customers.create` / `getOrCreate`** — landed (ADR 0045): `CreateCustomer` records the name and
+   email a billing page needs before the customer buys anything, `customers.create` is idempotent on
+   equal details and refuses a different identity, `customers.getOrCreate` is the sign-up path, and
+   `Customer` / `BillingState` read the record back.
 6. **`setupPayment`** — a provider-port operation for adding a method without a purchase.
 
 Nothing on the deployment plane is "missing": a library that grew an edge cache, a chat formatter or
