@@ -139,6 +139,9 @@ const mergeAllowance = (base: Allowance, extra: Allowance): Allowance => ({
   ...(base.cap === undefined && extra.cap === undefined
     ? {}
     : { cap: Math.max(base.cap ?? 0, extra.cap ?? 0) }),
+  // A pooled item stays pooled through the merge: it is one source every
+  // attached entity draws on, not a per-plan grant (ADR 0040 §3).
+  ...(base.pooled === true || extra.pooled === true ? { pooled: true } : {}),
 });
 
 /**

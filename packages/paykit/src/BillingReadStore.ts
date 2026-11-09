@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Proration } from "./Proration.ts";
-import { FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
+import { EntityEntitlement, FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
 
 /** One row a dashboard or the edge read path can query without a view. */
@@ -25,7 +25,17 @@ export const BillingReadRow = Schema.Struct({
   proration: Schema.optionalKey(Proration),
   prorationInvoice: Schema.optionalKey(Schema.String),
   currency: Schema.optionalKey(Schema.String),
+  /**
+   * The customer's own rows. A pooled source is recorded once, here, so a
+   * report that adds scopes dedupes by `sourceId` (ADR 0040 §4).
+   */
   features: Schema.Record(Schema.String, FeatureEntitlement),
+  /**
+   * Every entity's own rows, keyed by entity id. The list-path equivalent of
+   * `Balances.get({ entityId })`; absent on a row written before entities
+   * existed, which reads as "no entity was ever created".
+   */
+  entities: Schema.optionalKey(Schema.Record(Schema.String, EntityEntitlement)),
 });
 
 export type BillingReadRow = typeof BillingReadRow.Type;

@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { EntityId } from "../Customer.ts";
 import { AccountId } from "./Subscription.id.ts";
 
 /**
@@ -12,6 +13,8 @@ export class BalanceExpired extends Domain.Event("BalanceExpired", {
   amount: Schema.Int,
   /** The whole spendable count after the grant left. */
   balanceAfter: Schema.Int,
+  /** The scope that held the grant; absent means the customer. */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /**
@@ -25,6 +28,8 @@ export class ExpireGrant extends Domain.Command("ExpireGrant", {
   input: {
     feature: Schema.String,
     grantId: Schema.String,
+    /** The entity scope holding the grant; absent means the customer. */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [BalanceExpired],
   rejects: [],

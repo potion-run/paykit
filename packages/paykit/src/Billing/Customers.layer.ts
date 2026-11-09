@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { CustomerId } from "../Customer.ts";
+import { CustomerId, EntityId } from "../Customer.ts";
 import type { Customer, CustomerPlan } from "../Customer.ts";
 import { PlanId } from "../Plan.ts";
 import type { BillingStateView } from "../Subscription/BillingState.view.ts";
@@ -63,6 +63,16 @@ const customerOf = (account: string, view: BillingStateView | null): Customer =>
     id: CustomerId.make(account),
     plans,
     ...(view?.billingControls === undefined ? {} : { billingControls: view.billingControls }),
+    // The entity list is the same read `Paykit.Entities(account).list()` serves;
+    // the scope's plans and balances stay on its `Balance` (ADR 0040 §4).
+    entities: (view?.entities ?? []).map((entity) => ({
+      id: EntityId.make(entity.id),
+      parentId: CustomerId.make(account),
+      ...(entity.name === undefined ? {} : { name: entity.name }),
+      status: entity.status,
+      createdAt: entity.createdAt,
+      ...(entity.archivedAt === undefined ? {} : { archivedAt: entity.archivedAt }),
+    })),
   };
 };
 

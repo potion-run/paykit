@@ -98,6 +98,7 @@ const billing = {
     },
   },
   schedule: [],
+  entities: [],
   status: "active" as const,
   periodStart: at,
   periodEnd: at,

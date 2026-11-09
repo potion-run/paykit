@@ -14,7 +14,14 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { controlsKey, normalizeBillingControls, type BillingControls } from "../Customer.ts";
+import {
+  controlsKey,
+  normalizeBillingControls,
+  scopeEntityId,
+  type BillingControls,
+  type EntityId,
+  type ScopeRef,
+} from "../Customer.ts";
 import { soleUnitPriceOf } from "../Pricing.ts";
 import { prorate, prorateQuantity, sameProration } from "../Proration.ts";
 import {
@@ -26,6 +33,8 @@ import {
 } from "./Allowance.verdict.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
+import { ArchiveEntity, EntityArchivedEvent } from "./ArchiveEntity.command.ts";
+import { AttachEntity, EntityAttached } from "./AttachEntity.command.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
 import { CancelImmediately, SubscriptionCanceled } from "./CancelImmediately.command.ts";
 import {
@@ -52,15 +61,19 @@ import {
   GraceDeadlineNotLater,
   GraceEntered,
 } from "./EnterGrace.command.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityExists } from "./EntityExists.rejection.ts";
+import { EntityHasOccupancy } from "./EntityHasOccupancy.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { Expire, SubscriptionExpired } from "./Expire.command.ts";
 import { BalanceExpired, ExpireGrant } from "./ExpireGrant.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
+import { FeaturePricedInCredits } from "./FeaturePricedInCredits.rejection.ts";
 import { GraceElapsed } from "./GraceElapsed.command.ts";
 import {
   BalanceGranted,
   FeatureNotCounted,
-  FeaturePricedInCredits,
   GrantBalance,
   GrantExpiryNotLater,
 } from "./GrantBalance.command.ts";
@@ -92,6 +105,7 @@ import {
   withPhase,
   withPlan,
 } from "./PlanSet.ts";
+import { PooledItemOnEntity } from "./PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts";
 import {
@@ -186,6 +200,11 @@ import {
   duePhasesOf,
   grantsOf,
   grantsReturnedFor,
+  entityOf,
+  entityRecordsOf,
+  pooledOf,
+  pooledRemainingOf,
+  scopeStateOf,
   grantsWithout,
   holdOf,
   includedRemainingOf,
@@ -203,6 +222,7 @@ import {
   nextResetAt,
   remainingOf,
   openHoldsOf,
+  periodTiedReset,
   refundedOf,
   refundedWith,
   refundOfProviderId,
@@ -220,6 +240,8 @@ import {
   statusOf,
   SubscriptionState,
   usedOf,
+  type BalanceGrants,
+  type EntityRecord,
   type HoldRecord,
   type SubscribedState,
   type SubscriptionStatus,
@@ -235,8 +257,16 @@ import {
   TrackUsage,
   UsageRecorded,
 } from "./TrackUsage.command.ts";
+import {
+  BalanceTransferred,
+  TransferBalance,
+  TransferExceedsBalance,
+  TransferOfCreditSystem,
+  TransferOfPooledSource,
+} from "./TransferBalance.command.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
+import { UpdateEntity, EntityUpdated } from "./UpdateEntity.command.ts";
 import { UsageAlertFired } from "./UsageAlertFired.event.ts";
 import {
   NoTierChangeScheduled,
@@ -291,6 +321,26 @@ const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
+
+/**
+ * The refusal an entity scope earns, or `null` when the scope may be read.
+ * An unknown id and an archived one are different answers: the first never
+ * existed, the second is terminal (ADR 0040 §7).
+ */
+const entityRefusalOf = (
+  state: SubscriptionState,
+  entityId: EntityId | undefined,
+  account: string,
+): EntityUnknown | EntityArchived | null => {
+  if (entityId === undefined) return null;
+  const record = entityOf(state, entityId);
+
+  if (record === undefined) return new EntityUnknown({ account, entityId });
+
+  return record.status === "archived"
+    ? new EntityArchived({ entityId, archivedAt: record.archivedAt ?? record.createdAt })
+    : null;
+};
 
 /**
  * The event that returns an open hold's units (or credits) to a standing. A
@@ -470,8 +520,39 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     );
   }
 
+  // Every attached entity's own period closes with the customer's: its plan
+  // sources reset, its lifetime grants stay, and an archived scope is skipped
+  // (ADR 0040 §3). A `PlanItemReset` per feature keeps the entity's reset a
+  // fold of the log, exactly as the customer's `UsageReset` does.
+  const entityResets = entityRecordsOf(state).flatMap((record) => {
+    if (record.status !== "attached" || Object.keys(record.plans).length === 0) return [];
+    const scoped = scopeStateOf(state, record.id);
+
+    return Object.entries(allowancesOf(scoped)).flatMap(([feature, allowance]) => {
+      const reset = resetOf(scoped, feature, allowance);
+
+      // A window the period does not own keeps its counters; its own boundary
+      // resets it through `ResetAllowance`.
+      if (reset.kept) return [];
+
+      return [
+        new PlanItemReset({
+          entity: record.id,
+          feature,
+          remaining:
+            reset.remaining === null ? null : reset.remaining + grantTotalOf(scoped, feature),
+          carried: reset.carried,
+          resetAt: periodTiedReset(allowance)
+            ? nextPeriodEnd
+            : nextResetAt(nextPeriodStart, allowance),
+        }),
+      ];
+    });
+  });
+
   return [
     ...moved,
+    ...entityResets,
     ...resetReleases,
     new PeriodClosed({
       periodStart: state.period.start,
@@ -502,11 +583,15 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
 };
 
 /** The per-feature facts a judgement reads, from the standing itself. */
-const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
+const judgedOf = (
+  state: SubscribedState,
+  feature: string,
+  over: { readonly remaining?: number | null; readonly carried?: number } = {},
+): JudgedFeature => {
   const allowance = allowancesOf(state)[feature];
   const rates = ratesOf(state)[feature];
   const included = allowance?.included ?? null;
-  const remaining = availableOf(state, feature);
+  const remaining = over.remaining === undefined ? availableOf(state, feature) : over.remaining;
   const used = usedOf(state, feature);
   // A credit-priced feature shares one pool: its `reserved` is the credits
   // every open hold kept out, not the units held on this feature.
@@ -516,9 +601,10 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
   // The write path knows `included`, a read model knows `carried`; the ceiling
   // is written from `remaining`, so the rollover part is derived here.
   const carried =
-    typeof included === "number" && remaining !== null
+    over.carried ??
+    (typeof included === "number" && remaining !== null
       ? Math.max(0, remaining + used + reserved - included)
-      : 0;
+      : 0);
 
   return {
     overage: allowance?.overage ?? "block",
@@ -788,6 +874,24 @@ const holdRefusalOf = (
  * aggregate, so a `TrackUsage` that would exceed a blocking allowance is
  * refused in the same transaction that would have recorded it.
  */
+/**
+ * Apply a scoped event's outcome to the entity a command named. An entity the
+ * log never wrote (or one that has since been archived) is left alone rather
+ * than invented: its record is the only place its scope state lives.
+ */
+const withScope = (
+  state: SubscribedState,
+  entityId: EntityId | undefined,
+  update: (record: EntityRecord) => EntityRecord,
+): SubscribedState => {
+  if (entityId === undefined) return state;
+  const record = state.entities?.[entityId];
+
+  if (record === undefined) return state;
+
+  return { ...state, entities: { ...state.entities, [entityId]: update(record) } };
+};
+
 export class Subscription extends Domain.Aggregate("Subscription", {
   id: AccountId,
   state: SubscriptionState,
@@ -833,6 +937,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     SetUsage,
     SetBillingControls,
     RecordQuantityProrationInvoice,
+    AttachEntity,
+    UpdateEntity,
+    ArchiveEntity,
+    TransferBalance,
   ],
   decide: {
     StartTrial: (state, command, { id, now }) => {
@@ -955,7 +1063,26 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return new StandingEnded({ account: id, status: current.status });
       }
 
+      // A move names either the customer's scope or one of its entities. An
+      // entity holds its own plan set and its own sources; the customer's
+      // aggregate decides and commits both (ADR 0040 §2–3).
+      const scopeRefusal = entityRefusalOf(current, command.entity, id);
+
+      if (scopeRefusal !== null) return scopeRefusal;
+
+      const scoped = scopeStateOf(current, command.entity);
+
       for (const [feature, allowance] of Object.entries(command.allowances)) {
+        // A pooled grant belongs to the customer: attaching one on an entity
+        // would be a second pool (ADR 0040 §3).
+        if (command.entity !== undefined && allowance.pooled === true) {
+          return new PooledItemOnEntity({
+            entityId: command.entity,
+            planId: command.tier,
+            feature,
+          });
+        }
+
         // Only a blocking allowance can be oversubscribed: below its count,
         // every later request is refused and the read model reports a negative
         // `remaining` for a feature that stops at zero. A billed or allowed
@@ -970,9 +1097,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         // Money and units are refused separately because the evidence a console
         // shows is a different sentence in each.
         const refusal = downgradeOf(allowance, {
-          used: usedOf(current, feature),
-          reserved: reservedOf(current, feature),
-          billed: billedOf(current, feature),
+          used: usedOf(scoped, feature),
+          // Holds and money are the customer's: an entity has no hold stream
+          // and no billed counter of its own in this slice.
+          reserved: command.entity === undefined ? reservedOf(current, feature) : 0,
+          billed: command.entity === undefined ? billedOf(current, feature) : 0,
         });
 
         switch (refusal._tag) {
@@ -1003,7 +1132,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
 
-      const currentCurrency = currencyOf(current);
+      const currentCurrency = currencyOf(scoped);
 
       if (
         currentCurrency !== undefined &&
@@ -1018,7 +1147,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // A caller that sends a number the model did not compute is refused
       // rather than trusted: an unverifiable charge is worse than no charge.
       const expected = prorate({
-        from: priceOf(current),
+        from: priceOf(scoped),
         to: command.price,
         period: { start: current.period.start, end: current.period.end },
         at: now,
@@ -1039,7 +1168,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             : { group: command.group }),
           ...(command.addOn === true ? { addOn: true } : {}),
           allowances: command.allowances,
-          remaining: remainingAfterChange(current, command.allowances),
+          remaining: remainingAfterChange(scoped, command.allowances),
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
           ...((priceCurrency ?? currentCurrency) === undefined
             ? {}
             : { currency: (priceCurrency ?? currentCurrency)! }),
@@ -1057,11 +1187,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             : { planCredits: command.credits }),
           // An explicit move supersedes the phases its group still had waiting
           // (ADR 0039 §6). Nothing waiting means nothing to say.
-          ...(scheduleOf(current).length === 0 ? {} : { supersedesSchedule: true }),
+          ...(command.entity !== undefined || scheduleOf(current).length === 0
+            ? {}
+            : { supersedesSchedule: true }),
           creditsExpire: command.creditsExpire,
           ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
           rates: command.rates,
-          ...(priceOf(current) === undefined ? {} : { priceBefore: priceOf(current) }),
+          ...(priceOf(scoped) === undefined ? {} : { priceBefore: priceOf(scoped) }),
           ...(command.price === undefined ? {} : { priceAfter: command.price }),
           ...(command.proration === undefined ? {} : { proration: command.proration }),
           ...(() => {
@@ -1072,8 +1204,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
-    TrackUsage: (state, command, { now }) => {
+    TrackUsage: (state, command, { id, now }) => {
+      // A scope is resolved before the standing is: an archived entity refuses
+      // even when the customer is healthy, and an unknown id is not a scope to
+      // create on write (ADR 0040 §6–7).
+      const scopeRefusal = entityRefusalOf(state, command.entity, id);
+
+      if (scopeRefusal !== null) return scopeRefusal;
+
       if (state._tag === "Unsubscribed") {
+        // An entity has no plan and no sources of its own before the customer
+        // subscribes, and the customer's pack is not entity-scoped: a pack is
+        // reached through a pooled plan item.
+        if (command.entity !== undefined) {
+          return new StandingBlocksUsage({ standing: "blocked", status: "none" });
+        }
+
         // A pack can be spent before a plan exists. The purchase captured the
         // catalog's rate cards, so this is the same credit math as a standing,
         // with the whole pool spendable and no allowance to consult.
@@ -1112,7 +1258,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ];
       }
 
-      const allowance = allowancesOf(state)[command.feature];
+      // The scope's own plan set and counters. The customer scope is the
+      // standing itself; an entity's is its record (ADR 0040 §2).
+      const scoped = scopeStateOf(state, command.entity);
+      const allowance = allowancesOf(scoped)[command.feature];
+
+      // Credits are one pool per customer (ADR 0002): an entity reaches them
+      // through a pooled plan item, never by spending the pool directly.
+      if (command.entity !== undefined && ratesOf(scoped)[command.feature] !== undefined) {
+        return new FeaturePricedInCredits({ feature: command.feature });
+      }
 
       // A flag is granted, not metered, and a quantity is occupied, not spent.
       // Both are refused before the capacity rule so a seat out of balance says
@@ -1125,9 +1280,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return new FeatureNotConsumable({ feature: command.feature });
       }
 
+      // What the scope may spend: its own sources, plus the pooled row when the
+      // customer's item is shared. The pool is one number, so the judgement and
+      // the event read the same figure (ADR 0040 §3–4).
+      const own = remainingOf(scoped, command.feature);
+      const pool = command.entity === undefined ? null : pooledRemainingOf(state, command.feature);
+
+      const shared =
+        command.entity === undefined || pool === null
+          ? undefined
+          : own === null
+            ? null
+            : own + pool;
+
       const verdict = capacityOf({
         standing: standingOf(state.status),
-        feature: judgedOf(state, command.feature),
+        feature: judgedOf(scoped, command.feature, {
+          ...(shared === undefined ? {} : { remaining: shared }),
+          ...(command.entity === undefined ? {} : { carried: 0 }),
+        }),
         ask: {
           amount: command.amount,
           ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
@@ -1148,16 +1319,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const refusal = usageRefusalOf(verdict, state, command.feature, command.amount);
 
       if (refusal !== null) return refusal;
-      // A credit-priced feature spends the account's pool: the event carries
+
+      // A credit-priced feature spends the account's one pool: the event carries
       // the cost and the balance after it, so the pool is a fold of the log.
-      const rates = ratesOf(state)[command.feature];
+      const rates = ratesOf(scoped)[command.feature];
 
       if (rates !== undefined) {
         const cost =
           command.amount *
           creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
 
-        const usedAfter = usedOf(state, command.feature) + cost;
+        const usedAfter = usedOf(scoped, command.feature) + cost;
 
         return [
           new UsageRecorded({
@@ -1175,8 +1347,24 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ];
       }
 
-      const used = usedOf(state, command.feature);
-      const remaining = remainingOf(state, command.feature);
+      // A counted or priced feature: the scope spends its own sources first and
+      // draws the pooled source for the rest, so an entity's own remaining and
+      // the shared pool move by different amounts in one event.
+      const used = usedOf(scoped, command.feature);
+      const remaining = remainingOf(scoped, command.feature);
+      const drawsPool = command.entity !== undefined && pool !== null;
+
+      const fromOwn =
+        drawsPool && remaining !== null
+          ? Math.min(command.amount, Math.max(0, remaining))
+          : command.amount;
+
+      const fromPool = command.amount - fromOwn;
+
+      const grants = drawsPool
+        ? grantsForSpend(scoped, command.feature, fromOwn)
+        : grantsForSpend(scoped, command.feature, command.amount);
+
       const pricing = pricingOf(allowance ?? {});
       const charge = chargeOf(pricing, allowance?.included ?? null, used, command.amount);
       const billed = billedOf(state, command.feature);
@@ -1189,7 +1377,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           cost: 0,
           creditsAfter: state.credits,
           usedAfter: used + command.amount,
-          remainingAfter: remainingAfterSpending(remaining, command.amount),
+          remainingAfter: remainingAfterSpending(remaining, fromOwn),
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
+          ...(fromPool <= 0 || pool === null ? {} : { poolAfter: pool - fromPool }),
           ...(pricing === null
             ? {}
             : {
@@ -1206,12 +1396,222 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                   : { unitPrice: soleUnitPriceOf(pricing)! }),
                 billable: billableUnitsOf(allowance?.included ?? null, used, command.amount),
               }),
-          ...(Object.keys(grantsForSpend(state, command.feature, command.amount)).length === 0
-            ? {}
-            : { grantsUsed: grantsForSpend(state, command.feature, command.amount) }),
+          ...(Object.keys(grants).length === 0 ? {} : { grantsUsed: grants }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
         ...alertsFor(state, command.feature, used + command.amount, now),
+      ];
+    },
+    AttachEntity: (state, command, { now }) => {
+      const existing = entityOf(state, command.entityId);
+
+      if (existing !== undefined) {
+        // Terminal wins: an archived id is never reopened, and a live one is a
+        // second create rather than a rename (ADR 0040 §7).
+        return existing.status === "archived"
+          ? new EntityArchived({
+              entityId: command.entityId,
+              archivedAt: existing.archivedAt ?? existing.createdAt,
+            })
+          : new EntityExists({ entityId: command.entityId });
+      }
+
+      return [
+        new EntityAttached({
+          entity: command.entityId,
+          ...(command.name === undefined ? {} : { name: command.name }),
+          at: now,
+        }),
+      ];
+    },
+    UpdateEntity: (state, command, { id }) => {
+      const record = entityOf(state, command.entityId);
+
+      if (record === undefined)
+        return new EntityUnknown({ account: id, entityId: command.entityId });
+
+      if (record.status === "archived") {
+        return new EntityArchived({
+          entityId: command.entityId,
+          archivedAt: record.archivedAt ?? record.createdAt,
+        });
+      }
+
+      // A rename to the name the record already holds moves nothing, so the
+      // write is idempotent without relying on the command id.
+      if ((record.name ?? undefined) === command.name) return [];
+
+      return [
+        new EntityUpdated({
+          entity: command.entityId,
+          ...(command.name === undefined ? {} : { name: command.name }),
+        }),
+      ];
+    },
+    ArchiveEntity: (state, command, { id, now }) => {
+      const record = entityOf(state, command.entityId);
+
+      if (record === undefined)
+        return new EntityUnknown({ account: id, entityId: command.entityId });
+
+      if (record.status === "archived") {
+        return new EntityArchived({
+          entityId: command.entityId,
+          archivedAt: record.archivedAt ?? record.createdAt,
+        });
+      }
+
+      // Evicting a user is never a billing side effect: an operator sets
+      // occupancy to zero first (ADR 0036, ADR 0040 §7).
+      const occupancy = Object.entries(record.occupied ?? {}).flatMap(([featureId, occupied]) =>
+        occupied > 0 ? [{ featureId, occupied }] : [],
+      );
+
+      if (occupancy.length > 0) {
+        return new EntityHasOccupancy({ entityId: command.entityId, occupancy });
+      }
+
+      const scoped = scopeStateOf(state, command.entityId);
+      const allowances = allowancesOf(scoped);
+
+      // A feature the scope holds only a grant for is not in its plan set, so
+      // the sweep reads both.
+      const features = new Set([
+        ...Object.keys(allowances),
+        ...Object.values(record.grants ?? {}).map((grant) => grant.feature),
+      ]);
+
+      const returned: Array<{
+        feature: string;
+        kind: "plan" | "rollover" | "grant";
+        amount: number;
+        interval: string;
+        expiresAt?: DateTime.Utc;
+        grantId?: string;
+      }> = [];
+
+      for (const feature of features) {
+        const own = remainingOf(scoped, feature);
+
+        if (own === null || own <= 0) continue;
+        // A lifetime grant is moved as a grant so it keeps its class and its
+        // deadline; the plan and rollover part moves as the plan source.
+        const planPart = Math.max(0, own - grantTotalOf(scoped, feature));
+
+        if (planPart > 0) {
+          returned.push({
+            feature,
+            kind: "plan",
+            amount: planPart,
+            interval: allowances[feature]?.resets ?? "never",
+          });
+        }
+
+        for (const grant of grantsOf(scoped, feature)) {
+          if (grant.remaining <= 0) continue;
+          returned.push({
+            feature,
+            kind: "grant",
+            amount: grant.remaining,
+            interval: "never",
+            ...(grant.expiresAt === undefined ? {} : { expiresAt: grant.expiresAt }),
+            grantId: grant.id,
+          });
+        }
+      }
+
+      // A purchase nobody occupies moves to the customer; the bill stays where
+      // it was written.
+      const returnedQuantities = Object.entries(record.quantities ?? {}).flatMap(
+        ([feature, quantity]) => (quantity > 0 ? [{ feature, quantity }] : []),
+      );
+
+      return [
+        new EntityArchivedEvent({
+          entity: command.entityId,
+          at: now,
+          returned,
+          returnedQuantities,
+        }),
+      ];
+    },
+    TransferBalance: (state, command, { id, commandId }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
+      const fromEntity = scopeEntityId(command.from);
+      const toEntity = scopeEntityId(command.to);
+
+      // Both endpoints are scopes of this customer; a foreign id is
+      // indistinguishable from an unknown one (ADR 0040 §1–2).
+      const fromRefusal = entityRefusalOf(state, fromEntity, id);
+
+      if (fromRefusal !== null) return fromRefusal;
+      const toRefusal = entityRefusalOf(state, toEntity, id);
+
+      if (toRefusal !== null) return toRefusal;
+
+      // The binding refuses a self-transfer at the schema; decide treats it as
+      // nothing to move.
+      if (fromEntity === toEntity) return [];
+
+      const feature = command.feature;
+
+      // Credits are one pool per customer, not a scope's balance (ADR 0002).
+      if (ratesOf(state)[feature] !== undefined) {
+        return new TransferOfCreditSystem({ feature });
+      }
+
+      if (command.amount <= 0) return [];
+
+      // A pooled source belongs to the customer and is one shared row: a
+      // transfer writes own sources only (ADR 0040 §6).
+      if (
+        pooledOf(state, feature) &&
+        (command.from.kind === "customer" || command.to.kind === "customer")
+      ) {
+        return new TransferOfPooledSource({ from: command.from, to: command.to, feature });
+      }
+
+      const fromState = scopeStateOf(state, fromEntity);
+      const available = remainingOf(fromState, feature) ?? 0;
+
+      if (command.amount > available) {
+        return new TransferExceedsBalance({
+          from: command.from,
+          feature,
+          amount: command.amount,
+          available,
+        });
+      }
+
+      // Plan and rollover are spent first, a grant last: the same order a spend
+      // takes, so the class each unit keeps is the class it had (ADR 0037).
+      const used = grantsForSpend(fromState, feature, command.amount);
+      const grant = Object.values(used).reduce((sum, amount) => sum + amount, 0);
+      const plan = command.amount - grant;
+
+      const deadline = grantsOf(fromState, feature)
+        .filter((entry) => (used[entry.id] ?? 0) > 0 && entry.expiresAt !== undefined)
+        .map((entry) => entry.expiresAt!)
+        .sort((left, right) => left.epochMilliseconds - right.epochMilliseconds)[0];
+
+      const toState = scopeStateOf(state, toEntity);
+
+      return [
+        new BalanceTransferred({
+          transferId: commandId,
+          from: command.from,
+          to: command.to,
+          feature,
+          amount: command.amount,
+          plan,
+          grant,
+          interval: allowancesOf(fromState)[feature]?.resets ?? "never",
+          ...(deadline === undefined ? {} : { expiresAt: deadline }),
+          ...(grant <= 0 ? {} : { grantsUsed: used }),
+          fromAfter: available - command.amount,
+          toAfter: (remainingOf(toState, feature) ?? 0) + command.amount,
+        }),
       ];
     },
     SetBillingControls: (state, command) => {
@@ -1226,8 +1626,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return [new BillingControlsSet(billingControls === undefined ? {} : { billingControls })];
     },
     SetQuantity: (state, command, { id, now }) => {
+      const scopeRefusal = entityRefusalOf(state, command.entity, id);
+
+      if (scopeRefusal !== null) return scopeRefusal;
+
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
-      const allowance = allowancesOf(state)[command.feature];
+      const scoped = scopeStateOf(state, command.entity);
+      const allowance = allowancesOf(scoped)[command.feature];
 
       if (allowance === undefined || !isQuantityGrant(allowance)) {
         return new FeatureNotConsumable({ feature: command.feature });
@@ -1255,7 +1660,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         });
       }
 
-      const before = quantityOf(state, command.feature, allowance);
+      const before = quantityOf(scoped, command.feature, allowance);
 
       if (before === command.quantity) return [];
 
@@ -1303,13 +1708,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: command.feature,
           quantityBefore: before,
           quantityAfter: command.quantity,
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
           ...(proration === null ? {} : { proration, prorationId: command.dedupeKey }),
         }),
       ];
     },
     SetUsage: (state, command, { id }) => {
+      const scopeRefusal = entityRefusalOf(state, command.entity, id);
+
+      if (scopeRefusal !== null) return scopeRefusal;
+
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
-      const allowance = allowancesOf(state)[command.feature];
+      const scoped = scopeStateOf(state, command.entity);
+      const allowance = allowancesOf(scoped)[command.feature];
 
       if (allowance === undefined || !isQuantityGrant(allowance)) {
         return new FeatureNotConsumable({ feature: command.feature });
@@ -1319,7 +1730,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return new UsageInvalid({ feature: command.feature, usage: command.usage });
       }
 
-      const before = occupiedOf(state, command.feature);
+      const before = occupiedOf(scoped, command.feature);
 
       if (before === command.usage) return [];
 
@@ -1336,7 +1747,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: command.feature,
           occupiedBefore: before,
           occupiedAfter: command.usage,
-          remainingAfter: quantityOf(state, command.feature, allowance) - command.usage,
+          remainingAfter: quantityOf(scoped, command.feature, allowance) - command.usage,
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
         }),
       ];
     },
@@ -1810,9 +2222,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     GrantBalance: (state, command, { id, now, commandId }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
 
-      const allowance = allowancesOf(state)[command.feature];
+      const scopeRefusal = entityRefusalOf(state, command.entity, id);
 
-      if (ratesOf(state)[command.feature] !== undefined) {
+      if (scopeRefusal !== null) return scopeRefusal;
+
+      const scoped = scopeStateOf(state, command.entity);
+      const allowance = allowancesOf(scoped)[command.feature];
+
+      if (ratesOf(scoped)[command.feature] !== undefined) {
         return new FeaturePricedInCredits({ feature: command.feature });
       }
 
@@ -1844,15 +2261,16 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           grantId: commandId,
           granted: command.granted,
           ...(command.expiresAt === undefined ? {} : { expiresAt: command.expiresAt }),
-          planId: planIdOf(state) || undefined,
-          remainingAfter: (remainingOf(state, command.feature) ?? 0) + command.granted,
+          ...(planIdOf(scoped) === "" ? {} : { planId: planIdOf(scoped) }),
+          remainingAfter: (remainingOf(scoped, command.feature) ?? 0) + command.granted,
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
         }),
       ];
     },
     ExpireGrant: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
-
-      const grant = state.grants?.[command.grantId];
+      const scoped = scopeStateOf(state, command.entity);
+      const grant = scoped.grants?.[command.grantId];
 
       if (grant === undefined || grant.feature !== command.feature) return [];
 
@@ -1871,7 +2289,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           feature: grant.feature,
           grantId: grant.id,
           amount: grant.remaining,
-          balanceAfter: (remainingOf(state, grant.feature) ?? 0) - grant.remaining,
+          balanceAfter: (remainingOf(scoped, grant.feature) ?? 0) - grant.remaining,
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
         }),
       ];
     },
@@ -2218,10 +2637,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // boundary. The scheduled fire is a leftover, not a reset.
       if (isTerminalStatus(state.status)) return [];
 
-      const allowance = allowancesOf(state)[command.feature];
+      const scoped = scopeStateOf(state, command.entity);
+      const allowance = allowancesOf(scoped)[command.feature];
 
       if (allowance === undefined) return [];
-      const boundary = state.resetAt?.[command.feature];
+      const boundary = scoped.resetAt?.[command.feature];
 
       if (boundary === undefined) return [];
 
@@ -2230,11 +2650,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (DateTime.toEpochMillis(boundary) !== DateTime.toEpochMillis(command.at)) return [];
 
       if (DateTime.toEpochMillis(now) < DateTime.toEpochMillis(boundary)) return [];
-      const reset = resetOfFeature(state, command.feature, allowance);
+      const reset = resetOfFeature(scoped, command.feature, allowance);
 
-      const releases = Object.values(state.holds)
-        .filter((hold) => hold.status === "open" && hold.feature === command.feature)
-        .map((hold) => releaseEvent(state, hold, "reset"));
+      // Holds are the customer's: an entity's own window has none to release.
+      const releases =
+        command.entity === undefined
+          ? Object.values(state.holds)
+              .filter((hold) => hold.status === "open" && hold.feature === command.feature)
+              .map((hold) => releaseEvent(state, hold, "reset"))
+          : [];
 
       return [
         ...releases,
@@ -2243,9 +2667,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           remaining:
             reset.remaining === null
               ? null
-              : reset.remaining + grantTotalOf(state, command.feature),
+              : reset.remaining + grantTotalOf(scoped, command.feature),
           carried: reset.carried,
           resetAt: nextResetAt(now, allowance),
+          ...(command.entity === undefined ? {} : { entity: command.entity }),
         }),
       ];
     },
@@ -2355,6 +2780,35 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ? withoutGroupPhases(state.schedule, event.group ?? DEFAULT_PLAN_GROUP)
           : withoutPhase(state.schedule, event.tier);
 
+      if (event.entity !== undefined) {
+        return withScope(state, event.entity, (record) => ({
+          ...record,
+          plans: withPlan(record.plans, row),
+          // A feature the new plan drops stays only while the scope still holds
+          // a grant for it: a lifetime grant is not the plan's to remove.
+          remaining: {
+            ...Object.fromEntries(
+              Object.entries(record.remaining).filter(
+                ([feature]) =>
+                  event.remaining[feature] === undefined &&
+                  Object.values(record.grants ?? {}).some((grant) => grant.feature === feature),
+              ),
+            ),
+            ...event.remaining,
+          },
+          resetAt: event.resetAt ?? {},
+          quantities: Object.fromEntries(
+            Object.entries(event.allowances).flatMap(([feature, allowance]) => {
+              if (!isQuantityGrant(allowance)) return [];
+              const included = typeof allowance.included === "number" ? allowance.included : 0;
+              const held = record.quantities?.[feature] ?? included;
+
+              return [[feature, quantityAfterTierChange(held, included)]];
+            }),
+          ),
+        }));
+      }
+
       return {
         ...rest,
         plans: withPlan(state.plans, row),
@@ -2395,8 +2849,35 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ...(prorationSeq === 0 ? {} : { prorationSeq }),
       };
     },
-    UsageRecorded: (state, event) =>
-      state._tag === "Subscribed"
+    UsageRecorded: (state, event) => {
+      if (state._tag === "Subscribed" && event.entity !== undefined) {
+        const scoped = withScope(state, event.entity, (record) => ({
+          ...record,
+          usage: { ...record.usage, [event.feature]: event.usedAfter },
+          remaining: { ...record.remaining, [event.feature]: event.remainingAfter },
+          ...(event.grantsUsed === undefined
+            ? {}
+            : { grants: grantsAfterSpend(record.grants, event.grantsUsed) }),
+        }));
+
+        return {
+          ...scoped,
+          // Money and the shared pool stay the customer's: a scope's spend folds
+          // into the billed total, and a pool draw moves the one pooled source.
+          ...(event.billedAfter === undefined
+            ? {}
+            : { billed: { ...state.billed, [event.feature]: event.billedAfter } }),
+          ...(event.poolAfter === undefined
+            ? {}
+            : { remaining: { ...state.remaining, [event.feature]: event.poolAfter } }),
+          dedupeKeys:
+            event.dedupeKey === undefined
+              ? state.dedupeKeys
+              : { ...state.dedupeKeys, [event.dedupeKey]: true },
+        };
+      }
+
+      return state._tag === "Subscribed"
         ? {
             ...state,
             credits: event.creditsAfter,
@@ -2423,7 +2904,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ...(event.dedupeKey === undefined
               ? {}
               : { dedupeKeys: { ...state.dedupeKeys, [event.dedupeKey]: true } }),
-          },
+          };
+    },
     UsageReserved: (state, event) =>
       state._tag === "Subscribed"
         ? {
@@ -2547,29 +3029,49 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             prepaidCredits: protectedAfterSpending(state, event.balanceAfter),
           }
         : state,
-    BalanceGranted: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            grants: grantedWith(state.grants, {
-              id: event.grantId,
-              feature: event.feature,
-              granted: event.granted,
-              remaining: event.granted,
-              ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
-              ...(event.planId === undefined ? {} : { planId: event.planId }),
-            }),
-            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
-          }
-        : state,
-    BalanceExpired: (state, event) =>
-      state._tag === "Subscribed"
-        ? {
-            ...state,
-            grants: grantsWithout(state.grants, event.grantId),
-            remaining: { ...state.remaining, [event.feature]: event.balanceAfter },
-          }
-        : state,
+    BalanceGranted: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+
+      const grant = {
+        id: event.grantId,
+        feature: event.feature,
+        granted: event.granted,
+        remaining: event.granted,
+        ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
+        ...(event.planId === undefined ? {} : { planId: event.planId }),
+      };
+
+      if (event.entity !== undefined) {
+        return withScope(state, event.entity, (record) => ({
+          ...record,
+          grants: grantedWith(record.grants, grant),
+          remaining: { ...record.remaining, [event.feature]: event.remainingAfter },
+        }));
+      }
+
+      return {
+        ...state,
+        grants: grantedWith(state.grants, grant),
+        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+      };
+    },
+    BalanceExpired: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+
+      if (event.entity !== undefined) {
+        return withScope(state, event.entity, (record) => ({
+          ...record,
+          grants: grantsWithout(record.grants, event.grantId),
+          remaining: { ...record.remaining, [event.feature]: event.balanceAfter },
+        }));
+      }
+
+      return {
+        ...state,
+        grants: grantsWithout(state.grants, event.grantId),
+        remaining: { ...state.remaining, [event.feature]: event.balanceAfter },
+      };
+    },
     CreditsPurchased: (state, event) => {
       // A purchase is money charged, with or without a standing: the ceiling a
       // refund is measured against has to count a pack bought before a plan.
@@ -2722,6 +3224,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     PlanItemReset: (state, event) => {
       if (state._tag !== "Subscribed") return state;
 
+      // A scope's own window: only its counter and boundary move. Holds are the
+      // customer's, so an entity's reset releases none.
+      if (event.entity !== undefined) {
+        return withScope(state, event.entity, (record) => {
+          const resetAt = Object.fromEntries(
+            Object.entries(record.resetAt ?? {}).filter(([feature]) => feature !== event.feature),
+          );
+
+          return {
+            ...record,
+            usage: { ...record.usage, [event.feature]: 0 },
+            remaining: { ...record.remaining, [event.feature]: event.remaining },
+            ...(event.resetAt === null
+              ? {}
+              : { resetAt: { ...resetAt, [event.feature]: event.resetAt } }),
+          };
+        });
+      }
+
       const resetAt = Object.fromEntries(
         Object.entries(state.resetAt ?? {}).filter(([feature]) => feature !== event.feature),
       );
@@ -2744,6 +3265,27 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     QuantityChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
 
+      if (event.entity !== undefined) {
+        const scoped = withScope(state, event.entity, (record) => ({
+          ...record,
+          quantities: { ...record.quantities, [event.feature]: event.quantityAfter },
+          remaining: {
+            ...record.remaining,
+            [event.feature]: event.quantityAfter - (record.occupied?.[event.feature] ?? 0),
+          },
+        }));
+
+        return event.proration === undefined || event.prorationId === undefined
+          ? scoped
+          : {
+              ...scoped,
+              quantityProrations: {
+                ...scoped.quantityProrations,
+                [event.prorationId]: { feature: event.feature, proration: event.proration },
+              },
+            };
+      }
+
       return {
         ...state,
         quantities: { ...state.quantities, [event.feature]: event.quantityAfter },
@@ -2763,6 +3305,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     UsageSet: (state, event) => {
       if (state._tag !== "Subscribed") return state;
+
+      if (event.entity !== undefined) {
+        return withScope(state, event.entity, (record) => ({
+          ...record,
+          occupied: { ...record.occupied, [event.feature]: event.occupiedAfter },
+          remaining: { ...record.remaining, [event.feature]: event.remainingAfter },
+        }));
+      }
 
       return {
         ...state,
@@ -2870,6 +3420,147 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             },
           }
         : state,
+    // A new scope starts empty: no plan, no count and no source. A duplicate is
+    // left alone, so a replayed create is the same scope.
+    EntityAttached: (state, event) => {
+      if (state.entities?.[event.entity] !== undefined) return state;
+
+      return {
+        ...state,
+        entities: {
+          ...state.entities,
+          [event.entity]: {
+            id: event.entity,
+            ...(event.name === undefined ? {} : { name: event.name }),
+            status: "attached" as const,
+            createdAt: event.at,
+            plans: {},
+            remaining: {},
+          },
+        },
+      };
+    },
+    EntityUpdated: (state, event) => {
+      const record = state.entities?.[event.entity];
+
+      if (record === undefined) return state;
+      const { name: _previous, ...rest } = record;
+
+      return {
+        ...state,
+        entities: {
+          ...state.entities,
+          [event.entity]: {
+            ...rest,
+            ...(event.name === undefined ? {} : { name: event.name }),
+          },
+        },
+      };
+    },
+    // The archive is terminal and its sweep is the only record of the move:
+    // what the scope owned lands on the customer, the scope holds nothing, and
+    // the record stays for the bills that name it.
+    EntityArchived: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const record = state.entities?.[event.entity];
+
+      if (record === undefined) return state;
+
+      const remaining = { ...state.remaining };
+      const grants = { ...state.grants };
+
+      for (const returned of event.returned) {
+        remaining[returned.feature] = (remaining[returned.feature] ?? 0) + returned.amount;
+
+        if (returned.kind === "grant" && returned.grantId !== undefined) {
+          grants[returned.grantId] = {
+            id: returned.grantId,
+            feature: returned.feature,
+            granted: returned.amount,
+            remaining: returned.amount,
+            ...(returned.expiresAt === undefined ? {} : { expiresAt: returned.expiresAt }),
+          };
+        }
+      }
+
+      const quantities = { ...state.quantities };
+
+      for (const returned of event.returnedQuantities) {
+        quantities[returned.feature] = (quantities[returned.feature] ?? 0) + returned.quantity;
+        remaining[returned.feature] = (remaining[returned.feature] ?? 0) + returned.quantity;
+      }
+
+      return {
+        ...state,
+        remaining,
+        ...(Object.keys(grants).length === 0 ? {} : { grants }),
+        ...(Object.keys(quantities).length === 0 ? {} : { quantities }),
+        entities: {
+          ...state.entities,
+          [event.entity]: {
+            ...record,
+            status: "archived" as const,
+            archivedAt: event.at,
+            plans: {},
+            remaining: {},
+          },
+        },
+      };
+    },
+    // One event, both sides: the source loses what the target gains, in the
+    // class it had. `fromAfter`/`toAfter` are the scopes' own remains, so a
+    // replay needs no second read.
+    BalanceTransferred: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+
+      const write = (
+        current: SubscribedState,
+        scope: ScopeRef,
+        remaining: number,
+        grants: BalanceGrants,
+      ): SubscribedState => {
+        if (scope.kind === "customer") {
+          return {
+            ...current,
+            remaining: { ...current.remaining, [event.feature]: remaining },
+            grants,
+          };
+        }
+
+        return withScope(current, scope.entityId, (record) => ({
+          ...record,
+          remaining: { ...record.remaining, [event.feature]: remaining },
+          grants,
+        }));
+      };
+
+      const source = scopeStateOf(state, scopeEntityId(event.from));
+      const target = scopeStateOf(state, scopeEntityId(event.to));
+
+      // A unit that arrived by transfer keeps its class: a lifetime grant
+      // arrives as a grant with its deadline, never as an expiring plan source.
+      const arrived: BalanceGrants =
+        event.grant <= 0
+          ? (target.grants ?? {})
+          : grantedWith(target.grants ?? {}, {
+              id: `${event.transferId}:grant`,
+              feature: event.feature,
+              granted: event.grant,
+              remaining: event.grant,
+              ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
+            });
+
+      const debited = write(
+        state,
+        event.from,
+        event.fromAfter,
+        event.grantsUsed === undefined
+          ? (source.grants ?? {})
+          : grantsAfterSpend(source.grants, event.grantsUsed),
+      );
+
+      return write(debited, event.to, event.toAfter, arrived);
+    },
   },
   reply: {
     SetQuantity: (_state, events) => {

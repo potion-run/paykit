@@ -3,6 +3,9 @@ import * as Schema from "effect/Schema";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -28,6 +31,8 @@ export class UsageSet extends Domain.Event("UsageSet", {
    * be negative, and it is what `check()` compares a request against.
    */
   remainingAfter: Schema.Int,
+  /** The entity scope whose seats are in use; absent means the customer. */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /**
@@ -48,6 +53,8 @@ export class SetUsage extends Domain.Command("SetUsage", {
     feature: Schema.String,
     /** The number in use. A count, not a purchase and not a spend. */
     usage: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+    /** The entity scope to set; absent means the customer (ADR 0040 §3). */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [UsageSet],
   rejects: [
@@ -55,6 +62,8 @@ export class SetUsage extends Domain.Command("SetUsage", {
     FeatureNotConsumable,
     UsageInvalid,
     StandingBlocksUsage,
+    EntityUnknown,
+    EntityArchived,
     Unauthenticated,
     Forbidden,
   ],

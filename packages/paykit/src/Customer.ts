@@ -129,6 +129,60 @@ export const normalizeBillingControls = (
 export const controlsKey = (billingControls: BillingControls | undefined): string =>
   JSON.stringify(normalizeBillingControls(billingControls) ?? null);
 
+/**
+ * A child scope under one customer: a team, a project, a workspace. It is a
+ * scope of the customer's aggregate, not a second customer — it has its own plan
+ * set and its own balance sources, and no second event stream (ADR 0040 §1–3).
+ * An id is never reused after the entity is archived.
+ */
+export const EntityId = Schema.String.pipe(Schema.brand("EntityId"));
+
+export type EntityId = typeof EntityId.Type;
+
+/**
+ * Where an entity is in its life. `detached` is the absence of a record, not a
+ * status: an entity the log never created has no record to read.
+ * `archived` is terminal — a new entity is a new id (ADR 0040 §7).
+ */
+export const EntityStatus = Schema.Literals(["attached", "archived"]);
+
+export type EntityStatus = typeof EntityStatus.Type;
+
+/** The customer-visible record of one entity. Plans and balances stay off it. */
+export const Entity = Schema.Struct({
+  id: EntityId,
+  /** The customer this scope belongs to; the hierarchy is one level. */
+  parentId: CustomerId,
+  name: Schema.optionalKey(Schema.String),
+  status: EntityStatus,
+  createdAt: Schema.DateTimeUtc,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtc),
+});
+
+export type Entity = typeof Entity.Type;
+
+/**
+ * The scope a balance, a command or a transfer names. A bare string cannot stand
+ * in for a customer or an entity by accident, and `{ kind: "customer" }` is the
+ * scope every caller meant before entities existed (ADR 0040 §1).
+ */
+export const ScopeRef = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("customer") }),
+  Schema.Struct({ kind: Schema.Literal("entity"), entityId: EntityId }),
+]);
+
+export type ScopeRef = typeof ScopeRef.Type;
+
+/** The customer's own scope, the shape an absent `entityId` means. */
+export const CUSTOMER_SCOPE: ScopeRef = { kind: "customer" };
+
+/** The scope one entity names. */
+export const entityScope = (entityId: EntityId): ScopeRef => ({ kind: "entity", entityId });
+
+/** The entity id a scope names, or `undefined` for the customer scope. */
+export const scopeEntityId = (scope: ScopeRef | undefined): EntityId | undefined =>
+  scope?.kind === "entity" ? scope.entityId : undefined;
+
 /** What a customer is, before its balances are folded in. */
 export const Customer = Schema.Struct({
   id: CustomerId,
@@ -136,6 +190,8 @@ export const Customer = Schema.Struct({
   email: Schema.optionalKey(Schema.String),
   plans: Schema.Array(CustomerPlan),
   billingControls: Schema.optionalKey(BillingControls),
+  /** Every entity this customer ever attached, archived ones included. */
+  entities: Schema.Array(Entity),
 });
 
 export type Customer = typeof Customer.Type;

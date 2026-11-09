@@ -15,7 +15,7 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { BillingControls } from "../Customer.ts";
+import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
 import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -122,9 +122,36 @@ export const FeatureEntitlement = Schema.Struct({
    * are spent first, so a grant is the last money a customer can spend.
    */
   grants: Schema.optionalKey(Schema.Array(BalanceGrantView)),
+  /**
+   * Whether the customer's item for this feature is pooled: one shared source
+   * every attached entity draws on. Only the customer's own row can carry it
+   * (ADR 0040 §3–4).
+   */
+  pooled: Schema.optionalKey(Schema.Boolean),
 });
 
 export type FeatureEntitlement = typeof FeatureEntitlement.Type;
+
+/**
+ * One entity's scope as the read model carries it: its lifecycle and its own
+ * feature rows. The shared pool is not copied here — a `Balance` for the scope
+ * appends the customer's one pooled row (ADR 0040 §4).
+ */
+export const EntityEntitlement = Schema.Struct({
+  id: EntityId,
+  name: Schema.optionalKey(Schema.String),
+  status: EntityStatus,
+  createdAt: Schema.DateTimeUtc,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtc),
+  features: Schema.Record(Schema.String, FeatureEntitlement),
+});
+
+export type EntityEntitlement = typeof EntityEntitlement.Type;
+
+/** Every entity under one customer, keyed by entity id. */
+export const EntityEntitlements = Schema.Record(Schema.String, EntityEntitlement);
+
+export type EntityEntitlements = typeof EntityEntitlements.Type;
 
 /** The `check()` read model: per-feature remaining and the account's standing. */
 export const EntitlementsState = Schema.Struct({
@@ -160,7 +187,14 @@ export const EntitlementsState = Schema.Struct({
    * actually has (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /** The customer's own scope rows. */
   features: Schema.Record(Schema.String, FeatureEntitlement),
+  /**
+   * Every entity's own rows, keyed by entity id. An entity is a partition of
+   * this one read model, not a second key: a read for it filters this map
+   * (ADR 0040 §2).
+   */
+  entities: Schema.optionalKey(EntityEntitlements),
 });
 
 export type EntitlementsState = typeof EntitlementsState.Type;
@@ -201,6 +235,72 @@ const linesOfEvent = (event: {
 
 const epoch = DateTime.makeUnsafe(0);
 
+/** The entity rows a view holds, or an empty map for a state written before one. */
+const entityMap = (view: EntitlementsState): EntityEntitlements => view.entities ?? {};
+
+/** Replace one entity's rows, leaving its lifecycle and every other scope alone. */
+const withEntityFeatures = (
+  view: EntitlementsState,
+  entityId: string,
+  features: Readonly<Record<string, FeatureEntitlement>>,
+): EntitlementsState => {
+  const entity = entityMap(view)[entityId];
+
+  if (entity === undefined) return view;
+
+  return {
+    ...view,
+    entities: { ...view.entities, [entityId]: { ...entity, features } },
+  };
+};
+
+/** Move one feature row of one entity. */
+const withEntityFeature = (
+  view: EntitlementsState,
+  entityId: string,
+  feature: string,
+  update: (value: FeatureEntitlement | undefined) => FeatureEntitlement,
+): EntitlementsState => {
+  const entity = entityMap(view)[entityId];
+
+  if (entity === undefined) return view;
+
+  return withEntityFeatures(view, entityId, {
+    ...entity.features,
+    [feature]: update(entity.features[feature]),
+  });
+};
+
+/** Set the customer's pooled row's remaining to the pool the event recorded. */
+const withPoolRow = (
+  view: EntitlementsState,
+  feature: string,
+  remaining: number,
+): EntitlementsState => {
+  const value = view.features[feature];
+
+  if (value === undefined) return view;
+
+  return { ...view, features: { ...view.features, [feature]: { ...value, remaining } } };
+};
+
+/** The row a scope starts with when a transfer credits a feature it never had. */
+const rowFromTransfer = (
+  event: { readonly feature: string; readonly amount: number; readonly interval: string },
+  grant: FeatureEntitlement["grants"],
+): FeatureEntitlement => ({
+  included: 0,
+  used: 0,
+  reserved: 0,
+  remaining: event.amount,
+  carried: 0,
+  allowed: true,
+  overage: "block",
+  resets: "never",
+  resetsAt: null,
+  ...(grant === undefined ? {} : { grants: grant }),
+});
+
 export const initialEntitlements: EntitlementsState = {
   account: "",
   tier: "",
@@ -212,6 +312,7 @@ export const initialEntitlements: EntitlementsState = {
   credits: 0,
   dunningAttempts: 0,
   features: {},
+  entities: {},
 };
 
 type ViewContext = { readonly key: { readonly id: string } };
@@ -247,6 +348,154 @@ export class Entitlements extends Domain.View("Entitlements", {
     }
   }),
   evolve: {
+    // An entity is a partition of this read model: its lifecycle is one entry,
+    // and its rows are what a scoped `Balance` reads (ADR 0040 §2).
+    EntityAttached: (view, event, context): EntitlementsState =>
+      withAccount(
+        entityMap(view)[event.entity] === undefined
+          ? {
+              ...view,
+              entities: {
+                ...view.entities,
+                [event.entity]: {
+                  id: event.entity,
+                  ...(event.name === undefined ? {} : { name: event.name }),
+                  status: "attached",
+                  createdAt: event.at,
+                  features: {},
+                },
+              },
+            }
+          : view,
+        context,
+      ),
+    EntityUpdated: (view, event, context): EntitlementsState => {
+      const entity = entityMap(view)[event.entity];
+
+      if (entity === undefined) return withAccount(view, context);
+      const { name: _previous, ...rest } = entity;
+
+      return withAccount(
+        {
+          ...view,
+          entities: {
+            ...view.entities,
+            [event.entity]: {
+              ...rest,
+              ...(event.name === undefined ? {} : { name: event.name }),
+            },
+          },
+        },
+        context,
+      );
+    },
+    // An archived scope holds nothing: its rows are cleared and the record stays
+    // for the bills that name it. The customer's sources gained the sweep in the
+    // aggregate; the read model needs the same move.
+    EntityArchived: (view, event, context): EntitlementsState => {
+      const entity = entityMap(view)[event.entity];
+
+      if (entity === undefined) return withAccount(view, context);
+
+      const features = { ...view.features };
+
+      for (const returned of event.returned) {
+        const current = features[returned.feature];
+
+        features[returned.feature] =
+          current === undefined
+            ? {
+                ...rowFromTransfer(
+                  {
+                    feature: returned.feature,
+                    amount: returned.amount,
+                    interval: returned.interval,
+                  },
+                  undefined,
+                ),
+                remaining: returned.amount,
+                resets: returned.interval === "never" ? "never" : "month",
+              }
+            : {
+                ...current,
+                remaining: (current.remaining ?? 0) + returned.amount,
+              };
+      }
+
+      return withAccount(
+        {
+          ...view,
+          features,
+          entities: {
+            ...view.entities,
+            [event.entity]: {
+              ...entity,
+              status: "archived",
+              archivedAt: event.at,
+              features: {},
+            },
+          },
+        },
+        context,
+      );
+    },
+    // One event, both scopes: the source's own count falls, the target's rises,
+    // and a lifetime part arrives as a grant with its deadline.
+    BalanceTransferred: (view, event, context): EntitlementsState => {
+      const writeScope = (
+        current: EntitlementsState,
+        scope: typeof event.from,
+        remaining: number,
+        update: (value: FeatureEntitlement | undefined) => FeatureEntitlement,
+      ): EntitlementsState =>
+        scope.kind === "customer"
+          ? {
+              ...current,
+              features: {
+                ...current.features,
+                [event.feature]: update(current.features[event.feature]),
+              },
+            }
+          : withEntityFeature(current, scope.entityId, event.feature, update);
+
+      const sourceRow = (value: FeatureEntitlement | undefined): FeatureEntitlement =>
+        value === undefined
+          ? rowFromTransfer(
+              { feature: event.feature, interval: event.interval, amount: event.fromAfter },
+              undefined,
+            )
+          : { ...value, remaining: event.fromAfter };
+
+      const targetRow = (value: FeatureEntitlement | undefined): FeatureEntitlement => {
+        const grants =
+          event.grant <= 0
+            ? value?.grants
+            : [
+                ...(value?.grants ?? []),
+                {
+                  id: `${event.transferId}:grant`,
+                  granted: event.grant,
+                  remaining: event.grant,
+                  ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
+                },
+              ];
+
+        return value === undefined
+          ? rowFromTransfer(
+              { feature: event.feature, interval: event.interval, amount: event.toAfter },
+              grants,
+            )
+          : {
+              ...value,
+              remaining: event.toAfter,
+              ...(grants === undefined ? {} : { grants }),
+            };
+      };
+
+      const debited = writeScope(view, event.from, event.fromAfter, sourceRow);
+
+      return withAccount(writeScope(debited, event.to, event.toAfter, targetRow), context);
+    },
     TrialStarted: (view, event, context): EntitlementsState =>
       withAccount(
         {
@@ -312,6 +561,35 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       ),
     PlanChanged: (view, event, context): EntitlementsState => {
+      // A scope's plan set is its own: the entity's rows are rebuilt from the
+      // event and the customer's are untouched (ADR 0040 §3).
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+
+        if (entity === undefined) return withAccount(view, context);
+
+        return withAccount(
+          withEntityFeatures(
+            view,
+            event.entity,
+            featuresOf(
+              event.allowances,
+              event.rates,
+              view.credits,
+              heldOf(entity.features),
+              entity.features,
+              event.remaining,
+              view.periodEnd,
+              view.standing,
+              true,
+              event.resetAt,
+              view.billingControls,
+            ),
+          ),
+          context,
+        );
+      }
+
       // A new tier change replaces what the old one owed and the invoice that
       // settled it; carrying either forward would report stale money.
       const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
@@ -348,6 +626,50 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     UsageRecorded: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+
+        if (entity === undefined) return withAccount(view, context);
+        const feature = entity.features[event.feature];
+
+        const grants =
+          feature === undefined ? undefined : grantsAfterUsage(feature.grants, event.grantsUsed);
+
+        // A scope with no row of its own can still draw the shared pool: the
+        // event then moves the customer's one row and only that.
+        if (feature === undefined) {
+          return withAccount(
+            event.poolAfter === undefined
+              ? view
+              : withPoolRow(view, event.feature, event.poolAfter),
+            context,
+          );
+        }
+
+        const updated = withEntityFeature(view, event.entity, event.feature, (value) => {
+          const row = value ?? feature;
+
+          return {
+            ...row,
+            used: event.usedAfter,
+            remaining: event.remainingAfter,
+            ...(grants === undefined ? {} : { grants: [...grants] }),
+            allowed: allowsOne(
+              view.standing,
+              judgedOf(row, { used: event.usedAfter, remaining: event.remainingAfter }),
+            ),
+          };
+        });
+
+        // A draw on the shared pool moves the customer's one row, never a copy.
+        return withAccount(
+          event.poolAfter === undefined
+            ? updated
+            : withPoolRow(updated, event.feature, event.poolAfter),
+          context,
+        );
+      }
+
       const feature = view.features[event.feature];
 
       if (feature === undefined) return withAccount(view, context);
@@ -578,6 +900,31 @@ export class Entitlements extends Domain.View("Entitlements", {
         context,
       ),
     QuantityChanged: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+        const feature = entity?.features[event.feature];
+
+        if (entity === undefined || feature === undefined) return withAccount(view, context);
+
+        const remaining = event.quantityAfter - feature.used;
+
+        return withAccount(
+          withEntityFeatures(view, event.entity, {
+            ...entity.features,
+            [event.feature]: {
+              ...feature,
+              quantity: event.quantityAfter,
+              remaining,
+              allowed: allowsOne(
+                view.standing,
+                judgedQuantityOf(feature, event.quantityAfter, remaining),
+              ),
+            },
+          }),
+          context,
+        );
+      }
+
       const feature = view.features[event.feature];
 
       if (feature === undefined || feature.kind !== "non_consumable") {
@@ -608,6 +955,29 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     UsageSet: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+        const feature = entity?.features[event.feature];
+
+        if (entity === undefined || feature === undefined) return withAccount(view, context);
+
+        return withAccount(
+          withEntityFeatures(view, event.entity, {
+            ...entity.features,
+            [event.feature]: {
+              ...feature,
+              used: event.occupiedAfter,
+              remaining: event.remainingAfter,
+              allowed: allowsOne(
+                view.standing,
+                judgedQuantityOf(feature, feature.quantity ?? 0, event.remainingAfter),
+              ),
+            },
+          }),
+          context,
+        );
+      }
+
       const feature = view.features[event.feature];
 
       if (feature === undefined || feature.kind !== "non_consumable") {
@@ -636,6 +1006,52 @@ export class Entitlements extends Domain.View("Entitlements", {
     QuantityProrationInvoiced: (view, _event, context): EntitlementsState =>
       withAccount(view, context),
     BalanceGranted: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+
+        if (entity === undefined) return withAccount(view, context);
+        const existing = entity.features[event.feature];
+
+        const grant = {
+          id: event.grantId,
+          granted: event.granted,
+          remaining: event.granted,
+          ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
+        };
+
+        const feature: FeatureEntitlement =
+          existing === undefined
+            ? {
+                included: 0,
+                used: 0,
+                reserved: 0,
+                remaining: event.remainingAfter,
+                carried: 0,
+                allowed: true,
+                overage: "block",
+                resets: "never",
+                resetsAt: null,
+                grants: [grant],
+              }
+            : {
+                ...existing,
+                remaining: event.remainingAfter,
+                grants: [...(existing.grants ?? []), grant],
+                allowed: allowsOne(
+                  view.standing,
+                  judgedOf(existing, { remaining: event.remainingAfter }),
+                ),
+              };
+
+        return withAccount(
+          withEntityFeatures(view, event.entity, {
+            ...entity.features,
+            [event.feature]: feature,
+          }),
+          context,
+        );
+      }
+
       const existing = view.features[event.feature];
 
       const grant = {
@@ -691,6 +1107,32 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     BalanceExpired: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+        const feature = entity?.features[event.feature];
+
+        if (entity === undefined || feature === undefined) return withAccount(view, context);
+
+        const grants = (feature.grants ?? []).filter((grant) => grant.id !== event.grantId);
+        const { grants: _previousGrants, ...rest } = feature;
+
+        return withAccount(
+          withEntityFeatures(view, event.entity, {
+            ...entity.features,
+            [event.feature]: {
+              ...rest,
+              remaining: event.balanceAfter,
+              ...(grants.length === 0 ? {} : { grants }),
+              allowed: allowsOne(
+                view.standing,
+                judgedOf(feature, { remaining: event.balanceAfter }),
+              ),
+            },
+          }),
+          context,
+        );
+      }
+
       const feature = view.features[event.feature];
 
       if (feature === undefined) return withAccount(view, context);
@@ -718,6 +1160,42 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     PlanItemReset: (view, event, context): EntitlementsState => {
+      if (event.entity !== undefined) {
+        const entity = entityMap(view)[event.entity];
+        const feature = entity?.features[event.feature];
+
+        if (entity === undefined || feature === undefined) return withAccount(view, context);
+
+        if (feature.kind === "non_consumable") return withAccount(view, context);
+
+        const { priced: _priced, billed: _billed, ...carried } = feature;
+
+        return withAccount(
+          withEntityFeatures(view, event.entity, {
+            ...entity.features,
+            [event.feature]: {
+              ...carried,
+              used: 0,
+              reserved: 0,
+              remaining: event.remaining,
+              carried: event.carried,
+              resetsAt: event.resetAt,
+              allowed: allowsOne(
+                view.standing,
+                judgedOf(feature, {
+                  used: 0,
+                  reserved: 0,
+                  remaining: event.remaining,
+                  billed: 0,
+                  carried: event.carried,
+                }),
+              ),
+            },
+          }),
+          context,
+        );
+      }
+
       const feature = view.features[event.feature];
 
       if (feature === undefined || feature.kind === "non_consumable") {
@@ -1224,6 +1702,7 @@ const featuresOf = (
         pricing?: Pricing;
         unitPrice?: UnitPrice;
         moneyCap?: number;
+        pooled?: boolean;
       }
     >
   >,
@@ -1273,6 +1752,7 @@ const featuresOf = (
             quantity,
             resets: "never",
             resetsAt: null,
+            ...(allowance.pooled === true ? { pooled: true } : {}),
           },
         ];
       }
@@ -1315,6 +1795,7 @@ const featuresOf = (
           ...(priced === undefined ? {} : { priced }),
           resets: allowance.resets,
           resetsAt: allowance.resets === "never" ? null : (resetAt?.[feature] ?? periodEnd),
+          ...(allowance.pooled === true ? { pooled: true } : {}),
           // A plan change keeps a grant: it belongs to the customer, not to the
           // plan that was active when it was made (ADR 0037).
           ...((previous[feature]?.grants?.length ?? 0) > 0

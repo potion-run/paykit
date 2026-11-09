@@ -3,7 +3,10 @@ import * as Schema from "effect/Schema";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { EntityId } from "../Customer.ts";
 import { Proration } from "../Proration.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -50,6 +53,8 @@ export class QuantityChanged extends Domain.Event("QuantityChanged", {
   proration: Schema.optionalKey(Proration),
   /** The key `ChargeQuantityProration` uses; the command's `dedupeKey`. */
   prorationId: Schema.optionalKey(Schema.String),
+  /** The entity scope that bought; absent means the customer (ADR 0040 §3). */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /**
@@ -90,6 +95,8 @@ export class SetQuantity extends Domain.Command("SetQuantity", {
     quantity: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
     /** The retry key, which is also the proration id. */
     dedupeKey: Schema.String,
+    /** The entity scope to set; absent means the customer (ADR 0040 §3). */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [QuantityChanged],
   rejects: [
@@ -100,6 +107,8 @@ export class SetQuantity extends Domain.Command("SetQuantity", {
     QuantityExceeded,
     QuantityProrationAlreadyBilled,
     StandingBlocksUsage,
+    EntityUnknown,
+    EntityArchived,
     Unauthenticated,
     Forbidden,
   ],

@@ -46,8 +46,8 @@ documented billing surface, not a second implementation.
 | Add-ons | `plans` plus `schedule` in the standing, one plan per group, add-ons stack (ADR 0039) | partial — `multiAttach` / `multiUpdate` and an `addAddOn` binding remain |
 | Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
-| Entity plans | entity scope + its own plan set (ADR 0040) | modelled |
-| Entities and transfer | `EntityId`, scoped balances, pooled items, `billing.transfer` (ADR 0040) | modelled |
+| Entity plans | `EntityId`, `ScopeState` per entity, `entityId` on `ChangeTier` (ADR 0040) | shipped — `attach`/`update` do not carry a scope yet; the advanced command does |
+| Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | partial — the model, reads and events are in; `Entities` / `TransferBalance` bindings, `Atom` verbs and the SQL-backed entity list remain |
 | Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants })` (ADR 0041) | shipped — the quote rides the command; a priced first activation through a checkout is refused until a pending activation can carry it |
 | Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
@@ -91,7 +91,11 @@ documented billing surface, not a second implementation.
 1. **The plan set / multi-attach / schedules** — the plan set and its phase schedule are in the
    standing (ADR 0039). `multiAttach` / `multiUpdate`, one balance source per plan, the
    `isDefault`-aware cancellation and a phase applied at its own instant remain.
-2. **Entities and transfer** — modelled (ADR 0040); the implementation follows the plan set.
+2. **Entities and transfer** — the scope state, the four commands, the scoped reads (`Balance.scope`,
+   `balanceOfEntity`, `Entitlements.entities`, `Customer.entities`, `BillingReadRow.entities`) and the
+   `0002_entities` column are in (ADR 0040). Remaining: `Paykit.Entities` and
+   `Paykit.TransferBalance` bindings and layers, `entityId` on the `Balances`/`Attach` bindings, the
+   `Atom` verbs, and entity-scoped tests over the Api/SQL paths.
 3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a
    plan may declare `custom: true`, and the guard accepts a bespoke allowance set that is
    structurally valid. What remains is carrying quoted terms across a checkout, a bespoke add-on

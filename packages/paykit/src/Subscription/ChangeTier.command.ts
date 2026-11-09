@@ -4,12 +4,16 @@ import { Allowances } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
+import { EntityId } from "../Customer.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { Proration as ProrationValue } from "../Proration.ts";
 import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
+import { PooledItemOnEntity } from "./PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -103,6 +107,8 @@ export class PlanChanged extends Domain.Event("PlanChanged", {
   /** What the account pays from the change on. Absent when the new tier is free. */
   priceAfter: Schema.optionalKey(Price),
   proration: Schema.optionalKey(ProrationValue),
+  /** The entity scope the plan set belongs to; absent means the customer. */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /** Move an existing standing to another tier. */
@@ -122,6 +128,8 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     topUp: Schema.optionalKey(TopUpTerms),
     rates: CreditRateCards,
     proration: Schema.optionalKey(ProrationValue),
+    /** The entity scope to move; absent means the customer (ADR 0040 §3). */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [PlanChanged],
   rejects: [
@@ -134,6 +142,9 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     DowngradeBelowCeiling,
     CatalogMismatch,
     ProrationMismatch,
+    EntityUnknown,
+    EntityArchived,
+    PooledItemOnEntity,
   ],
   middleware: [Session, CatalogGuard],
 }) {}

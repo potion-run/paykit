@@ -124,6 +124,7 @@ const billing: BillingStateView = {
     },
   },
   schedule: [],
+  entities: [],
   status: "active" as const,
   periodStart: at,
   periodEnd: at,

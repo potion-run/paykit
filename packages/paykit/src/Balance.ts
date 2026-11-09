@@ -1,6 +1,7 @@
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import type { AllowanceKind, Included, Overage } from "./Allowance.ts";
+import { CUSTOMER_SCOPE, EntityId, ScopeRef, entityScope } from "./Customer.ts";
 import type { RateCard } from "./Feature.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
 
@@ -20,6 +21,14 @@ export type BalanceSourceKind = typeof BalanceSourceKind.Type;
 export const BalanceSource = Schema.Struct({
   /** Stable within a balance: the plan and feature, or the purchase kind. */
   id: Schema.String,
+  /** The scope that owns this source: the customer or one of its entities. */
+  scope: ScopeRef,
+  /**
+   * `true` only on the shared row: the customer's pooled source as an entity
+   * sees it. Its `id` and `remaining` are the pool's own, not a copy an entity
+   * holds, and it is absent once the entity is archived (ADR 0040 §4).
+   */
+  pooled: Schema.optionalKey(Schema.Boolean),
   kind: BalanceSourceKind,
   granted: Schema.NullOr(Schema.Int),
   remaining: Schema.NullOr(Schema.Int),
@@ -62,6 +71,8 @@ export type SpendLimitView = typeof SpendLimitView.Type;
  */
 export const Balance = Schema.Struct({
   customerId: Schema.String,
+  /** The scope the balance was asked for. Absent on a row built before scopes. */
+  scope: ScopeRef,
   featureId: Schema.String,
   /** The plan's grant, the shared pool for a credit feature, or the purchase for a seat. */
   granted: Schema.NullOr(Schema.Int),
@@ -111,6 +122,8 @@ export interface BalanceFeature {
   /** The customer's money ceiling for this feature this period, in minor units. */
   readonly spendLimit?: number;
   readonly quantity?: number;
+  /** Whether the customer's item is pooled: one source every entity draws on. */
+  readonly pooled?: boolean;
   readonly creditRates?: RateCard;
   /** The standalone grants the feature holds, as the read model carries them. */
   readonly grants?: ReadonlyArray<{
@@ -129,8 +142,10 @@ const planSource = (
   granted: number | null,
   remaining: number | null,
   usage: number,
+  scope: ScopeRef,
 ): BalanceSource => ({
   id: `${planId}:${featureId}`,
+  scope,
   kind: "plan",
   granted,
   remaining,
@@ -145,6 +160,8 @@ export interface BalancePlan {
   readonly tier?: string;
   readonly credits?: number;
   readonly prepaidCredits?: number;
+  /** The scope this balance answers for; absent means the customer's own. */
+  readonly scope?: ScopeRef;
 }
 
 /**
@@ -158,6 +175,7 @@ export const balanceOfFeature = (
   feature: BalanceFeature,
   plan: BalancePlan = {},
 ): Balance => {
+  const scope = plan.scope ?? CUSTOMER_SCOPE;
   const tier = plan.tier ?? "";
   const credits = plan.credits ?? 0;
   const prepaid = Math.min(plan.prepaidCredits ?? 0, credits);
@@ -180,6 +198,7 @@ export const balanceOfFeature = (
     const sources: Array<BalanceSource> = [
       {
         id: `credits:${tier}`,
+        scope,
         kind: "plan",
         granted: planGranted,
         remaining: planRemaining,
@@ -192,6 +211,7 @@ export const balanceOfFeature = (
         : [
             {
               id: "credits:one_off",
+              scope,
               kind: "one_off" as const,
               granted: prepaid,
               remaining: Math.min(prepaid, Math.max(0, remaining ?? 0)),
@@ -203,6 +223,7 @@ export const balanceOfFeature = (
 
     return {
       customerId,
+      scope,
       featureId,
       granted: credits,
       remaining,
@@ -220,6 +241,7 @@ export const balanceOfFeature = (
   if (feature.kind === "flag") {
     return {
       customerId,
+      scope,
       featureId,
       granted: null,
       remaining: null,
@@ -240,6 +262,7 @@ export const balanceOfFeature = (
 
     return {
       customerId,
+      scope,
       featureId,
       granted: purchased,
       remaining: feature.remaining,
@@ -247,7 +270,9 @@ export const balanceOfFeature = (
       unlimited: false,
       overageAllowed: feature.overage !== "block",
       nextResetAt: null,
-      breakdown: [planSource(featureId, feature, tier, purchased, feature.remaining, occupied)],
+      breakdown: [
+        planSource(featureId, feature, tier, purchased, feature.remaining, occupied, scope),
+      ],
       purchased,
       occupied,
       ...(spendLimit === undefined ? {} : { spendLimit }),
@@ -275,6 +300,7 @@ export const balanceOfFeature = (
             planIncluded,
             planRemaining,
             planIncluded - planRemaining,
+            scope,
           ),
         ]),
     ...(rollover === 0
@@ -282,6 +308,7 @@ export const balanceOfFeature = (
       : [
           {
             id: `rollover:${featureId}`,
+            scope,
             kind: "rollover" as const,
             granted: feature.carried ?? rollover,
             remaining: rollover,
@@ -291,6 +318,7 @@ export const balanceOfFeature = (
         ]),
     ...grants.map((grant) => ({
       id: grant.id,
+      scope,
       kind: "grant" as const,
       granted: grant.granted,
       remaining: grant.remaining,
@@ -307,6 +335,7 @@ export const balanceOfFeature = (
 
   return {
     customerId,
+    scope,
     featureId,
     granted,
     remaining: feature.remaining,
@@ -332,6 +361,117 @@ export const balanceOf = (state: EntitlementsState, featureId: string): Balance 
   });
 };
 
+/**
+ * The customer's pooled source for one feature, as every attached entity sees
+ * it: the customer's own plan row, marked `pooled: true`, with the pool's id and
+ * remaining. It is one row built from one source, never a copy (ADR 0040 §4).
+ */
+export const pooledSourceOf = (
+  state: EntitlementsState,
+  featureId: string,
+): BalanceSource | null => {
+  const feature = state.features[featureId];
+
+  if (feature?.pooled !== true) return null;
+
+  const balance = balanceOfFeature(state.account, featureId, feature, {
+    tier: state.tier,
+    credits: state.credits,
+    prepaidCredits: state.prepaidCredits,
+  });
+
+  const source = balance.breakdown.find((row) => row.kind === "plan");
+
+  return source === undefined ? null : { ...source, scope: CUSTOMER_SCOPE, pooled: true };
+};
+
+/**
+ * A feature's balance for one entity: its own sources, then the shared pool as
+ * one `pooled: true` row. `remaining` is what the entity may spend, which is
+ * its own sources plus the pool's remaining — not a share of the customer's
+ * total (ADR 0040 §4).
+ *
+ * An archived entity holds nothing: it has no pooled row and an empty balance.
+ * A feature neither the entity nor the pool grants is `null`, the same answer
+ * the customer read gives for a feature it does not hold.
+ */
+export const balanceOfEntity = (
+  state: EntitlementsState,
+  entityId: string,
+  featureId: string,
+): Balance | null => {
+  const entity = state.entities?.[entityId];
+
+  if (entity === undefined) return null;
+  const scope = entityScope(EntityId.make(entityId));
+  const pooled = pooledSourceOf(state, featureId);
+  const ownFeature = entity.features[featureId];
+
+  if (entity.status === "archived") {
+    return emptyBalance(state.account, featureId, scope);
+  }
+
+  if (ownFeature === undefined && pooled === null) return null;
+
+  const own =
+    ownFeature === undefined
+      ? emptyBalance(state.account, featureId, scope)
+      : balanceOfFeature(state.account, featureId, ownFeature, {
+          tier: state.tier,
+          credits: state.credits,
+          prepaidCredits: state.prepaidCredits,
+          scope,
+        });
+
+  if (pooled === null) return own;
+  const poolRemaining = pooled.remaining ?? 0;
+
+  return {
+    ...own,
+    granted: own.granted === null ? null : own.granted + (pooled.granted ?? 0),
+    remaining: own.remaining === null ? null : own.remaining + poolRemaining,
+    breakdown: [...own.breakdown, pooled],
+  };
+};
+
+/** Every feature an entity holds a balance for, own and pooled, in id order. */
+export const balancesOfEntity = (
+  state: EntitlementsState,
+  entityId: string,
+): ReadonlyArray<Balance> => {
+  const entity = state.entities?.[entityId];
+
+  if (entity === undefined) return [];
+
+  return [...new Set([...Object.keys(entity.features), ...Object.keys(state.features)])]
+    .sort()
+    .flatMap((featureId) => {
+      const balance = balanceOfEntity(state, entityId, featureId);
+
+      return balance === null ? [] : [balance];
+    });
+};
+
+/**
+ * A feature's balance for whichever scope a caller named. `entityId` absent is
+ * the customer's own scope, so an old call reads exactly what it read before.
+ */
+export const balanceOfScope = (
+  state: EntitlementsState,
+  featureId: string,
+  entityId?: string,
+): Balance | null =>
+  entityId === undefined
+    ? balanceOf(state, featureId)
+    : balanceOfEntity(state, entityId, featureId);
+
+/** Every feature a scope holds a balance for. */
+export const balancesOfScope = (
+  state: EntitlementsState,
+  entityId?: string,
+): ReadonlyArray<Balance> =>
+  entityId === undefined ? balancesOf(state) : balancesOfEntity(state, entityId);
+
 /** Every feature the account holds a balance for, in the view's order. */
 export const balancesOf = (state: EntitlementsState): ReadonlyArray<Balance> =>
   Object.keys(state.features).flatMap((featureId) => {
@@ -344,8 +484,13 @@ export const balancesOf = (state: EntitlementsState): ReadonlyArray<Balance> =>
  * The balance a blocked or absent account reports. A missing row is not an
  * error for `check`: it is a feature the account has nothing of.
  */
-export const emptyBalance = (customerId: string, featureId: string): Balance => ({
+export const emptyBalance = (
+  customerId: string,
+  featureId: string,
+  scope: ScopeRef = CUSTOMER_SCOPE,
+): Balance => ({
   customerId,
+  scope,
   featureId,
   granted: 0,
   remaining: 0,

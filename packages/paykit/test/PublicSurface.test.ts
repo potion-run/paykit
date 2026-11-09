@@ -17,6 +17,12 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.featureOf).toBe("function");
   expect(Paykit.FeatureId).toBeDefined();
   expect(Paykit.PlanId).toBeDefined();
+  // the entity scope: a child of a customer, not a second customer (ADR 0040)
+  expect(Paykit.EntityId).toBeDefined();
+  expect(Paykit.Entity).toBeDefined();
+  expect(Paykit.ScopeRef).toBeDefined();
+  expect(typeof Paykit.balanceOfEntity).toBe("function");
+  expect(typeof Paykit.balanceOfScope).toBe("function");
   expect(Paykit.TopUpThreshold).toBeDefined();
   expect(Paykit.CatalogTopUpOnPack).toBeDefined();
   expect(Paykit.CatalogError).toBeDefined();

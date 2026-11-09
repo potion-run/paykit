@@ -286,12 +286,12 @@ so a plan-class transfer has the same deadline on both ends; per-scope reset int
 
 | Action | Source | Event |
 | --- | --- | --- |
-| `attachEntity` | the entity create operation (planned) | `EntityAttached` |
-| `archiveEntity` | the entity archive operation (planned) | `EntityArchived` (carries `returned`) |
+| `attachEntity` | `AttachEntity` | `EntityAttached` |
+| `archiveEntity` | `ArchiveEntity` | `EntityArchived` (carries `returned`) |
 | `attachPlan` | `Subscribe` / the entity branch of attach | `PlanChanged` |
 | `grant` | `GrantBalance` | `BalanceGranted` |
 | `spend` | `TrackUsage` | `UsageRecorded` |
-| `transfer` | `Transfer` (planned; ADR 0040) | `BalanceTransferred` |
+| `transfer` | `TransferBalance` | `BalanceTransferred` |
 | `closePeriod` | `ClosePeriod` | `UsageReset` / `PlanItemReset` |
 | `tick` | the platform clock | — |
 
@@ -321,10 +321,8 @@ What the slice deliberately leaves out:
   the expiry order within a class.
 - **Per-scope periods.** Every scope closes with the customer, so a transfer preserves one deadline.
   The ADR's "never extend a deadline" rule is what a per-scope period would have to implement.
-- **Entity commands.** `attachEntity`, `archiveEntity` and `transfer` are modelled before their
-  `*.command.ts` exists, so they are named in `scripts/spec-coverage.ts`'s `MACHINE_ACTIONS` rather
-  than in a command row. The row for each lands with its command: `CreateEntity` / `ArchiveEntity`
-  for the two lifecycle actions, `Transfer` for the transfer.
+- **Rename.** `UpdateEntity` records a label and moves no balance; the model has no label rule, so
+  its coverage row is deliberately empty.
 
 ## The money (`money.qnt`)
 

@@ -12,7 +12,7 @@ import {
   type Pricing,
   type Resets,
 } from "../Allowance.ts";
-import { BillingControls } from "../Customer.ts";
+import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -248,6 +248,48 @@ export const TopUpFailureRecord = Schema.Struct({
 export type TopUpFailureRecord = typeof TopUpFailureRecord.Type;
 
 /**
+ * The parts of one scope a balance is read and written through. The customer's
+ * scope lives at the top of the standing; an entity's is one record beside it.
+ * A scope has its own plan set and its own sources and no second standing: the
+ * period, the status, the credit pool and the holds belong to the customer
+ * (ADR 0040 §2–3). `allowances` is derived from `plans` through `allowancesOf`,
+ * exactly as it is for the customer, so there is one source of truth.
+ */
+export const ScopeState = Schema.Struct({
+  plans: Plans,
+  remaining: Remaining,
+  usage: Schema.optionalKey(UsageCounts),
+  resetAt: Schema.optionalKey(ResetWindows),
+  grants: Schema.optionalKey(BalanceGrants),
+  quantities: Schema.optionalKey(QuantityCounts),
+  occupied: Schema.optionalKey(OccupancyCounts),
+});
+
+export type ScopeState = typeof ScopeState.Type;
+
+/**
+ * One entity of a customer, as the aggregate holds it: its scope state plus the
+ * lifecycle the log records. There is no `detached` record — that is the
+ * absence of an entry. An archived record is retained with its history, never
+ * deleted, so a bill that names it still resolves (ADR 0003, ADR 0040 §7).
+ */
+export const EntityRecord = Schema.Struct({
+  ...ScopeState.fields,
+  id: EntityId,
+  name: Schema.optionalKey(Schema.String),
+  status: EntityStatus,
+  createdAt: Schema.DateTimeUtc,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtc),
+});
+
+export type EntityRecord = typeof EntityRecord.Type;
+
+/** Every entity of a customer, keyed by the entity id. */
+export const Entities = Schema.Record(Schema.String, EntityRecord);
+
+export type Entities = typeof Entities.Type;
+
+/**
  * What an account with no standing looks like: it may still hold checkout refs,
  * and a one-off pack may already have put credits in its pool.
  */
@@ -278,6 +320,13 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
    * plan grants the feature. With no plan there is no top-up line (ADR 0026).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The child scopes under this customer, beside the customer's own scope. An
+   * entity is a partition of this one aggregate, so it lives here rather than
+   * in a stream of its own (ADR 0040 §2). It exists before a plan can: a scope
+   * is created, then a plan is attached to it.
+   */
+  entities: Schema.optionalKey(Entities),
 });
 
 export type UnsubscribedState = typeof UnsubscribedState.Type;
@@ -366,6 +415,12 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * alone, because they belong to the customer and not to the plan (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The child scopes under this customer, each with its own plan set and
+   * sources (ADR 0040 §2–3). An entity is skipped by a close once archived:
+   * its plans ended at the archive and the pool belongs to the customer.
+   */
+  entities: Schema.optionalKey(Entities),
   /**
    * The thresholds whose alert has already fired this period, keyed by feature.
    * A period close and an activation start the set over; an allowance's own
@@ -543,6 +598,105 @@ export const primaryPlanOf = (state: SubscribedState): PlanRow | undefined =>
 /** Every active plan, in the order a merge reads them. */
 export const planRowsOf = (state: SubscribedState): ReadonlyArray<PlanRow> =>
   planOrder(state.plans);
+
+/**
+ * Every entity of a customer, archived ones included, in id order. The order is
+ * the rule and not the insertion order, so a replayed log and a live state list
+ * the same scopes the same way.
+ */
+export const entityRecordsOf = (state: SubscriptionState): ReadonlyArray<EntityRecord> =>
+  Object.values(state.entities ?? {}).sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+  );
+
+/** One entity's record, or `undefined` when the log never created it. */
+export const entityOf = (state: SubscriptionState, entityId: string): EntityRecord | undefined =>
+  state.entities?.[entityId];
+
+/**
+ * Whether an entity exists and was archived. An unknown id is not archived: it
+ * never existed, which is `EntityUnknown` and a different answer.
+ */
+export const entityArchived = (state: SubscriptionState, entityId: string): boolean =>
+  entityOf(state, entityId)?.status === "archived";
+
+/**
+ * The state one scope's balance is read and written through. The customer's
+ * scope is the standing itself; an entity's is the same standing with that
+ * record's plan set and counters overlaid, so every helper that takes a scope
+ * (`allowancesOf`, `remainingOf`, `grantsForSpend`, `quantityOf`) is the one
+ * function it always was (ADR 0040 §2).
+ */
+export const scopeStateOf = (state: SubscriptionState, entityId?: string): SubscribedState => {
+  const scope =
+    entityId === undefined
+      ? state._tag === "Subscribed"
+        ? state
+        : undefined
+      : state.entities?.[entityId];
+
+  // An unsubscribed customer's scope has no plan and no source. It still reads
+  // as a standing with empty counters so the same helpers answer it, which is
+  // what an archive of a scope created before its plan needs.
+  if (scope === undefined) {
+    return {
+      _tag: "Subscribed",
+      plans: {},
+      schedule: [],
+      status: "expired",
+      period: { start: DateTime.makeUnsafe(0), end: DateTime.makeUnsafe(0), anchorTz: "UTC" },
+      cancelAtPeriodEnd: false,
+      credits: 0,
+      topUpAttempts: 0,
+      usage: {},
+      remaining: {},
+      holds: {},
+      refs: state.refs,
+      trialUsed: false,
+      dedupeKeys: {},
+      dunningAttempts: 0,
+    };
+  }
+
+  // SAFETY: an entity's scope shares the standing's period, pool and status and
+  // overrides only the six scope fields, so the result is a standing whose
+  // readers see that record's plan set and counters.
+  return {
+    ...state,
+    plans: scope.plans,
+    remaining: scope.remaining,
+    usage: scope.usage ?? {},
+    resetAt: scope.resetAt ?? {},
+    grants: scope.grants ?? {},
+    quantities: scope.quantities ?? {},
+    occupied: scope.occupied ?? {},
+  } as SubscribedState;
+};
+
+/**
+ * Whether the customer's item for a feature is pooled: one shared source every
+ * attached entity draws on (ADR 0040 §3).
+ */
+export const pooledOf = (state: SubscribedState, feature: string): boolean =>
+  allowancesOf(state)[feature]?.pooled === true;
+
+/**
+ * The pooled source's remaining for a feature, or `null` when the customer's
+ * item is not pooled. One number, owned by the customer: an entity's breakdown
+ * shows it as a `pooled: true` row whose `remaining` is this (ADR 0040 §4).
+ */
+export const pooledRemainingOf = (state: SubscribedState, feature: string): number | null => {
+  const allowance = allowancesOf(state)[feature];
+
+  if (allowance?.pooled !== true) return null;
+  const remaining = recordedCount(state.remaining, feature);
+
+  return remaining !== undefined ? remaining : includedRemainingOf(allowance);
+};
+
+/** Every feature a scope holds a count for, pooled items included. */
+export const scopeFeaturesOf = (state: SubscribedState, entityId?: string): ReadonlyArray<string> =>
+  Object.keys(allowancesOf(scopeStateOf(state, entityId)));
 
 /** Every add-on attached to the account. */
 export const addOnsOf = (state: SubscribedState): ReadonlyArray<PlanRow> =>

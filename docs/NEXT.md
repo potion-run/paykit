@@ -198,10 +198,20 @@ The next work is the API migration, not another command. The order is:
    `multiAttach` / `multiUpdate` as one operation and one command id, one balance source per plan in
    `Balance.breakdown`, the `isDefault`-aware cancel/uncancel commands, a scheduled `applyPhase` at
    the phase's own instant, and an `addAddOn` binding.
-7. **Entities and transfer — model and brief landed.** The ADR
+7. **Entities and transfer — state, commands and reads landed.** The ADR
    ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` decide a child
-   scope, a pooled plan item, `billing.transfer` and the archive; the implementation brief is
-   [`entities-and-transfer`](./briefs/entities-and-transfer.md). It lands after the plan set.
+   scope, a pooled plan item, `billing.transfer` and the archive. The implementation is in:
+   `ScopeState` / `EntityRecord` sit on both state tags with their own plan set and sources;
+   `AttachEntity`, `UpdateEntity`, `ArchiveEntity` (sweeping `returned` / `returnedQuantities`) and
+   `TransferBalance` are commands; `GrantBalance`, `TrackUsage`, `SetQuantity` and `SetUsage` take
+   `entity`, and a pooled item is spent only after the scope's own sources. The close resets every
+   attached scope's plan and leaves its lifetime grants. The reads carry the scope: `Balance.scope`,
+   `BalanceSource.scope` / `pooled`, `balanceOfEntity`, `Entitlements.entities`,
+   `BillingStateView.entities`, `Customer.entities`, `BillingReadRow.entities` and the additive
+   `0002_entities` migration. Tests: `test/billing/Entities.test.ts`, `test/billing/Transfer.test.ts`.
+   Remaining from the slice: `Paykit.Entities` and `Paykit.TransferBalance` bindings/layers,
+   `entityId` on the `Balances` / `Attach` bindings, the `Atom` verbs, `check` over the Api for an
+   entity, and the generated property/SQL/binding tests the brief lists.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
 the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated
@@ -245,9 +255,14 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   `isDefault`-aware `cancelGroup`/`uncancelGroup` commands (today cancellation is still the
   standing-level `cancelAtPeriodEnd` that ends the account), a scheduled `applyPhase` command that
   fires at the phase's own instant rather than at the close, and an `addAddOn` operation binding.
-- Landed: the entity model. `entities.qnt` and its 14 scenarios are green; ADR
-  [0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md) decides a child scope, a pooled plan
-  item, the transfer and the archive. The implementation is the slice after the plan set.
+- Landed: the entity model and its implementation. `entities.qnt` and its 14 scenarios are green;
+  ADR [0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md) decides a child scope, a pooled plan
+  item, the transfer and the archive. The code has `ScopeState`/`EntityRecord` on both state tags,
+  the four commands (`AttachEntity`, `UpdateEntity`, `ArchiveEntity`, `TransferBalance`), `entity`
+  on the four scoped commands, the per-scope close, and the scoped read model down to the
+  `0002_entities` SQL column. Remaining: the `Entities` / `TransferBalance` bindings and layers,
+  `entityId` on the `Balances` / `Attach` bindings, the `Atom` verbs, and the brief's property,
+  SQL and binding test rows.
 
 ### 1. The remaining surfaces
 

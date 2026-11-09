@@ -40,6 +40,9 @@ export const BillingReadLive = BillingRead.toLayer(
             : { prorationInvoice: input.state.prorationInvoice }),
           ...(input.state.currency === undefined ? {} : { currency: input.state.currency }),
           features: input.state.features,
+          ...(input.state.entities === undefined || Object.keys(input.state.entities).length === 0
+            ? {}
+            : { entities: input.state.entities }),
         };
 
         yield* store.upsert(row);

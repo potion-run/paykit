@@ -139,6 +139,7 @@ describe("Check read paths", () => {
       allowed: true,
       balance: {
         customerId: account,
+        scope: { kind: "customer" },
         featureId: "messages",
         granted: 100,
         remaining: 7,

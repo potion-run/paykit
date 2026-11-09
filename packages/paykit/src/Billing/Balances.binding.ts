@@ -5,11 +5,8 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { Balance } from "../Balance.ts";
 import { FeatureNotConsumable } from "../Subscription/FeatureNotConsumable.rejection.ts";
-import {
-  FeatureNotCounted,
-  FeaturePricedInCredits,
-  GrantExpiryNotLater,
-} from "../Subscription/GrantBalance.command.ts";
+import { FeaturePricedInCredits } from "../Subscription/FeaturePricedInCredits.rejection.ts";
+import { FeatureNotCounted, GrantExpiryNotLater } from "../Subscription/GrantBalance.command.ts";
 import {
   HoldExceeded,
   HoldExpired,

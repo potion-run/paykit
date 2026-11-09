@@ -4,6 +4,8 @@ import { balanceOf, emptyBalance } from "../Balance.ts";
 import { BillingApi } from "../BillingApi.api.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { scheduleTierChangeInputOf, subscribeInputOf, withGrants } from "../TierCommand.ts";
@@ -293,6 +295,18 @@ const BillingApiCore = Layer.mergeAll(
           const input = { account, ...request, requiredBalance };
 
           const view = yield* bound(toCheckError)(client.Entitlements.get(id, options()));
+
+          if (
+            request.entityId !== undefined &&
+            (view === null || view.entities?.[request.entityId] === undefined)
+          ) {
+            return yield* bound(toCheckError)(
+              Effect.fail(
+                new EntityUnknown({ account, entityId: EntityId.make(request.entityId) }),
+              ),
+            );
+          }
+
           const answer = evaluateCheck(view, input);
 
           if (request.lock !== true || !answer.allowed) return answer;

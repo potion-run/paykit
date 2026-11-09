@@ -26,8 +26,11 @@ import {
   DowngradeBelowUsage,
 } from "../Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import { PooledItemOnEntity } from "../Subscription/PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
@@ -62,6 +65,9 @@ export const ChangeTierRejection = Schema.Union([
   DowngradeBelowCeiling,
   ProrationMismatch,
   CatalogMismatch,
+  EntityUnknown,
+  EntityArchived,
+  PooledItemOnEntity,
 ]);
 
 export type ChangeTierRejection = typeof ChangeTierRejection.Type;
