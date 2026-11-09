@@ -228,9 +228,12 @@ The next work is the API migration, not another command. The order is:
    previews, the four Api commands, `Atom.entities` / `createEntity` / `updateEntity` /
    `archiveEntity` / `transferBalance`, and `check` for a scope over both transports. Tests:
    `test/billing/Entities.test.ts`, `test/billing/Transfer.test.ts`,
-   `test/billing/EntitySurface.test.ts` and `test/sql/SqlEventLog.test.ts`.
-   Remaining from the slice: the generated property tests and per-scope `Agreement`/`Idempotence`
-   rows the brief lists; those are coverage for the surface, not another shape.
+   `test/billing/EntitySurface.test.ts` and `test/sql/SqlEventLog.test.ts`. The generated entity
+   histories and the per-scope `Agreement` / `Idempotence` rows the brief lists landed beside them:
+   `test/properties/Entities.test.ts` now checks `totalConservedAcrossScopes`, `pooledGrantShared`,
+   `archivedEntityHoldsNothing` and `noSpendAfterArchive` against the read model, `Agreement.test.ts`
+   compares `decide`, the entity's `Entitlements` row, its `Balance` and `allowed` scope by scope,
+   and `Idempotence.test.ts` replays every entity command by its command id.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
 the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated

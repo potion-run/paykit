@@ -389,6 +389,10 @@ export const standingFrom = (
     // replaces the plan but not the record the customer wrote about itself
     // (ADR 0045).
     ...(previous.customer === undefined ? {} : { customer: previous.customer }),
+    // A child scope is a partition of the customer, not of the plan: an
+    // activation replaces what the customer is sold, never the scopes it
+    // created (ADR 0040 §2).
+    ...(previous.entities === undefined ? {} : { entities: previous.entities }),
     trialUsed: options.trialUsed,
     dedupeKeys: {},
     dunningAttempts: 0,

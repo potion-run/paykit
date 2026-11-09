@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
+import { balanceOfEntity, pooledSourceOf } from "../../src/Balance.ts";
 import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { EntityId } from "../../src/Customer.ts";
 import { feature, messages } from "../../src/Feature.ts";
@@ -11,6 +12,11 @@ import { ArchiveEntity } from "../../src/Subscription/ArchiveEntity.command.ts";
 import { AttachEntity } from "../../src/Subscription/AttachEntity.command.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
+import {
+  Entitlements,
+  initialEntitlements,
+  type EntitlementsState,
+} from "../../src/Subscription/Entitlements.view.ts";
 import { GrantBalance } from "../../src/Subscription/GrantBalance.command.ts";
 import { SetQuantity } from "../../src/Subscription/SetQuantity.command.ts";
 import { SetUsage } from "../../src/Subscription/SetUsage.command.ts";
@@ -33,6 +39,7 @@ import {
   EntityPlanId,
   evolveAt,
   isAccepted,
+  propertyAccount,
   start,
   type EntityPlanId as EntityPlanIdType,
 } from "./Arbitraries.ts";
@@ -173,18 +180,21 @@ const EntityScript = Schema.Struct({
 
 type EntityScript = typeof EntityScript.Type;
 
-const run = (
-  state: SubscriptionState,
-  command: { readonly _tag: string },
-  now: DateTime.Utc,
-  id: string,
-): SubscriptionState => {
-  const decision = decideAt(state, command, now, id);
+type Event = Readonly<{ readonly _tag: string }>;
 
-  if (!isAccepted(decision)) throw new Error(`the fixture command ${id} was refused`);
+const viewHandlers = Entitlements.definition.evolve as unknown as Record<
+  string,
+  (state: EntitlementsState, event: Event, context: unknown) => EntitlementsState
+>;
 
-  return evolveAt(state, decision, now, id);
-};
+const foldView = (view: EntitlementsState, events: ReadonlyArray<Event>): EntitlementsState =>
+  events.reduce<EntitlementsState>((current, event) => {
+    const handler = viewHandlers[event._tag];
+
+    return handler === undefined
+      ? current
+      : handler(current, event, { key: { id: propertyAccount } });
+  }, view);
 
 /**
  * The customer is subscribed, both entities are attached and both hold a team
@@ -193,28 +203,36 @@ const run = (
  * real to move rather than spending the whole run proving a missing scope is
  * refused.
  */
-const seeded = (): SubscriptionState => {
-  let state = run(
-    initialSubscriptionState,
-    new Subscribe({ tier: "base", ...termsOf("base") }),
-    start,
-    "seed-open",
-  );
+const seededWithView = (): {
+  readonly state: SubscriptionState;
+  readonly view: EntitlementsState;
+} => {
+  let state: SubscriptionState = initialSubscriptionState;
+  let view = initialEntitlements;
 
-  state = run(state, new ChangeTier({ tier: "pool", ...termsOf("pool") }), start, "seed-pool");
+  const step = (command: { readonly _tag: string }, id: string): void => {
+    const decision = decideAt(state, command, start, id);
+
+    if (!isAccepted(decision)) throw new Error(`the fixture command ${id} was refused`);
+    state = evolveAt(state, decision, start, id);
+    view = foldView(view, decision);
+  };
+
+  step(new Subscribe({ tier: "base", ...termsOf("base") }), "seed-open");
+  step(new ChangeTier({ tier: "pool", ...termsOf("pool") }), "seed-pool");
 
   for (const id of entityIds) {
-    state = run(state, new AttachEntity({ entityId: entityIdOf(id) }), start, `seed-attach-${id}`);
-    state = run(
-      state,
+    step(new AttachEntity({ entityId: entityIdOf(id) }), `seed-attach-${id}`);
+    step(
       new ChangeTier({ tier: "team", ...termsOf("team"), entity: entityIdOf(id) }),
-      start,
       `seed-plan-${id}`,
     );
   }
 
-  return state;
+  return { state, view };
 };
+
+const seeded = (): SubscriptionState => seededWithView().state;
 
 const ownOf = (state: SubscriptionState, id: EntityPlanIdType): number =>
   remainingOf(scopeStateOf(state, entityIdOf(id)), "messages") ?? 0;
@@ -296,12 +314,70 @@ const noSpendAfterArchive = (state: SubscriptionState, id: EntityPlanIdType): vo
   }
 };
 
+/**
+ * The pooled grant is one source: every attached scope reports the same source
+ * id and the same remaining, and an archived scope reports no pooled row at all.
+ */
+const pooledGrantShared = (state: SubscriptionState, view: EntitlementsState): boolean => {
+  const pool = pooledSourceOf(view, "messages");
+
+  if (pool === null) return false;
+
+  for (const id of entityIds) {
+    const record = entityOf(state, entityIdOf(id));
+
+    if (record?.status !== "attached") continue;
+
+    const balance = balanceOfEntity(view, entityIdOf(id), "messages");
+
+    if (balance === null) return false;
+    const pooled = balance.breakdown.filter((row) => row.pooled === true);
+
+    if (pooled.length !== 1) return false;
+
+    if (pooled[0]?.id !== pool.id) return false;
+
+    if (pooled[0]?.remaining !== pool.remaining) return false;
+  }
+
+  return true;
+};
+
+/** An archived scope holds no row in the read model either. */
+const archivedViewHoldsNothing = (
+  state: SubscriptionState,
+  view: EntitlementsState,
+  id: EntityPlanIdType,
+): void => {
+  const record = entityOf(state, entityIdOf(id));
+
+  if (record?.status !== "archived") return;
+
+  const entry = view.entities?.[entityIdOf(id)];
+
+  assert(entry !== undefined, `${id} has no row after its archive`);
+  assert(Object.keys(entry.features).length === 0, `${id} still has a feature row`);
+
+  const balance = balanceOfEntity(view, entityIdOf(id), "messages");
+
+  assert(
+    balance === null || balance.breakdown.length === 0,
+    `${id} still reports a balance after its archive`,
+  );
+};
+
+/** Every unit the customer's scopes and its one pool own, for one feature. */
+const totalOf = (state: SubscriptionState): number =>
+  entityIds.reduce((sum, id) => sum + ownOf(state, id), 0) + poolOf(state);
+
 describe("entities in a generated history", () => {
   it.effect("a transfer conserves both scopes' own sources and moves no pool", () =>
     assertProperty(
       Arbitrary.schema(EntityScript),
       (script) => {
-        let state = seeded();
+        const seeded = seededWithView();
+        let state = seeded.state;
+        let view = seeded.view;
         let now = start;
 
         for (const [index, step] of script.steps.entries()) {
@@ -332,6 +408,9 @@ describe("entities in a generated history", () => {
 
           const before = state;
           state = evolveAt(state, decision, now, `entity-${index}`);
+          view = foldView(view, decision);
+
+          if (!pooledGrantShared(state, view)) return false;
 
           for (const event of decision) {
             if (event._tag === "EntityArchived") {
@@ -339,6 +418,11 @@ describe("entities in a generated history", () => {
 
               archivedHoldsNothing(state, id);
               noSpendAfterArchive(state, id);
+              archivedViewHoldsNothing(state, view, id);
+              assert(
+                totalOf(before) === totalOf(state),
+                `archive ${id} did not conserve the scopes and the pool`,
+              );
             }
 
             if (event._tag === "BalanceTransferred") {
@@ -372,6 +456,10 @@ describe("entities in a generated history", () => {
                 poolOf(before) === poolOf(state),
                 `transfer ${from} -> ${to} moved the shared pool`,
               );
+              assert(
+                totalOf(before) === totalOf(state),
+                `transfer ${from} -> ${to} did not conserve the scopes and the pool`,
+              );
             }
 
             if (event._tag === "UsageRecorded") {
@@ -404,10 +492,11 @@ describe("entities in a generated history", () => {
           if (entityOf(state, entityIdOf(id))?.status === "archived") {
             archivedHoldsNothing(state, id);
             noSpendAfterArchive(state, id);
+            archivedViewHoldsNothing(state, view, id);
           }
         }
 
-        return true;
+        return pooledGrantShared(state, view);
       },
       { runs: 80, size: 40 },
     ),
