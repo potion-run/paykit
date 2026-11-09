@@ -8,6 +8,7 @@ import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
+import { BillingCommandsLive } from "../../src/Billing/Commands.rpc.ts";
 import {
   ChargeProration,
   ChangeTier,
@@ -63,7 +64,10 @@ const inProcessWorld = Layer.mergeAll(BillingInProcess, catalogLayer(testCatalog
   Layer.provideMerge(Model),
 );
 
-const apiWorld = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)).pipe(
+const apiWorld = Layer.mergeAll(
+  BillingApiLayer.pipe(Layer.provideMerge(BillingCommandsLive)),
+  catalogLayer(testCatalog),
+).pipe(
   Layer.provide(BillingApi.layerClientInProcess),
   Layer.provideMerge(Model),
   Layer.provide(Layer.succeed(BindingCall, { headers: { "x-paykit-actor": "acct_surface" } })),

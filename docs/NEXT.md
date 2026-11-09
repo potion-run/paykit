@@ -412,8 +412,8 @@ standing change.
 Landed ([the configuration brief](./briefs/billing-configuration.md)). The four examples export one
 `billing.config.ts` and pass it to three one-call surfaces: `Paykit.BillingStack` validates and
 records, `Paykit.world` builds the runtime graph with the catalog in the layer's error channel, and
-`PaykitAtom.make({ url })` builds the browser client, reading the deploy's own catalog from the
-served `PaykitCatalogRpcs` read. The catalog constructors are
+`PaykitAtom.make({ url })` builds the browser client over the tenant Api and the server-expanded
+command surface, and reads no catalog. The catalog constructors are
 discriminated unions, so `"unlimited"` beside `overage: "bill"`, a cap without a bill, a flag with a
 rate card, and a one-off pack with grants are editor errors; the runtime validator still refuses the
 serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call, and `PolarBilling`
@@ -424,13 +424,17 @@ a guarded `Catalog` RPC, and `make` reads it once when the runtime is built, so 
 longer join terms the server refuses with `CatalogMismatch`.
 
 `Paykit.handler` landed beside it ([ADR
-0029](./adr/0029-the-request-handler-is-a-primitive.md)): it mounts `/api`, `/admin`, `/checkout` and
-`/webhooks`, answers a refusal with `Paykit.httpStatus`, takes the deployment's own paths through
-`routes`, and builds no world — it requires the Api services, so one process stays one model.
+0029](./adr/0029-the-request-handler-is-a-primitive.md)): it mounts `/api`, `/api/commands`, `/admin`,
+`/checkout` and `/webhooks`, answers a refusal with `Paykit.httpStatus`, takes the deployment's own
+paths through `routes`, and builds no world — it requires the Api services, so one process stays one
+model.
 `Paykit.moneyRoutes(provider)` is promoted beside it, which is where the copy the billing and polar
-examples each carried went. What is left is the *join* itself — the Api taking a tier id and the
-server expanding it, which needs a tenant command surface because a model command's payload cannot be
-enriched between the RPC and `decide`. `examples/polar` is on the handler now, `/` included; the
+examples each carried went. The *join* landed beside it ([ADR
+0048](./adr/0048-the-api-names-a-plan-and-the-deployment-joins-it.md)): `BillingCommandsRpcs` takes
+the plan id and the deployment expands it with `CatalogService` before the model `send`, because a
+model command's payload cannot be enriched between the RPC and `decide`. `BillingApiLayer` resolves
+`BillingCommands` instead of the catalog for the four commands that join it, and `Paykit.handler`
+mounts the surface at `${tenant}/commands`. `examples/polar` is on the handler now, `/` included; the
 tanstack example keeps its own adapter because it is a framework entry point, not a path table.
 
 ### 4. Auth

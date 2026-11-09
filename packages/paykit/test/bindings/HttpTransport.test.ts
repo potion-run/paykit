@@ -13,6 +13,7 @@ import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
+import { BillingCommandsLive } from "../../src/Billing/Commands.rpc.ts";
 import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
@@ -88,7 +89,10 @@ describe("the bindings over a real HTTP transport", () => {
 
       const server = yield* BillingApi;
 
-      const overTheWire = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)).pipe(
+      const overTheWire = Layer.mergeAll(
+        BillingApiLayer.pipe(Layer.provideMerge(BillingCommandsLive)),
+        catalogLayer(testCatalog),
+      ).pipe(
         Layer.provide(BillingApi.layerClientHttp("http://billing.test/api")),
         Layer.provideMerge(base),
         Layer.provide(Layer.succeed(BindingCall, { headers: { "x-paykit-actor": account } })),

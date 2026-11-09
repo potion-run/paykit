@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
+import { BillingCommandsLive } from "../../src/Billing/Commands.rpc.ts";
 import {
   BillingAdminApiLayer,
   BillingAdminInProcess,
@@ -90,7 +91,10 @@ const tenantInProcessWorld = Layer.mergeAll(BillingInProcess, catalogLayer(testC
   Layer.provideMerge(Model),
 );
 
-const tenantApiWorld = Layer.mergeAll(BillingApiLayer, catalogLayer(testCatalog)).pipe(
+const tenantApiWorld = Layer.mergeAll(
+  BillingApiLayer.pipe(Layer.provideMerge(BillingCommandsLive)),
+  catalogLayer(testCatalog),
+).pipe(
   Layer.provide(BillingApi.layerClientInProcess),
   Layer.provideMerge(Model),
   Layer.provide(Layer.succeed(BindingCall, { headers: { "x-paykit-actor": account } })),

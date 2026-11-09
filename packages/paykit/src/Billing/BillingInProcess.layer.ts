@@ -72,6 +72,7 @@ import {
   toChargeQuantityProrationError,
 } from "./ChargeQuantityProration.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
+import { BillingCommandsLive } from "./Commands.rpc.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import {
   CreateCustomer,
@@ -1241,4 +1242,7 @@ export const BillingInProcess = Layer.mergeAll(
   MultiUpdateInProcess.pipe(Layer.provide(BillingCore)),
   PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),
   PreviewUpdateInProcess.pipe(Layer.provide(BillingCore)),
+  // The server-expanded tenant surface the Api layer uses. A world that hosts
+  // the model can serve it for a client that never sees the catalog.
+  BillingCommandsLive,
 );

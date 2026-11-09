@@ -231,6 +231,27 @@ export {
 } from "./Cancel.binding.ts";
 
 export {
+  BillingCommandUnavailable,
+  BillingCommands,
+  BillingCommandsClient,
+  BillingCommandsHandlers,
+  BillingCommandsLive,
+  BillingCommandsRpcs,
+  BillingCommandsServer,
+  ScheduleCancellationCommandRequest,
+  ScheduleCancellationCommandResult,
+  ScheduleTierChangeCommandRequest,
+  ScheduleTierChangeCommandResult,
+  SetBillingControlsCommandRequest,
+  SetBillingControlsCommandResult,
+  StartTrialCommandRequest,
+  StartTrialCommandResult,
+  type BillingCommandCall,
+  type BillingCommandsClientOptions,
+  type BillingCommandsShape,
+} from "./Commands.rpc.ts";
+
+export {
   ScheduleTierChange,
   WithdrawTierChange,
   type PendingTierResult,

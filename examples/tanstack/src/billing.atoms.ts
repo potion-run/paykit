@@ -5,10 +5,10 @@ import * as PaykitAtom from "@potion.run/paykit/Atom";
  * `entitlements(account)` and `billing(account)` are queries, and every tenant
  * verb is a command that refreshes them.
  *
- * The catalog is not passed in. The client reads it from the deploy at
- * `/api/billing/catalog` when the runtime is built, so the browser joins a
- * tier's terms from the same value the Billing Worker validates — a bundled
- * second copy is a copy that can go stale.
+ * There is no catalog here. A command that names a plan (`startTrial`,
+ * `scheduleTierChange`) sends the id; the Billing Worker expands it with the
+ * catalog its model was built with, so the browser never holds a copy that can
+ * go stale.
  *
  * The base URL is same-origin. `src/worker.ts` forwards it to the Billing
  * Worker over a service binding and attaches the actor header, so the browser

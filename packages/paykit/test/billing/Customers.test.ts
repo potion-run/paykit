@@ -15,6 +15,7 @@ import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
+import { BillingCommandsLive } from "../../src/Billing/Commands.rpc.ts";
 import { Customers } from "../../src/Billing/Customers.binding.ts";
 import { Hold } from "../../src/Billing/Hold.binding.ts";
 import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
@@ -95,7 +96,7 @@ const inProcessWorld = Layer.mergeAll(
 ).pipe(Layer.provideMerge(Model));
 
 const apiWorld = Layer.mergeAll(
-  BillingApiLayer,
+  BillingApiLayer.pipe(Layer.provideMerge(BillingCommandsLive)),
   catalogLayer(testCatalog),
   PaymentsMemory().payments,
 ).pipe(

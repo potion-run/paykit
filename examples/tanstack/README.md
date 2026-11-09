@@ -10,9 +10,9 @@ export const billing = PaykitAtom.make({
 });
 ```
 
-The catalog is not passed in: `make` reads the deploy's own from
-`/api/billing/catalog` when the runtime is built, so the browser joins a tier's
-terms from the value the Worker validates.
+The catalog is not passed in. A command that names a plan (`startTrial`,
+`scheduleTierChange`) sends the id; the Billing Worker expands it with the
+catalog its model was built with, so the browser never holds a copy.
 
 `make` builds one runtime over the tenant Api. From it, a page reads two views
 and calls every tenant command:
@@ -64,9 +64,9 @@ Api serves, and the deployment owns the operations the model's process owns.
 | --- | --- |
 | `src/catalog.ts` | Two tiers. Plain data, imported by the Worker only. |
 | `src/Billing.ts` | The model on `MemoryStore`, the `Manual` provider, and `InsecureDevGuards`. |
-| `src/BillingWorker.ts` | `/api/*` for the tenant Api, `/api/billing/catalog` for the catalog, `/bootstrap` for the free tier. |
+| `src/BillingWorker.ts` | `/api/*` for the tenant Api, `/api/billing/commands` for the server-expanded plan commands, `/bootstrap` for the free tier. |
 | `src/worker.ts` | The Website entry: proxy billing paths, hand the rest to TanStack. |
-| `src/billing.atoms.ts` | `PaykitAtom.make` over the Api client, with the catalog read from the deploy. |
+| `src/billing.atoms.ts` | `PaykitAtom.make` over the Api and server-command clients, with no catalog. |
 | `src/routes/index.tsx` | The page: bootstrap, read, track, check, cancel, resume. |
 | `src/session.ts` | The demo cookie and actor header, shared by both entries. |
 | `test/example.test.ts` | The catalog, and the operation the bootstrap calls. |

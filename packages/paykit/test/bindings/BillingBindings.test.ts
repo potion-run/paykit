@@ -11,6 +11,7 @@ import { BindingCall } from "../../src/Billing/Bindings.ts";
 import { Resume, ScheduleCancellation } from "../../src/Billing/Cancel.binding.ts";
 import { ChangeTier } from "../../src/Billing/ChangeTier.binding.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
+import { BillingCommandsLive } from "../../src/Billing/Commands.rpc.ts";
 import { ConsumeCredits } from "../../src/Billing/ConsumeCredits.binding.ts";
 import { Hold } from "../../src/Billing/Hold.binding.ts";
 import { List } from "../../src/Billing/List.binding.ts";
@@ -120,7 +121,7 @@ const worldManual = Layer.mergeAll(
  * and its reply decoding are all on the path.
  */
 const apiWorld = Layer.mergeAll(
-  BillingApiLayer,
+  BillingApiLayer.pipe(Layer.provideMerge(BillingCommandsLive)),
   catalogLayer(testCatalog),
   PaymentsMemory().payments,
 ).pipe(

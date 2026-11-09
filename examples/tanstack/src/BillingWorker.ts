@@ -6,7 +6,6 @@ import {
   BillingApi,
   InsecureDevGuards,
   Paykit,
-  PaykitCatalogServer,
   Subscription,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
@@ -21,8 +20,9 @@ import { billing } from "./billing.config.ts";
  * - `/api/*` — the tenant `BillingApi`. The browser's atom client talks to it
  *   through the Website's `/api/billing` proxy, so the actor header comes from
  *   the demo cookie rather than the page.
- * - `/api/billing/catalog` — the catalog the deploy sells, so the browser
- *   reads it instead of bundling a copy.
+ * - `/api/billing/commands` — the server-expanded plan commands. The browser
+ *   names a plan; this Worker joins its terms from the catalog it was built
+ *   with, so the client never holds a catalog copy.
  * - `/bootstrap` — the demo's one operation: give a visitor the free tier.
  *   A purchase is a provider path (`Paykit.Subscribe`), not a tenant command,
  *   which is why it lives here and not in the atom client.
@@ -35,7 +35,7 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
   { main: import.meta.url },
   Effect.gen(function* () {
     const tenant = yield* BillingApi;
-    const served = yield* PaykitCatalogServer;
+    const commands = yield* Paykit.BillingCommandsServer;
     const subscribeOf = yield* Paykit.Subscribe;
     const subscription = yield* Subscription;
 
@@ -68,12 +68,12 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
           return HttpServerResponse.jsonUnsafe({ account: actor.id });
         }
 
-        // The catalog the deploy sells, so the browser joins a tier's terms
-        // from this value instead of bundling its own copy of it.
-        if (url.pathname === "/api/billing/catalog") return yield* served;
-
         // The Api's protocol is rooted at whatever path the client uses as its
         // base; the Website's proxy forwards `/api/billing/*` here unchanged.
+        // The commands route is checked first because it sits under the Api's
+        // prefix, and the Api's fetch would otherwise take it.
+        if (url.pathname === "/api/billing/commands") return yield* commands;
+
         if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
           return yield* tenant.fetch;
         }

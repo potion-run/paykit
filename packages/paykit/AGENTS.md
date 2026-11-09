@@ -322,8 +322,8 @@ is the record; these are the rules a new one follows.
   binding that already walks the provider path (`subscribeOf()`, `previewOf()`), so there is one
   purchase path and one quote. A second implementation is a second answer to "what did we charge".
 - **Four layers, one clearance each.** `BillingInProcess` closes over the model; `BillingApiLayer`
-  closes over `BillingApi.Client` and is protocol-agnostic, so the deployment picks
-  `layerClientInProcess` or `layerClientHttp(url)`. `BillingAdminInProcess` and `BillingAdminApiLayer`
+  closes over `BillingApi.Client` and `BillingCommands` and is protocol-agnostic, so the deployment
+  picks `layerClientInProcess` or `layerClientHttp(url)` and provides the matching command client. `BillingAdminInProcess` and `BillingAdminApiLayer`
   are the operator pair over `BillingAdminApi`. Both tenants implement every tenant verb, so a caller
   cannot tell which one it got; the admin verbs exist only on the admin layers, and the layer a
   deployment provides is the authorization. `test/bindings/AdminBindings.test.ts` asserts the
@@ -351,9 +351,9 @@ is the record; these are the rules a new one follows.
 `src/Atom.ts`, entry `@potion.run/paykit/Atom`, is the first-class Effect Atom integration. It wraps
 `BillingApiLayer`; it never re-implements a verb.
 
-- `make({ layer })` builds one `Atom.runtime` over `BillingApi.Client` and `CatalogService`.
+- `make({ layer })` builds one `Atom.runtime` over `BillingApi.Client` and `BillingCommands`.
   `provideMerge` keeps both on the runtime, so an application query can reach the client without
-  rebuilding the transport.
+  rebuilding the transport. The `{ url }` form builds both clients and reads no catalog.
 - `entitlements(account)` and `billing(account)` are queries, memoized per account and wrapped in
   `Atom.withServerValueInitial`. Every command atom is memoized per account and invalidates
   `paykit/account/<id>` on success, so a view refreshes without the caller wiring a subscription.

@@ -311,6 +311,30 @@ export * as Billing from "./Billing/index.ts";
 // The tenant surface. A request handler uses these; each takes the account and
 // returns the verb, so a call site cannot name a second account.
 export {
+  BillingCommandUnavailable,
+  BillingCommands,
+  BillingCommandsClient,
+  BillingCommandsHandlers,
+  BillingCommandsLive,
+  BillingCommandsRpcs,
+  BillingCommandsServer,
+} from "./Billing/Commands.rpc.ts";
+
+export type {
+  BillingCommandCall,
+  BillingCommandsClientOptions,
+  BillingCommandsShape,
+  ScheduleCancellationCommandRequest,
+  ScheduleCancellationCommandResult,
+  ScheduleTierChangeCommandRequest,
+  ScheduleTierChangeCommandResult,
+  SetBillingControlsCommandRequest,
+  SetBillingControlsCommandResult,
+  StartTrialCommandRequest,
+  StartTrialCommandResult,
+} from "./Billing/Commands.rpc.ts";
+
+export {
   BillingApiLayer,
   Balances,
   BalancesLive,
