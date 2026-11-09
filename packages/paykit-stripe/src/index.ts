@@ -33,6 +33,7 @@ export type { StripeClientConfig } from "./StripeClient.ts";
 // The metered-price resource for a package or a ladder; `StripePrices` uses it.
 export {
   MeteredPrice,
+  MeteredPriceLookupKeyNotTransferred,
   MeteredPriceProvider,
   meteredPriceNameOf,
   stripeTiersOf,
