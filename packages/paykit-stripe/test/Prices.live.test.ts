@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import { registerMeteredPriceProvider } from "../src/MeteredPrice.ts";
 import { StripePrices } from "../src/Prices.ts";
 
 /**
@@ -48,6 +49,7 @@ test.provider.skipIf(!hasKey)(
 
       // Start from nothing: a previous run's prices must not be mistaken for this
       // run's.
+      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const first = yield* stack.deploy(StripePrices("Prices", { tiers: { pro: proPrice } }));
@@ -133,6 +135,7 @@ test.provider.skipIf(!hasKey)(
   (stack) =>
     Effect.gen(function* () {
       const key = apiKey!;
+      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const sold = yield* stack.deploy(
@@ -168,6 +171,7 @@ test.provider.skipIf(!hasKey)(
   (stack) =>
     Effect.gen(function* () {
       const key = apiKey!;
+      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const tiers = {
