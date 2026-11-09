@@ -3,8 +3,9 @@ import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Overage, Pricing } from "./Allowance.ts";
-import { Balance, balanceOfFeature, emptyBalance } from "./Balance.ts";
+import { Balance, balanceOfEntity, balanceOfFeature, emptyBalance } from "./Balance.ts";
 import type { BillingReadRow } from "./BillingReadStore.ts";
+import { entityScope, EntityId } from "./Customer.ts";
 import type { RateCard } from "./Feature.ts";
 import { capacityOf } from "./Subscription/Allowance.verdict.ts";
 import type { EntitlementsState } from "./Subscription/Entitlements.view.ts";
@@ -25,6 +26,12 @@ export const CheckInput = Schema.Struct({
   lock: Schema.optionalKey(Schema.Boolean),
   /** The retry key, which is also the hold id when `lock` is set. */
   idempotencyKey: Schema.optionalKey(Schema.String),
+  /**
+   * The entity scope to ask for; absent means the customer. An archived entity
+   * answers `allowed: false` with an empty balance, and an unknown id is a
+   * refusal at the binding, not a scope with nothing in it (ADR 0040 §4).
+   */
+  entityId: Schema.optionalKey(Schema.String),
 });
 
 export type CheckInput = typeof CheckInput.Type;
@@ -58,6 +65,12 @@ export class CheckTransport extends Context.Service<
 export const evaluateCheck = (
   state: {
     readonly standing: Standing;
+    /** Present on a full read model, which an entity scope needs. */
+    readonly account?: string;
+    readonly tier?: string;
+    readonly credits?: number;
+    readonly prepaidCredits?: number;
+    readonly entities?: EntitlementsState["entities"];
     readonly features: Readonly<
       Record<
         string,
@@ -98,6 +111,45 @@ export const evaluateCheck = (
       allowed: false,
       balance: emptyBalance(input.account, input.featureId),
       standing: "blocked",
+    };
+  }
+
+  // An entity reads its own rows plus the one shared pool; its `remaining` is
+  // what it may spend, which is the number the judgement must see.
+  if (input.entityId !== undefined) {
+    const entity = state.entities?.[input.entityId];
+    const scope = entityScope(EntityId.make(input.entityId));
+
+    if (entity === undefined || entity.status === "archived") {
+      return {
+        allowed: false,
+        balance: emptyBalance(input.account, input.featureId, scope),
+        standing: state.standing,
+      };
+    }
+
+    // SAFETY: the entity branch only reads the scope maps, and a state without
+    // them has no entity id to reach this branch with.
+    const balance = balanceOfEntity(
+      { ...state, account: state.account ?? input.account } as EntitlementsState,
+      input.entityId,
+      input.featureId,
+    );
+
+    if (balance === null) {
+      return {
+        allowed: false,
+        balance: emptyBalance(input.account, input.featureId, scope),
+        standing: state.standing,
+      };
+    }
+
+    const feature = entity.features[input.featureId] ?? state.features[input.featureId];
+
+    return {
+      allowed: verdictOf(state.standing, feature, balance.remaining, input),
+      balance,
+      standing: state.standing,
     };
   }
 
@@ -155,8 +207,66 @@ export const evaluateCheck = (
   };
 };
 
-/** The read model's row as the state `evaluateCheck` reads. */
-export const rowToState = (row: BillingReadRow): EntitlementsState => ({
+/** The one judgement, from a feature row and the count the scope may spend. */
+const verdictOf = (
+  standing: Standing,
+  feature:
+    | {
+        readonly overage: Overage;
+        readonly remaining: number | null;
+        readonly resetsAt: DateTime.Utc | null;
+        readonly creditRates?: RateCard;
+        readonly cap?: number;
+        readonly carried?: number;
+        readonly pricing?: Pricing;
+        readonly moneyCap?: number;
+        readonly spendLimit?: number;
+        readonly billed?: number;
+        readonly reserved?: number;
+        readonly used?: number;
+        readonly included?: number | "unlimited" | null;
+        readonly quantity?: number;
+      }
+    | undefined,
+  remaining: number | null,
+  input: CheckInput,
+): boolean => {
+  if (feature === undefined) return remaining !== null && (input.requiredBalance ?? 1) <= remaining;
+
+  const verdict = capacityOf({
+    standing,
+    feature: {
+      overage: feature.overage,
+      included: feature.included ?? null,
+      ...(feature.cap === undefined ? {} : { cap: feature.cap }),
+      carried: feature.carried ?? 0,
+      ...(feature.moneyCap === undefined ? {} : { moneyCap: feature.moneyCap }),
+      ...(feature.spendLimit === undefined ? {} : { spendLimit: feature.spendLimit }),
+      ...(feature.pricing === undefined ? {} : { pricing: feature.pricing }),
+      billed: feature.billed ?? 0,
+      used: feature.used ?? 0,
+      reserved: feature.reserved ?? 0,
+      remaining,
+      ...(feature.creditRates === undefined ? {} : { creditRates: feature.creditRates }),
+      ...(feature.quantity === undefined ? {} : { quantity: feature.quantity }),
+    },
+    ask: {
+      amount: input.requiredBalance ?? 1,
+      ...(input.dimension === undefined ? {} : { dimension: input.dimension }),
+      ...(input.properties === undefined ? {} : { properties: input.properties }),
+    },
+  });
+
+  return verdict._tag === "Allowed";
+};
+
+/**
+ * The read model's row as the state `evaluateCheck` reads. With an `entityId`
+ * the row becomes that scope: its own features under `entities`, and the
+ * customer's pooled rows kept so the shared source is still one row
+ * (ADR 0040 §4).
+ */
+export const rowToState = (row: BillingReadRow, entityId?: string): EntitlementsState => ({
   account: row.account,
   tier: row.tier,
   status: row.status,
@@ -168,7 +278,13 @@ export const rowToState = (row: BillingReadRow): EntitlementsState => ({
   dunningAttempts: row.dunningAttempts,
   ...(row.currency === undefined ? {} : { currency: row.currency }),
   prepaidCredits: row.prepaidCredits,
-  features: row.features,
+  features:
+    entityId === undefined
+      ? row.features
+      : Object.fromEntries(
+          Object.entries(row.features).filter(([, feature]) => feature.pooled === true),
+        ),
+  ...(row.entities === undefined ? {} : { entities: row.entities }),
 });
 
 /** Kept for callers that already use the schema in their own codecs. */

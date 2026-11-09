@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
+import { EntityId } from "../Customer.ts";
 import { UsageReleased } from "./ReleaseHold.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -16,6 +17,8 @@ export class PlanItemReset extends Domain.Event("PlanItemReset", {
   carried: Schema.Int,
   /** The next boundary, or `null` when the allowance never resets again. */
   resetAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** The scope whose window closed; absent means the customer (ADR 0040 §3). */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /**
@@ -32,6 +35,8 @@ export class ResetAllowance extends Domain.Command("ResetAllowance", {
     feature: Schema.String,
     /** The boundary the caller believes it is resetting. */
     at: Schema.DateTimeUtc,
+    /** The entity scope to reset; absent means the customer. */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [UsageReleased, PlanItemReset],
   rejects: [],

@@ -129,6 +129,9 @@ const rowFromState = (account: string, state: EntitlementsState): BillingReadRow
   prepaidCredits: state.prepaidCredits ?? 0,
   ...(state.currency === undefined ? {} : { currency: state.currency }),
   features: state.features,
+  ...(state.entities === undefined || Object.keys(state.entities).length === 0
+    ? {}
+    : { entities: state.entities }),
 });
 
 /**

@@ -1,15 +1,14 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
+import { FeaturePricedInCredits } from "./FeaturePricedInCredits.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { FeatureNotMetered } from "./TrackUsage.command.ts";
-
-/** A grant that is not for a priced-in-credits feature. */
-export class FeaturePricedInCredits extends Domain.Rejection("FeaturePricedInCredits", {
-  feature: Schema.String,
-}) {}
 
 /** A grant needs a count to add to; an unlimited allowance has none. */
 export class FeatureNotCounted extends Domain.Rejection("FeatureNotCounted", {
@@ -38,6 +37,8 @@ export class BalanceGranted extends Domain.Event("BalanceGranted", {
   planId: Schema.optionalKey(Schema.String),
   /** The whole spendable count after the grant. */
   remainingAfter: Schema.Int,
+  /** The entity scope the grant belongs to; absent means the customer. */
+  entity: Schema.optionalKey(EntityId),
 }) {}
 
 /**
@@ -56,6 +57,8 @@ export class GrantBalance extends Domain.Command("GrantBalance", {
     granted: Schema.Int,
     /** An optional deadline; omitted, the grant never expires. */
     expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+    /** The entity scope to grant; absent means the customer (ADR 0040 §3). */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [BalanceGranted],
   rejects: [
@@ -65,6 +68,8 @@ export class GrantBalance extends Domain.Command("GrantBalance", {
     FeaturePricedInCredits,
     FeatureNotCounted,
     GrantExpiryNotLater,
+    EntityUnknown,
+    EntityArchived,
   ],
   reply: {
     granted: Schema.Int,

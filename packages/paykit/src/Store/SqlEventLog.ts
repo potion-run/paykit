@@ -8,6 +8,7 @@ import {
   type BillingReadRow,
 } from "../BillingReadStore.ts";
 import { BillingReadRow as BillingReadRowSchema } from "../BillingReadStore.ts";
+import type { EntityEntitlement, FeatureEntitlement } from "../Subscription/Entitlements.view.ts";
 import { asyncOf, type SqlDialect, type SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
 
@@ -402,8 +403,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         `INSERT INTO ${readModels}
-          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features, entities)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (account) DO UPDATE SET
            tier = excluded.tier,
            status = excluded.status,
@@ -417,7 +418,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
            proration = excluded.proration,
            proration_invoice = excluded.proration_invoice,
            currency = excluded.currency,
-           features = excluded.features`,
+           features = excluded.features,
+           entities = excluded.entities`,
         [
           row.account,
           row.tier,
@@ -433,6 +435,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           row.prorationInvoice ?? null,
           row.currency ?? null,
           featuresJson(row.features),
+          row.entities === undefined ? null : entitiesJson(row.entities),
         ] satisfies ReadonlyArray<SqlValue>,
       ),
 
@@ -444,7 +447,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 export type SqlEventLog = ReturnType<typeof SqlEventLog>;
 
 const READ_MODEL_COLUMNS =
-  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features";
+  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features, entities";
 
 interface ReadModelColumns {
   readonly account: string;
@@ -462,6 +465,7 @@ interface ReadModelColumns {
   readonly proration_invoice: string | null;
   readonly currency: string | null;
   readonly features: string;
+  readonly entities: string | null;
 }
 
 // SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
@@ -482,6 +486,7 @@ const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
       ...(row.proration_invoice === null ? {} : { prorationInvoice: row.proration_invoice }),
       ...(row.currency === null ? {} : { currency: row.currency }),
       features: decodeFeatures(row.features),
+      ...(row.entities === null ? {} : { entities: entitiesFrom(row.entities) }),
     }),
   ).pipe(
     // A row this schema cannot read is a bug in the store, not a case a caller
@@ -494,59 +499,121 @@ const numberFrom = (value: number | string): number =>
 
 const dateTimeFrom = (millis: number): DateTime.Utc => DateTime.makeUnsafe(millis);
 
+/** One feature row as the SQL column stores it: instants become millis. */
+const featureWire = (value: FeatureEntitlement) => ({
+  ...value,
+  resetsAt: value.resetsAt === null ? null : value.resetsAt.epochMilliseconds,
+  ...(value.grants === undefined
+    ? {}
+    : {
+        grants: value.grants.map((grant) => ({
+          ...grant,
+          ...(grant.expiresAt === undefined
+            ? {}
+            : { expiresAt: grant.expiresAt.epochMilliseconds }),
+        })),
+      }),
+});
+
+/** One feature row as the read model carries it. */
+const featureFromWire = (
+  value: Omit<FeatureEntitlement, "resetsAt" | "grants"> & {
+    readonly resetsAt: number | null;
+    readonly grants?: ReadonlyArray<
+      Omit<NonNullable<FeatureEntitlement["grants"]>[number], "expiresAt"> & {
+        readonly expiresAt?: number;
+      }
+    >;
+  },
+): FeatureEntitlement => {
+  const { resetsAt, grants, ...rest } = value;
+
+  return {
+    ...rest,
+    resetsAt: resetsAt === null ? null : dateTimeFrom(resetsAt),
+    ...(grants === undefined
+      ? {}
+      : {
+          grants: grants.map(({ expiresAt, ...grant }) => ({
+            ...grant,
+            ...(expiresAt === undefined ? {} : { expiresAt: dateTimeFrom(expiresAt) }),
+          })),
+        }),
+  };
+};
+
 const featuresJson = (features: BillingReadRow["features"]): string =>
   JSON.stringify(
     Object.fromEntries(
-      Object.entries(features).map(([feature, value]) => [
-        feature,
+      Object.entries(features).map(([feature, value]) => [feature, featureWire(value)]),
+    ),
+  );
+
+/**
+ * The entity column: each scope's lifecycle and its own rows. The pooled source
+ * is not duplicated here — it stays once in the customer's `features`.
+ */
+const entitiesJson = (entities: Readonly<Record<string, EntityEntitlement>>): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(entities).map(([id, entity]) => [
+        id,
         {
-          ...value,
-          resetsAt: value.resetsAt === null ? null : value.resetsAt.epochMilliseconds,
-          ...(value.grants === undefined
+          ...entity,
+          createdAt: entity.createdAt.epochMilliseconds,
+          ...(entity.archivedAt === undefined
             ? {}
-            : {
-                grants: value.grants.map((grant) => ({
-                  ...grant,
-                  ...(grant.expiresAt === undefined
-                    ? {}
-                    : { expiresAt: grant.expiresAt.epochMilliseconds }),
-                })),
-              }),
+            : { archivedAt: entity.archivedAt.epochMilliseconds }),
+          features: Object.fromEntries(
+            Object.entries(entity.features).map(([feature, value]) => [
+              feature,
+              featureWire(value),
+            ]),
+          ),
         },
       ]),
     ),
   );
 
+const entitiesFrom = (json: string): Readonly<Record<string, EntityEntitlement>> =>
+  Object.fromEntries(
+    Object.entries(
+      // SAFETY: the JSON is `entitiesJson`'s own output, in the wire shape below.
+      JSON.parse(json) as Record<
+        string,
+        Omit<EntityEntitlement, "createdAt" | "archivedAt" | "features"> & {
+          readonly createdAt: number;
+          readonly archivedAt?: number;
+          readonly features: Readonly<Record<string, never>>;
+        }
+      >,
+    ).map(([id, entity]): [string, EntityEntitlement] => {
+      const { createdAt, archivedAt, features, ...rest } = entity;
+
+      return [
+        id,
+        {
+          ...rest,
+          createdAt: dateTimeFrom(createdAt),
+          ...(archivedAt === undefined ? {} : { archivedAt: dateTimeFrom(archivedAt) }),
+          features: Object.fromEntries(
+            Object.entries(features).map(([feature, value]) => [
+              feature,
+              // SAFETY: the value is one encoded feature row.
+              featureFromWire(value as never),
+            ]),
+          ),
+        },
+      ];
+    }),
+  );
+
 // SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
 const decodeFeatures = (json: string): BillingReadRow["features"] =>
   Object.fromEntries(
-    Object.entries(
-      JSON.parse(json) as Record<
-        string,
-        Omit<BillingReadRow["features"][string], "resetsAt" | "grants"> & {
-          resetsAt: number | null;
-          grants?: ReadonlyArray<
-            Omit<NonNullable<BillingReadRow["features"][string]["grants"]>[number], "expiresAt"> & {
-              expiresAt?: number;
-            }
-          >;
-        }
-      >,
-    ).map(([feature, value]) => [
+    Object.entries(JSON.parse(json) as Record<string, never>).map(([feature, value]) => [
       feature,
-      {
-        ...value,
-        resetsAt: value.resetsAt === null ? null : dateTimeFrom(value.resetsAt),
-        ...(value.grants === undefined
-          ? {}
-          : {
-              grants: value.grants.map((grant) => ({
-                ...grant,
-                ...(grant.expiresAt === undefined
-                  ? {}
-                  : { expiresAt: dateTimeFrom(grant.expiresAt) }),
-              })),
-            }),
-      },
+      // SAFETY: the value is one encoded feature row.
+      featureFromWire(value as never),
     ]),
   ) as BillingReadRow["features"];

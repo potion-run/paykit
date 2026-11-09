@@ -182,9 +182,14 @@ export {
   BalanceSourceKind,
   SpendLimitView,
   balanceOf,
+  balanceOfEntity,
   balanceOfFeature,
+  balanceOfScope,
   balancesOf,
+  balancesOfEntity,
+  balancesOfScope,
   emptyBalance,
+  pooledSourceOf,
 } from "./Balance.ts";
 
 export {
@@ -195,6 +200,10 @@ export {
   CustomerPlan,
   CustomerSpendLimit,
   CustomerUsageAlert,
+  Entity,
+  EntityId,
+  EntityStatus,
+  ScopeRef,
   controlsKey,
 } from "./Customer.ts";
 

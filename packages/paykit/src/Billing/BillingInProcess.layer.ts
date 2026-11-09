@@ -7,11 +7,13 @@ import { asSystem } from "../Auth/Actor.ts";
 import { balanceOf, emptyBalance } from "../Balance.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
+import { EntityId } from "../Customer.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { GrantBalance as GrantBalanceCommand } from "../Subscription/GrantBalance.command.ts";
 import { Hold as HoldCommand } from "../Subscription/Hold.command.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
@@ -448,7 +450,20 @@ const BillingCore = Layer.mergeAll(
           const input = { account, ...request, requiredBalance };
 
           const before = yield* bound(toCheckError)(entitlements.query(ref));
-          const answer = evaluateCheck(Option.getOrNull(before), input);
+          const scoped = Option.getOrNull(before);
+
+          if (
+            request.entityId !== undefined &&
+            scoped?.entities?.[request.entityId] === undefined
+          ) {
+            return yield* bound(toCheckError)(
+              Effect.fail(
+                new EntityUnknown({ account, entityId: EntityId.make(request.entityId) }),
+              ),
+            );
+          }
+
+          const answer = evaluateCheck(scoped, input);
 
           // A refused check places nothing: the lock exists to protect capacity
           // the account has, not to reserve what it does not.

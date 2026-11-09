@@ -2,8 +2,12 @@ import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { UnitPrice } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
+import { EntityId } from "../Customer.ts";
 import { PricedLine } from "../Pricing.ts";
+import { EntityArchived } from "./EntityArchived.rejection.ts";
+import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
+import { FeaturePricedInCredits } from "./FeaturePricedInCredits.rejection.ts";
 import { SpendLimitExceeded } from "./SpendLimitExceeded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { Standing } from "./Subscription.state.ts";
@@ -123,6 +127,14 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
   grantsUsed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
   /** The hold this event settled, when the usage came from a hold, not a Track. */
   holdId: Schema.optionalKey(Schema.String),
+  /**
+   * The entity scope that spent the units; absent means the customer. The
+   * event's `remainingAfter` is that scope's own count and `poolAfter` the
+   * shared source it drew on (ADR 0040 §3).
+   */
+  entity: Schema.optionalKey(EntityId),
+  /** The pooled source's remaining after this event, when the scope drew it. */
+  poolAfter: Schema.optionalKey(Schema.Int),
 }) {}
 
 /**
@@ -139,6 +151,8 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     /** The event's properties, which a rate card's rules and multipliers match. */
     properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
     dedupeKey: Schema.optionalKey(Schema.String),
+    /** The entity scope spending; absent means the customer (ADR 0040 §3). */
+    entity: Schema.optionalKey(EntityId),
   },
   events: [UsageRecorded, UsageAlertFired],
   rejects: [
@@ -150,6 +164,9 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     SpendCapExceeded,
     MoneyCapExceeded,
     SpendLimitExceeded,
+    EntityUnknown,
+    EntityArchived,
+    FeaturePricedInCredits,
   ],
   middleware: [Session],
 }) {}

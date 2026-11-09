@@ -129,6 +129,14 @@ export const Allowance = Schema.Struct({
    * money ceiling.
    */
   moneyCap: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
+  /**
+   * Whether this item's grant belongs to the customer rather than the scope it
+   * is attached on: one shared source every attached entity draws on, and a
+   * `pooled: true` row whose `remaining` is the same for each of them (ADR 0040
+   * §3–4). A pooled item is valid only on the customer's scope; a pooled item
+   * on an entity would be a second pool.
+   */
+  pooled: Schema.optionalKey(Schema.Boolean),
 });
 
 export type Allowance = typeof Allowance.Type;
@@ -195,6 +203,12 @@ interface AllowanceBase {
   readonly carryOver?: boolean;
   /** The most one window may carry, in the feature's own units. Requires `carryOver`. */
   readonly carryCap?: number;
+  /**
+   * Give the grant to the customer so every attached entity draws on one
+   * source, instead of to the scope the item is attached on (ADR 0040 §3).
+   * Only valid on the customer's scope.
+   */
+  readonly pooled?: boolean;
 }
 
 /** An allowance that never runs out; there is nothing past its end. */
@@ -386,6 +400,7 @@ export function allowance(
     ...(value.unitPrice === undefined ? {} : { unitPrice: { ...value.unitPrice } }),
     ...(value.moneyCap === undefined ? {} : { moneyCap: value.moneyCap }),
     ...(value.prorate === undefined ? {} : { prorate: value.prorate }),
+    ...(value.pooled === true ? { pooled: true } : {}),
   };
 }
 

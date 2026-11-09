@@ -23,7 +23,7 @@ import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
 import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
-const shipped = ["0001_init"] as const;
+const shipped = ["0001_init", "0002_entities"] as const;
 
 const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
   sql.all<{
@@ -65,8 +65,8 @@ describe("migrations", () => {
   it("carries every migration as statements and a canonical SQL string", () =>
     Effect.gen(function* () {
       const records = yield* readMigrationFiles({ dialect: "sqlite" });
-      expect(records.length).toBe(1);
-      expect(records.map((record) => record.name)).toEqual(["0001_init"]);
+      expect(records.length).toBe(shipped.length);
+      expect(records.map((record) => record.name)).toEqual([...shipped]);
 
       for (const record of records) {
         expect(record.hash).toMatch(/^[0-9a-f]{64}$/);

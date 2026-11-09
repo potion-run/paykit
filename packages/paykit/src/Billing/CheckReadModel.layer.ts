@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { BillingReadStore } from "../BillingReadStore.ts";
 import { CheckFailed, evaluateCheck, rowToState } from "../Check.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Check, toCheckError } from "./Check.binding.ts";
 
@@ -37,6 +39,25 @@ export const CheckReadModel = Layer.effect(
         }
 
         const row = yield* mapBindingFailure(toCheckError)(store.get(account));
+
+        if (request.entityId !== undefined) {
+          const entity = row?.entities?.[request.entityId];
+
+          // An archived scope answers `allowed: false`; an id this customer
+          // never attached is a refusal, not an empty scope (ADR 0040 §4).
+          if (entity === undefined) {
+            return yield* mapBindingFailure(toCheckError)(
+              Effect.fail(
+                new EntityUnknown({ account, entityId: EntityId.make(request.entityId) }),
+              ),
+            );
+          }
+
+          return evaluateCheck(row === null ? null : rowToState(row, request.entityId), {
+            account,
+            ...request,
+          });
+        }
 
         return evaluateCheck(row === null ? null : rowToState(row), { account, ...request });
       });

@@ -290,7 +290,14 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
 export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<MigrationFile> => {
   const scope = scopeOf(input);
 
-  return [fileOf("0001_init", initStatements(scope))];
+  return [
+    fileOf("0001_init", initStatements(scope)),
+    // Additive and forward-only: a row written before the column existed reads
+    // as "no entity was ever created" (ADR 0040 §8).
+    fileOf("0002_entities", [
+      `ALTER TABLE ${tableName(BILLING_TABLES.readModel, scope)} ADD COLUMN entities TEXT`,
+    ]),
+  ];
 };
 
 const fileOf = (id: string, statements: ReadonlyArray<string>): MigrationFile => ({

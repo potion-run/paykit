@@ -63,12 +63,14 @@ describe("the public plan item, customer and balance shapes", () => {
       id: CustomerId.make("cus_1"),
       plans: [{ planId: "pro", status: "active" as const }],
       billingControls: {},
+      entities: [],
     };
 
     expect(Schema.is(Customer)(customer)).toBe(true);
 
     const balance = {
       customerId: "cus_1",
+      scope: { kind: "customer" as const },
       featureId: "messages",
       granted: 100,
       remaining: 80,
@@ -79,6 +81,7 @@ describe("the public plan item, customer and balance shapes", () => {
       breakdown: [
         {
           id: "src_1",
+          scope: { kind: "customer" as const },
           kind: "plan" as const,
           granted: 100,
           remaining: 80,

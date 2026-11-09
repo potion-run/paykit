@@ -116,6 +116,7 @@ const SPEC_COVERAGE = {
     windows: ["changeTierCap"],
     balances: ["changePlan"],
     schedules: ["attach", "addAddOn"],
+    entities: ["attachPlan"],
   },
   DunningRetry: { standing: ["dunningRung"] },
 
@@ -155,6 +156,11 @@ const SPEC_COVERAGE = {
   RetryTopUp: { standing: ["topUpRung"], windows: ["fireRung"] },
   TopUpCooldownElapsed: { windows: ["cooldownElapsed"] },
 
+  // ── the entity scope (ADR 0040) ────────────────────────────────────────────
+  AttachEntity: { entities: ["attachEntity"] },
+  ArchiveEntity: { entities: ["archiveEntity"] },
+  TransferBalance: { entities: ["transfer"] },
+
   // ── money facts ────────────────────────────────────────────────────────────
   RecordProrationInvoice: { money: ["invoiceProration"] },
   QuantityProration: { money: ["invoiceQuantity"] },
@@ -164,6 +170,9 @@ const SPEC_COVERAGE = {
   // ── out of every slice, with the reason ────────────────────────────────────
   AttachProviderRef: null, // provider ids, never read by `decide`
   GrantCredits: null, // goodwill, not a price or a fact about a sale
+  // A rename moves no balance and no plan: the log records a label, and the
+  // model has no label rule to check it against (ADR 0040 §7).
+  UpdateEntity: null,
 } as const satisfies Readonly<Record<string, Coverage | null>>;
 
 /**
@@ -171,12 +180,9 @@ const SPEC_COVERAGE = {
  * points, the clock a policy runs on, and a scheduler's choice among queued
  * rungs. They are named here rather than in a command row.
  *
- * `entities` is the one planned exception. `attachEntity`, `archiveEntity` and
- * `transfer` are modelled by ADR 0040 before their commands land, so they have
- * no `*.command.ts` to name them. Each joins a command row the moment its
- * command exists; until then naming them here is what keeps the action
- * accounted for without inventing a row for a file that is not there. The
- * README says the same thing beside the model.
+ * `entities` has no exception left: `attachEntity`, `archiveEntity` and
+ * `transfer` take their command rows (`AttachEntity`, `ArchiveEntity`,
+ * `TransferBalance`) the way every other modelled action does.
  */
 const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   paykit: ["init", "step", "tick"],
@@ -189,7 +195,7 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   // rung is fired by the retry policy; the command that owns it lands with the
   // implementation, and until then it is the clock's own transition.
   schedules: ["init", "step", "tick", "applyPhase"],
-  entities: ["init", "step", "tick", "attachEntity", "archiveEntity", "transfer"],
+  entities: ["init", "step", "tick"],
   money: ["init", "step"],
 };
 

@@ -260,6 +260,51 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "EntityAttached",
+    body: body({
+      entity: "ent_support",
+      name: "Support",
+      at: "2030-01-02T00:00:00Z",
+    }),
+  },
+  {
+    tag: "EntityUpdated",
+    body: body({ entity: "ent_support", name: "Support EU" }),
+  },
+  {
+    tag: "EntityArchived",
+    body: body({
+      entity: "ent_support",
+      at: "2030-01-10T00:00:00Z",
+      returned: [
+        { feature: "messages", kind: "plan", amount: 250, interval: "month" },
+        {
+          feature: "messages",
+          kind: "grant",
+          amount: 40,
+          interval: "never",
+          grantId: "grant_dev_1",
+        },
+      ],
+      returnedQuantities: [{ feature: "seats", quantity: 2 }],
+    }),
+  },
+  {
+    tag: "BalanceTransferred",
+    body: body({
+      transferId: "transfer_dev_1",
+      from: { kind: "entity", entityId: "ent_a" },
+      to: { kind: "entity", entityId: "ent_b" },
+      feature: "messages",
+      amount: 50,
+      plan: 50,
+      grant: 0,
+      interval: "month",
+      fromAfter: 150,
+      toAfter: 200,
+    }),
+  },
+  {
     tag: "BillingControlsSet",
     body: body({
       billingControls: {
@@ -598,6 +643,7 @@ export const devToolsBilling = (
       },
     },
     schedule: [],
+    entities: [],
     status,
     periodStart: at,
     periodEnd,

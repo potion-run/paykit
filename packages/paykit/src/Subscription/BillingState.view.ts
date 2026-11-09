@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { BillingControls } from "../Customer.ts";
+import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
@@ -112,6 +112,17 @@ export const AlertFiredView = Schema.Struct({
 
 export type AlertFiredView = typeof AlertFiredView.Type;
 
+/** One entity the page shows: its id, its label and where it is in its life. */
+export const EntityView = Schema.Struct({
+  id: EntityId,
+  name: Schema.optionalKey(Schema.String),
+  status: EntityStatus,
+  createdAt: Schema.DateTimeUtc,
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtc),
+});
+
+export type EntityView = typeof EntityView.Type;
+
 /** What a billing page shows. */
 export const BillingStateView = Schema.Struct({
   account: Schema.String,
@@ -197,6 +208,12 @@ export const BillingStateView = Schema.Struct({
   billingControls: Schema.optionalKey(BillingControls),
   /** The alerts this period has recorded, oldest first. */
   alertsFired: Schema.optionalKey(Schema.Array(AlertFiredView)),
+  /**
+   * Every entity under this customer, archived ones included, in id order. The
+   * customer record folds this list; the plans and balances of a scope stay on
+   * its `Balance`, not here (ADR 0040 §4).
+   */
+  entities: Schema.Array(EntityView),
 });
 
 export type BillingStateView = typeof BillingStateView.Type;
@@ -215,6 +232,7 @@ export const initialBillingState: BillingStateView = {
   credits: 0,
   plans: {},
   schedule: [],
+  entities: [],
   dunningAttempts: 0,
 };
 
@@ -287,6 +305,51 @@ export class BillingState extends Domain.View("BillingState", {
     }
   }),
   evolve: {
+    // An entity is a scope under this customer, not a second page: the list is
+    // what a console renders, and its balances are read per scope.
+    EntityAttached: (view, event, context): BillingStateView =>
+      view.entities.some((entity) => entity.id === event.entity)
+        ? withAccount(view, context)
+        : withAccount(
+            {
+              ...view,
+              entities: [
+                ...view.entities,
+                {
+                  id: event.entity,
+                  ...(event.name === undefined ? {} : { name: event.name }),
+                  status: "attached" as const,
+                  createdAt: event.at,
+                },
+              ].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)),
+            },
+            context,
+          ),
+    EntityUpdated: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          entities: view.entities.map((entity) => {
+            if (entity.id !== event.entity) return entity;
+            const { name: _previous, ...rest } = entity;
+
+            return { ...rest, ...(event.name === undefined ? {} : { name: event.name }) };
+          }),
+        },
+        context,
+      ),
+    EntityArchived: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          entities: view.entities.map((entity) =>
+            entity.id === event.entity
+              ? { ...entity, status: "archived" as const, archivedAt: event.at }
+              : entity,
+          ),
+        },
+        context,
+      ),
     // A trial starts a fresh standing: the previous price, proration, grace
     // and dunning count do not survive it, and the pool is the one the event
     // grants. The state's `TrialStarted` builds a new object, so this fold

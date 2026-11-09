@@ -82,20 +82,32 @@ export {
   BalanceSource,
   BalanceSourceKind,
   balanceOf,
+  balanceOfEntity,
+  balanceOfScope,
   balancesOf,
+  balancesOfEntity,
+  balancesOfScope,
   emptyBalance,
+  pooledSourceOf,
 } from "./Balance.ts";
 
 export {
   BillingControls,
+  CUSTOMER_SCOPE,
   Customer,
   CustomerAutoTopUp,
   CustomerId,
   CustomerPlan,
   CustomerSpendLimit,
   CustomerUsageAlert,
+  Entity,
+  EntityId,
+  EntityStatus,
+  ScopeRef,
   controlsKey,
+  entityScope,
   normalizeBillingControls,
+  scopeEntityId,
 } from "./Customer.ts";
 
 export {
@@ -940,7 +952,6 @@ export { UsageAlertFired } from "./Subscription/UsageAlertFired.event.ts";
 export {
   BalanceGranted,
   FeatureNotCounted,
-  FeaturePricedInCredits,
   GrantBalance as GrantBalanceCommand,
   GrantExpiryNotLater,
 } from "./Subscription/GrantBalance.command.ts";
@@ -949,6 +960,43 @@ export {
   BalanceExpired,
   ExpireGrant as ExpireGrantCommand,
 } from "./Subscription/ExpireGrant.command.ts";
+
+export {
+  AttachEntity as AttachEntityCommand,
+  EntityAttached,
+} from "./Subscription/AttachEntity.command.ts";
+
+export {
+  EntityUpdated,
+  UpdateEntity as UpdateEntityCommand,
+} from "./Subscription/UpdateEntity.command.ts";
+
+export {
+  ArchiveEntity as ArchiveEntityCommand,
+  EntityArchivedEvent,
+  ReturnedQuantity,
+  ReturnedSource,
+} from "./Subscription/ArchiveEntity.command.ts";
+
+export {
+  BalanceTransferred,
+  TransferBalance as TransferBalanceCommand,
+  TransferExceedsBalance,
+  TransferOfCreditSystem,
+  TransferOfPooledSource,
+} from "./Subscription/TransferBalance.command.ts";
+
+export { EntityArchived } from "./Subscription/EntityArchived.rejection.ts";
+
+export { EntityExists } from "./Subscription/EntityExists.rejection.ts";
+
+export { EntityHasOccupancy } from "./Subscription/EntityHasOccupancy.rejection.ts";
+
+export { EntityUnknown } from "./Subscription/EntityUnknown.rejection.ts";
+
+export { FeaturePricedInCredits } from "./Subscription/FeaturePricedInCredits.rejection.ts";
+
+export { PooledItemOnEntity } from "./Subscription/PooledItemOnEntity.rejection.ts";
 
 export {
   NoQuantityProrationDue,

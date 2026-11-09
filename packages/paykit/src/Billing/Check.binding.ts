@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { type CheckResult, CheckFailed } from "../Check.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { HoldExceeded } from "../Subscription/Hold.command.ts";
 import { SpendLimitExceeded } from "../Subscription/SpendLimitExceeded.rejection.ts";
 import {
@@ -38,6 +39,11 @@ export interface CheckRequest {
    * a lock: two callers must not reserve under one id.
    */
   readonly idempotencyKey?: string;
+  /**
+   * The entity scope to ask for; absent means the customer. A lock is
+   * customer-scoped: a hold is a customer fact, so an entity lock is refused.
+   */
+  readonly entityId?: string;
 }
 
 /** A `check` asked to place a lock without an id for it. */
@@ -55,6 +61,7 @@ export class CheckLockKeyMissing extends Schema.TaggedError<CheckLockKeyMissing>
 const refusals = [
   CheckFailed,
   CheckLockKeyMissing,
+  EntityUnknown,
   HoldExceeded,
   StandingBlocksUsage,
   FeatureNotMetered,
