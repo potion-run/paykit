@@ -3,9 +3,11 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import { allowance } from "../../src/Allowance.ts";
 import { asSystem } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
+import { Attach } from "../../src/Billing/Attach.binding.ts";
 import { Balances } from "../../src/Billing/Balances.binding.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
@@ -31,14 +33,21 @@ import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 
 const requests = feature({ id: "requests", name: "Requests" });
+const support = feature({ id: "support", name: "Support" });
 const storage = feature({ id: "storage", name: "Storage" });
 const seats = feature({ id: "seats", name: "Seats", kind: "non_consumable" });
 
 /** `requests` is postpaid-priced; `storage` is declared but no plan bills it. */
 const testCatalog = Effect.runSync(
   catalog({
-    features: [messages, requests, storage, seats],
+    features: [messages, requests, storage, seats, support],
     tiers: [
+      tier({
+        id: "support",
+        group: "support",
+        addOn: true,
+        grants: [allowance(support, { included: 5 })],
+      }),
       tier({
         id: "team",
         grants: [
@@ -345,4 +354,31 @@ both("accepts a ceiling below the period's bill and binds the next spend", () =>
 
     expect(balance.spendLimit).toEqual({ amount: 4, remaining: 0 });
   }),
+);
+
+it.live("lists every active plan, not only the base one", () =>
+  Effect.gen(function* () {
+    yield* subscribe(account);
+    const customers = yield* Customers(account);
+    const attach = yield* Attach(account);
+
+    yield* attach({ planId: "support", idempotencyKey: "add-support" });
+
+    // `Attach` commits the command; the billing view catches up behind it.
+    const billing = yield* BillingState;
+    yield* billing.query(Subscription.ref(account)).pipe(
+      Effect.repeat({
+        schedule: Schedule.spaced("10 millis"),
+        times: 100,
+        until: (view) => Option.getOrNull(view)?.plans.support !== undefined,
+      }),
+    );
+
+    const customer = yield* customers.get();
+
+    expect(customer.plans.map((plan) => plan.planId).sort()).toEqual(["support", "team"]);
+    expect(
+      customer.plans.find((plan) => plan.planId === "support")?.scheduledPlanId,
+    ).toBeUndefined();
+  }).pipe(Effect.provide(inProcessWorld)),
 );

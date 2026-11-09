@@ -38,6 +38,10 @@ export interface TierGrantInput {
   readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly price?: Price;
+  /** The group the plan fills; absent means the default group. */
+  readonly group?: string;
+  /** Whether the plan stacks beside every group. */
+  readonly addOn?: boolean;
 }
 
 /** The catalog fields every tier command shares, in one shape. */
@@ -49,6 +53,8 @@ const grantOf = (tierId: string, terms: PlanTerms): TierGrantInput => ({
   ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
   rates: terms.rates,
   ...(terms.price === undefined ? {} : { price: terms.price }),
+  ...(terms.group === undefined ? {} : { group: terms.group }),
+  ...(terms.addOn === true ? { addOn: true } : {}),
 });
 
 /**

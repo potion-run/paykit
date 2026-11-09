@@ -274,15 +274,19 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   }
 
   // The same plan is a replay, not a second activation; quantities can still
-  // change.
-  if (planIdOf(state) === request.planId) {
+  // change. An add-on is kept by id, because `planIdOf` answers the group's
+  // base plan.
+  if (planIdOf(state) === request.planId || state.plans[request.planId] !== undefined) {
     return yield* applyQuantities(deps, account, request, {
       outcome: "updated",
       planId: request.planId,
     });
   }
 
-  const upgrade = amountOf(terms.price) > amountOf(priceOf(state));
+  // An add-on stacks beside every group instead of replacing one, so it is
+  // immediate by construction: there is no group slot to schedule a move into.
+  const addOn = tier.addOn === true;
+  const upgrade = addOn || amountOf(terms.price) > amountOf(priceOf(state));
   const immediate = upgrade || request.planSchedule === "immediate";
 
   if (!immediate) {

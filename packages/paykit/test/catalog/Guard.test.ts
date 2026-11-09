@@ -16,6 +16,13 @@ const proTier = tier({
   grants: [allowance(messages, { included: 2000, overage: "bill" })],
 });
 
+const supportTier = tier({
+  id: "support",
+  group: "support",
+  addOn: true,
+  grants: [allowance(messages, { included: 5, overage: "block" })],
+});
+
 const ceilTier = tier({
   id: "ceil",
   price: { amount: 4900, currency: "usd", interval: "month" },
@@ -31,16 +38,18 @@ const ceilTier = tier({
 });
 
 const testCatalog = Effect.runSync(
-  catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier] }),
+  catalog({ features: [messages], tiers: [freeTier, proTier, supportTier, ceilTier] }),
 );
 
 const free = planItemsOf(testCatalog, "free")!;
 const pro = planItemsOf(testCatalog, "pro")!;
 const ceil = planItemsOf(testCatalog, "ceil")!;
+const support = planItemsOf(testCatalog, "support")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const ceilPrice = { amount: 4900, currency: "usd", interval: "month" as const };
 const proTerms = creditTermsOf(testCatalog, "pro")!;
 const freeTerms = creditTermsOf(testCatalog, "free")!;
+const supportTerms = creditTermsOf(testCatalog, "support")!;
 
 describe("the catalog guard", () => {
   it("accepts a command whose fields match the catalog", () => {
@@ -56,6 +65,37 @@ describe("the catalog guard", () => {
     expect(catalogMismatchOf(testCatalog, { tier: "free", allowances: free, ...freeTerms })).toBe(
       null,
     );
+    // A grouped add-on carries its group and flag as plan terms.
+    expect(
+      catalogMismatchOf(testCatalog, {
+        tier: "support",
+        group: "support",
+        addOn: true,
+        allowances: support,
+        ...supportTerms,
+      }),
+    ).toBe(null);
+  });
+
+  it("refuses a group or add-on flag the catalog does not state", () => {
+    const grouped = catalogMismatchOf(testCatalog, {
+      tier: "support",
+      group: "other",
+      addOn: true,
+      allowances: support,
+      ...supportTerms,
+    });
+
+    const forged = catalogMismatchOf(testCatalog, {
+      tier: "support",
+      group: "support",
+      addOn: false,
+      allowances: support,
+      ...supportTerms,
+    });
+
+    expect(grouped?.field).toBe("group");
+    expect(forged?.field).toBe("addOn");
   });
 
   it("refuses credit terms the catalog never sold", () => {

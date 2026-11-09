@@ -1189,6 +1189,10 @@ export const creditTermsOf = (catalog: Catalog, tierId: string): PlanCreditTerms
 export interface PlanTerms extends PlanCreditTerms {
   readonly allowances: Allowances;
   readonly price?: Price;
+  /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+  readonly group?: string;
+  /** Whether the plan stacks beside every group instead of filling one. */
+  readonly addOn?: boolean;
 }
 
 /** The command fields a plan implies, or `null` when the catalog lacks it. */
@@ -1216,6 +1220,8 @@ export const planTermsOf = (
     ...terms,
     allowances,
     ...(price === undefined || price === null ? {} : { price }),
+    ...(tier.group === undefined ? {} : { group: tier.group }),
+    ...(tier.addOn === true ? { addOn: true } : {}),
   };
 };
 

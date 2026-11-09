@@ -12,6 +12,8 @@ import { priceFor, topUpKey, type Price, type TopUpTerms } from "./Tier.ts";
 /** The catalog-derived fields a command may carry on the wire. */
 interface CatalogCarried {
   readonly tier?: string;
+  readonly group?: string;
+  readonly addOn?: boolean;
   readonly allowances?: Readonly<Record<string, Allowance>>;
   readonly price?: Price;
   readonly credits?: number;
@@ -121,6 +123,29 @@ export const catalogMismatchOf = (
       field: "tier",
       expected: "in catalog",
       actual: "missing",
+    });
+  }
+
+  // The group and the add-on flag are plan terms too: a caller that moves a
+  // plan into another group would change which plan it replaces.
+  const expectedGroup = tier.group ?? "";
+  const actualGroup = input.group ?? "";
+
+  if (expectedGroup !== actualGroup) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "group",
+      expected: expectedGroup.length === 0 ? "default" : expectedGroup,
+      actual: actualGroup.length === 0 ? "default" : actualGroup,
+    });
+  }
+
+  if ((tier.addOn === true) !== (input.addOn === true)) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "addOn",
+      expected: String(tier.addOn === true),
+      actual: String(input.addOn === true),
     });
   }
 

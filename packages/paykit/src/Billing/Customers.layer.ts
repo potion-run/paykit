@@ -28,9 +28,28 @@ export class CustomersRead extends Context.Service<
  * no plan is a customer with no plans, not a refusal.
  */
 const customerOf = (account: string, view: BillingStateView | null): Customer => {
-  const plans: Array<CustomerPlan> = [];
+  // A customer holds a plan set, not one tier: every active row is a plan, and
+  // the phase that replaces its group is its scheduled change.
+  const rows = Object.values(view?.plans ?? {});
+  const scheduled = new Map<string, string>();
 
-  if (view !== null && view.tier.length > 0) {
+  for (const phase of view?.schedule ?? []) scheduled.set(phase.group, phase.planId);
+
+  const plans: Array<CustomerPlan> = rows.map((row) => {
+    const next = scheduled.get(row.group);
+
+    return {
+      planId: PlanId.make(row.planId),
+      status: view!.status,
+      ...(row.addOn || next === undefined || next === row.planId
+        ? {}
+        : { scheduledPlanId: PlanId.make(next) }),
+    };
+  });
+
+  // A view built before the plan set carries one tier and no rows. The package
+  // is unpublished, but a read should still answer rather than lose a plan.
+  if (plans.length === 0 && view !== null && view.tier.length > 0) {
     plans.push({
       planId: PlanId.make(view.tier),
       status: view.status,

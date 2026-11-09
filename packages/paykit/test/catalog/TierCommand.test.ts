@@ -47,7 +47,32 @@ const testCatalog: Catalog = Effect.runSync(
   catalog({ features: [messages], tiers: [free, pro, pack] }),
 );
 
+const groupedCatalog: Catalog = Effect.runSync(
+  catalog({
+    features: [messages],
+    tiers: [
+      tier({
+        id: "support",
+        group: "support",
+        addOn: true,
+        grants: [allowance(messages, { included: 5 })],
+      }),
+    ],
+  }),
+);
+
 describe("subscribeInputOf", () => {
+  it("carries the plan's group and add-on flag from the catalog", () => {
+    expect(subscribeInputOf(groupedCatalog, "support")).toMatchObject({
+      group: "support",
+      addOn: true,
+    });
+    expect(scheduleTierChangeInputOf(groupedCatalog, "support")).toMatchObject({
+      group: "support",
+      addOn: true,
+    });
+  });
+
   it("carries the tier's terms and the anchor the caller states", () => {
     expect(subscribeInputOf(testCatalog, "pro", { anchorTz: "Europe/Berlin" })).toEqual({
       tier: "pro",
