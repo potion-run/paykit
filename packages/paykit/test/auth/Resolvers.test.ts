@@ -5,6 +5,7 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Headers from "effect/http/Headers";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { Actor, type ActorValue } from "../../src/Auth/Actor.ts";
@@ -201,5 +202,90 @@ describe("the boundary a refusal names", () => {
     const failure = failureOf(admin(Actor, { headers: {}, payload: {} }));
     expect(failure?._tag).toBe("Forbidden");
     expect(failure?.scope).toBe("admin");
+  });
+});
+
+/**
+ * The origin check reads the method from the HTTP request the handler runs in,
+ * so a test for it provides one. `null` is a transport that is not HTTP, which
+ * the guard treats as unsafe.
+ */
+const guardedOver = (
+  guard: Guard,
+  request: { readonly headers: Record<string, string>; readonly method: string },
+): { readonly actor: unknown } | { readonly error: string } =>
+  Effect.runSync(
+    Effect.gen(function* () {
+      // The guard reads one field of the request, so the test provides exactly
+      // that rather than building a whole HTTP message.
+      // SAFETY: the origin check reads `method` and nothing else on this value.
+      const incoming = { method: request.method } as HttpServerRequest.HttpServerRequest;
+
+      const outcome = yield* Effect.exit(
+        guard(Actor, { headers: request.headers, payload: { target: "acct_1" } }).pipe(
+          Effect.provideService(HttpServerRequest.HttpServerRequest, incoming),
+        ),
+      );
+
+      if (Exit.isSuccess(outcome)) return { actor: outcome.value };
+
+      const failure = Option.getOrNull(Cause.findErrorOption(outcome.cause)) as {
+        readonly _tag: string;
+      } | null;
+
+      return { error: failure?._tag ?? "Defect" };
+    }),
+  );
+
+const sameSite = (options: { readonly allowOrigins?: ReadonlyArray<string> }) =>
+  SessionFrom(answers(account), options);
+
+describe("a guard behind an origin allowlist", () => {
+  it("refuses an unsafe request from an origin the deployment does not serve", () => {
+    const guard = sessionGuard(sameSite({ allowOrigins: ["https://app.example"] }));
+
+    const refused = guardedOver(guard, {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    });
+
+    expect(refused).toEqual({ error: "CrossOrigin" });
+  });
+
+  it("accepts the named origin, and a request with no origin at all", () => {
+    const guard = sessionGuard(sameSite({ allowOrigins: ["https://app.example"] }));
+
+    expect(
+      guardedOver(guard, { method: "POST", headers: { origin: "https://app.example" } }),
+    ).toEqual({ actor: account });
+
+    // A server or a CLI is not a browser's cross-site request.
+    expect(guardedOver(guard, { method: "POST", headers: {} })).toEqual({ actor: account });
+  });
+
+  it("exempts a safe method, which cannot carry a cross-site command", () => {
+    const guard = sessionGuard(sameSite({ allowOrigins: ["https://app.example"] }));
+
+    expect(
+      guardedOver(guard, { method: "GET", headers: { origin: "https://evil.example" } }),
+    ).toEqual({ actor: account });
+  });
+
+  it("checks nothing when the deployment names no origins", () => {
+    const guard = sessionGuard(sameSite({}));
+
+    expect(
+      guardedOver(guard, { method: "POST", headers: { origin: "https://evil.example" } }),
+    ).toEqual({ actor: account });
+  });
+
+  it("guards the operator surface the same way", () => {
+    const guard = adminGuard(
+      AdminFrom(answers(operator), { allowOrigins: ["https://ops.example"] }),
+    );
+
+    expect(
+      guardedOver(guard, { method: "POST", headers: { origin: "https://evil.example" } }),
+    ).toEqual({ error: "CrossOrigin" });
   });
 });

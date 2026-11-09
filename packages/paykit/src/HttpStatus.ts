@@ -39,8 +39,10 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     // The provider refused the money.
     case "PaymentDeclined":
       return 402;
-    // The caller is signed in and may not do this.
+    // The caller is signed in and may not do this, or the request came from an
+    // origin the deployment does not serve.
     case "Forbidden":
+    case "CrossOrigin":
       return 403;
     // The provider does not implement the capability the deployment asked for.
     case "ProviderCapabilityMissing":

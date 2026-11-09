@@ -1,4 +1,4 @@
-import { Forbidden, Unauthenticated, BillingAdminApi } from "@potion.run/paykit";
+import { BillingAdminApi, CrossOrigin, Forbidden, Unauthenticated } from "@potion.run/paykit";
 import {
   type AdminAction,
   BillingOverview,
@@ -96,7 +96,9 @@ export const AdminRejected = Schema.TaggedStruct("Rejected", {
 });
 
 export const AdminDenied = Schema.TaggedStruct("Denied", {
-  error: Schema.Union([Unauthenticated, Forbidden]),
+  // The `Admin` guard can refuse a cross-origin unsafe request before it
+  // resolves a caller, so the console keeps that refusal as evidence too.
+  error: Schema.Union([Unauthenticated, Forbidden, CrossOrigin]),
 });
 
 export const AdminUnknown = Schema.TaggedStruct("Unknown", {});

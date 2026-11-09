@@ -133,9 +133,11 @@ The options, cheapest first:
 
 - **Document the boundary.** A cookie session is the deployment's, and `SameSite=Lax` + a
   same-origin JSON API is the rule. This is what the examples do today.
-- **An origin option on `SessionFrom` / `AdminFrom`.** `allowOrigins` on `FromResolverOptions`;
-  a request with an `Origin` outside the list is a new `CrossOrigin` rejection. This needs
-  `GuardRequest` to carry the method so a safe `GET` can be exempt.
+- **Landed as [ADR 0033](../adr/0033-the-origin-is-checked-in-the-guard.md).** An origin option on
+  `SessionFrom` / `AdminFrom`: `allowOrigins` on `FromResolverOptions`, and a request with an
+  `Origin` outside the list is a new `CrossOrigin` rejection. The brief expected `GuardRequest` to
+  carry the method; it cannot, because the object Alchemy hands a middleware has no HTTP request in
+  it. The guard reads `HttpServerRequest` from context instead and treats an absent method as unsafe.
 - **A `Paykit.originCheck` middleware** beside the guards, so a deployment can compose it without
   changing the resolver contract.
 

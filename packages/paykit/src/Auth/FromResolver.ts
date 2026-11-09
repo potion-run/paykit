@@ -1,8 +1,11 @@
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import type * as Headers from "effect/http/Headers";
+import * as Headers from "effect/http/Headers";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { Actor, type ActorValue, mayActOn } from "./Actor.ts";
+import { CrossOrigin } from "./CrossOrigin.rejection.ts";
 import { Forbidden } from "./Forbidden.rejection.ts";
 import { Admin, Session } from "./Guards.ts";
 import { Unauthenticated } from "./Unauthenticated.rejection.ts";
@@ -54,7 +57,60 @@ export interface FromResolverOptions {
    * deployment's session service. Defaults to `"session"`.
    */
   readonly source?: string;
+  /**
+   * The origins an unsafe request may come from, when the deployment serves a
+   * browser. Absent, no origin is checked — the answer for an Api that a server
+   * or a same-origin page calls (ADR 0033).
+   */
+  readonly allowOrigins?: ReadonlyArray<string>;
 }
+
+/** Methods a page may send without a body, and so without a CSRF risk. */
+const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Refuse a cross-origin unsafe request before the resolver runs.
+ *
+ * A browser attaches the session cookie to a cross-site `POST` but not the
+ * deployment's own page's consent, so the origin is what tells the two apart. A
+ * request with no `Origin` is not a browser's cross-site request — a server or a
+ * CLI — and is allowed. When the stack does not expose the request's method (a
+ * transport that is not HTTP, a test), the method is treated as unsafe so a
+ * deployment that named `allowOrigins` fails closed (ADR 0033).
+ */
+const originRefusalOf = (
+  options: FromResolverOptions,
+  request: GuardRequest,
+  method: string | null,
+): CrossOrigin | null => {
+  const allowed = options.allowOrigins;
+
+  if (allowed === undefined) return null;
+
+  const origin = headerOf(request.headers, "origin");
+
+  // No origin is not a browser's cross-site request: a server, a CLI, a test.
+  if (origin === null) return null;
+
+  const unsafe = method === null || !safeMethods.has(method.toUpperCase());
+
+  if (!unsafe || allowed.includes(origin)) return null;
+
+  return new CrossOrigin({ origin, method: method ?? "unknown" });
+};
+
+/** One header's value, from whichever shape the transport handed the guard. */
+const headerOf = (headers: Headers.Input, name: string): string | null =>
+  Option.getOrNull(Headers.get(Headers.fromInput(headers), name));
+
+/**
+ * The request's method, from the HTTP request the handler is running in. A
+ * transport that is not HTTP has none, which `originRefusalOf` treats as unsafe.
+ */
+const methodOf = Effect.map(
+  Effect.serviceOption(HttpServerRequest.HttpServerRequest),
+  Option.match({ onNone: () => null, onSome: (request) => request.method }),
+);
 
 /** The target a payload acts on, when it carries one. */
 const targetOf = (payload: unknown): string | null => {
@@ -99,6 +155,12 @@ export const SessionFrom = <E, R>(
 
       return (effect, request) =>
         Effect.gen(function* () {
+          // The origin is checked before the session is looked up: a request we
+          // will not honour should not read the deployment's identity store.
+          const refused = originRefusalOf(options, request, yield* methodOf);
+
+          if (refused !== null) return yield* refused;
+
           const actor = yield* resolve(request).pipe(Effect.provideContext(context), Effect.orDie);
 
           if (actor === null) return yield* new Unauthenticated({ source });
@@ -191,6 +253,10 @@ export const AdminFrom = <E, R>(
 
       return (effect, request) =>
         Effect.gen(function* () {
+          const refused = originRefusalOf(options, request, yield* methodOf);
+
+          if (refused !== null) return yield* refused;
+
           const actor = yield* resolve(request).pipe(Effect.provideContext(context), Effect.orDie);
 
           if (actor === null) return yield* new Unauthenticated({ source });

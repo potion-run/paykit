@@ -1,6 +1,7 @@
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import * as Schema from "effect/Schema";
 import { Actor } from "./Actor.ts";
+import { CrossOrigin } from "./CrossOrigin.rejection.ts";
 import { Forbidden } from "./Forbidden.rejection.ts";
 import { Unauthenticated } from "./Unauthenticated.rejection.ts";
 
@@ -31,7 +32,7 @@ import { Unauthenticated } from "./Unauthenticated.rejection.ts";
 export class Session extends RpcMiddleware.Service<Session, { provides: Actor }>()(
   "paykit/Session",
   {
-    error: Schema.Union([Unauthenticated, Forbidden]),
+    error: Schema.Union([Unauthenticated, Forbidden, CrossOrigin]),
   },
 ) {}
 
@@ -43,5 +44,5 @@ export class Session extends RpcMiddleware.Service<Session, { provides: Actor }>
  * @primitive
  */
 export class Admin extends RpcMiddleware.Service<Admin, { provides: Actor }>()("paykit/Admin", {
-  error: Schema.Union([Unauthenticated, Forbidden]),
+  error: Schema.Union([Unauthenticated, Forbidden, CrossOrigin]),
 }) {}

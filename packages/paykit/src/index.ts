@@ -566,6 +566,8 @@ export { ActorKind } from "./Auth/Actor.ts";
 
 export type { ActorValue } from "./Auth/Actor.ts";
 
+export { CrossOrigin } from "./Auth/CrossOrigin.rejection.ts";
+
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
 
 export { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";

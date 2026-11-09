@@ -12,6 +12,7 @@ import type * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Schema from "effect/Schema";
+import { CrossOrigin } from "../Auth/CrossOrigin.rejection.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Admin } from "../Auth/Guards.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
@@ -62,7 +63,14 @@ export class AdminReadFailed extends Schema.TaggedError<AdminReadFailed>()("Admi
 }) {}
 
 /** Every way an admin read can fail before it returns a domain answer. */
-export const AdminReadError = Schema.Union([Unauthenticated, Forbidden, AdminReadFailed]);
+export const AdminReadError = Schema.Union([
+  Unauthenticated,
+  Forbidden,
+  // The `Admin` guard refuses a cross-origin unsafe request before it resolves
+  // a caller, and that refusal reaches an RPC's error channel too (ADR 0033).
+  CrossOrigin,
+  AdminReadFailed,
+]);
 
 export type AdminReadError = typeof AdminReadError.Type;
 
