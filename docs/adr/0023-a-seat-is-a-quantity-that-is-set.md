@@ -52,9 +52,10 @@ command's required `dedupeKey`. The standing keeps `quantities` and
 
 **4. `ChargeQuantityProration` collects a positive `due`.** Like a tier change's
 proration, a positive difference is opened as a provider invoice keyed by the
-change, and `QuantityProrationInvoiced` records it. A reduction's credit stays on
-the standing for the next period; paying it out is a refund, which is a provider
-action, not a subscription one.
+change, and `QuantityProrationInvoiced` records it. A reduction's credit is
+recorded on the standing for audit; paying it out is a refund, which is a
+provider action, not a subscription one. Nothing applies the credit
+automatically.
 
 **5. `TrackUsage` and `Hold` refuse a quantity.** A seat is not metered, so both
 answer `FeatureNotConsumable`. `check()` answers from the cap: a quantity with no
@@ -119,7 +120,9 @@ no seat price for a billable seat.
   `priced`; its money is a proration. A report cannot mistake seats for usage.
 - **A quantity change is idempotent by the caller's key.** The key is the
   command id and the proration id, so a retry records one change and bills one
-  invoice.
+  invoice. The key owns that change: a different quantity under the same key is
+  refused (`QuantityProrationAlreadyBilled`) rather than replacing the change
+  or erasing its invoice; a new quantity takes a new key.
 - **The period close keeps seats.** A quantity is not a counter, so `UsageReset`
   marks it `kept` and `ClosePeriod` does not move it.
 - **The vendor owns the item when it can.** With a `quantity` provider the

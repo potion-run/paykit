@@ -103,9 +103,11 @@ fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
 are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md). F4, F5 and F7 are fixed by later
-ADRs, F2's proration identity landed (the command names it and refuses a second invoice), and F1,
-F3, F6 and F8–F12 are still open; F2's amount/currency trust and its missing `charged` are open too.
-The file records which is which.
+ADRs; F1, F2, F3, F6, F8, F10, F11 and F12 are implemented in code (proration identity and
+`charged`, a single owner per quantity key, a fresh refill budget on `PlanChanged`, terminal windows
+and pending phases dropped, a forward-only grace deadline, and cancellation winning the boundary).
+F9 is documented: a quantity credit is recorded for audit and a consumer is future work. The file
+records the probes and the tests that now pin them.
 
 The first seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)

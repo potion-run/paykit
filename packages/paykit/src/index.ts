@@ -823,6 +823,7 @@ export {
 export {
   AlreadyInGrace,
   EnterGrace as EnterGraceCommand,
+  GraceDeadlineNotLater,
   GraceEntered,
 } from "./Subscription/EnterGrace.command.ts";
 
@@ -881,6 +882,7 @@ export {
 export {
   NoProrationDue,
   ProrationInvoiced,
+  ProrationInvoiceMismatch,
   RecordProrationInvoice,
 } from "./Subscription/RecordProrationInvoice.command.ts";
 
@@ -915,6 +917,7 @@ export {
   QuantityChanged,
   QuantityExceeded,
   QuantityInvalid,
+  QuantityProrationAlreadyBilled,
   SetQuantity,
 } from "./Subscription/SetQuantity.command.ts";
 
@@ -953,6 +956,8 @@ export {
 export {
   NoQuantityProrationDue,
   QuantityProrationInvoiced,
+  QuantityProrationMismatch,
+  QuantityProrationNotBillable,
   RecordQuantityProrationInvoice,
 } from "./Subscription/QuantityProration.command.ts";
 

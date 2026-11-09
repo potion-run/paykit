@@ -288,9 +288,11 @@ module standing {
     else state.phase
 
   // `ClosePeriod`: apply a scheduled tier change, then roll the period and
-  // reset the schedule. A terminal standing never reaches this action.
+  // reset the schedule. A terminal standing never reaches this action. A
+  // cancellation wins the boundary (ADR 0039 §5): no phase lands, so the
+  // pending change is withdrawn and the close keeps the tier it was on.
   pure def applyClosePeriod(state: State): State = {
-    val pending = isPending(state.pending)
+    val pending = isPending(state.pending) and not(state.cancelAtPeriodEnd)
     val nextTier = if (pending) pendingTierOf(state.pending) else state.tier
     {
       ...state,
@@ -358,6 +360,11 @@ module standing {
   val dunningAttemptsHaveARun: bool =
     state.phase != Grace or state.dunningAttempts == 0 or state.dunningRun > 0
 
+  // A terminal standing has no future: no boundary will read a pending change,
+  // so the expiry and the canceling close drop it (ADR 0020, ADR 0039 §7).
+  val terminalHasNoPending: bool =
+    not(isTerminal(state.phase)) or not(isPending(state.pending))
+
   val standingInvariant: bool = and {
     creditPoolConserved,
     creditsNeverNegative,
@@ -367,6 +374,7 @@ module standing {
     noPeriodPastEnd,
     cancellationBelongsToAStanding,
     dunningAttemptsHaveARun,
+    terminalHasNoPending,
   }
 
   // ── actions ────────────────────────────────────────────────────────────────
@@ -423,12 +431,12 @@ module standing {
   action graceElapsed: bool = all {
     state.phase == Grace,
     state.now >= state.graceEnd,
-    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE },
+    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE, pending: NoTier },
   }
 
   action expire: bool = all {
     state.phase == Grace,
-    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE },
+    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE, pending: NoTier },
   }
 
   action scheduleCancellation: bool = all {
@@ -591,6 +599,13 @@ module standing {
   // the period has rolled past its first end.
   val pendingApplied: bool =
     not(isPending(state.pending)) and rollsPeriod(state.phase) and state.periodEnd > PERIOD_LENGTH
+
+  // A cancellation wins the boundary and withdraws the pending change.
+  val cancellationWonTheBoundary: bool =
+    state.phase == Canceled
+      and state.cancelAtPeriodEnd
+      and not(isPending(state.pending))
+      and state.periodEnd > PERIOD_LENGTH
 
   val dunningRunStarted: bool =
     state.phase == Grace and state.dunningRun > 0 and state.dunningAttempts > 0

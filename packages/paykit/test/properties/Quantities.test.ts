@@ -20,6 +20,7 @@ import { QuantityChanged, SetQuantity } from "../../src/Subscription/SetQuantity
 import { SetUsage, UsageSet } from "../../src/Subscription/SetUsage.command.ts";
 import {
   allowancesOf,
+  chargedOf,
   planIdOf,
   priceOf,
   occupiedOf,
@@ -636,6 +637,25 @@ describe("a seat is a quantity that is set", () => {
 
         if (entry === undefined) return true;
 
+        // A reduction is a credit, and a credit is never invoiced. This is the
+        // F2 probe: the command used to accept one because it only checked
+        // that the entry had no invoice id.
+        if (entry.proration.due <= 0) {
+          const credit = decideAt(
+            nextState,
+            new RecordQuantityProrationInvoice({
+              prorationId: "seats:two",
+              invoiceId: "in_credit",
+              amount: entry.proration.due,
+              currency: entry.proration.currency,
+            }),
+            at,
+            "invoice-credit",
+          );
+
+          return !isAccepted(credit) && tagOf(credit) === "QuantityProrationNotBillable";
+        }
+
         const invoice = decideAt(
           nextState,
           new RecordQuantityProrationInvoice({
@@ -654,6 +674,10 @@ describe("a seat is a quantity that is set", () => {
         if (invoiced._tag !== "Subscribed") return false;
 
         if (invoiced.quantityProrations?.["seats:two"]?.invoiceId !== "in_quantity") return false;
+
+        // The invoice is money the customer was charged: the fold puts it in
+        // `charged`, exactly as a tier proration invoice does.
+        if (chargedOf(invoiced).usd !== entry.proration.due) return false;
 
         const retry = decideAt(
           invoiced,

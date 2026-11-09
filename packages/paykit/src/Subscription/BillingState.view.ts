@@ -168,7 +168,8 @@ export const BillingStateView = Schema.Struct({
   price: Schema.optionalKey(Price),
   /**
    * The money the last tier change moved. A positive `due` is what
-   * `ChargeProration` bills; a negative one is a credit the next period applies.
+   * `ChargeProration` bills; a negative one is a credit recorded for audit.
+   * Nothing applies it automatically.
    */
   proration: Schema.optionalKey(Proration),
   /** The invoice a positive proration was billed on, once it was. */
@@ -630,11 +631,17 @@ export class BillingState extends Domain.View("BillingState", {
         context,
       );
     },
-    PeriodClosed: (view, event, context): BillingStateView =>
-      withAccount(
+    PeriodClosed: (view, event, context): BillingStateView => {
+      const terminal = event.statusAfter === "canceled" || event.statusAfter === "expired";
+      const { pendingTier: _pending, ...rest } = view;
+
+      return withAccount(
         {
-          ...view,
+          ...(terminal ? rest : view),
           status: event.statusAfter,
+          // A terminal close drops the phases that were waiting for a period
+          // the standing will not have (ADR 0020, ADR 0039 §7).
+          ...(terminal ? { schedule: [] } : {}),
           periodStart: event.nextPeriodStart,
           periodEnd: event.nextPeriodEnd,
           cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
@@ -643,14 +650,27 @@ export class BillingState extends Domain.View("BillingState", {
           alertsFired: [],
         },
         context,
-      ),
-    SubscriptionExpired: (view, _event, context): BillingStateView =>
-      withAccount({ ...view, status: "expired" }, context),
-    SubscriptionCanceled: (view, event, context): BillingStateView =>
-      withAccount(
-        { ...view, status: "canceled", periodEnd: event.canceledAt, cancelAtPeriodEnd: false },
+      );
+    },
+    SubscriptionExpired: (view, _event, context): BillingStateView => {
+      const { pendingTier: _pending, ...rest } = view;
+
+      return withAccount({ ...rest, status: "expired", schedule: [] }, context);
+    },
+    SubscriptionCanceled: (view, event, context): BillingStateView => {
+      const { pendingTier: _pending, ...rest } = view;
+
+      return withAccount(
+        {
+          ...rest,
+          status: "canceled",
+          periodEnd: event.canceledAt,
+          cancelAtPeriodEnd: false,
+          schedule: [],
+        },
         context,
-      ),
+      );
+    },
     TrialExtended: (view, event, context): BillingStateView =>
       withAccount({ ...view, trialEndsAt: event.trialEndsAt, periodEnd: event.periodEnd }, context),
     // A credit-priced feature spends the shared pool, so the billing page
