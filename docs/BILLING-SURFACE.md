@@ -43,7 +43,7 @@ documented billing surface, not a second implementation.
 | Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
 | Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
 | Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
-| Add-ons | one plan per group, add-ons stack (ADR 0039) | modelled |
+| Add-ons | `plans` plus `schedule` in the standing, one plan per group, add-ons stack (ADR 0039) | partial — `multiAttach` / `multiUpdate` and an `addAddOn` binding remain |
 | Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
 | Entity plans | entity scope + its own plan set (ADR 0040) | modelled |
@@ -88,8 +88,9 @@ documented billing surface, not a second implementation.
 
 ## What is actually ours to build
 
-1. **The plan set / multi-attach / schedules** — modelled (ADR 0039); the implementation is in
-   progress. This is the largest open model item.
+1. **The plan set / multi-attach / schedules** — the plan set and its phase schedule are in the
+   standing (ADR 0039). `multiAttach` / `multiUpdate`, one balance source per plan, the
+   `isDefault`-aware cancellation and a phase applied at its own instant remain.
 2. **Entities and transfer** — modelled (ADR 0040); the implementation follows the plan set.
 3. **Custom plans** — the one product capability a host cannot build on top: `CatalogGuard` must
    learn an explicit custom/allowlisted path.

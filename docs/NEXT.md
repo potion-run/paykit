@@ -29,10 +29,11 @@ plan is [the API brief](./briefs/plan-customer-balance-api.md).
 Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-state.md)):
 `controls.qnt` models a money ceiling and a usage alert, `SetBillingControls` writes the customer's
 `autoTopUp`, `spendLimits` and `usageAlerts`, `Paykit.Customers(account)` reads them, a limit is a
-`capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The plan set and the
-entity scope are modelled ahead of their code: `schedules.qnt` with [ADR
-0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md), and `entities.qnt` with [ADR
-0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md).
+`capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The plan set is in
+the standing: [ADR 0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt`
+became `plans` plus `schedule`, one row per active plan and ordered phases, with the close applying
+the phases due at the boundary. The entity scope is still modelled ahead of its code: `entities.qnt`
+with [ADR 0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md).
 
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
@@ -186,10 +187,13 @@ The next work is the API migration, not another command. The order is:
    and `decide` share it; an alert is `UsageAlertFired`, evidence that never refuses. The write is
    canonical and idempotent (`normalizeBillingControls` / `controlsKey`), and it works before a
    plan exists because the command carries the catalog's `features` facts past `CatalogGuard`.
-6. **Multiple plans and schedules — model landed.** [ADR
-   0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt` decide one plan per
-   group, add-ons stack, a multi-phase schedule, `multiAttach` / `multiUpdate` and the cancellation
-   fallback to the group's default. The implementation is the next TypeScript slice.
+6. **Multiple plans and schedules — state and phases landed.** [ADR
+   0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt` became the plan set
+   in `SubscribedState` (`plans` plus `schedule`), one row per active plan, an add-on stacking beside
+   every group, and a close that applies the phases due at the boundary in order. Remaining:
+   `multiAttach` / `multiUpdate` as one operation and one command id, one balance source per plan in
+   `Balance.breakdown`, the `isDefault`-aware cancel/uncancel commands, a scheduled `applyPhase` at
+   the phase's own instant, and an `addAddOn` binding.
 7. **Entities and transfer — model and brief landed.** The ADR
    ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` decide a child
    scope, a pooled plan item, `billing.transfer` and the archive; the implementation brief is
