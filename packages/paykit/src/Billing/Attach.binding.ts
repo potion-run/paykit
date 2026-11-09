@@ -5,8 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { Allowance, type Allowances } from "../Allowance.ts";
 import { asSystem } from "../Auth/Actor.ts";
-import { planOf, planTermsOf, type Catalog } from "../Catalog.ts";
+import { planItemsOf, planOf, planTermsOf, type Catalog } from "../Catalog.ts";
+import { sameAllowances } from "../CatalogGuard.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Payments, ProviderCapabilityMissing, type PaymentsService } from "../Payments.ts";
 import { unusedFraction } from "../Proration.ts";
@@ -24,6 +26,7 @@ import type { ChangeTierVerb } from "./ChangeTier.binding.ts";
 import { ChangeTier } from "./ChangeTier.binding.ts";
 import type { ChargeQuantityProrationVerb } from "./ChargeQuantityProration.binding.ts";
 import { ChargeQuantityProration } from "./ChargeQuantityProration.binding.ts";
+import { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 import type { ChargeProrationVerb } from "./Portal.binding.ts";
 import { ChargeProration } from "./Portal.binding.ts";
 import type { PreviewVerb } from "./Preview.binding.ts";
@@ -61,6 +64,11 @@ export type ProrationBehavior = typeof ProrationBehavior.Type;
 export const AttachRequest = Schema.Struct({
   /** The plan to buy or move to. */
   planId: Schema.String,
+  /**
+   * The plan items a custom plan is sold with, when they differ from the
+   * catalog's defaults. Omitted means the plan's `grants` (ADR 0041 §6).
+   */
+  grants: Schema.optionalKey(Schema.Array(Allowance)),
   /** Quantities to set on a non-consumable feature, after the plan move. */
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   /**
@@ -134,6 +142,8 @@ export interface UpdateResult {
 /** What a caller asks `previewAttach` to show. */
 export const PreviewAttachRequest = Schema.Struct({
   planId: Schema.String,
+  /** The bespoke items a custom plan is quoted at, when any. */
+  grants: Schema.optionalKey(Schema.Array(Allowance)),
   featureQuantities: Schema.optionalKey(Schema.Array(FeatureQuantity)),
   planSchedule: Schema.optionalKey(PlanSchedule),
   prorationBehavior: Schema.optionalKey(ProrationBehavior),
@@ -164,20 +174,7 @@ export interface PreviewUpdateResult {
 }
 
 /** A plan operation that needs a capability the current slice does not have. */
-export class PlanOperationUnsupported extends Schema.TaggedError<PlanOperationUnsupported>()(
-  "PlanOperationUnsupported",
-  {
-    planId: Schema.String,
-    reason: Schema.Literals([
-      "quantities_on_scheduled_change",
-      "quantities_on_checkout",
-      "cancel_immediately",
-      "nothing_to_uncancel",
-      "no_change",
-      "refund_charge_unknown",
-    ]),
-  },
-) {}
+export { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 
 type SubscriptionService = Effect.Success<typeof Subscription>;
 
@@ -210,6 +207,39 @@ const isActive = (
 
 const amountOf = (price: { readonly amount: number } | undefined): number => price?.amount ?? 0;
 
+/** A bespoke item list folded to the record a command and a plan row carry. */
+const allowancesOfGrants = (grants: ReadonlyArray<Allowance>): Allowances => {
+  const allowances: Record<string, Allowance> = {};
+
+  for (const grant of grants) allowances[grant.feature] = grant;
+
+  return allowances;
+};
+
+/**
+ * Whether a request states items the catalog does not: the one case a hosted
+ * checkout cannot carry, because the activation is rebuilt from the catalog
+ * when the provider's webhook lands (ADR 0041 §7).
+ */
+const isBespoke = (
+  catalog: Catalog,
+  planId: string,
+  grants: ReadonlyArray<Allowance> | undefined,
+): boolean => {
+  if (grants === undefined) return false;
+  const stated = planItemsOf(catalog, planId);
+
+  if (stated === null) return false;
+
+  return !sameAllowances(stated, allowancesOfGrants(grants));
+};
+
+/** The `grants` a verb takes, spread only when the request states any. */
+const grantsOf = (request: {
+  readonly grants?: ReadonlyArray<Allowance>;
+}): { readonly grants?: ReadonlyArray<Allowance> } =>
+  request.grants === undefined ? {} : { grants: request.grants };
+
 const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   deps: AttachDeps,
   account: string,
@@ -234,10 +264,11 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const kind = tier.kind ?? "subscription";
+  const grants = grantsOf(request);
 
   // A one-off plan is a purchase, not a standing change.
   if (kind === "one_off") {
-    const result = yield* subscribe({ tier: request.planId });
+    const result = yield* subscribe({ tier: request.planId, ...grants });
 
     return "url" in result
       ? ({ outcome: "checkout", planId: request.planId, paymentUrl: result.url } as const)
@@ -249,7 +280,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   // A new or terminal standing is an activation.
   if (!isActive(state)) {
     if (request.featureQuantities !== undefined && request.featureQuantities.length > 0) {
-      const result = yield* subscribe({ tier: request.planId });
+      const result = yield* subscribe({ tier: request.planId, ...grants });
 
       if ("url" in result || "invoiceId" in result) {
         return yield* new PlanOperationUnsupported({
@@ -264,7 +295,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
       });
     }
 
-    const result = yield* subscribe({ tier: request.planId });
+    const result = yield* subscribe({ tier: request.planId, ...grants });
 
     return "url" in result
       ? ({ outcome: "checkout", planId: request.planId, paymentUrl: result.url } as const)
@@ -275,12 +306,24 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
 
   // The same plan is a replay, not a second activation; quantities can still
   // change. An add-on is kept by id, because `planIdOf` answers the group's
-  // base plan.
+  // base plan. A bespoke set that differs from the one in force is not a
+  // replay, though: it is a new deal on the same plan, so it takes the ordinary
+  // move path and its timing (the boundary unless the caller asks for it now),
+  // and the phase it writes carries the terms (ADR 0041 §6).
   if (planIdOf(state) === request.planId || state.plans[request.planId] !== undefined) {
-    return yield* applyQuantities(deps, account, request, {
-      outcome: "updated",
-      planId: request.planId,
-    });
+    const inForce = state.plans[request.planId]?.allowances;
+
+    const redeal =
+      request.grants !== undefined &&
+      inForce !== undefined &&
+      !sameAllowances(inForce, allowancesOfGrants(request.grants));
+
+    if (!redeal) {
+      return yield* applyQuantities(deps, account, request, {
+        outcome: "updated",
+        planId: request.planId,
+      });
+    }
   }
 
   // An add-on stacks beside every group instead of replacing one, so it is
@@ -300,6 +343,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
     const scheduled = yield* scheduleTierChange({
       tier: request.planId,
       dedupeKey: request.idempotencyKey,
+      ...grants,
     });
 
     return {
@@ -312,6 +356,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   const changed = yield* changeTier({
     tier: request.planId,
     dedupeKey: request.idempotencyKey,
+    ...grants,
   });
 
   const charged =
@@ -487,19 +532,42 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   const state = yield* deps.subscription.state(Subscription.ref(account));
   const preview = yield* deps.preview(account);
   const kind = tier.kind ?? "subscription";
+  const grants = grantsOf(request);
+
+  // A bespoke set cannot cross a hosted checkout: the activation is rebuilt
+  // from the catalog when the provider's webhook lands (ADR 0041 §7). The
+  // apply path refuses the same combination in `Subscribe`, so the preview must
+  // not promise a deal the write would decline.
+  const needsCheckout = tier.price !== undefined || kind === "one_off";
+
+  if (needsCheckout && isBespoke(deps.catalog, request.planId, request.grants)) {
+    return yield* new PlanOperationUnsupported({
+      planId: request.planId,
+      reason: "custom_plan_checkout",
+    });
+  }
 
   if (kind === "one_off" || !isActive(state)) {
     return {
       // A command preview cannot know whether the provider will open a
       // checkout, but a priced plan is a purchase until it is paid.
-      outcome: tier.price === undefined && kind !== "one_off" ? "activated" : "checkout",
+      outcome: needsCheckout ? "checkout" : "activated",
       planId: request.planId,
-      preview: yield* preview({ command: { kind: "subscribe", tier: request.planId } }),
+      preview: yield* preview({ command: { kind: "subscribe", tier: request.planId, ...grants } }),
     } as const satisfies PreviewAttachResult;
   }
 
   if (planIdOf(state) === request.planId) {
-    return { outcome: "updated", planId: request.planId } as const satisfies PreviewAttachResult;
+    const inForce = state.plans[request.planId]?.allowances;
+
+    const redeal =
+      request.grants !== undefined &&
+      inForce !== undefined &&
+      !sameAllowances(inForce, allowancesOfGrants(request.grants));
+
+    if (!redeal) {
+      return { outcome: "updated", planId: request.planId } as const satisfies PreviewAttachResult;
+    }
   }
 
   const terms = planTermsOf(
@@ -526,7 +594,7 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
       planId: planIdOf(state),
       pendingPlanId: request.planId,
       preview: yield* preview({
-        command: { kind: "scheduleTierChange", tier: request.planId },
+        command: { kind: "scheduleTierChange", tier: request.planId, ...grants },
       }),
     } as const satisfies PreviewAttachResult;
   }
@@ -534,7 +602,7 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   return {
     outcome: "changed",
     planId: request.planId,
-    preview: yield* preview({ command: { kind: "changeTier", tier: request.planId } }),
+    preview: yield* preview({ command: { kind: "changeTier", tier: request.planId, ...grants } }),
   } as const satisfies PreviewAttachResult;
 });
 

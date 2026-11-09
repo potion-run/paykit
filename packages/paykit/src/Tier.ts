@@ -221,6 +221,13 @@ export const Tier = Schema.Struct({
   topUp: Schema.optionalKey(TopUpTerms),
   grants: Schema.Array(Allowance),
   /**
+   * Whether a customer may hold bespoke allowances under this plan. Absent
+   * means the plan is fixed: `grants` is exactly what any customer may hold
+   * under it. A custom plan's `grants` are the defaults a caller gets when it
+   * states none, and the shape a bespoke set is judged against (ADR 0041).
+   */
+  custom: Schema.optionalKey(Schema.Boolean),
+  /**
    * The base tier this one is a named alternative of, e.g. annual Pro. The
    * catalog resolves the variant into a full tier, so the runtime never sees
    * a partial one.
@@ -268,6 +275,12 @@ export interface SubscriptionTierInput {
    * activate, so the tuple requires at least one allowance.
    */
   readonly grants: readonly [Allowance, ...Allowance[]];
+  /**
+   * Whether a customer may hold bespoke allowances under this plan (ADR 0041).
+   * It is the deployment's opt-in, so it is stated here, once, and not on a
+   * request.
+   */
+  readonly custom?: boolean;
   /** The base tier this one is a named alternative of. */
   readonly variantOf?: string;
   /** What this variant changes about its base. Requires `variantOf`. */
@@ -296,6 +309,8 @@ export interface OneOffTierInput {
   readonly topUp?: never;
   /** A pack sells credits, not a standing, so it grants no allowance. */
   readonly grants?: readonly [];
+  /** A pack has no allowances to make bespoke. */
+  readonly custom?: never;
   readonly variantOf?: never;
   readonly customize?: never;
   readonly rateCard?: never;
@@ -318,6 +333,12 @@ export interface VariantTierInput {
   readonly creditsExpire?: CreditsExpire;
   readonly topUp?: TopUpTermsInput;
   readonly grants?: readonly Allowance[];
+  /**
+   * Inherited from the base plan, and never stated on a variant: a variant of
+   * a custom plan is the same negotiated plan at another price, and a fixed
+   * base cannot grow a bespoke child (ADR 0041 §5).
+   */
+  readonly custom?: never;
   readonly variantOf: string;
   readonly customize?: TierCustomize;
   readonly rateCard?: Readonly<Record<string, RateCard>>;
@@ -379,6 +400,7 @@ export const tier = (input: TierInput): Tier => {
     ...(input.group === undefined ? {} : { group: input.group }),
     ...(input.addOn === undefined ? {} : { addOn: input.addOn }),
     ...(input.isDefault === undefined ? {} : { isDefault: input.isDefault }),
+    ...(input.custom === undefined ? {} : { custom: input.custom }),
     ...(input.trial === undefined ? {} : { trial: input.trial }),
     ...(input.kind === undefined ? {} : { kind }),
     ...(input.price === undefined ? {} : { price: { ...input.price } }),

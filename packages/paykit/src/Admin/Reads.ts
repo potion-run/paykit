@@ -408,9 +408,13 @@ export const makeAdminReads = Effect.gen(function* () {
     preview: (input) =>
       preview(input).pipe(
         Effect.map(previewAnswerOf),
-        Effect.catchTag("PlanNotInCatalog", (rejection) =>
-          Effect.succeed(PreviewRejected.make({ rejection })),
-        ),
+        Effect.catchTags({
+          PlanNotInCatalog: (rejection) => Effect.succeed(PreviewRejected.make({ rejection })),
+          // A bespoke allowance set that disagrees with the catalog is the same
+          // kind of answer for a console: a plan it cannot quote, with the
+          // reason on the rejection.
+          CatalogMismatch: (rejection) => Effect.succeed(PreviewRejected.make({ rejection })),
+        }),
       ),
     verify: ({ account }) => verify({ account }),
     holds: (account) =>

@@ -1,13 +1,21 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { pricingOf, type Allowance } from "./Allowance.ts";
-import { planItemsOf, ratesOf, planOf, pricedInCatalog } from "./Catalog.ts";
+import { pricingOf, type Allowance, type Allowances } from "./Allowance.ts";
+import {
+  allowanceFaultOf,
+  catalogFactsOf,
+  planItemsOf,
+  ratesOf,
+  planOf,
+  pricedInCatalog,
+  type Catalog,
+} from "./Catalog.ts";
 import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { pricingKey } from "./Pricing.ts";
-import { priceFor, topUpKey, type Price, type TopUpTerms } from "./Tier.ts";
+import { priceFor, topUpKey, type Price, type Tier, type TopUpTerms } from "./Tier.ts";
 
 /** The catalog-derived fields a command may carry on the wire. */
 interface CatalogCarried {
@@ -54,6 +62,64 @@ const allowancesKey = (allowances: Readonly<Record<string, Allowance>>): string 
       .sort()
       .map((feature) => allowanceKey(allowances[feature]!)),
   );
+
+/** Whether two allowance sets describe the same plan items, field for field. */
+export const sameAllowances = (left: Allowances, right: Allowances): boolean =>
+  allowancesKey(left) === allowancesKey(right);
+
+/**
+ * The first thing a bespoke allowance set gets wrong structurally, or `null`
+ * when every item could have been declared in the catalog. It is the same
+ * per-item rule the deploy runs (`allowanceFaultOf`), so a rule the catalog
+ * states cannot be missing here: the difference is only that a bespoke set does
+ * not have to equal the plan's `grants` (ADR 0041 §3).
+ */
+const bespokeMismatchOf = (
+  catalog: Catalog,
+  plan: Tier,
+  allowances: Allowances,
+): CatalogMismatch | null => {
+  const entries = Object.entries(allowances);
+
+  if (entries.length === 0) {
+    return new CatalogMismatch({
+      tier: plan.id,
+      field: "allowances",
+      expected: "at least one plan item",
+      actual: "none",
+    });
+  }
+
+  const facts = catalogFactsOf(catalog);
+
+  for (const [feature, allowance] of entries) {
+    // A record key and the item it holds are one feature spelled twice; a
+    // disagreement would name one feature and grant another.
+    if (allowance.feature !== feature) {
+      return new CatalogMismatch({
+        tier: plan.id,
+        feature,
+        field: "allowances",
+        expected: feature,
+        actual: allowance.feature,
+      });
+    }
+
+    const fault = allowanceFaultOf(facts, plan, allowance);
+
+    if (fault !== null) {
+      return new CatalogMismatch({
+        tier: plan.id,
+        feature,
+        field: "allowances",
+        expected: "a valid catalog plan item",
+        actual: fault._tag,
+      });
+    }
+  }
+
+  return null;
+};
 
 const priceKey = (price: Price | undefined): string =>
   price === undefined ? "free" : JSON.stringify([price.amount, price.currency, price.interval]);
@@ -152,11 +218,21 @@ export const catalogMismatchOf = (
   const granted = planItemsOf(catalog, input.tier);
 
   if (granted !== null && input.allowances !== undefined) {
-    const expected = allowancesKey(granted);
-    const actual = allowancesKey(input.allowances);
+    // A custom plan opts in to bespoke allowances: its `grants` are the default
+    // a caller gets when it states none, so the command's set is judged by
+    // shape rather than by equality. Every other plan keeps the exact rule
+    // (ADR 0041 §3).
+    if (tier.custom === true) {
+      const bespoke = bespokeMismatchOf(catalog, tier, input.allowances);
 
-    if (expected !== actual) {
-      return new CatalogMismatch({ tier: tier.id, field: "allowances", expected, actual });
+      if (bespoke !== null) return bespoke;
+    } else {
+      const expected = allowancesKey(granted);
+      const actual = allowancesKey(input.allowances);
+
+      if (expected !== actual) {
+        return new CatalogMismatch({ tier: tier.id, field: "allowances", expected, actual });
+      }
     }
   }
 
@@ -241,6 +317,13 @@ export const catalogMismatchOf = (
  * omits the price, or sends allowances its tier does not grant, is refused
  * with `CatalogMismatch` instead of writing a standing that can never be
  * reconciled against an invoice.
+ *
+ * A plan the catalog declares with `custom: true` is the one exception, and it
+ * is the catalogue's choice rather than the caller's (ADR 0041): its `grants`
+ * are a default, so a bespoke set is accepted when every item is one the
+ * catalog could have declared for that plan. The price and the credit terms are
+ * compared exactly for a custom plan too, so a bespoke deal changes what a
+ * customer may use, never what the deployment charges.
  *
  * A catalog-owning sender — `Paykit.Subscribe`, the webhook translator — builds
  * the command from `CatalogService` and never needs this guard. It exists for

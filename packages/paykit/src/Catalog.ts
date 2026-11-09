@@ -9,7 +9,7 @@ import {
   pricingOf,
   type Allowance,
 } from "./Allowance.ts";
-import { CreditRateCards, Feature, RateCard, cardFromRates } from "./Feature.ts";
+import { CreditRateCards, Feature, type FeatureKind, RateCard, cardFromRates } from "./Feature.ts";
 import type { Plan } from "./Plan.ts";
 import { currencyOfPricing, unitsOf, type Pricing } from "./Pricing.ts";
 import { CreditsExpire, Price, Tier, priceFor, type TierKind, type TopUpTerms } from "./Tier.ts";
@@ -400,6 +400,32 @@ export class CatalogProrateOnMetered extends Schema.TaggedError<CatalogProrateOn
   { tier: Schema.String, feature: Schema.String },
 ) {}
 
+/** A one-off pack asks to be custom; a pack grants no allowance to make bespoke. */
+export class CatalogCustomPack extends Schema.TaggedError<CatalogCustomPack>()(
+  "CatalogCustomPack",
+  { tier: Schema.String },
+) {}
+
+/**
+ * An add-on asks to be custom. An add-on stacks beside every group, and the
+ * plan set merges one feature's items into one count, so a bespoke add-on needs
+ * a per-plan balance source before it has an answer (ADR 0041 §5).
+ */
+export class CatalogCustomAddOn extends Schema.TaggedError<CatalogCustomAddOn>()(
+  "CatalogCustomAddOn",
+  { tier: Schema.String },
+) {}
+
+/**
+ * A plan claims to be both custom and its group's default. A default is the
+ * plan a cancellation falls back to, and a fallback has to be the catalogue's
+ * terms, not a bespoke set nobody quoted as one (ADR 0041 §5).
+ */
+export class CatalogCustomDefaultPlan extends Schema.TaggedError<CatalogCustomDefaultPlan>()(
+  "CatalogCustomDefaultPlan",
+  { tier: Schema.String },
+) {}
+
 /** A value that does not satisfy the catalog schema, with its path in `message`. */
 export class CatalogInvalid extends Schema.TaggedError<CatalogInvalid>()("CatalogInvalid", {
   message: Schema.String,
@@ -458,6 +484,9 @@ export const CatalogError = Schema.Union([
   CatalogQuantityWithoutPrice,
   CatalogQuantityCap,
   CatalogProrateOnMetered,
+  CatalogCustomPack,
+  CatalogCustomAddOn,
+  CatalogCustomDefaultPlan,
   CatalogInvalid,
 ]);
 
@@ -742,6 +771,181 @@ const featureCardOf = (feature: Feature): Result.Result<RateCard | null, Catalog
 };
 
 /**
+ * The catalog facts one plan item is judged against: which features are
+ * declared, what kind each one is, and which of them are priced in credits. It
+ * is derived from a validated catalog, so `defineCatalog` and the runtime guard
+ * judge an allowance from the same facts rather than each building its own.
+ */
+export interface CatalogFacts {
+  readonly declared: ReadonlySet<string>;
+  readonly kinds: ReadonlyMap<string, FeatureKind>;
+  readonly creditPriced: ReadonlySet<string>;
+}
+
+/** The facts every plan item is judged against, from a validated catalog. */
+export const catalogFactsOf = (catalog: Catalog): CatalogFacts => ({
+  declared: new Set(catalog.features.map((feature) => feature.id)),
+  kinds: new Map(catalog.features.map((feature) => [feature.id, feature.kind])),
+  creditPriced: new Set(
+    catalog.features
+      .filter((feature) => feature.creditRates !== undefined || feature.rateCard !== undefined)
+      .map((feature) => feature.id),
+  ),
+});
+
+/**
+ * The catalog rule one plan item breaks, or `null` when it breaks none. This is
+ * the one place the per-item rules live: `defineCatalog` runs it over a plan's
+ * declared `grants`, and `CatalogGuard` runs it over the bespoke items a custom
+ * plan was sold with (ADR 0041), so a rule cannot exist for one and not the
+ * other.
+ */
+export const allowanceFaultOf = (
+  facts: CatalogFacts,
+  tier: Tier,
+  grant: Allowance,
+): CatalogError | null => {
+  if (!facts.declared.has(grant.feature)) {
+    return new CatalogUnknownFeature({ tier: tier.id, feature: grant.feature });
+  }
+
+  // A credit-priced feature spends the pool; an allowance would be a second
+  // answer to how much is left.
+  if (facts.creditPriced.has(grant.feature)) {
+    return new CatalogCreditFeatureHasAllowance({ tier: tier.id, feature: grant.feature });
+  }
+
+  // Unlimited means there is no end to be past, so an overage is only
+  // meaningful when it allows: anything else describes a boundary that
+  // cannot exist.
+  if (grant.included === "unlimited" && grant.overage !== "allow") {
+    return new CatalogUnlimitedOverage({ tier: tier.id, feature: grant.feature });
+  }
+
+  // A flag has nothing to count, so it is granted with `grant()` and only
+  // with `grant()`; a metered feature is the mirror image. Both directions
+  // are refusals, because either one silently changes what usage recording
+  // means for that feature.
+  const flagFeature = facts.kinds.get(grant.feature) === "flag";
+  const quantityFeature = facts.kinds.get(grant.feature) === "non_consumable";
+
+  if (quantityFeature !== isQuantityGrant(grant)) {
+    return new CatalogQuantityKind({ tier: tier.id, feature: grant.feature });
+  }
+
+  if (quantityFeature) {
+    if (grant.included === "unlimited") {
+      return new CatalogQuantityIncluded({ tier: tier.id, feature: grant.feature });
+    }
+
+    if (grant.resets !== "never") {
+      return new CatalogQuantityResets({ tier: tier.id, feature: grant.feature });
+    }
+
+    for (const field of ["resetEvery", "carryCap", "moneyCap"] as const) {
+      if (grant[field] !== undefined) {
+        return new CatalogQuantityField({ tier: tier.id, feature: grant.feature, field });
+      }
+    }
+
+    if (grant.carryOver === true) {
+      return new CatalogQuantityField({
+        tier: tier.id,
+        feature: grant.feature,
+        field: "carryOver",
+      });
+    }
+
+    const quantityPricing = pricingOf(grant);
+
+    if (quantityPricing !== null && quantityPricing._tag !== "unit") {
+      return new CatalogQuantityPricing({ tier: tier.id, feature: grant.feature });
+    }
+
+    if (grant.overage === "bill" && quantityPricing === null) {
+      return new CatalogQuantityWithoutPrice({ tier: tier.id, feature: grant.feature });
+    }
+
+    if (grant.overage !== "bill" && quantityPricing !== null) {
+      return new CatalogPricingWithoutBilling({ tier: tier.id, feature: grant.feature });
+    }
+
+    if (
+      grant.cap !== undefined &&
+      typeof grant.included === "number" &&
+      grant.cap < grant.included
+    ) {
+      return new CatalogQuantityCap({ tier: tier.id, feature: grant.feature });
+    }
+
+    if (grant.prorate !== undefined && grant.overage !== "bill") {
+      return new CatalogQuantityField({
+        tier: tier.id,
+        feature: grant.feature,
+        field: "prorate",
+      });
+    }
+
+    return null;
+  }
+
+  if (grant.prorate !== undefined) {
+    return new CatalogProrateOnMetered({ tier: tier.id, feature: grant.feature });
+  }
+
+  if (flagFeature && !isFlagGrant(grant)) {
+    return new CatalogFlagNotGranted({ tier: tier.id, feature: grant.feature });
+  }
+
+  if (!flagFeature && isFlagGrant(grant)) {
+    return new CatalogFlagOnMetered({ tier: tier.id, feature: grant.feature });
+  }
+
+  // A carry needs something to carry and a boundary to carry it over. A
+  // flag has neither; an allowance that never resets has no boundary, so
+  // the setting would silently do nothing.
+  if (grant.carryOver === true && flagFeature) {
+    return new CatalogCarryOverOnFlag({ tier: tier.id, feature: grant.feature });
+  }
+
+  // A cap limits what is billed past `included`, so an allowance that never
+  // bills past it cannot have one.
+  if (grant.cap !== undefined && grant.overage !== "bill") {
+    return new CatalogCapWithoutBilling({ tier: tier.id, feature: grant.feature });
+  }
+
+  // A price prices the billable part, so it needs a bill; a money cap
+  // needs a price to turn units into money.
+  const pricingError = pricingErrorOf(tier, grant.feature, grant);
+
+  if (pricingError !== null) return pricingError;
+
+  if (grant.moneyCap !== undefined && pricingOf(grant) === null) {
+    return new CatalogMoneyCapWithoutUnitPrice({ tier: tier.id, feature: grant.feature });
+  }
+
+  if (grant.carryOver === true && grant.resets === "never") {
+    return new CatalogCarryOverNeverResets({ tier: tier.id, feature: grant.feature });
+  }
+
+  if (grant.carryOver !== true) {
+    if (grant.carryCap !== undefined) {
+      return new CatalogCarryWithoutCarry({
+        tier: tier.id,
+        feature: grant.feature,
+        field: "carryCap",
+      });
+    }
+  }
+
+  if (grant.resetEvery !== undefined && grant.resets === "never") {
+    return new CatalogResetEveryNever({ tier: tier.id, feature: grant.feature });
+  }
+
+  return null;
+};
+
+/**
  * Validate a catalog: the schema first, then the references the schema cannot
  * see — duplicate declarations, a grant with no declared feature, a tier that
  * grants nothing, an unlimited allowance that claims an overage, a flag that
@@ -794,7 +998,15 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     return Result.fail(new CatalogDuplicateTier({ tier: duplicateTier }));
   }
 
-  const declared = new Set(catalog.features.map((feature) => feature.id));
+  const facts = catalogFactsOf(catalog);
+
+  // A feature's rate card is validated before any tier reads it: an invalid
+  // card is a catalog the runtime cannot price a spend with.
+  for (const feature of catalog.features) {
+    const card = featureCardOf(feature);
+
+    if (Result.isFailure(card)) return Result.fail(card.failure);
+  }
 
   // The packs an auto top-up line may name: a one-off tier is a pack by
   // definition, and the loop below already requires its credits and its price,
@@ -805,20 +1017,6 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       .map((tier): string => tier.id),
   );
 
-  const kinds = new Map(catalog.features.map((feature) => [feature.id, feature.kind]));
-  const cards = new Map<string, RateCard>();
-  const creditPriced = new Set<string>();
-
-  for (const feature of catalog.features) {
-    const card = featureCardOf(feature);
-
-    if (Result.isFailure(card)) return Result.fail(card.failure);
-
-    if (card.success === null) continue;
-    cards.set(feature.id, card.success);
-    creditPriced.add(feature.id);
-  }
-
   for (const tier of catalog.tiers) {
     const kind = tier.kind ?? "subscription";
 
@@ -828,6 +1026,22 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
 
     if (kind === "one_off" && tier.variantOf !== undefined) {
       return Result.fail(new CatalogVariantOnPack({ tier: tier.id }));
+    }
+
+    const custom = tier.custom === true;
+
+    if (custom && kind === "one_off") {
+      return Result.fail(new CatalogCustomPack({ tier: tier.id }));
+    }
+
+    if (custom && tier.addOn === true) {
+      return Result.fail(new CatalogCustomAddOn({ tier: tier.id }));
+    }
+
+    // A fallback is the catalogue's terms by definition, and a bespoke set is
+    // not something anyone quoted as one (ADR 0041 §5).
+    if (custom && tier.isDefault === true) {
+      return Result.fail(new CatalogCustomDefaultPlan({ tier: tier.id }));
     }
 
     if (kind === "one_off") {
@@ -905,7 +1119,7 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     // A per-tier rate-card override only makes sense for a feature the catalog
     // prices in credits; anything else would be a card nothing reads.
     for (const feature of Object.keys(tier.rateCard ?? {})) {
-      if (!creditPriced.has(feature)) {
+      if (!facts.creditPriced.has(feature)) {
         return Result.fail(new CatalogRateCardOverride({ tier: tier.id, feature }));
       }
     }
@@ -913,10 +1127,6 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     const granted = new Set<string>();
 
     for (const grant of tier.grants) {
-      if (!declared.has(grant.feature)) {
-        return Result.fail(new CatalogUnknownFeature({ tier: tier.id, feature: grant.feature }));
-      }
-
       if (granted.has(grant.feature)) {
         return Result.fail(
           new CatalogDuplicateAllowance({ tier: tier.id, feature: grant.feature }),
@@ -925,154 +1135,9 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
 
       granted.add(grant.feature);
 
-      // A credit-priced feature spends the pool; an allowance would be a second
-      // answer to how much is left.
-      if (creditPriced.has(grant.feature)) {
-        return Result.fail(
-          new CatalogCreditFeatureHasAllowance({ tier: tier.id, feature: grant.feature }),
-        );
-      }
+      const fault = allowanceFaultOf(facts, tier, grant);
 
-      // Unlimited means there is no end to be past, so an overage is only
-      // meaningful when it allows: anything else describes a boundary that
-      // cannot exist.
-      if (grant.included === "unlimited" && grant.overage !== "allow") {
-        return Result.fail(new CatalogUnlimitedOverage({ tier: tier.id, feature: grant.feature }));
-      }
-
-      // A flag has nothing to count, so it is granted with `grant()` and only
-      // with `grant()`; a metered feature is the mirror image. Both directions
-      // are refusals, because either one silently changes what usage recording
-      // means for that feature.
-      const flagFeature = kinds.get(grant.feature) === "flag";
-      const quantityFeature = kinds.get(grant.feature) === "non_consumable";
-
-      if (quantityFeature !== isQuantityGrant(grant)) {
-        return Result.fail(new CatalogQuantityKind({ tier: tier.id, feature: grant.feature }));
-      }
-
-      if (quantityFeature) {
-        if (grant.included === "unlimited") {
-          return Result.fail(
-            new CatalogQuantityIncluded({ tier: tier.id, feature: grant.feature }),
-          );
-        }
-
-        if (grant.resets !== "never") {
-          return Result.fail(new CatalogQuantityResets({ tier: tier.id, feature: grant.feature }));
-        }
-
-        for (const field of ["resetEvery", "carryCap", "moneyCap"] as const) {
-          if (grant[field] !== undefined) {
-            return Result.fail(
-              new CatalogQuantityField({ tier: tier.id, feature: grant.feature, field }),
-            );
-          }
-        }
-
-        if (grant.carryOver === true) {
-          return Result.fail(
-            new CatalogQuantityField({
-              tier: tier.id,
-              feature: grant.feature,
-              field: "carryOver",
-            }),
-          );
-        }
-
-        const quantityPricing = pricingOf(grant);
-
-        if (quantityPricing !== null && quantityPricing._tag !== "unit") {
-          return Result.fail(new CatalogQuantityPricing({ tier: tier.id, feature: grant.feature }));
-        }
-
-        if (grant.overage === "bill" && quantityPricing === null) {
-          return Result.fail(
-            new CatalogQuantityWithoutPrice({ tier: tier.id, feature: grant.feature }),
-          );
-        }
-
-        if (grant.overage !== "bill" && quantityPricing !== null) {
-          return Result.fail(
-            new CatalogPricingWithoutBilling({ tier: tier.id, feature: grant.feature }),
-          );
-        }
-
-        if (
-          grant.cap !== undefined &&
-          typeof grant.included === "number" &&
-          grant.cap < grant.included
-        ) {
-          return Result.fail(new CatalogQuantityCap({ tier: tier.id, feature: grant.feature }));
-        }
-
-        if (grant.prorate !== undefined && grant.overage !== "bill") {
-          return Result.fail(
-            new CatalogQuantityField({ tier: tier.id, feature: grant.feature, field: "prorate" }),
-          );
-        }
-
-        continue;
-      }
-
-      if (grant.prorate !== undefined) {
-        return Result.fail(new CatalogProrateOnMetered({ tier: tier.id, feature: grant.feature }));
-      }
-
-      if (flagFeature && !isFlagGrant(grant)) {
-        return Result.fail(new CatalogFlagNotGranted({ tier: tier.id, feature: grant.feature }));
-      }
-
-      if (!flagFeature && isFlagGrant(grant)) {
-        return Result.fail(new CatalogFlagOnMetered({ tier: tier.id, feature: grant.feature }));
-      }
-
-      // A carry needs something to carry and a boundary to carry it over. A
-      // flag has neither; an allowance that never resets has no boundary, so
-      // the setting would silently do nothing.
-      if (grant.carryOver === true && flagFeature) {
-        return Result.fail(new CatalogCarryOverOnFlag({ tier: tier.id, feature: grant.feature }));
-      }
-
-      // A cap limits what is billed past `included`, so an allowance that never
-      // bills past it cannot have one.
-      if (grant.cap !== undefined && grant.overage !== "bill") {
-        return Result.fail(new CatalogCapWithoutBilling({ tier: tier.id, feature: grant.feature }));
-      }
-
-      // A price prices the billable part, so it needs a bill; a money cap
-      // needs a price to turn units into money.
-      const pricingError = pricingErrorOf(tier, grant.feature, grant);
-
-      if (pricingError !== null) return Result.fail(pricingError);
-
-      if (grant.moneyCap !== undefined && pricingOf(grant) === null) {
-        return Result.fail(
-          new CatalogMoneyCapWithoutUnitPrice({ tier: tier.id, feature: grant.feature }),
-        );
-      }
-
-      if (grant.carryOver === true && grant.resets === "never") {
-        return Result.fail(
-          new CatalogCarryOverNeverResets({ tier: tier.id, feature: grant.feature }),
-        );
-      }
-
-      if (grant.carryOver !== true) {
-        if (grant.carryCap !== undefined) {
-          return Result.fail(
-            new CatalogCarryWithoutCarry({
-              tier: tier.id,
-              feature: grant.feature,
-              field: "carryCap",
-            }),
-          );
-        }
-      }
-
-      if (grant.resetEvery !== undefined && grant.resets === "never") {
-        return Result.fail(new CatalogResetEveryNever({ tier: tier.id, feature: grant.feature }));
-      }
+      if (fault !== null) return Result.fail(fault);
     }
   }
 

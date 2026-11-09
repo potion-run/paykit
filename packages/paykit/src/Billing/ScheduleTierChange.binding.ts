@@ -1,5 +1,6 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
+import type { Allowance } from "../Allowance.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
@@ -20,6 +21,11 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  */
 export interface ScheduleTierChangeRequest {
   readonly tier: string;
+  /**
+   * The plan items the phase freezes, when they differ from the catalog's
+   * defaults (ADR 0041). Omitted means the plan's `grants`.
+   */
+  readonly grants?: ReadonlyArray<Allowance>;
   /** The retry key, which is also the command id. */
   readonly dedupeKey: string;
 }

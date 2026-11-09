@@ -12,6 +12,9 @@ import {
   CatalogCreditGrantInvalid,
   CatalogCreditRateInvalid,
   CatalogCreditRateMissing,
+  CatalogCustomAddOn,
+  CatalogCustomDefaultPlan,
+  CatalogCustomPack,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
   CatalogDuplicateTier,
@@ -37,7 +40,8 @@ import {
   planOf,
 } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
-import { TierId } from "../src/Tier.ts";
+import { Plan, plan } from "../src/Plan.ts";
+import { TierId, type Tier } from "../src/Tier.ts";
 import {
   rawAllowance as allowance,
   rawFeature as feature,
@@ -711,6 +715,90 @@ describe("catalog", () => {
         threshold: 500,
         pack: "credits_1m",
       });
+    }
+  });
+
+  it("accepts a custom plan, and refuses the three shapes it cannot be", () => {
+    // A custom plan is a plan with one extra sentence: its grants are the quote,
+    // not the ceiling (ADR 0041). The sentence cannot apply to a pack (nothing
+    // is granted), an add-on (nothing may stack a bespoke set) or a group's
+    // fallback (which has to be the catalogue's terms).
+    const custom = tier({
+      id: "enterprise",
+      custom: true,
+      price: { amount: 4_000_000, currency: "usd", interval: "annual" },
+      credits: 500_000,
+      grants: [allowance(messages, { included: 150_000 })],
+    });
+
+    const accepted = defineCatalog({ features: [messages], tiers: [custom] });
+    expect(Result.isSuccess(accepted)).toBe(true);
+
+    if (Result.isSuccess(accepted)) {
+      expect(planOf(accepted.success, "enterprise")?.custom).toBe(true);
+    }
+
+    const pack = tier({
+      id: "pack",
+      custom: true,
+      kind: "one_off",
+      price: { amount: 900, currency: "usd", interval: "month" },
+      credits: 100,
+      grants: [],
+    });
+
+    const addOn = tier({
+      id: "rider",
+      custom: true,
+      addOn: true,
+      grants: [allowance(messages, { included: 10 })],
+    });
+
+    const fallback = tier({
+      id: "floor",
+      custom: true,
+      isDefault: true,
+      grants: [allowance(messages, { included: 10 })],
+    });
+
+    const refuses = (declared: Tier, failure: unknown) => {
+      const result = defineCatalog({ features: [messages], tiers: [declared] });
+
+      expect(Result.isFailure(result)).toBe(true);
+
+      if (Result.isFailure(result)) expect(result.failure).toBeInstanceOf(failure as never);
+    };
+
+    refuses(pack, CatalogCustomPack);
+    refuses(addOn, CatalogCustomAddOn);
+    refuses(fallback, CatalogCustomDefaultPlan);
+  });
+
+  it("carries `custom` through the public plan constructor and a variant", () => {
+    const custom = plan({
+      id: "enterprise",
+      custom: true,
+      price: { amount: 4_000_000, currency: "usd", interval: "annual" },
+      grants: [allowance(messages, { included: 150_000 })],
+    });
+
+    expect(Schema.is(Plan)(custom)).toBe(true);
+    expect(custom.custom).toBe(true);
+
+    // A variant inherits the sentence: it is the same negotiated plan at another
+    // price, not a fixed plan that happens to look like one (ADR 0041 §5).
+    const annual = tier({
+      id: "enterprise_annual",
+      variantOf: "enterprise",
+      customize: { price: { amount: 40_000_000, currency: "usd", interval: "annual" } },
+      grants: [],
+    });
+
+    const declared = defineCatalog({ features: [messages], tiers: [custom, annual] });
+    expect(Result.isSuccess(declared)).toBe(true);
+
+    if (Result.isSuccess(declared)) {
+      expect(planOf(declared.success, "enterprise_annual")?.custom).toBe(true);
     }
   });
 });

@@ -33,7 +33,9 @@ Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-s
 the standing: [ADR 0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt`
 became `plans` plus `schedule`, one row per active plan and ordered phases, with the close applying
 the phases due at the boundary. The entity scope is still modelled ahead of its code: `entities.qnt`
-with [ADR 0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md).
+with [ADR 0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md). Custom plans landed beside them
+([ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a plan may declare `custom: true`, and
+a bespoke allowance set travels on the plan command and into the event.
 
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
@@ -334,10 +336,17 @@ service. A console is not one of them: what a library owes is the read model a c
 `Preview`, `List`, `BillingRead`, `AccountEvents` and the timeline are that. The screens themselves
 are the example's job.
 
-- **Per-customer custom plans.** A `PlanChanged` already carries the allowances it granted, so history
-  stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
-  whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
-  is a decision, not code, and it is the one thing here a host cannot do for itself.
+- **Per-customer custom plans — landed.** [ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)
+  makes `custom: true` a catalog opt-in: the plan's `grants` are the quote, and `CatalogGuard` accepts
+  a bespoke set that is structurally valid instead of requiring equality. `Paykit.Attach(account)({
+  planId, grants })`, `previewAttach` and the three plan verbs carry the items; they ride the
+  command, the event and therefore the read model, so replay reproduces a deal and a catalog deploy
+  never rewrites one. A custom plan is base-only (no add-on, no `isDefault`, no pack), and a priced
+  custom plan's *first* activation still cannot cross a hosted checkout
+  (`PlanOperationUnsupported`, reason `custom_plan_checkout`) because the webhook rebuilds the
+  activation from the catalog. The brief is [custom-plans](./briefs/custom-plans.md); what remains
+  is the quoted-terms-carrying provider reference, a bespoke add-on (needs the per-plan balance
+  source) and a negotiated price (a per-account price object, not a plan).
 
 ### 3. The configuration surface
 
