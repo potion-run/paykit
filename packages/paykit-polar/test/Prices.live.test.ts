@@ -87,6 +87,13 @@ const readProduct = (id: string) => DistilledPolar.productsGet({ id }).pipe(Effe
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 
+/**
+ * A unit amount the way Polar reports it: a decimal string at a fixed scale, so
+ * `2` arrives as `"2.000000000000"`. Compared as a number, because the scale is
+ * the vendor's and asserting it would pin an encoding paykit does not choose.
+ */
+const amountOf = (decimal: string): number => Number(decimal);
+
 test.provider.skipIf(!hasToken)(
   "creates the product the catalog states, keeps its identity, and retains a replaced one",
   (stack) =>
@@ -99,7 +106,9 @@ test.provider.skipIf(!hasToken)(
       const productId = first.products.pro;
       const name = productNameOf(stack.stage, "pro");
 
-      expect(productId.startsWith("prod_")).toBe(true);
+      // The id is Polar's, so the test asserts it round-trips rather than
+      // assuming an encoding.
+      expect((yield* readProduct(productId)).id).toBe(productId);
       expect(name).toBe(`paykit:${stack.stage}:pro`);
 
       const created = yield* productNamed(name);
@@ -186,7 +195,7 @@ test.provider.skipIf(!hasToken)(
           }
         | undefined;
 
-      expect(metered?.unit_amount).toBe("2");
+      expect(metered === undefined ? undefined : amountOf(metered.unit_amount)).toBe(2);
       expect(metered?.price_currency).toBe("usd");
 
       const listed = yield* DistilledPolar.metersList({ limit: 100 }).pipe(Effect.provide(live));
@@ -236,12 +245,12 @@ test.provider.skipIf(!hasToken)(
       const tiers = {
         package: {
           price: proPrice,
-          usage: { messages: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
+          usage: { units: { kind: "unit", amount: 500, currency: "usd", units: 1_000 } },
         },
         ladder: {
           price: proPrice,
           usage: {
-            messages: {
+            units: {
               kind: "graduated",
               currency: "usd",
               bands: [
@@ -261,7 +270,7 @@ test.provider.skipIf(!hasToken)(
         | { readonly unit_amount: string }
         | undefined;
 
-      expect(packagePrice?.unit_amount).toBe("0.5");
+      expect(packagePrice === undefined ? undefined : amountOf(packagePrice.unit_amount)).toBe(0.5);
 
       const ladderProduct = yield* readProduct(sold.products.ladder);
 
@@ -280,9 +289,14 @@ test.provider.skipIf(!hasToken)(
 
       expect(ladderPrice?.amount_type).toBe("metered_tiers");
       expect(ladderPrice?.tiers.type).toBe("graduated");
-      expect(ladderPrice?.tiers.tiers).toEqual([
-        { bound: 100, unit_amount: "1" },
-        { bound: null, unit_amount: "2" },
+      expect(
+        ladderPrice?.tiers.tiers.map((band) => ({
+          bound: band.bound ?? null,
+          unit_amount: amountOf(band.unit_amount),
+        })),
+      ).toEqual([
+        { bound: 100, unit_amount: 1 },
+        { bound: null, unit_amount: 2 },
       ]);
 
       const changed = yield* stack.deploy(
@@ -292,8 +306,8 @@ test.provider.skipIf(!hasToken)(
             ladder: {
               ...tiers.ladder,
               usage: {
-                messages: {
-                  ...tiers.ladder.usage.messages,
+                units: {
+                  ...tiers.ladder.usage.units,
                   bands: [
                     { upTo: 100, amount: 1, currency: "usd" },
                     { upTo: "inf", amount: 3, currency: "usd" },

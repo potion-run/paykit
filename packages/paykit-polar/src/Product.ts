@@ -86,7 +86,7 @@ export type Product = Resource<
   "Polar.Product",
   ProductProps,
   {
-    /** Polar product id (`prod_…`). */
+    /** The Polar product id. Its form is Polar's, so nothing here spells it. */
     id: string;
     /** The stage-qualified name, `paykit:<encoded stage>:<encoded tier>`. */
     name: string;

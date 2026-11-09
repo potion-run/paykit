@@ -145,7 +145,7 @@ export const priceDeclarations = (
 
 /** A product the vendor holds, reduced to what the sweep decides on. */
 export interface FoundProduct {
-  /** Polar product id (`prod_…`). */
+  /** The Polar product id the tier is sold as. Its form is Polar's. */
   readonly id: string;
   /** The stage-qualified name, `paykit:<encoded stage>:<encoded tier>`. */
   readonly name: string;
