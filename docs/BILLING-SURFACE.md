@@ -105,8 +105,9 @@ documented billing surface, not a second implementation.
    declare `custom: true`, the guard accepts a structurally valid bespoke set, a hosted checkout
    carries its quote as a pending activation keyed by the provider reference, a custom add-on stacks,
    a negotiated price is the operation's explicit override, and a custom plan may be a group's
-   fallback whose cancellation re-grants the catalog's terms. What remains is the per-plan balance
-   source.
+   fallback whose cancellation re-grants the catalog's terms. The per-plan balance source is in:
+   every active plan is its own `Balance.breakdown` row, and a spend consumes them in plan-set
+   order before a standalone grant.
 4. **Plan versioning / migration** — landed ([ADR
    0047](../adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)): a plan states its
    generation, every row and event records the one it bought, attaching the plan again is an

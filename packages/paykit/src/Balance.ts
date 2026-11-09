@@ -122,8 +122,9 @@ export interface BalanceFeature {
   /** The customer's money ceiling for this feature this period, in minor units. */
   readonly spendLimit?: number;
   /**
-   * The plans that grant this feature, one entry each. A balance reports one
-   * plan source per entry instead of one merged plan count (ADR 0035 §4).
+   * The plans that grant this feature, one entry each, in the plan set's read
+   * order. A balance reports one plan source per entry instead of one merged
+   * plan count, and a spend consumes them in that order (ADR 0035 §4).
    */
   readonly planSources?: ReadonlyArray<{
     readonly planId: string;
@@ -172,6 +173,28 @@ export interface BalancePlan {
   /** The scope this balance answers for; absent means the customer's own. */
   readonly scope?: ScopeRef;
 }
+
+/**
+ * Split what remains across the plan sources in the plan set's order. Each
+ * source starts with its grant, and the deficit between the grants and what is
+ * left is charged to the first source, then the next: a spend consumes a plan
+ * source before it reaches a later one. A source with no count stays `null`.
+ */
+const remainingByPlanSource = (
+  granted: ReadonlyArray<number | null>,
+  remaining: number,
+): ReadonlyArray<number | null> => {
+  let deficit = granted.reduce<number>((total, value) => total + (value ?? 0), -remaining);
+
+  return granted.map((value) => {
+    if (value === null) return null;
+
+    const consumed = Math.min(value, Math.max(0, deficit));
+    deficit -= consumed;
+
+    return value - consumed;
+  });
+};
 
 /**
  * A feature's balance, from one feature row. One derivation, used by `check`,
@@ -273,30 +296,40 @@ export const balanceOfFeature = (
     const planRows = feature.planSources ?? [];
     const remainingTotal = Math.max(0, feature.remaining ?? 0);
 
-    let purchasedLeft = purchased;
-    let remainingLeft = remainingTotal;
-
     const sources: Array<BalanceSource> =
       planRows.length === 0
         ? [planSource(featureId, feature, tier, purchased, feature.remaining, occupied, scope)]
-        : planRows.map((row, index) => {
-            const included = typeof row.included === "number" ? row.included : 0;
-            const last = index === planRows.length - 1;
-            const granted = last ? purchasedLeft : Math.min(purchasedLeft, included);
-            const remaining = last ? remainingLeft : Math.min(remainingLeft, Math.max(0, granted));
-            purchasedLeft -= granted;
-            remainingLeft -= remaining;
+        : (() => {
+            let purchasedLeft = purchased;
 
-            return planSource(
-              featureId,
-              { ...feature, resets: row.resets ?? feature.resets },
-              row.planId,
-              granted,
-              remaining,
-              granted - remaining,
-              scope,
-            );
-          });
+            const grantedRows = planRows.map((row, index) => {
+              const included = typeof row.included === "number" ? row.included : 0;
+              const last = index === planRows.length - 1;
+              const granted = last ? purchasedLeft : Math.min(purchasedLeft, included);
+              purchasedLeft -= granted;
+
+              return granted;
+            });
+
+            // The plan set's order is also the order occupancy consumes: the
+            // first source is filled before the next one is touched.
+            const remainingRows = remainingByPlanSource(grantedRows, remainingTotal);
+
+            return planRows.map((row, index) => {
+              const granted = grantedRows[index] ?? 0;
+              const remaining = remainingRows[index] ?? 0;
+
+              return planSource(
+                featureId,
+                { ...feature, resets: row.resets ?? feature.resets },
+                row.planId,
+                granted,
+                remaining,
+                granted - remaining,
+                scope,
+              );
+            });
+          })();
 
     return {
       customerId,
@@ -336,17 +369,21 @@ export const balanceOfFeature = (
         ? []
         : [{ planId: tier, included: feature.included ?? null }];
 
-  let remainingLeft = planRemaining ?? 0;
+  const grantedRows = planRows.map((row) =>
+    typeof row.included === "number" ? row.included : null,
+  );
+
+  // Spend the plans in the plan set's order: the first source a plan grants is
+  // consumed before the next one, and every source before a standalone grant
+  // (ADR 0035 §4). An unlimited feature has no count on any source.
+  const remainingRows =
+    planRemaining === null
+      ? grantedRows.map(() => null)
+      : remainingByPlanSource(grantedRows, planRemaining);
 
   const planSources: Array<BalanceSource> = planRows.map((row, index) => {
-    const included = row.included;
-    const last = index === planRows.length - 1;
-    const granted = typeof included === "number" ? included : null;
-
-    const remaining =
-      granted === null ? null : last ? remainingLeft : Math.min(remainingLeft, granted);
-
-    if (remaining !== null) remainingLeft -= remaining;
+    const granted = grantedRows[index] ?? null;
+    const remaining = remainingRows[index] ?? null;
 
     return planSource(
       featureId,

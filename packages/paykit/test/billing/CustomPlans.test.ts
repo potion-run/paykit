@@ -477,7 +477,7 @@ describe("a bespoke add-on", () => {
       expect(row?.plans.rider?.addOn).toBe(true);
       expect(row?.plans.rider?.allowances.seats?.included).toBe(5);
       // The base plan is untouched and both sources are spendable beside each
-      // other; a per-plan breakdown is the read-model follow-up (ADR 0042 §2).
+      // other; each plan reports its own breakdown row (ADR 0042 §2).
       expect(row?.plans.free?.allowances.messages?.included).toBe(100);
       expect(row?.allowances.messages?.included).toBe(100);
       expect(row?.allowances.seats?.included).toBe(5);

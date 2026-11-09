@@ -131,8 +131,9 @@ balance. A close that ends the standing (`canceled` or `expired`) opens no furth
 period, and `EnterGrace` is refused once the standing is terminal.
 
 - A balance is a list of sources ([ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md)).
-  `Balance.breakdown` reports the plan, the rollover and every standalone grant. A spend takes
-  from the plan and rollover before a grant, and an expiring grant before a lifetime one. A grant
+  `Balance.breakdown` reports one plan source per active plan, the rollover and every standalone
+  grant. A spend takes from the plan sources in plan-set order, then the rollover, then a grant, and
+  an expiring grant before a lifetime one. A grant
   is customer state, not plan data: `GrantBalance` writes `BalanceGranted`, `BalanceExpiry`
   schedules `ExpireGrant` at `expiresAt`, and a close or plan change leaves every grant alone.
   `balances.create` is the binding; a resetting standalone grant is an add-on plan item (Phase 5).

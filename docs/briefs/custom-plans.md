@@ -55,8 +55,9 @@ ADR 0042 closes the three gaps this brief left open:
   set. A custom plan with no quote is `PendingActivationMissing`; a quote for another plan is
   `PendingActivationStale`. `custom_plan_checkout` is gone.
 - **Bespoke add-ons.** `custom: true` with `addOn: true` is accepted, and a custom add-on stacks
-  through the ordinary attach path. `CatalogCustomAddOn` is gone. `Balance.breakdown` still reports
-  the merged plan source until the per-plan balance source lands; that is the read-model follow-up.
+  through the ordinary attach path. `CatalogCustomAddOn` is gone. The per-plan balance source landed
+  beside it: each plan is its own `Balance.breakdown` row, and a spend consumes them in plan-set
+  order.
 - **A negotiated price.** `price` is optional on the attach, preview and plan-verb requests, and the
   guard accepts it on a custom plan as the explicit override. The event already carries it
   (`SubscriptionActivated.price`, `PlanChanged.priceAfter`, `PlanChangeScheduled.price`). A first
@@ -74,12 +75,14 @@ ADR 0042 closes the three gaps this brief left open:
   `Payments.createCheckout` returns the vendor reference, `WebhookEvent` names it, and a completion
   that names no quote while several are held is `PendingActivationAmbiguous` (409).
 
-What remains is the per-plan balance source (so a stacked bespoke item has its own breakdown row and
-one feature's two spend shapes are refused rather than merged).
+The per-plan balance source landed with it: a stacked bespoke item has its own
+`Balance.breakdown` row, a spend consumes the plan sources in plan-set order before a standalone
+grant, and a second add-on adds its grant to the feature instead of resetting the balance. A
+feature's spend path still reads the one merged plan item.
 
-Tests: `test/billing/CustomPlans.test.ts`, `test/catalog/Guard.test.ts`, `test/Catalog.test.ts`,
-`test/Types.test.ts`, `test/subscribe/Subscribe.test.ts`, and the vendor packages'
-`test/Webhooks.test.ts` files.
+Tests: `test/billing/CustomPlans.test.ts`, `test/billing/CustomBalance.test.ts`,
+`test/catalog/Guard.test.ts`, `test/Catalog.test.ts`, `test/Types.test.ts`,
+`test/subscribe/Subscribe.test.ts`, and the vendor packages' `test/Webhooks.test.ts` files.
 
 ## Target surface
 
@@ -191,7 +194,7 @@ behaviour and the quantity rules are the ones the event recorded.
 | Rule | Tag | Why |
 | --- | --- | --- |
 | `custom` on a `kind: "one_off"` pack | `CatalogCustomPack` | a pack grants nothing, so nothing is bespoke |
-| `custom` with `addOn: true` | accepted | it is a custom plan that stacks; the read model's per-plan source is a follow-up (ADR 0042 §2) |
+| `custom` with `addOn: true` | accepted | it is a custom plan that stacks; each plan is its own `Balance.breakdown` source (ADR 0042 §2) |
 | `custom` with `isDefault: true` | accepted | a fallback is still the catalogue's terms: `defaultPlanFor` resolves `planTermsOf`, so a cancellation never re-grants a bespoke set (ADR 0043) |
 | `addOn: true` with `isDefault: true` | `CatalogDefaultOnAddOn` | an add-on fills no group, so it can never be a fallback (ADR 0043) |
 | a variant of a custom plan | `custom` inherited, `isDefault` not | `mergeVariant` keeps the base's `custom` and drops the base's `isDefault`; a variant of a non-custom base cannot add `custom` (ADR 0043) |
@@ -220,6 +223,7 @@ behaviour and the quantity rules are the ones the event recorded.
 | a custom fallback re-grants the catalog's terms | `test/billing/CustomPlans.test.ts` | the frozen `fallback` row and the boundary carry the floor's grants, price and credits (ADR 0043) |
 | a negotiated price on a checkout and on a move | `test/billing/CustomPlans.test.ts` | `pendingActivations[reference].price`, `state.plans[id].price`, `PlanChanged.priceAfter` |
 | a bespoke add-on stacks beside the base plan | `test/billing/CustomPlans.test.ts` | `PlanChanged.addOn`, both plan rows, the merged allowances |
+| two bespoke add-ons grant one feature | `test/billing/CustomBalance.test.ts` | one `Balance.breakdown` row per plan, a spend consumes them in plan-set order, and `check` / `allowed` agree |
 | replay reproduces the deal | `test/billing/CustomPlans.test.ts` | folding `AccountEvents` rebuilds the same plan row |
 | a wire caller gets the same guard | `test/Api.test.ts` | `BillingApi.clientInProcess` `ChangeTier` with bespoke items, and the refusal for an undeclared feature |
 
