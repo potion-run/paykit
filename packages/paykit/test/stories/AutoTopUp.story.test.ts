@@ -33,6 +33,7 @@ import {
   PurchaseCredits,
 } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { TopUpFailed } from "../../src/Subscription/RecordTopUpFailure.command.ts";
+import { TopUpRetryDue } from "../../src/Subscription/RetryTopUp.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TopUpCooldownCleared } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
@@ -47,6 +48,16 @@ const plan = tier({
   price,
   credits: 2_000,
   topUp: { threshold: 1_000 },
+  grants: [allowance(messages, { included: 100 })],
+});
+
+// The same plan with a budget: a refused refill is tried once more, an hour
+// after the attempt that failed (ADR 0031).
+const retrying = tier({
+  id: "retrying",
+  price,
+  credits: 2_000,
+  topUp: { threshold: 1_000, retry: { attempts: 1, every: Duration.hours(1) } },
   grants: [allowance(messages, { included: 100 })],
 });
 
@@ -80,12 +91,13 @@ const smallPack = tier({
 const testCatalog = Effect.runSync(
   catalog({
     features: [messages, ai],
-    tiers: [plan, plain, pack, smallPack],
+    tiers: [plan, retrying, plain, pack, smallPack],
   }),
 );
 
 const terms = allowancesOf(testCatalog, "plan")!;
 const rates = creditRatesOf(testCatalog);
+const retryingTerms = allowancesOf(testCatalog, "retrying")!;
 const account = Subscription.ref("acct_auto_top_up");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -151,6 +163,42 @@ const subscribedPlain = [
       remaining: { messages: 100 },
       credits: 2_000,
       creditsExpire: "period",
+      rates,
+      periodStart: start,
+      periodEnd: monthLater,
+      anchorTz: "UTC",
+      interval: "month",
+      currency: "usd",
+      price,
+      statusAfter: "active",
+    }),
+  ),
+] as const;
+
+const subscribedRetrying = [
+  Story.provide(Actor, system("test")),
+  Story.clock(start),
+  Story.when(
+    account,
+    new Subscribe({
+      tier: "retrying",
+      allowances: retryingTerms,
+      price,
+      credits: 2_000,
+      creditsExpire: "period",
+      topUp: { threshold: 1_000, retry: { attempts: 1, every: Duration.hours(1) } },
+      rates,
+    }),
+  ),
+  Story.then(
+    account,
+    new SubscriptionActivated({
+      tier: "retrying",
+      allowances: retryingTerms,
+      remaining: { messages: 100 },
+      credits: 2_000,
+      creditsExpire: "period",
+      topUp: { threshold: 1_000, retry: { attempts: 1, every: Duration.hours(1) } },
       rates,
       periodStart: start,
       periodEnd: monthLater,
@@ -597,6 +645,7 @@ it.effect(
           provider: "stripe",
           reason: "PaymentDeclined",
           at: start,
+          attempt: 1,
           commandId: topUpFailureCommandId(account.id, 2),
         }),
       ),
@@ -883,5 +932,102 @@ it.effect("buys the pack and honours the bound the tier states, not the deployme
     ),
     Story.view(Entitlements, account, { credits: 600 }),
     Story.view(BillingState, account, { topUp: pickyLine }),
+  );
+});
+
+it.effect("retries a refused refill on the tier's budget, and the retry lands", () => {
+  const declined = new PaymentDeclined({
+    provider: "stripe",
+    code: "card_declined",
+    message: "the card was declined",
+  });
+
+  // The first attempt refuses on both legs; the second, an hour later, is the
+  // card that worked. A mutable counter is what makes one story contain both.
+  let attempts = 0;
+
+  const processor = PaymentsStripe({
+    bindings: {
+      createCheckoutSession: () => Effect.succeed({ url: "https://checkout.test" }),
+      createCustomerSession: () => Effect.succeed({ url: "https://portal.test" }),
+      charge: () => {
+        attempts += 1;
+
+        return attempts === 1 ? Effect.fail(declined) : Effect.succeed({ chargeId: "ch_retry" });
+      },
+      createInvoice: () => Effect.fail(declined),
+    },
+  });
+
+  return storyWith(processor, { pack: "pack" })(
+    ...subscribedRetrying,
+    Story.when(account, new TrackUsage({ feature: "ai", amount: 1_500 })),
+    Story.then(
+      account,
+      new UsageRecorded({
+        feature: "ai",
+        amount: 1_500,
+        cost: 1_500,
+        creditsAfter: 500,
+        usedAfter: 1_500,
+        remainingAfter: 500,
+      }),
+    ),
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.failed(Payments.charge, declined),
+    Story.call(Payments.createInvoice, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 2),
+    }),
+    Story.failed(Payments.createInvoice, declined),
+    Story.then(
+      account,
+      new TopUpFailed({
+        tier: "pack",
+        price: pack.price!,
+        provider: "stripe",
+        reason: "PaymentDeclined",
+        at: start,
+        attempt: 1,
+        commandId: topUpFailureCommandId(account.id, 2),
+      }),
+    ),
+    // The page says the policy is on its last attempt rather than that it gave
+    // up, which is the difference ADR 0031 exists to make visible.
+    Story.view(BillingState, account, { topUpAttempts: 1 }),
+    // The tier's budget is one retry, an hour after the attempt that failed.
+    Story.clock(DateTime.add(start, { hours: 1 })),
+    Story.then(account, new TopUpRetryDue({ attempt: 1 })),
+    // The rung is a new attempt, so it is a new purchase with its own id.
+    Story.call(Payments.charge, {
+      account: account.id,
+      amount: 4_900,
+      currency: "usd",
+      commandId: topUpCommandId(account.id, 4),
+    }),
+    Story.returned(Payments.charge, { chargeId: "ch_retry" }),
+    Story.then(
+      account,
+      new CreditsPurchased({
+        tier: "pack",
+        amount: 5_000,
+        price: pack.price!,
+        rates,
+        chargeId: "ch_retry",
+        balanceAfter: 5_500,
+        prepaidAfter: 5_000,
+      }),
+    ),
+    // A purchase makes good on the failure and starts the budget over, so the
+    // page stops reporting the attempt it spent.
+    Story.view(BillingState, account, { topUpAttempts: 0 }),
+    Story.view(Entitlements, account, { credits: 5_500 }),
   );
 });

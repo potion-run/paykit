@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -214,6 +215,16 @@ export class CatalogUnknownTopUpPack extends Schema.TaggedError<CatalogUnknownTo
   { tier: Schema.String, pack: Schema.String },
 ) {}
 
+/**
+ * A tier's top-up line states a retry budget that cannot be waited out. A zero
+ * `every` would schedule every rung at the failure's own instant, which is a
+ * loop against a provider rather than a retry.
+ */
+export class CatalogTopUpRetryInvalid extends Schema.TaggedError<CatalogTopUpRetryInvalid>()(
+  "CatalogTopUpRetryInvalid",
+  { tier: Schema.String },
+) {}
+
 /** A unit price where nothing is billed. A unit price only prices an overage. */
 export class CatalogUnitPriceWithoutBilling extends Schema.TaggedError<CatalogUnitPriceWithoutBilling>()(
   "CatalogUnitPriceWithoutBilling",
@@ -414,6 +425,7 @@ export const CatalogError = Schema.Union([
   CatalogOneOffWithoutPrice,
   CatalogTopUpOnPack,
   CatalogUnknownTopUpPack,
+  CatalogTopUpRetryInvalid,
   CatalogUnitPriceWithoutBilling,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
@@ -857,6 +869,14 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
 
     if (topUpPack !== undefined && !packs.has(topUpPack)) {
       return Result.fail(new CatalogUnknownTopUpPack({ tier: tier.id, pack: topUpPack }));
+    }
+
+    // A retry budget a deployment cannot wait out is a loop: `every` has to be a
+    // positive duration, or the rung is due at the failure's own instant.
+    const retry = tier.topUp?.retry;
+
+    if (retry !== undefined && Duration.toMillis(retry.every) <= 0) {
+      return Result.fail(new CatalogTopUpRetryInvalid({ tier: tier.id }));
     }
 
     // A price may be sold in several currencies, but each one is stated once,

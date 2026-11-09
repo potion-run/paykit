@@ -292,9 +292,14 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "TopUpRetryDue",
+    body: body({ attempt: 1 }),
+  },
+  {
     tag: "TopUpFailed",
     body: body({
       tier: "credits_100k",
+      attempt: 1,
       price: { amount: 4_900, currency: "usd", interval: "month" },
       provider: "stripe",
       reason: "PaymentDeclined",

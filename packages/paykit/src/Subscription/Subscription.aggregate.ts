@@ -85,6 +85,7 @@ import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.t
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
 import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
+import { RetryTopUp, TopUpRetryDue } from "./RetryTopUp.command.ts";
 import {
   RefundNotFound,
   RefundReversed,
@@ -150,6 +151,8 @@ import {
   resetOf,
   resetOfFeature,
   standingOf,
+  topUpAttemptsOf,
+  topUpOf,
   statusOf,
   SubscriptionState,
   usedOf,
@@ -585,6 +588,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     Refund,
     ReverseRefund,
     RecordTopUpFailure,
+    RetryTopUp,
     TopUpCooldownElapsed,
     ConsumeCredits,
     ScheduleCancellation,
@@ -1481,8 +1485,32 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           reason: command.reason,
           at: now,
           commandId,
+          // The count lives on the standing so a replay reproduces it, and a
+          // failure is the only thing that moves it.
+          attempt: topUpAttemptsOf(state) + 1,
         }),
       ];
+    },
+    RetryTopUp: (state, command) => {
+      // A retry is only worth recording where it can still be acted on, and
+      // every guard here is a way the rung went stale: the standing ended, the
+      // line moved, the pool recovered, a cooldown took over, or the count says
+      // a success or a newer failure already happened (ADR 0031).
+      if (state._tag !== "Subscribed") return [];
+
+      if (isTerminalStatus(state.status)) return [];
+
+      const line = topUpOf(state);
+
+      if (line === null) return [];
+
+      if (topUpAttemptsOf(state) !== command.attempt) return [];
+
+      if (state.topUpCooldownUntil !== undefined) return [];
+
+      if (creditsOf(state) > line.threshold) return [];
+
+      return [new TopUpRetryDue({ attempt: command.attempt })];
     },
     ReverseRefund: (state, command, { commandId }) => {
       // A non-positive reversal records nothing, like every other money command.
@@ -1929,11 +1957,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
 
       // A purchase is the refill that was owed, so the standing stops reporting
-      // a failure it has since made good on (ADR 0027).
+      // a failure it has since made good on, and the budget starts over: the
+      // retries it spent bought this pack (ADR 0027, ADR 0031).
       const { topUpFailure: _madeGood, ...rest } = state;
 
       return {
         ...rest,
+        topUpAttempts: 0,
         credits: event.balanceAfter,
         prepaidCredits: event.prepaidAfter,
         ...(charged === undefined ? {} : { charged }),
@@ -1957,6 +1987,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       state._tag === "Subscribed"
         ? {
             ...state,
+            topUpAttempts: event.attempt,
             topUpFailure: {
               tier: event.tier,
               ...(event.price === undefined ? {} : { price: event.price }),
@@ -1974,6 +2005,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       refunded: refundedWith(state, event.currency, event.refundedAfter),
       refunds: reversedWith(state.refunds, event.refundId, event.amount),
     }),
+    // A rung that fired is a trigger, not a counter: the attempt it becomes is
+    // recorded by the purchase or the failure that follows it.
+    TopUpRetryDue: (state) => state,
     TopUpCooldownCleared: (state) => {
       if (state._tag !== "Subscribed" || state.topUpCooldownUntil === undefined) return state;
       const { topUpCooldownUntil: _cleared, ...rest } = state;
@@ -2034,6 +2068,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             },
             cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
             lastClosedPeriodStart: event.periodStart,
+            // The period reset the pool, so a failure from the last one is not
+            // this account's current problem and its budget is spent.
+            topUpAttempts: 0,
           }
         : state,
     AllowanceReset: (state, event) => {

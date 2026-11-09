@@ -125,6 +125,7 @@ export {
   CatalogOneOffWithoutPrice,
   CatalogTopUpOnPack,
   CatalogUnknownTopUpPack,
+  CatalogTopUpRetryInvalid,
   CatalogMoneyCapWithoutUnitPrice,
   CatalogUnitPriceCurrency,
   CatalogUnitPriceWithoutBilling,
@@ -726,6 +727,11 @@ export {
   RecordTopUpFailure as RecordTopUpFailureCommand,
   TopUpFailed,
 } from "./Subscription/RecordTopUpFailure.command.ts";
+
+export {
+  RetryTopUp as RetryTopUpCommand,
+  TopUpRetryDue,
+} from "./Subscription/RetryTopUp.command.ts";
 
 export {
   Refund as RefundCommand,

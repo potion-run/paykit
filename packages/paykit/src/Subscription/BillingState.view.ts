@@ -66,6 +66,12 @@ export const BillingStateView = Schema.Struct({
    */
   topUpFailure: Schema.optionalKey(TopUpFailureRecord),
   /**
+   * How many refills in a row a provider has refused. With the tier's budget it
+   * is the sentence "failed twice, one attempt left"; without it an operator
+   * cannot tell a policy that is still trying from one that gave up (ADR 0031).
+   */
+  topUpAttempts: Schema.optionalKey(Schema.Int),
+  /**
    * Money this account was charged, per currency, in minor units. With
    * `refunded` it is what a console offers to send back: "charged 4,900,
    * refunded 0" is one sentence, and `Refund` caps itself by it.
@@ -347,12 +353,13 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, credits: event.balanceAfter }, context),
     CreditsPurchased: (view, event, context): BillingStateView => {
       // A purchase is the refill that was owed, so the page stops reporting the
-      // failure it makes good on (ADR 0027).
+      // failure it makes good on and the budget starts over (ADR 0027, ADR 0031).
       const { topUpFailure: _madeGood, ...rest } = view;
 
       return withAccount(
         {
           ...rest,
+          topUpAttempts: 0,
           credits: event.balanceAfter,
           ...(event.price === undefined
             ? {}
@@ -366,6 +373,7 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount(
         {
           ...view,
+          topUpAttempts: event.attempt,
           topUpFailure: {
             tier: event.tier,
             ...(event.price === undefined ? {} : { price: event.price }),
@@ -376,6 +384,9 @@ export class BillingState extends Domain.View("BillingState", {
         },
         context,
       ),
+    // The rung itself changes nothing a page shows; the attempt it becomes is
+    // recorded by the purchase or the failure that follows it.
+    TopUpRetryDue: (view, _event, context): BillingStateView => withAccount(view, context),
     TopUpCooldownCleared: (view, _event, context): BillingStateView => {
       const { topUpCooldownUntil: _cleared, ...rest } = view;
 

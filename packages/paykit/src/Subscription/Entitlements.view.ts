@@ -730,6 +730,10 @@ export class Entitlements extends Domain.View("Entitlements", {
     // A refill that could not be bought moved no credit: the pool and every
     // counter are exactly where the crossing left them. The view still emits it
     // so the read-model projection sees the whole log.
+    // A rung is a trigger the policy acts on: it grants nothing and moves no
+    // counter, but the view emits it so the read-model projection sees the
+    // whole log (ADR 0031).
+    TopUpRetryDue: (view, _event, context): EntitlementsState => withAccount(view, context),
     TopUpFailed: (view, _event, context): EntitlementsState => withAccount(view, context),
     // Money going back is not an entitlement: the pool and every counter are
     // untouched (revoking credits is a separate `ConsumeCredits`). The view

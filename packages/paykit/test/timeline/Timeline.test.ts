@@ -314,6 +314,7 @@ it("renders a refill that could not be bought as its own entry, with no money on
         provider: "stripe",
         reason: "PaymentDeclined",
         at: start,
+        attempt: 1,
         commandId: "topup-failed:acct:2",
       }),
     ),

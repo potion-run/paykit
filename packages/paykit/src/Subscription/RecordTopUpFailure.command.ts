@@ -29,6 +29,12 @@ export class TopUpFailed extends Domain.Event("TopUpFailed", {
   reason: Schema.String,
   /** When the crossing gave up. */
   at: Schema.DateTimeUtc,
+  /**
+   * Which attempt this was, counting the crossing's own: `1` is the first
+   * failure of the episode. It is what a scheduled retry compares itself to, so
+   * a success or a newer failure makes an old deadline a no-op (ADR 0031).
+   */
+  attempt: Schema.Int,
   /** The crossing that failed, so an operator can tie it to the spend. */
   commandId: Schema.String,
 }) {}

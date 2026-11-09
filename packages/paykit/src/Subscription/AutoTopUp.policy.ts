@@ -15,8 +15,15 @@ import type { Price, TopUpTerms } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
 import { RecordTopUpFailure } from "./RecordTopUpFailure.command.ts";
+import { RetryTopUp, TopUpRetryDue } from "./RetryTopUp.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
-import { creditsOf, standingTierOf, topUpCooldownOf, topUpOf } from "./Subscription.state.ts";
+import {
+  creditsOf,
+  standingTierOf,
+  topUpAttemptsOf,
+  topUpCooldownOf,
+  topUpOf,
+} from "./Subscription.state.ts";
 import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
 import { UsageRecorded } from "./TrackUsage.command.ts";
 
@@ -254,6 +261,14 @@ export const topUpCooldownCommandId = (account: string, seq: number): string =>
 export const topUpFailureCommandId = (account: string, seq: number): string =>
   `topup-failed:${account}:${seq}`;
 
+/**
+ * The id of the rung a failure schedules. Derived from the attempt that failed,
+ * so a redelivered crossing schedules the same deadline rather than one per
+ * pass, and two failures cannot share a rung.
+ */
+export const topUpRetryCommandId = (account: string, seq: number): string =>
+  `topup-retry:${account}:${seq}`;
+
 /** The tag of a provider's refusal, for a record an operator can match. */
 const failureTag = (error: unknown): string => {
   // SAFETY: the port's failures are tagged errors, and a value that is not one
@@ -294,7 +309,7 @@ const failureTag = (error: unknown): string => {
  */
 export class AutoTopUp extends Domain.Policy("AutoTopUp", {
   from: Subscription,
-  on: [UsageRecorded, CreditsConsumed, TopUpCooldownCleared],
+  on: [UsageRecorded, CreditsConsumed, TopUpCooldownCleared, TopUpRetryDue],
 }) {}
 
 export const AutoTopUpLive = AutoTopUp.toLayer(
@@ -335,7 +350,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // but the policy runs later, and a pool that has recovered means this
       // pass is a redelivery rather than a new need.
       const due =
-        event._tag === "TopUpCooldownCleared"
+        event._tag === "TopUpCooldownCleared" || event._tag === "TopUpRetryDue"
           ? creditsOf(standing) <= threshold
           : crossedThreshold(event, threshold);
 
@@ -478,6 +493,25 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
             { commandId: topUpFailureCommandId(key.id, envelope.seq) },
           ),
         ).pipe(Effect.catchCause(() => Effect.void));
+
+        // The failure is on the log, so the account is still under its line and
+        // the crossing cannot happen a second time on its own. The tier's budget
+        // is what tries again: one rung per failure, `every` after the attempt's
+        // own commit time so a redelivery schedules the same deadline, while the
+        // failures so far are fewer than the retries the tier allows (ADR 0031).
+        const retry = line.retry;
+        const attempt = topUpAttemptsOf(standing) + 1;
+
+        if (retry !== undefined && attempt <= retry.attempts) {
+          // The rung is an `Admin` command, so scheduling it is the system
+          // acting, exactly as the failure above is.
+          yield* asSystem(
+            subscriptions.schedule(key, new RetryTopUp({ attempt }), {
+              at: DateTime.addDuration(envelope.at, retry.every),
+              commandId: topUpRetryCommandId(key.id, envelope.seq),
+            }),
+          ).pipe(Effect.catchTag("AlreadyExecuted", () => Effect.void));
+        }
       }
     });
   }),

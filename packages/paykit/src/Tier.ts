@@ -80,12 +80,25 @@ export const TopUpPackId = Schema.String.pipe(Schema.check(Schema.isMinLength(1)
 export type TopUpPackId = typeof TopUpPackId.Type;
 
 /**
+ * A budget for refills a provider would not collect: `attempts` retries after
+ * the first attempt, each `every` after the failure it follows.
+ */
+export const TopUpRetry = Schema.Struct({
+  /** Retries after the first attempt. `3` is four provider calls at most. */
+  attempts: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** The wait before each retry, measured from the failure it follows. */
+  every: Schema.Duration,
+});
+
+export type TopUpRetry = typeof TopUpRetry.Type;
+
+/**
  * A tier's whole auto top-up line: when to refill, how often, and with what.
  *
- * The three travel together because they are one sentence — "refill below
- * 5,000 credits from the 100k pack, at most hourly" — and a deployment that
- * could state one without the others would refill an enterprise pool with a
- * free tier's pack.
+ * They travel together because they are one sentence — "refill below 5,000
+ * credits from the 100k pack, at most hourly, three times if it fails" — and a
+ * deployment that could state one without the others would refill an enterprise
+ * pool with a free tier's pack.
  */
 export const TopUpTerms = Schema.Struct({
   /** Credits at or below which a spend on this tier is a crossing. */
@@ -101,6 +114,11 @@ export const TopUpTerms = Schema.Struct({
    * the deployment named as its default.
    */
   pack: Schema.optionalKey(TopUpPackId),
+  /**
+   * How many times a failed refill is tried again, and how long to wait. Absent,
+   * a failure is recorded and left alone (ADR 0031).
+   */
+  retry: Schema.optionalKey(TopUpRetry),
 });
 
 export type TopUpTerms = typeof TopUpTerms.Type;
@@ -117,6 +135,11 @@ export interface TopUpTermsInput {
   readonly cooldown?: Duration.Duration;
   /** The `kind: "one_off"` pack this tier buys, by id. */
   readonly pack?: string;
+  /** How many times a failed refill is retried, and how long to wait. */
+  readonly retry?: {
+    readonly attempts: number;
+    readonly every: Duration.Duration;
+  };
 }
 
 /**
@@ -271,6 +294,9 @@ const topUpTermsOf = (input: TopUpTermsInput): TopUpTerms => ({
   threshold: input.threshold,
   ...(input.cooldown === undefined ? {} : { cooldown: input.cooldown }),
   ...(input.pack === undefined ? {} : { pack: input.pack }),
+  ...(input.retry === undefined
+    ? {}
+    : { retry: { attempts: input.retry.attempts, every: input.retry.every } }),
 });
 
 /**

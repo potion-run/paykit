@@ -299,6 +299,13 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    */
   topUpFailure: Schema.optionalKey(TopUpFailureRecord),
   /**
+   * How many refills in a row the provider has refused, since the last one that
+   * landed or the last time the line was re-established. It is what a scheduled
+   * retry compares itself to, so an old deadline cannot charge a card the
+   * budget already spent (ADR 0031).
+   */
+  topUpAttempts: Schema.Int,
+  /**
    * Money this account was charged, per currency: a fold of `PaymentRecorded`,
    * `CreditsPurchased.price` and `ProrationInvoiced`. It is the ceiling a
    * refund is measured against (ADR 0019).
@@ -488,6 +495,10 @@ export const standingTierOf = (state: SubscriptionState): string | null =>
  */
 export const topUpFailureOf = (state: SubscriptionState): TopUpFailureRecord | null =>
   state._tag === "Subscribed" ? (state.topUpFailure ?? null) : null;
+
+/** How many refills in a row a provider has refused. Absent state is none. */
+export const topUpAttemptsOf = (state: SubscriptionState): number =>
+  state._tag === "Subscribed" ? state.topUpAttempts : 0;
 
 /**
  * The deadline a top-up cooldown ends at, or `null` when one is not open. Only a

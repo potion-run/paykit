@@ -316,4 +316,6 @@ export const standingFrom = (
     trialUsed: options.trialUsed,
     dedupeKeys: {},
     dunningAttempts: 0,
+    // A new standing has no failed refills behind it (ADR 0031).
+    topUpAttempts: 0,
   }) satisfies SubscribedState;

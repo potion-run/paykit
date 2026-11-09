@@ -20,10 +20,12 @@ import {
   RecordTopUpFailure,
   TopUpFailed,
 } from "../../src/Subscription/RecordTopUpFailure.command.ts";
+import { RetryTopUp } from "../../src/Subscription/RetryTopUp.command.ts";
 import {
   initialSubscriptionState,
   topUpCooldownOf,
   topUpFailureOf,
+  type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import {
   TopUpCooldownCleared,
@@ -501,5 +503,106 @@ describe("the pack and the bound a standing's line selects", () => {
       if (!isAccepted(moved)) return;
       expect(topUpFailureOf(evolveAt(failed, moved, start, "move"))).not.toBeNull();
     });
+  });
+});
+
+describe("the retry budget", () => {
+  const hour = DateTime.add(start, { hours: 1 });
+
+  /** A standing under its line, with the count and cooldown a test needs. */
+  const standing = (over: Partial<SubscribedState> = {}): SubscribedState => ({
+    ...subscribedAt("pro"),
+    topUp: { threshold: 1_000 },
+    topUpAttempts: 0,
+    credits: 500,
+    ...over,
+  });
+
+  it("records a rung only while the attempt it names is still the standing's", () => {
+    const live = decideAt(
+      standing({ topUpAttempts: 1 }),
+      new RetryTopUp({ attempt: 1 }),
+      start,
+      "rung",
+    );
+
+    expect(isAccepted(live) && live.map((event) => event._tag)).toEqual(["TopUpRetryDue"]);
+
+    // A success or a newer failure moved the count, so the rung is stale.
+    const stale = decideAt(
+      standing({ topUpAttempts: 2 }),
+      new RetryTopUp({ attempt: 1 }),
+      start,
+      "rung",
+    );
+
+    expect(isAccepted(stale) && stale).toEqual([]);
+  });
+
+  it("records nothing for a pool that recovered, a cooldown, or no line", () => {
+    const recovered = decideAt(
+      standing({ credits: 5_000 }),
+      new RetryTopUp({ attempt: 0 }),
+      start,
+      "rung",
+    );
+
+    expect(isAccepted(recovered) && recovered).toEqual([]);
+
+    const cooling = decideAt(
+      standing({ topUpCooldownUntil: hour }),
+      new RetryTopUp({ attempt: 0 }),
+      start,
+      "rung",
+    );
+
+    expect(isAccepted(cooling) && cooling).toEqual([]);
+
+    const noLine = decideAt(
+      standing({ topUp: undefined }),
+      new RetryTopUp({ attempt: 0 }),
+      start,
+      "rung",
+    );
+
+    expect(isAccepted(noLine) && noLine).toEqual([]);
+  });
+
+  it("counts a failure and starts the budget over when a purchase lands", () => {
+    const failed = evolveAt(
+      standing(),
+      [
+        new TopUpFailed({
+          tier: "pack",
+          provider: "stripe",
+          reason: "PaymentDeclined",
+          at: start,
+          attempt: 1,
+          commandId: "topup-failed:acct:2",
+        }),
+      ],
+      start,
+      "failed",
+    );
+
+    expect(topUpFailureOf(failed)).not.toBeNull();
+    expect(failed._tag === "Subscribed" && failed.topUpAttempts).toBe(1);
+
+    const bought = evolveAt(
+      failed,
+      [
+        new CreditsPurchased({
+          tier: "pack",
+          amount: 5_000,
+          balanceAfter: 5_500,
+          prepaidAfter: 5_000,
+        }),
+      ],
+      start,
+      "bought",
+    );
+
+    expect(bought._tag === "Subscribed" && bought.topUpAttempts).toBe(0);
+    expect(topUpFailureOf(bought)).toBeNull();
   });
 });
