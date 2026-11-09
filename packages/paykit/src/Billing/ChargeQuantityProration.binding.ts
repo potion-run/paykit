@@ -60,8 +60,9 @@ export type ChargeQuantityProrationVerb = (
  *
  * `SetQuantity` records the proration and the key that owns it; this is the
  * step that opens the provider invoice and records it. Only a positive `due` is
- * charged: a reduction's credit stays on the standing for the next period,
- * because paying money out is a refund, not a subscription action.
+ * charged: a reduction's credit is recorded on the standing for audit, and
+ * paying it out is a refund, not a subscription action. Nothing applies that
+ * credit automatically.
  *
  * ### Collecting a seat increase
  * **Example:** Charge the difference after adding seats

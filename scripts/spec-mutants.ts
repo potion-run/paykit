@@ -182,6 +182,13 @@ const STANDING_MUTANTS: ReadonlyArray<Mutant> = [
       "     else state.now + 1 <= nextDeadline(state)),",
     why: "a clock that walks one step past a grace deadline",
   },
+  {
+    name: "expiry-keeps-a-pending-tier",
+    invariant: "terminalHasNoPending",
+    from: "    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE, pending: NoTier },\n  }\n\n  action expire",
+    to: "    state' = { ...state, phase: Expired, graceEnd: NO_DEADLINE },\n  }\n\n  action expire",
+    why: "an expiry that leaves a scheduled change for a standing no close will read",
+  },
 ];
 
 const WINDOWS_MUTANTS: ReadonlyArray<Mutant> = [

@@ -303,7 +303,8 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   /**
    * The money the last tier change moved, copied from its event. A positive
    * `due` is what `ChargeProration` bills; a negative one is a credit recorded
-   * for audit and applied by the next period rather than paid out.
+   * for audit. Nothing applies that credit automatically: paying it out is a
+   * refund, and a later period is a provider charge the deployment owns.
    */
   proration: Schema.optionalKey(Proration),
   /** The provider invoice a proration was billed on, so it bills once. */
@@ -405,7 +406,7 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   /**
    * The unbilled money a quantity change moved, keyed by the command that
    * recorded it. A positive `due` is collected by `ChargeQuantityProration`;
-   * a credit stays here for the next period to apply.
+   * a credit is recorded for audit only and is not applied automatically.
    */
   quantityProrations: Schema.optionalKey(Schema.Record(Schema.String, QuantityProration)),
   refs: Refs,

@@ -149,6 +149,18 @@ module standing_test {
       .expect(state.phase == Expired)
       .expect(standingInvariant)
 
+  // Grace is a forward window. A deadline at or before now is disabled, not a
+  // window that opens already lapsed.
+  run enterGracePastDeadlineTest =
+    init
+      .then(subscribe(Pro))
+      .then(enterGrace(0).fail())
+
+  run failPaymentPastDeadlineTest =
+    init
+      .then(subscribe(Pro))
+      .then(failPayment(0).fail())
+
   // Expiry is only from grace; an active standing has no grace to expire.
   run expireOnlyFromGraceTest =
     init
@@ -186,6 +198,34 @@ module standing_test {
       .then(closePeriod)
       .then(resume)
       .expect(state.phase == Canceled and not(state.cancelAtPeriodEnd))
+
+  // A terminal standing has no future: the pending change is dropped by the
+  // expiry, and no later close will read it.
+  run expiryClearsPendingTest =
+    init
+      .then(subscribe(Free))
+      .then(scheduleTier(Pro))
+      .expect(isPending(state.pending))
+      .then(enterGrace(8))
+      .then(expire)
+      .expect(state.phase == Expired)
+      .expect(not(isPending(state.pending)))
+      .expect(standingInvariant)
+
+  // A cancellation wins the boundary: the pending change is withdrawn, the
+  // tier stays the one the account was on, and the plan pool is expired.
+  run cancellationWinsTheBoundaryTest =
+    init
+      .then(subscribe(Free))
+      .then(scheduleTier(Pro))
+      .then(scheduleCancellation)
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.phase == Canceled)
+      .expect(state.tier == Free)
+      .expect(not(isPending(state.pending)))
+      .expect(state.planCredits == 0)
+      .expect(standingInvariant)
 
   // ── the period boundary ────────────────────────────────────────────────────
 

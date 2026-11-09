@@ -6,7 +6,6 @@ import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from
 import { NoProrationDue } from "../Subscription/RecordProrationInvoice.command.ts";
 import { RecordProrationInvoice } from "../Subscription/RecordProrationInvoice.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { planIdOf } from "../Subscription/Subscription.state.ts";
 
 /** Which account's unbilled tier change to collect. */
 export interface ChargeProrationInput {
@@ -36,9 +35,9 @@ export type ChargeProrationResult = typeof ChargeProrationResult.Type;
  *
  * Three rules keep it honest:
  *
- * - **Only a positive `due` is charged.** A downgrade's credit is recorded and
- *   applied by the next period; paying money out is a refund, which is a
- *   provider action, not a subscription one.
+ * - **Only a positive `due` is charged.** A downgrade's credit is recorded on
+ *   the standing for audit; paying money out is a refund, which is a provider
+ *   action, not a subscription one. Nothing applies the credit automatically.
  * - **Once.** The invoice id is stored by `RecordProrationInvoice`, and a second
  *   call returns `nothing` instead of opening a second invoice. The provider
  *   call carries a `commandId` keyed by the change, so a retry after a crash is
@@ -71,7 +70,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
 
     const proration = state.proration;
 
-    if (proration === undefined || proration.due <= 0) {
+    if (proration === undefined || proration.due <= 0 || state.prorationId === undefined) {
       return yield* new NoProrationDue({ account: input.account, reason: "none" });
     }
 
@@ -81,12 +80,9 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
 
     // The change itself is the idempotency key. `PlanChanged` gives every
     // prorated change a sequence number, so two identical changes in one period
-    // are two charges, while a retry of either is the same one. State recorded
-    // before the field existed falls back to the money and period it moved.
-    const changeId =
-      state.prorationId === undefined
-        ? `${input.account}:${planIdOf(state)}:${state.period.start.epochMilliseconds}:${proration.due}:${proration.currency}`
-        : `${input.account}:${state.period.start.epochMilliseconds}:${state.prorationId}`;
+    // are two charges, while a retry of either is the same one.
+    const prorationId = state.prorationId;
+    const changeId = `${input.account}:${state.period.start.epochMilliseconds}:${prorationId}`;
 
     // The invoice is collected by the provider the standing already belongs to.
     const chosen = Option.match(router, {
@@ -117,6 +113,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
         subscription.send(
           ref,
           new RecordProrationInvoice({
+            prorationId,
             invoiceId,
             amount: proration.due,
             currency: proration.currency,

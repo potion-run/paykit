@@ -344,12 +344,13 @@ records), `reversalsBounded`, `refundAmountsArePositive`, `billedProrationIsPosi
 `quantityCreditsNeverInvoiced`, `quantityInvoicesMatchDue`, `invoicedIsPartOfCharged`.
 
 `canInvoiceProration` is the whole identity rule: an invoice names the current proration's id and
-its due. `canInvoiceQuantity` adds the one the implementation's command layer is missing: a credit
-(`due < 0`) is never invoiced, and the invoice amount is the due.
+its due. `canInvoiceQuantity` states the same rule for a quantity change: a credit (`due < 0`) is
+never invoiced, the invoice amount is the due, and a key owns one change, so `SetQuantity` refuses a
+reused key with `QuantityProrationAlreadyBilled`.
 
 ## The mutants
 
-`pnpm spec:mutants` kills 72 mutants across the nine models: 17 for the spend path, 3 for the
+`pnpm spec:mutants` kills 73 mutants across the nine models: 17 for the spend path, 4 for the
 standing, 6 for the windows, 4 for the plan operations, 13 for the plan set and its schedules, 7 for
 the balance ledger, 9 for the entities, 7 for the money protocol and 6 for customer controls. Each
 mutant is a textual replacement and the gate fails when an invariant **survives** it. The new

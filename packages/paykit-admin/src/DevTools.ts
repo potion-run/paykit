@@ -306,7 +306,12 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
   },
   {
     tag: "ProrationInvoiced",
-    body: body({ invoiceId: "in_dev_1", amount: 950, currency: "usd" }),
+    body: body({
+      prorationId: "pr_dev_1",
+      invoiceId: "in_dev_1",
+      amount: 950,
+      currency: "usd",
+    }),
   },
   {
     tag: "PlanChangeScheduled",

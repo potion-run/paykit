@@ -1,11 +1,14 @@
 # Findings — implicit state machines and the divergences the models expose
 
-**Status:** review only for code; the behavioral decisions are recorded. F4 and F7 now point at
-[0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md) and
-[0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md), and the models have been
-updated to the new rules. The nine models in this directory are green (`pnpm spec`,
-`pnpm spec:test`, `pnpm spec:mutants`); the remaining findings are places where
-`src/Subscription` does not implement the rule the model states.
+**Status:** all twelve findings are addressed. F1, F2, F3, F6, F8, F10, F11 and F12 are
+implemented in code with tests in the finding's shape; F4, F5 and F7 were fixed by
+[0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md),
+[0031](../../docs/adr/0031-a-failed-top-up-retries-on-a-budget.md) and
+[0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). F9 is closed as a
+documentation fix: a quantity credit is recorded for audit, and nothing applies it
+automatically. A consumer for that credit (a later invoice, a refund, or an explicit
+apply command) is future work, not an open divergence. The nine models are green
+(`pnpm spec`, `pnpm spec:test`, `pnpm spec:mutants`, `pnpm spec:coverage`).
 
 The method was:
 
@@ -38,10 +41,15 @@ Severity is about customer money or a state no later command can explain, not ab
 
 **Current status (2026-11).** F4, F5 and F7 are fixed by [ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md),
 [ADR 0031](../../docs/adr/0031-a-failed-top-up-retries-on-a-budget.md) and
-[ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). F2 is partly fixed: the
-proration identity landed (the command names it and refuses a second invoice), while the amount and
-currency are still trusted and the invoice is not added to `charged`. F1, F3, F6 and F8–F12 remain
-open; F6 is a one-line reset of `topUpAttempts` in the `PlanChanged` fold.
+[ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). F1, F2, F3 and F6 are
+fixed by the `prorationId` on `RecordProrationInvoice`/`ProrationInvoiced`, the due/currency guard and
+`charged` fold on `QuantityProrationInvoiced`, the `QuantityProrationAlreadyBilled` refusal on
+`SetQuantity`, and the `topUpAttempts: 0` reset in the `PlanChanged` fold. F8, F10, F11 and F12 are
+fixed by a terminal guard on `ResetAllowance`, clearing the schedule on terminal expiry and a
+canceling close, a forward-only grace deadline (`GraceDeadlineNotLater`), and cancellation winning the
+boundary. F9 is documented: the credit is recorded for audit only. Tests: `test/billing/InvoiceIdentity.test.ts`,
+`test/standing/Findings.test.ts`, `test/properties/Quantities.test.ts`, and the named `standing_test.qnt`
+scenarios.
 
 ---
 
@@ -89,6 +97,10 @@ require the current `prorationId` to match, and require `amount == proration.due
 `currency == proration.currency`. `RecordQuantityProrationInvoice` is the precedent: it already
 carries the id.
 
+**Fixed.** `ProrationInvoiced` and `RecordProrationInvoice` carry `prorationId`; `decide` refuses a
+stale id or a different amount/currency with `ProrationInvoiceMismatch`, and
+`test/billing/InvoiceIdentity.test.ts` pins the two probes above.
+
 ---
 
 ## F2 — a quantity invoice can be a credit, can be any amount, and never reaches `charged`
@@ -125,6 +137,10 @@ reason the binding's guard looked sufficient.
 **Proposed fix:** move the `due > 0` and amount/currency checks into `decide`; fold
 `QuantityProrationInvoiced.amount` into `charged` exactly as `ProrationInvoiced` does.
 
+**Fixed.** `decide` refuses a credit with `QuantityProrationNotBillable` and a mismatched amount or
+currency with `QuantityProrationMismatch`; `QuantityProrationInvoiced` folds into `charged`. The
+credit and `charged` probes are in `test/billing/InvoiceIdentity.test.ts`.
+
 ---
 
 ## F3 — a reused quantity key overwrites a billed proration
@@ -156,6 +172,12 @@ charge twice under one key.
 **Proposed fix:** `SetQuantity` refuses (or ignores) a `dedupeKey` that already has an entry with a
 different quantity. Treat the entry as immutable: a new quantity is a new key, and a retry is a
 replay only when the quantity is the same.
+
+**Decision.** A retry with the same quantity records nothing (it never reaches the key check because
+the quantity did not move). A different quantity under an existing key is refused with
+`QuantityProrationAlreadyBilled`, carrying the entry's `invoiceId` when it has one. [ADR
+0023](../../docs/adr/0023-a-seat-is-a-quantity-that-is-set.md) records the rule, and
+`test/billing/InvoiceIdentity.test.ts` pins the double-bill probe.
 
 ---
 
@@ -250,6 +272,9 @@ so its retries are suppressed exactly when a deployment moved it to a line that 
 **Proposed fix:** set `topUpAttempts: 0` in `PlanChanged` (keep `topUpFailure` as history, per ADR
 0027), and add the story/property that pins it.
 
+**Fixed.** `PlanChanged` resets `topUpAttempts` to zero and leaves `topUpFailure` in place;
+`test/standing/Findings.test.ts` records the probe.
+
 ---
 
 ## F7 — a plan allowance and a lifetime grant are the same field
@@ -310,6 +335,9 @@ read model then shows a reset that no open period owns.
 **Proposed fix:** refuse (or ignore) `ResetAllowance` for a terminal standing, exactly as
 `ClosePeriod` does. A terminal standing's windows have no next boundary.
 
+**Fixed.** `ResetAllowance` records nothing for a terminal standing; `test/standing/Findings.test.ts`
+pins the daily-boundary-after-expiry probe.
+
 ---
 
 ## F9 — a seat reduction's credit is recorded and never applied
@@ -332,6 +360,11 @@ gap rather than a wrong transition, but it is money.
 **Proposed fix:** decide the consumer (next period's invoice, a credit against a later seat change,
 or a refund), then implement and model it. Until then, say the credit is only recorded for audit and
 remove "next period applies it" from the docs.
+
+**Closed as documentation.** The code comments, [ADR 0023](../../docs/adr/0023-a-seat-is-a-quantity-that-is-set.md)
+and the binding now say the credit is recorded for audit only. A consumer is future work: paying a
+credit out is a refund, and applying it to a later period is a deployment's invoice decision, not a
+standing rule the model can state without inventing a new money action.
 
 ---
 
@@ -359,6 +392,10 @@ a console and a future `Resume`/replacement have to know it is meaningless.
 **Proposed fix:** clear `pendingTier` on `SubscriptionExpired` (and on the close that cancels), or
 make `standingConditionsOf` hide it for terminal phases. Clearing is the smaller state.
 
+**Fixed.** `SubscriptionExpired` and a close into a terminal status clear the schedule (and with it
+`pendingTier`); the billing view does the same. `test/standing/Findings.test.ts` and
+`standing_test.qnt`'s `expiryClearsPendingTest` pin it.
+
 ---
 
 ## F11 — grace accepts a deadline at or before `now`
@@ -382,6 +419,10 @@ immediately. Both are avoidable.
 `EnterGrace` and `RecordPaymentFailure`. A webhook with a stale deadline should be a no-op, not a
 lapsed window.
 
+**Fixed.** `EnterGrace` refuses with `GraceDeadlineNotLater`; `RecordPaymentFailure` records nothing
+when the effective deadline is at or before now, and keeps an existing live deadline otherwise.
+`test/standing/Findings.test.ts` pins both.
+
 ---
 
 ## F12 — a cancellation and a pending tier both apply at the same close
@@ -402,6 +443,10 @@ for an account that was on free when it canceled.
 **Proposed fix:** decide the precedence. The likely rule is that a cancellation wins the boundary and
 the pending change is withdrawn (no `PlanChanged`), or the change is applied and the cancellation is
 the next boundary's. Pin it in the model and a story.
+
+**Fixed.** A cancellation wins the boundary (ADR 0039 §5 and §7): no phase lands, the tier stays the
+one the account was on, and the pending schedule is dropped. `standing.qnt`'s
+`applyClosePeriod`, `cancellationWinsTheBoundaryTest` and `test/standing/Findings.test.ts` pin it.
 
 ---
 
@@ -432,12 +477,13 @@ the next boundary's. Pin it in the model and a story.
 ## Verification
 
 ```sh
-pnpm spec          # 4 models, every invariant, every witness
-pnpm spec:test     # 4 scenario modules (paykit, standing, windows, money)
-pnpm spec:mutants  # 33 mutants, all killed
-pnpm spec:coverage # 35 commands, 33 modelled, 2 out with a reason
+pnpm spec          # 9 models, every invariant, every witness
+pnpm spec:test     # 9 scenario modules (paykit, standing, windows, money, …)
+pnpm spec:mutants  # 73 mutants, all killed
+pnpm spec:coverage # 40 commands, 38 modelled, 2 out with a reason
 ```
 
 The probe scripts used for the evidence are not committed: they construct states with
-`decideAt`/`evolveAt` from `packages/paykit/test/properties/Arbitraries.ts`. Each finding above can
-become a story or property test in the same shape when it is fixed.
+`decideAt`/`evolveAt` from `packages/paykit/test/properties/Arbitraries.ts`. Each fixed finding now
+has a test in that shape: `test/billing/InvoiceIdentity.test.ts`, `test/standing/Findings.test.ts`,
+`test/properties/Quantities.test.ts`, and the named `standing_test.qnt` scenarios.

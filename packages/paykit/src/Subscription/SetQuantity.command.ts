@@ -53,6 +53,25 @@ export class QuantityChanged extends Domain.Event("QuantityChanged", {
 }) {}
 
 /**
+ * The retry key already owns a quantity change. A key is one change: a retry
+ * with the same quantity records nothing, and a different quantity under the
+ * same key is refused rather than replacing the change or erasing its invoice.
+ * A new quantity takes a new key.
+ */
+export class QuantityProrationAlreadyBilled extends Domain.Rejection(
+  "QuantityProrationAlreadyBilled",
+  {
+    account: Schema.String,
+    feature: Schema.String,
+    prorationId: Schema.String,
+    /** The change's `due`, so the caller can see what the key already owns. */
+    due: Schema.Int,
+    /** The invoice the existing change was billed on, when it has one. */
+    invoiceId: Schema.optionalKey(Schema.String),
+  },
+) {}
+
+/**
  * Set a non-consumable feature's quantity. A seat is bought, not spent: the
  * command sets the total the account holds, and the difference from what it
  * held is prorated for the rest of the period unless the allowance says
@@ -60,7 +79,8 @@ export class QuantityChanged extends Domain.Event("QuantityChanged", {
  *
  * A quantity change is a write with money attached, so the `dedupeKey` is
  * required and doubles as the proration id. A retry records one change; a
- * second call with the same key is a replay.
+ * second call with the same key and a different quantity is refused, because
+ * the key already owns that change and possibly its invoice.
  */
 export class SetQuantity extends Domain.Command("SetQuantity", {
   target: AccountId,
@@ -78,6 +98,7 @@ export class SetQuantity extends Domain.Command("SetQuantity", {
     QuantityInvalid,
     QuantityCapExceeded,
     QuantityExceeded,
+    QuantityProrationAlreadyBilled,
     StandingBlocksUsage,
     Unauthenticated,
     Forbidden,

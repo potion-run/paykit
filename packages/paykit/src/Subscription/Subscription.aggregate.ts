@@ -46,7 +46,12 @@ import {
 import { ConsumeCredits, CreditExceedsBalance, CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { DunningRetry, DunningRetryDue } from "./DunningRetry.command.ts";
-import { AlreadyInGrace, EnterGrace, GraceEntered } from "./EnterGrace.command.ts";
+import {
+  AlreadyInGrace,
+  EnterGrace,
+  GraceDeadlineNotLater,
+  GraceEntered,
+} from "./EnterGrace.command.ts";
 import { Expire, SubscriptionExpired } from "./Expire.command.ts";
 import { BalanceExpired, ExpireGrant } from "./ExpireGrant.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
@@ -92,6 +97,8 @@ import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts"
 import {
   NoQuantityProrationDue,
   QuantityProrationInvoiced,
+  QuantityProrationMismatch,
+  QuantityProrationNotBillable,
   RecordQuantityProrationInvoice,
 } from "./QuantityProration.command.ts";
 import { PaymentRecorded, RecordPayment } from "./RecordPayment.command.ts";
@@ -99,6 +106,7 @@ import { PaymentFailed, RecordPaymentFailure } from "./RecordPaymentFailure.comm
 import {
   NoProrationDue,
   ProrationInvoiced,
+  ProrationInvoiceMismatch,
   RecordProrationInvoice,
 } from "./RecordProrationInvoice.command.ts";
 import { RecordTopUpFailure, TopUpFailed } from "./RecordTopUpFailure.command.ts";
@@ -129,6 +137,7 @@ import {
   QuantityChanged,
   QuantityExceeded,
   QuantityInvalid,
+  QuantityProrationAlreadyBilled,
   SetQuantity,
 } from "./SetQuantity.command.ts";
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
@@ -311,8 +320,10 @@ const releaseEvent = (
 const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // Every phase due at the boundary lands first, in start order: `UsageReset`
   // reads the allowances in state, so the plans have to be in the log before
-  // the counters reset onto them (ADR 0039 §3).
-  const due = duePhasesOf(state, periodEnd);
+  // the counters reset onto them (ADR 0039 §3). A cancellation wins the
+  // boundary, so no phase lands and the close into a terminal standing drops
+  // the ones that were waiting (ADR 0039 §5 and §7).
+  const due = state.cancelAtPeriodEnd ? [] : duePhasesOf(state, periodEnd);
   // The plan the next period runs on. A phase scheduled beyond this boundary is
   // not due and stays in the schedule.
   const landing = due[due.length - 1];
@@ -1248,6 +1259,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       if (before === command.quantity) return [];
 
+      // The key owns one change. A retry with the same quantity already
+      // returned above; a different quantity under the same key would replace
+      // the change and erase the invoice the first one recorded, so it is a new
+      // key, not a replay.
+      const existing = state.quantityProrations?.[command.dedupeKey];
+
+      if (existing !== undefined) {
+        return new QuantityProrationAlreadyBilled({
+          account: id,
+          feature: command.feature,
+          prorationId: command.dedupeKey,
+          due: existing.proration.due,
+          ...(existing.invoiceId === undefined ? {} : { invoiceId: existing.invoiceId }),
+        });
+      }
+
       // A blocked standing may give seats back; it may not take more.
       if (!allowsUsage(state.status) && command.quantity > before) {
         return new StandingBlocksUsage({
@@ -1340,6 +1367,28 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         });
       }
 
+      // A reduction is a credit: the standing records it for audit, and paying
+      // it out is a refund, not a subscription charge.
+      if (entry.proration.due <= 0) {
+        return new QuantityProrationNotBillable({
+          account: id,
+          prorationId: command.prorationId,
+          due: entry.proration.due,
+        });
+      }
+
+      // The invoice settles the change it names. The binding computes the
+      // amount from the standing, but the command is the model boundary.
+      if (command.amount !== entry.proration.due || command.currency !== entry.proration.currency) {
+        return new QuantityProrationMismatch({
+          account: id,
+          prorationId: command.prorationId,
+          expected: entry.proration,
+          requestedAmount: command.amount,
+          requestedCurrency: command.currency,
+        });
+      }
+
       return [
         new QuantityProrationInvoiced({
           prorationId: command.prorationId,
@@ -1373,6 +1422,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         DateTime.toEpochMillis(state.graceUntil) > DateTime.toEpochMillis(command.graceUntil)
           ? state.graceUntil
           : command.graceUntil;
+
+      // A webhook can arrive after the deadline it proposed. With no live
+      // window that is a no-op rather than a grace that opens already lapsed;
+      // with one, the existing deadline is kept and the failure still counts.
+      if (DateTime.toEpochMillis(graceUntil) <= DateTime.toEpochMillis(now)) return [];
 
       // A failure that opens a new run starts the ladder now; a second failure
       // in the same run keeps the first one, so every rung stays measured from
@@ -1421,12 +1475,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
-    EnterGrace: (state, command, { id }) => {
+    EnterGrace: (state, command, { id, now }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
 
       if (state.status === "grace") return new AlreadyInGrace();
 
       if (!canEnterGrace(state.status)) return new NotInGrace({ status: state.status });
+
+      // Grace is a forward window. A deadline at or before now would open a
+      // standing `standingPhaseOf` already reports as overdue, and the clock
+      // would expire it on the next tick.
+      if (DateTime.toEpochMillis(command.graceUntil) <= DateTime.toEpochMillis(now)) {
+        return new GraceDeadlineNotLater({ current: now, requested: command.graceUntil });
+      }
 
       return [new GraceEntered({ graceUntil: command.graceUntil, statusAfter: "grace" })];
     },
@@ -1697,9 +1758,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (state._tag !== "Subscribed") return new NoProrationDue({ account: id, reason: "none" });
       const proration = state.proration;
 
-      // Only a positive `due` is money to collect; a credit is applied by the
-      // next period, so there is nothing to invoice.
-      if (proration === undefined || proration.due <= 0) {
+      // Only a positive `due` is money to collect; a credit is recorded for
+      // audit and nothing applies it, so there is nothing to invoice.
+      if (proration === undefined || proration.due <= 0 || state.prorationId === undefined) {
         return new NoProrationDue({ account: id, reason: "none" });
       }
 
@@ -1707,8 +1768,27 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return new NoProrationDue({ account: id, reason: "billed" });
       }
 
+      // The invoice settles the change it names. A stale id belongs to a change
+      // a later tier move replaced; a different amount or currency is not the
+      // money that change moved.
+      if (
+        command.prorationId !== state.prorationId ||
+        command.amount !== proration.due ||
+        command.currency !== proration.currency
+      ) {
+        return new ProrationInvoiceMismatch({
+          account: id,
+          expectedId: state.prorationId,
+          expected: proration,
+          requestedId: command.prorationId,
+          requestedAmount: command.amount,
+          requestedCurrency: command.currency,
+        });
+      }
+
       return [
         new ProrationInvoiced({
+          prorationId: state.prorationId,
           invoiceId: command.invoiceId,
           amount: command.amount,
           currency: command.currency,
@@ -2133,6 +2213,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ResetAllowance: (state, command, { now }) => {
       if (state._tag !== "Subscribed") return [];
+
+      // A terminal standing has no open period, so its windows have no next
+      // boundary. The scheduled fire is a leftover, not a reset.
+      if (isTerminalStatus(state.status)) return [];
+
       const allowance = allowancesOf(state)[command.feature];
 
       if (allowance === undefined) return [];
@@ -2274,6 +2359,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ...rest,
         plans: withPlan(state.plans, row),
         schedule,
+        // A change re-establishes the line and the pool — a fresh line with a
+        // new pool deserves a fresh refill budget (ADR 0031). The failure is
+        // history and stays, so a console can still say what happened.
+        topUpAttempts: 0,
         // New plan features come from the event. A feature the new plan drops
         // stays only if it still holds a grant — a lifetime grant is not the
         // plan's to remove (ADR 0037).
@@ -2610,6 +2699,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ? {
             ...state,
             status: event.statusAfter,
+            // A terminal standing carries no future, so a close into one drops
+            // the phases that were waiting for a period it will not have.
+            ...(event.statusAfter === "canceled" || event.statusAfter === "expired"
+              ? { schedule: [] }
+              : {}),
             period: {
               start: event.nextPeriodStart,
               end: event.nextPeriodEnd,
@@ -2688,6 +2782,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...state.quantityProrations,
           [event.prorationId]: { ...entry, invoiceId: event.invoiceId },
         },
+        // An invoice is money the customer was charged, exactly as a tier
+        // change's invoice is: the refund ceiling folds both.
+        charged: chargedWith(state, event.currency, event.amount),
       };
     },
     UsageReset: (state, event) => {
@@ -2728,7 +2825,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           }
         : state,
     SubscriptionExpired: (state, event) =>
-      state._tag === "Subscribed" ? { ...state, status: event.statusAfter } : state,
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            status: event.statusAfter,
+            // A terminal standing has no next boundary and no change to apply,
+            // so a scheduled phase does not survive it (ADR 0020).
+            schedule: [],
+          }
+        : state,
     TrialExtended: (state, event) =>
       state._tag === "Subscribed"
         ? {
