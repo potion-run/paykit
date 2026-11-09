@@ -1,7 +1,8 @@
 # The paykit model
 
 A Quint model of the `Subscription` aggregate's spend path: what a period includes, what a usage
-fact may record, what a hold reserves, and what the credit pool can cover.
+fact may record, what a hold reserves, what the credit pool can cover, and what a period boundary
+carries into the next one.
 
 ```sh
 pnpm spec          # typecheck both modules, then simulate with every invariant
@@ -38,6 +39,7 @@ happens, run it by hand and record the command and the bound in this file.
 | `settleHold` | `SettleHold.command.ts` | `UsageRecorded` + `UsageSettled` |
 | `releaseHold` | `ReleaseHold.command.ts` | `UsageReleased`, reason `released` |
 | `expireHold` | `HoldElapsed.command.ts` | `UsageReleased`, reason `expired` |
+| `closePeriod` | `ClosePeriod.command.ts`, `PeriodEnded.command.ts` | `UsageReleased` (reason `reset`), `PeriodClosed`, `UsageReset`, `CreditsExpired` |
 | `enterGrace` | `EnterGrace.command.ts` | `GraceEntered` |
 | `recover` | `Recover.command.ts` | `Recovered` |
 | `cancelStanding` | `ScheduleCancellation.command.ts`, `Expire.command.ts` | `CancellationScheduled`, `SubscriptionExpired` |
@@ -52,13 +54,15 @@ gate instead of quietly staying green.
 
 | Invariant | What it says | ADR |
 | --- | --- | --- |
-| `countedConserved` | `remaining + used + reserved == included`, for every counted feature | 0004, 0009 |
+| `countedConserved` | `remaining + used + reserved == included + carried`, for every counted feature | 0004, 0009 |
 | `noNegativeUsage` | usage only moves forward | 0008 |
 | `blockingNeverOversubscribed` | a `block` allowance's remaining never goes below zero; `bill` may pass `included` | 0009 |
+| `carriedIsBounded` | a boundary carries at most the cap, and an allowance that does not roll over carries nothing | 0001, 0022 |
 | `creditsCoverEveryHold` | the pool covers every open hold, so settle always has credits to bill | 0002, 0004 |
-| `creditPoolConserved` | `credits + spent + consumed == granted` | 0002 |
+| `creditPoolConserved` | `credits + spent + consumed + expired == granted` | 0002 |
 | `holdCostIsAmountTimesRate` | a hold's reservation is its units times the rate it captured | 0004 |
 | `noHoldPastDeadline` | the clock never passes an open hold's deadline | 0021 |
+| `noPeriodPastEnd` | the clock never passes the boundary with the period still open | 0012 |
 
 Each is load-bearing, not decorative, and `pnpm spec:mutants` is what proves it. An invariant can be
 true because nothing in the model can move the counter it watches, so the gate inverts one rule at a
@@ -74,7 +78,15 @@ time and fails when a mutant **survives**:
 | `credit-spend-keeps-the-credits` | usage that spends no credits | `creditPoolConserved` |
 | `hold-cost-ignores-the-rate` | a hold that reserves units where the pool charges credits | `holdCostIsAmountTimesRate` |
 | `tick-passes-the-deadline` | a clock that walks past a deadline with a hold open | `noHoldPastDeadline` |
+| `tick-passes-the-boundary` | a clock that walks past the boundary instead of stopping for the close | `noPeriodPastEnd` |
 | `blocking-allows-past-remaining` | a blocking allowance that accepts more than it has | `blockingNeverOversubscribed` |
+| `close-drops-the-carry` | a close that rolls the remainder into `remaining` but not `carried` | `countedConserved` |
+| `close-keeps-the-debt` | a close that carries an overdrawn allowance's debt forward | `countedConserved` |
+| `close-carries-two-periods` | a close that exceeds the carry cap | `carriedIsBounded` |
+| `close-keeps-the-counter` | a close that does not zero the counters it resets | `countedConserved` |
+| `close-zeros-a-kept-counter` | a close that resets a `resets: "never"` counter and keeps its remainder | `countedConserved` |
+| `close-keeps-open-holds` | a close that drops a feature's counters but keeps its open holds | `countedConserved` |
+| `close-forgets-the-expiry` | a close that empties the pool without recording what it expired | `creditPoolConserved` |
 
 A mutant is a textual replacement, and the gate insists the anchor occurs exactly once: rename a rule
 and it reports a stale mutant instead of mutating the wrong line. Adding an invariant without a mutant
@@ -86,13 +98,17 @@ so only `cancelRefusesSettleTest` catches it — the two halves check different 
 ## What it does not reproduce
 
 - **Tiers, proration, dunning, top-up, payment, quantities, flags, `unlimited`, caps, money caps,
-  dedupe keys, currency.** The model's three features are a blocking count, a billing count and a
-  credit-priced feature, with one scope and one rate. Money ceilings and banded prices are
-  `Pricing.test.ts`'s job; modelling the arithmetic here would only make the model wrong in a new way.
-- **Period close and rollover.** With no reset, `remaining + used + reserved == included` holds for
-  the whole life of a standing, which is the cleanest form of the conservation law. A close adds
-  `carried` and a second base; it belongs in the next slice, with an invariant that says the new
-  base is the old one plus what the close granted.
+  dedupe keys, currency.** The model's four features are a blocking count that carries, a billing
+  count that does not, a count that outlives every boundary, and the credit pool. Money ceilings and
+  banded prices are `Pricing.test.ts`'s job; modelling the arithmetic here would only make the model
+  wrong in a new way.
+- **A tier change at the boundary.** `ClosePeriod` applies a pending `TierChanged` first, so the new
+  tier's allowances are the ones the reset lands on, and a scheduled change re-grants the pool. The
+  model closes with no pending tier: the boundary rolls the same catalogue and expires the plan's
+  credits, which is the no-change path. Tier state is the next slice.
+- **A reset window the period does not own.** `ResetAllowance` runs the same carry arithmetic on a
+  per-feature clock (`resetAt`) rather than the period's. It is a second clock and a second chain, so
+  it stays out until the boundary path is settled.
 - **The read model.** `Entitlements`, `BillingState`, and every projection are folds over the same
   events and are compared against the aggregate by `test/properties/Agreement.test.ts`.
 - **Idempotence.** A retried command is a no-op; `Idempotence.test.ts` and the command ids carry it.
@@ -107,18 +123,20 @@ is briefly behind, not a bug. The model therefore **derives** a credit-priced fe
 (`spendableOf`) instead of storing it: an invariant over a field nothing reads would only be able to
 fail for the wrong reason.
 
-Two things follow. `ConsumeCredits` names no feature, so the aggregate has no counter for what it
+Three things follow. `ConsumeCredits` names no feature, so the aggregate has no counter for what it
 spent; the model keeps `consumed` as a history variable because the pool's conservation law needs
-it. And the model's `credits + spent + consumed` law is a claim about `CreditsConsumed` events, not
-about a field.
+it. `used` is a **per-period** counter that a close zeroes, so the pool's law needs `spent` as well —
+summing `used` would lose every credit the previous periods spent. And a close that forgets to record
+what it expired is caught by the `expired` term: a policy that simply does not expire is not a
+violation of any invariant, which is why `closeExpiresThePlanCreditsTest` exists too.
 
 ## When to update it
 
-The spec is the ground truth for the seven invariants above and for nothing else. When a command in
+The spec is the ground truth for the nine invariants above and for nothing else. When a command in
 the table changes what it accepts or what it writes, update the model and re-run `pnpm spec` **before**
 changing the command — a red model is a cheaper place to find out than a red deploy. When a new
 command touches `remaining`, `used`, `credits`, or `holds`, it is in scope: add the action, its
 witness, its `run`, and either an invariant or a note here saying why it has none.
 
-The next slice is the period close, then the quantity (seat) path — see
+The next slice is the quantity (seat) path, then a reset window the period does not own — see
 [`docs/NEXT.md`](../../docs/NEXT.md).

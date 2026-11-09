@@ -39,9 +39,9 @@ const MUTANTS: ReadonlyArray<Mutant> = [
     name: "settle-drops-the-return",
     invariant: "countedConserved",
     from:
-      "      credits: if (creditPriced) s.credits - spent else s.credits,\n" +
+      "      spent: if (creditPriced) s.spent + spent else s.spent,\n" +
       "      remaining: s.remaining.set(hold.feature, s.remaining.get(hold.feature) + returned),",
-    to: "      credits: if (creditPriced) s.credits - spent else s.credits,\n      remaining: s.remaining,",
+    to: "      spent: if (creditPriced) s.spent + spent else s.spent,\n      remaining: s.remaining,",
     why: "a settle that does not return the units it did not bill",
   },
   {
@@ -89,9 +89,16 @@ const MUTANTS: ReadonlyArray<Mutant> = [
   {
     name: "tick-passes-the-deadline",
     invariant: "noHoldPastDeadline",
-    from: "    state.now + 1 <= nextDeadline(state.holds),",
+    from: "    state.now + 1 <= nextDeadline(state),",
     to: "    true,",
     why: "a clock that walks past a deadline with a hold still open",
+  },
+  {
+    name: "tick-passes-the-boundary",
+    invariant: "noPeriodPastEnd",
+    from: "    state.now + 1 <= nextDeadline(state),",
+    to: "    state.now + 1 <= nextHoldDeadline(state.holds),",
+    why: "a clock that walks past the boundary instead of stopping for the close",
   },
   {
     name: "blocking-allows-past-remaining",
@@ -99,6 +106,55 @@ const MUTANTS: ReadonlyArray<Mutant> = [
     from: "    amount > 0 and (allowance.overage == Bill or amount <= remaining)",
     to: "    amount > 0",
     why: "a blocking allowance that accepts more than it has",
+  },
+  {
+    name: "close-drops-the-carry",
+    invariant: "countedConserved",
+    from: "        acc.set(feature, closeCarry(s.allowances.get(feature), s.remaining.get(feature)))),",
+    to: "        acc.set(feature, 0)),",
+    why: "a close that rolls the remainder into `remaining` but not into `carried`",
+  },
+  {
+    name: "close-keeps-the-debt",
+    invariant: "countedConserved",
+    from: "    else allowance.included + closeCarry(allowance, remaining)",
+    to: "    else remaining",
+    why: "a close that carries an overdrawn allowance's debt into the next period",
+  },
+  {
+    name: "close-carries-two-periods",
+    invariant: "carriedIsBounded",
+    from: "    clamp(remaining, 0, carriedCapOf(allowance))",
+    to: "    if (remaining < 0) 0 else remaining",
+    why: "a close that exceeds the carry cap",
+  },
+  {
+    name: "close-keeps-the-counter",
+    invariant: "countedConserved",
+    from: "        if (isKeptOnClose(s.allowances.get(feature))) acc else acc.set(feature, 0)),",
+    to: "        acc),",
+    why: "a close that does not zero the counters it resets",
+  },
+  {
+    name: "close-zeros-a-kept-counter",
+    invariant: "countedConserved",
+    from: "        if (isKeptOnClose(s.allowances.get(feature))) acc else acc.set(feature, 0)),",
+    to: "        acc.set(feature, 0)),",
+    why: 'a close that resets a `resets: "never"` counter while keeping its remainder',
+  },
+  {
+    name: "close-keeps-open-holds",
+    invariant: "countedConserved",
+    from: "        if (dropped.contains(id)) acc.set(id, { ...s.holds.get(id), status: Available }) else acc),",
+    to: "        acc),",
+    why: "a close that drops a feature's counters but keeps its open holds",
+  },
+  {
+    name: "close-forgets-the-expiry",
+    invariant: "creditPoolConserved",
+    from: "      expired: s.expired + s.credits,",
+    to: "      expired: s.expired,",
+    why: "a close that empties the pool without recording what it expired",
   },
 ];
 

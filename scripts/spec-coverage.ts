@@ -33,11 +33,13 @@ const COMMANDS = "packages/paykit/src/Subscription";
  */
 const SPEC_COVERAGE = {
   // Modelled. The value is the action in `paykit.qnt`.
+  ClosePeriod: "closePeriod",
   ConsumeCredits: "consumeCredits",
   EnterGrace: "enterGrace",
   Expire: "cancelStanding",
   Hold: "hold",
   HoldElapsed: "expireHold",
+  PeriodEnded: "closePeriod",
   Recover: "recover",
   ReleaseHold: "releaseHold",
   ScheduleCancellation: "cancelStanding",
@@ -49,12 +51,10 @@ const SPEC_COVERAGE = {
   // model does not have yet, or needs a vendor the model must not know about.
   AttachProviderRef: null, // provider ids, never read by `decide`
   ChangeTier: null, // tier state, proration and the two ceilings — next slice
-  ClosePeriod: null, // the period boundary and rollover — next slice
   DunningRetry: null, // the dunning ladder needs a payment sitting
   ExtendTrial: null, // the model has no trial
   GraceElapsed: null, // the model's grace window has no deadline
   GrantCredits: null, // a second grant path; the model grants once, at activation
-  PeriodEnded: null, // the period boundary — next slice with `ClosePeriod`
   PurchaseCredits: null, // a one-off pack, which needs the catalog to price
   QuantityProration: null, // quantity proration — next slice
   RecordPayment: null, // the payment plane, not the entitlement plane
@@ -62,7 +62,7 @@ const SPEC_COVERAGE = {
   RecordProrationInvoice: null, // the proration money plane
   RecordTopUpFailure: null, // auto top-up
   Refund: null, // the money plane and the refund ceiling
-  ResetAllowance: null, // a window the period does not own
+  ResetAllowance: null, // a window the period does not own: a second clock, next slice
   Resume: null, // a terminal standing is replaced, not moved (ADR 0020)
   RetryTopUp: null, // auto top-up
   ReverseRefund: null, // the money plane
