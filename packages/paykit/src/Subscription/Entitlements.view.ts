@@ -83,7 +83,7 @@ export type PlanSourceView = typeof PlanSourceView.Type;
 export const FeatureEntitlement = Schema.Struct({
   /**
    * `metered` counts and `flag` does not. Absent means `metered`, so a view
-   * recorded before the field existed still reads.
+   * that names no kind is metered.
    */
   kind: Schema.optionalKey(AllowanceKind),
   /**

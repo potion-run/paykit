@@ -356,12 +356,9 @@ Replay rules:
 - A `GrantBalance`/`SetQuantity`/`SetUsage`/`PlanItemReset` with `entity` writes that scope's maps;
   absent writes the customer's, exactly as today.
 
-**Versioning.** The change is additive: absent `entity` means the customer scope, and absent
-`entities` means no entity was ever created, so an old log means exactly what it meant. The state
-shape changes, so bump the generations of `Entitlements`, `BillingState` and `BillingRead`; the
-platform backfills them from the log. No event is rewritten, and no migration reads state. The SQL
-read table gains a nullable `entities TEXT` column in a new additive migration (`0002_entities`);
-the projection writes it and `doctor` compares it.
+**Versioning.** The library is unpublished, so there is no old state to decode and no deploy backfill.
+The SQL read table gains a nullable `entities TEXT` column in the additive `0002_entities`
+migration; the projection writes it and `doctor` compares it. No event is rewritten.
 
 ## The read model
 
@@ -433,8 +430,7 @@ Also:
   tenant layer still provides no operator verb.
 - `test/check/Entities.test.ts` — `check`/`track`/`balances` per scope; a pooled balance; an
   archived read is `allowed: false`; an unknown id is `EntityUnknown`.
-- `test/sql` — the `0002_entities` column, an upsert/read round trip, `doctor` agreement, and a
-  backfill of a row written before the column existed.
+- `test/sql` — the `0002_entities` migration, an upsert/read round trip and `doctor` agreement.
 - `test/PublicSurface.test.ts` — the names above and no aliases.
 
 ## Files to touch, in dependency order

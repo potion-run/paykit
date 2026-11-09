@@ -268,7 +268,7 @@ export interface MoneyProvider<Kind extends MoneyProviderKind = MoneyProviderKin
   readonly prices?: Readonly<Record<string, Price>>;
   /**
    * What the provider charges per billable unit, per tier and feature. Kept for
-   * a one-rate price and for state recorded before `usagePrices` existed; a
+   * a one-rate price; a
    * provider that can hold a ladder states the whole pricing there instead.
    */
   readonly unitPrices?: UnitPriceMap;

@@ -58,7 +58,7 @@ export const RefundRecord = Schema.Struct({
   refundedAfter: Schema.Int,
   /**
    * How much of this refund a provider has since reversed. Absent on a record
-   * written before reversals existed, and absent when none came back.
+   * absent when none came back.
    */
   reversed: Schema.optionalKey(Schema.Int),
 });

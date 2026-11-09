@@ -94,7 +94,7 @@ documented billing surface, not a second implementation.
    applied at its own instant by `PlanPhaseSchedule`, and the `AddAddOn` binding.
 2. **Entities and transfer** — shipped (ADR 0040): the scope state, the four commands, the scoped
    reads (`Balance.scope`, `balanceOfEntity`, `Entitlements.entities`, `Customer.entities`,
-   `BillingReadRow.entities`), the `0002_entities` column, `Paykit.Entities` and
+   `BillingReadRow.entities`), `Paykit.Entities` and
    `Paykit.TransferBalance` with their layers, `entityId` on `Balances` / `Attach` / `Update` /
    previews, the four tenant Api commands and the `Atom` verbs and mutations.
 3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md),

@@ -102,7 +102,7 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
   billedAfter: Schema.optionalKey(Schema.Int),
   /**
    * The catalog price this usage was recorded at. Absent when the allowance has
-   * no unit price, and on an event recorded before the field existed — which is
+   * no unit price — which is
    * why the close falls back to the standing's price for such a period.
    */
   unitPrice: Schema.optionalKey(UnitPrice),

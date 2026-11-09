@@ -126,7 +126,7 @@ their names land with their `*.command.ts`, and the ADR names the events (`Entit
 **8. The change is additive.** `entityId` is optional on commands and events; absence means the
 customer scope, so a state with no entities decodes as one scope. The customer's state gains
 `entities`, every source gains a `scope`, and the balance view's consumer generation bumps so the
-platform backfills it. `BalanceTransferred` is append-only like every other event: a field may be
+a rebuild replaces it. `BalanceTransferred` is append-only like every other event: a field may be
 added, never renamed or repurposed.
 
 ## Consequences

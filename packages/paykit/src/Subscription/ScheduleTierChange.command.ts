@@ -18,8 +18,7 @@ import { AccountId } from "./Subscription.id.ts";
 export class PlanChangeScheduled extends Domain.Event("PlanChangeScheduled", {
   tier: Schema.String,
   /**
-   * The group the phase moves. Absent means the default group, which is also
-   * what a phase recorded before plan groups existed decodes to.
+   * The group the phase moves. Absent means the default group.
    */
   group: Schema.optionalKey(Schema.String),
   /** Whether the plan stacks beside every group instead of filling one. */

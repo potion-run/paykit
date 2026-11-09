@@ -66,8 +66,7 @@ export class DowngradeBelowCeiling extends Domain.Rejection("DowngradeBelowCeili
 export class PlanChanged extends Domain.Event("PlanChanged", {
   tier: Schema.String,
   /**
-   * The group this plan fills. Absent means the default group, which is also
-   * what an event recorded before plan groups existed decodes to.
+   * The group this plan fills. Absent means the default group.
    */
   group: Schema.optionalKey(Schema.String),
   /** Whether this plan stacks beside every group instead of filling one. */

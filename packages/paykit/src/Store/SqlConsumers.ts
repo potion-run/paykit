@@ -386,7 +386,7 @@ export const SqlViewStore = (
      * A view keyed by its one aggregate fills each key itself before answering
      * (a lazy view, or a view whose version was bumped and is rebuilt in place).
      * Its source rows are read from the log; `kit.history` routes them to the
-     * key exactly as the deploy's backfill would.
+     * key exactly as a rebuild would.
      */
     const ensureCaughtUp = (key: string) =>
       Effect.gen(function* () {

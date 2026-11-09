@@ -162,15 +162,6 @@ paykit.balances.finalize({ lockId, action, overrideValue? })
 - Model gate: `entities.qnt`; entity scope, pooled rollup, transfer conservation.
 - Exit: a parent customer can have child entities with their own plans and balances.
 
-## Migration
-
-- Old `Tier` decodes into `Plan`; old `Allowance` into `PlanItem`.
-- Old `credits` and `prepaidCredits` decode into balance sources.
-- Old `quantities` becomes `purchased`; `occupied` starts at 0.
-- Bump the catalog and standing versions; backfill the balance view through the platform's
-  generation/backfill path.
-- Keep the command bindings for one release as an advanced surface.
-
 ## Definition of done per phase
 
 Each phase ends with:

@@ -214,8 +214,7 @@ export const activationOf = <S extends SubscriptionStatus>(
   return {
     tier: input.tier,
     // A plan in the default group is the log's ordinary case and stays
-    // unwritten, so an activation recorded before plan groups existed decodes
-    // to the same shape an ordinary one does (ADR 0039 §1).
+    // unwritten (ADR 0039 §1).
     ...(input.group === undefined || input.group === DEFAULT_PLAN_GROUP
       ? {}
       : { group: input.group }),

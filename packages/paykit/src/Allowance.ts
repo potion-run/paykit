@@ -75,8 +75,7 @@ export type AllowanceKind = typeof AllowanceKind.Type;
 export const Allowance = Schema.Struct({
   feature: FeatureId,
   /**
-   * Absent means `metered`: allowances recorded before the field existed are
-   * counted by construction, so old state and old events still decode.
+   * Absent means `metered`: a count, not a flag or a quantity.
    */
   kind: Schema.optionalKey(AllowanceKind),
   included: Included,
