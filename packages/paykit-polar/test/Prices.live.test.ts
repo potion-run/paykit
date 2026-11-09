@@ -27,6 +27,16 @@ import { polarProviders } from "../src/Providers.ts";
  *
  * `process.env` at module scope is the one place the Effect rule does not
  * reach: a skip gate runs before any Effect exists.
+ *
+ * **Every case owns its own tier and feature, and its own logical id.** The
+ * harness names a scratch stack after the test's title and derives a stage from
+ * the user, while Polar's identity for a product is `(stage, tier)` and for a
+ * meter is `(stage, feature)` — so two cases that sold tier `pro` would ask one
+ * sandbox for one object and the second would be refused `OwnedBySomeoneElse`,
+ * correctly. Products and meters are `RemovalPolicy.retain`, so a case's object
+ * outlives it and the collision would not clear between runs. Renaming a case
+ * orphans what it created for the same reason: the stack name changes, the
+ * vendor name does not.
  */
 const accessToken = process.env.POLAR_ACCESS_TOKEN;
 const hasToken = accessToken !== undefined && accessToken !== "";
@@ -85,7 +95,7 @@ test.provider.skipIf(!hasToken)(
       // this run's.
       yield* stack.destroy();
 
-      const first = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
+      const first = yield* stack.deploy(PolarPrices("PricesBase", { tiers: { pro: proPrice } }));
       const productId = first.products.pro;
       const name = productNameOf(stack.stage, "pro");
 
@@ -103,13 +113,13 @@ test.provider.skipIf(!hasToken)(
       // Identity survives a lost state: a deploy with no state adopts the
       // product the metadata names instead of creating a second one.
       yield* stack.destroy();
-      const adopted = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
+      const adopted = yield* stack.deploy(PolarPrices("PricesBase", { tiers: { pro: proPrice } }));
       expect(adopted.products.pro).toBe(productId);
 
       // Polar embeds the price in the product, so a price change is a new
       // generation: a new id, the same tier identity, and the old one kept.
       const second = yield* stack.deploy(
-        PolarPrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
+        PolarPrices("PricesBase", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
       );
 
       expect(second.products.pro).not.toBe(productId);
@@ -124,7 +134,7 @@ test.provider.skipIf(!hasToken)(
       expect(fixedPriceOf(previous)?.price_amount).toBe(1900);
 
       // A tier that leaves the catalog is retained the same way.
-      yield* stack.deploy(PolarPrices("Prices", { tiers: {} }));
+      yield* stack.deploy(PolarPrices("PricesBase", { tiers: {} }));
       const retired = yield* readProduct(productId);
       expect(retired.id).toBe(productId);
       const alsoRetired = yield* readProduct(second.products.pro);
@@ -137,7 +147,7 @@ test.provider.skipIf(!hasToken)("creates a one-time product for a one-off pack",
     yield* stack.destroy();
 
     const sold = yield* stack.deploy(
-      PolarPrices("Prices", {
+      PolarPrices("PricesOneOff", {
         tiers: { credits: { price: { ...proPrice, amount: 9_900 }, kind: "one_off" } },
       }),
     );
@@ -156,17 +166,17 @@ test.provider.skipIf(!hasToken)(
       yield* stack.destroy();
 
       const sold = yield* stack.deploy(
-        PolarPrices("Prices", {
+        PolarPrices("PricesMeter", {
           tiers: {
-            pro: {
+            metered: {
               price: proPrice,
-              usage: { messages: { amount: 2, currency: "usd" } },
+              usage: { requests: { amount: 2, currency: "usd" } },
             },
           },
         }),
       );
 
-      const product = yield* readProduct(sold.products.pro);
+      const product = yield* readProduct(sold.products.metered);
 
       const metered = product.prices.find((price) => "meter_id" in price) as
         | {
@@ -182,15 +192,15 @@ test.provider.skipIf(!hasToken)(
       const listed = yield* DistilledPolar.metersList({ limit: 100 }).pipe(Effect.provide(live));
 
       const meter = listed.items.find(
-        (candidate) => candidate.name === meterNameOf(stack.stage, "messages"),
+        (candidate) => candidate.name === meterNameOf(stack.stage, "requests"),
       );
 
       expect(meter?.aggregation).toEqual({ func: "sum", property: "metadata.units" });
       expect(meter?.filter.clauses[0]).toMatchObject({
         property: "name",
-        value: sold.meters.messages,
+        value: sold.meters.requests,
       });
-      expect(meter?.metadata.paykit_feature).toBe("messages");
+      expect(meter?.metadata.paykit_feature).toBe("requests");
     }),
 );
 
@@ -201,18 +211,18 @@ test.provider.skipIf(!hasToken)(
       yield* stack.destroy();
 
       const billing = yield* stack.deploy(
-        PolarBilling("Billing", {
+        PolarBilling("BillingJoined", {
           accessToken: accessToken ?? "",
           server: "sandbox",
           origin: "https://app.example.com",
-          tiers: { pro: proPrice },
+          tiers: { joined: proPrice },
         }),
       );
 
-      const product = yield* readProduct(billing.sold.products.pro);
-      expect(product.id).toBe(billing.sold.products.pro);
-      expect(product.name).toBe(productNameOf(stack.stage, "pro"));
-      expect(billing.prices).toEqual({ pro: proPrice });
+      const product = yield* readProduct(billing.sold.products.joined);
+      expect(product.id).toBe(billing.sold.products.joined);
+      expect(product.name).toBe(productNameOf(stack.stage, "joined"));
+      expect(billing.prices).toEqual({ joined: proPrice });
       expect(billing.capabilities.has("checkout")).toBe(true);
     }),
 );
@@ -243,7 +253,7 @@ test.provider.skipIf(!hasToken)(
         },
       } as const;
 
-      const sold = yield* stack.deploy(PolarPrices("Prices", { tiers }));
+      const sold = yield* stack.deploy(PolarPrices("PricesLadder", { tiers }));
 
       const packageProduct = yield* readProduct(sold.products.package);
 
@@ -276,7 +286,7 @@ test.provider.skipIf(!hasToken)(
       ]);
 
       const changed = yield* stack.deploy(
-        PolarPrices("Prices", {
+        PolarPrices("PricesLadder", {
           tiers: {
             ...tiers,
             ladder: {
