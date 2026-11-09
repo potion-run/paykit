@@ -14,6 +14,7 @@ import { Admin } from "../Auth/Guards.ts";
 import { Refund as RefundBinding } from "../Billing/Admin.binding.ts";
 import { transportMessage } from "../Billing/Bindings.ts";
 import { PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
+import { CreditExceedsBalance } from "../Subscription/ConsumeCredits.command.ts";
 import { RefundExceedsCharged } from "../Subscription/Refund.command.ts";
 import { AdminReadError, AdminReadFailed } from "./Reads.ts";
 
@@ -32,6 +33,11 @@ export const RefundRequest = Schema.Struct({
   /** Why the money went back, as an operator would tell a customer. */
   reason: Schema.optionalKey(Schema.String),
   /**
+   * Credits to burn with the refund, capped by the pool. Absent, the pool is
+   * untouched (ADR 0032).
+   */
+  revokeCredits: Schema.optionalKey(Schema.Int),
+  /**
    * The retry key, which is the provider's idempotency key and the command id.
    * The server allocates one when absent; the console always sends its own so
    * a retry replays the same refund.
@@ -44,6 +50,7 @@ export type RefundRequest = typeof RefundRequest.Type;
 /** Every typed refusal a refund can return as data. */
 export const RefundRejection = Schema.Union([
   RefundExceedsCharged,
+  CreditExceedsBalance,
   ProviderCapabilityMissing,
   PaymentDeclined,
 ]);
@@ -127,6 +134,7 @@ export const makeAdminRefund = Effect.gen(function* () {
             amount: input.amount,
             currency: input.currency,
             ...(input.reason === undefined ? {} : { reason: input.reason }),
+            ...(input.revokeCredits === undefined ? {} : { revokeCredits: input.revokeCredits }),
             dedupeKey: commandId,
           }),
         );

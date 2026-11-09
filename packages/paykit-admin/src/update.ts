@@ -542,6 +542,7 @@ const refundCommand = (
         amount: intent.amount,
         currency: intent.currency,
         ...(intent.reason === undefined ? {} : { reason: intent.reason }),
+        ...(intent.revokeCredits === undefined ? {} : { revokeCredits: intent.revokeCredits }),
       },
     }),
     (message) => Message.ReceivedAdminRefund({ message }),

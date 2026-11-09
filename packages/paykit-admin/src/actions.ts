@@ -99,6 +99,8 @@ export const AdminIntent = Schema.Union([
     amount: Schema.Int,
     currency: Schema.String,
     reason: Schema.optionalKey(Schema.String),
+    /** Credits to burn with the refund, when the operator said so. */
+    revokeCredits: Schema.optionalKey(Schema.Int),
   }),
   Schema.Struct({
     kind: Schema.Literal("ReverseRefund"),
@@ -135,6 +137,13 @@ const dateTime = (value: string, label: string): Result.Result<DateTime.Utc, str
 const selectTier = (value: string): Result.Result<string, string> => nonEmpty(value, "tier");
 
 /** An optional note: absent and blank are the same thing, so the field can stay empty. */
+/** A blank field is "none"; anything else has to be a positive whole amount. */
+const optionalCredits = (value: string | undefined): Result.Result<number | undefined, string> => {
+  const text = optionalText(value);
+
+  return text === undefined ? Result.succeed(undefined) : positiveInt(text);
+};
+
 const optionalText = (value: string | undefined): string | undefined => {
   const trimmed = (value ?? "").trim();
 
@@ -284,21 +293,29 @@ export const OperatorActions = operatorActionTable({
         default: ({ currency }) => currency,
       },
       { name: "reason", label: "Reason (optional)", control: "text" },
+      {
+        name: "revokeCredits",
+        label: "Credits to revoke (optional)",
+        control: "number",
+      },
     ],
     parse: (values) =>
       Result.flatMap(nonEmpty(values.chargeId ?? "", "charge id"), (chargeId) =>
         Result.flatMap(positiveInt(values.amount ?? ""), (amount) =>
-          Result.map(nonEmpty(values.currency ?? "", "currency"), (currency) => {
-            const reason = optionalText(values.reason);
+          Result.flatMap(nonEmpty(values.currency ?? "", "currency"), (currency) =>
+            Result.map(optionalCredits(values.revokeCredits), (revokeCredits) => {
+              const reason = optionalText(values.reason);
 
-            return {
-              kind: "Refund" as const,
-              chargeId,
-              amount,
-              currency,
-              ...(reason === undefined ? {} : { reason }),
-            };
-          }),
+              return {
+                kind: "Refund" as const,
+                chargeId,
+                amount,
+                currency,
+                ...(reason === undefined ? {} : { reason }),
+                ...(revokeCredits === undefined ? {} : { revokeCredits }),
+              };
+            }),
+          ),
         ),
       ),
   },

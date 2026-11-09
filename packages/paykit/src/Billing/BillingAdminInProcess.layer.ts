@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
+import { CreditExceedsBalance } from "../Subscription/ConsumeCredits.command.ts";
 import { EnterGrace as EnterGraceCommand } from "../Subscription/EnterGrace.command.ts";
 import { Expire as ExpireCommand } from "../Subscription/Expire.command.ts";
 import { ExtendTrial as ExtendTrialCommand } from "../Subscription/ExtendTrial.command.ts";
@@ -13,7 +14,12 @@ import { RecordPaymentFailure as RecordPaymentFailureCommand } from "../Subscrip
 import { Recover as RecoverCommand } from "../Subscription/Recover.command.ts";
 import { Refund as RefundCommand, RefundExceedsCharged } from "../Subscription/Refund.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { refundableOf, refundOfCommand, refundedOf } from "../Subscription/Subscription.state.ts";
+import {
+  refundableOf,
+  refundOfCommand,
+  refundedOf,
+  reservedCreditsOf,
+} from "../Subscription/Subscription.state.ts";
 import {
   EnterGrace,
   Expire,
@@ -279,6 +285,29 @@ export const BillingAdminInProcess = Layer.mergeAll(
             );
           }
 
+          // A revocation rides the refund, so its ceiling is checked here too:
+          // the provider call comes first, and a revocation the model would
+          // refuse must not leave the account on the way to being refused
+          // (ADR 0032).
+          const revoke = request.revokeCredits ?? 0;
+
+          if (revoke > 0) {
+            const reserved = state._tag === "Subscribed" ? reservedCreditsOf(state) : 0;
+            const available = state._tag === "Subscribed" ? state.credits - reserved : 0;
+
+            if (revoke > available) {
+              return yield* bound(toRefundError)(
+                Effect.fail(
+                  new CreditExceedsBalance({
+                    balance: state._tag === "Subscribed" ? state.credits : 0,
+                    requested: revoke,
+                    ...(reserved === 0 ? {} : { reserved }),
+                  }),
+                ),
+              );
+            }
+          }
+
           const chosen = Option.match(router, {
             onNone: () => null,
             onSome: (set) => providerFor(set, state.refs),
@@ -311,6 +340,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
                   amount: request.amount,
                   currency: request.currency,
                   ...(request.reason === undefined ? {} : { reason: request.reason }),
+                  ...(revoke <= 0 ? {} : { revokeCredits: revoke }),
                 }),
                 { commandId: request.dedupeKey },
               ),

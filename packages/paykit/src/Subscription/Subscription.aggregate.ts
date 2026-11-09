@@ -1459,6 +1459,20 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         });
       }
 
+      // A revocation is a second ceiling and a second fact. Both are checked
+      // before either is recorded, so a refused refund sends no money and burns
+      // no credits (ADR 0032).
+      const revoke = command.revokeCredits ?? 0;
+      const reserved = state._tag === "Subscribed" ? reservedCreditsOf(state) : 0;
+
+      if (revoke > 0 && revoke > (state._tag === "Subscribed" ? state.credits - reserved : 0)) {
+        return new CreditExceedsBalance({
+          balance: state._tag === "Subscribed" ? state.credits : 0,
+          requested: revoke,
+          ...(reserved === 0 ? {} : { reserved }),
+        });
+      }
+
       return [
         new RefundRecorded({
           chargeId: command.chargeId,
@@ -1469,6 +1483,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.reason === undefined ? {} : { reason: command.reason }),
           refundedAfter: (refundedOf(state)[command.currency] ?? 0) + command.amount,
         }),
+        // The money first, then the pool: a reader sees what went back before it
+        // sees what stopped being spendable.
+        ...(revoke <= 0 || state._tag !== "Subscribed"
+          ? []
+          : [new CreditsConsumed({ amount: revoke, balanceAfter: state.credits - revoke })]),
       ];
     },
     RecordTopUpFailure: (state, command, { commandId, now }) => {

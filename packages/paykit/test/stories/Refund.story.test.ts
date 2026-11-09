@@ -10,6 +10,10 @@ import { allowancesOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
+import {
+  CreditExceedsBalance,
+  CreditsConsumed,
+} from "../../src/Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import {
   CreditsPurchased,
@@ -393,5 +397,64 @@ it.effect("reverses a refund in two parts, and refuses a third", () =>
         requested: 1,
       }),
     ),
+  ),
+);
+
+it.effect("refunds and revokes credits in one call, as two facts", () =>
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(
+      account,
+      new Refund({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 4_900,
+        currency: "usd",
+        reason: "pack returned",
+        // The credits the money bought stop being spendable in the same call,
+        // but the log still holds one event per fact (ADR 0032).
+        revokeCredits: 5_000,
+      }),
+    ),
+    Story.then(
+      account,
+      new RefundRecorded({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 4_900,
+        currency: "usd",
+        reason: "pack returned",
+        commandId: "story:7",
+        refundedAfter: 4_900,
+      }),
+    ),
+    Story.then(account, new CreditsConsumed({ amount: 5_000, balanceAfter: 100 })),
+    Story.view(BillingState, account, { charged: { usd: 4_900 }, refunded: { usd: 4_900 } }),
+    // 5,100 was in the pool; the pack's 5,000 is gone and the plan's grant stays.
+    Story.view(Entitlements, account, { credits: 100 }),
+  ),
+);
+
+it.effect("refuses the whole refund when the pool cannot cover the revocation", () =>
+  // 5,100 in the pool, so 5,101 is the smallest revocation the model refuses —
+  // and it refuses the money too, because one decision records both or neither.
+  story(
+    ...subscribed,
+    ...bought,
+    Story.when(
+      account,
+      new Refund({
+        chargeId: "ch_1",
+        refundId: "re_1",
+        amount: 4_900,
+        currency: "usd",
+        revokeCredits: 5_101,
+      }),
+    ),
+    Story.rejected(new CreditExceedsBalance({ balance: 5_100, requested: 5_101 })),
+    // Nothing went back and nothing burned.
+    Story.view(BillingState, account, { charged: { usd: 4_900 } }),
+    Story.view(Entitlements, account, { credits: 5_100 }),
   ),
 );

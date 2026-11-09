@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
 import { Admin } from "../Auth/Guards.ts";
+import { CreditExceedsBalance, CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 
 /** A refund is larger than the money paykit recorded as charged in its currency. */
@@ -44,12 +45,13 @@ export class RefundRecorded extends Domain.Event("RefundRecorded", {
 /**
  * Record money going back to the customer.
  *
- * A refund is an operator's act, not a customer's command, and it never touches
- * the credit pool: revoking credits a refund should not leave spendable is
- * `ConsumeCredits`, which an operator may send separately, so the log keeps
- * "money left" and "credits were burned" apart. The provider call happens in the
- * `Refund` binding, before this command, and its `refundId` is the evidence this
- * event carries.
+ * A refund is an operator's act, not a customer's command. By default it never
+ * touches the credit pool: revoking credits is `ConsumeCredits`, which an
+ * operator may send separately, so the log keeps "money left" and "credits were
+ * burned" apart. `revokeCredits` is how an operator says both in one call — one
+ * command, two events, and the same two facts on the log (ADR 0032). The
+ * provider call happens in the `Refund` binding, before this command, and its
+ * `refundId` is the evidence this event carries.
  *
  * The cap is what paykit recorded as charged: a refund cannot exceed the money
  * the log knows about in its currency (`RefundExceedsCharged`), which is the same
@@ -66,8 +68,14 @@ export class Refund extends Domain.Command("Refund", {
     amount: Schema.Int,
     currency: Schema.String,
     reason: Schema.optionalKey(Schema.String),
+    /**
+     * Credits to burn with the refund, capped by what the pool can cover.
+     * Absent, the pool is untouched — ADR 0019's rule stands, and this is how an
+     * operator says both in one call (ADR 0032).
+     */
+    revokeCredits: Schema.optionalKey(Schema.Int),
   },
-  events: [RefundRecorded],
-  rejects: [RefundExceedsCharged],
+  events: [RefundRecorded, CreditsConsumed],
+  rejects: [RefundExceedsCharged, CreditExceedsBalance],
   middleware: [Admin],
 }) {}

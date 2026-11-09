@@ -91,6 +91,12 @@ export interface RefundRequest {
   readonly currency: string;
   /** Why the money went back, as an operator would tell a customer. */
   readonly reason?: string;
+  /**
+   * Credits to burn with the refund. Absent, the pool is untouched. The binding
+   * checks this ceiling before it calls the provider, so a revocation the model
+   * would refuse never leaves the account (ADR 0032).
+   */
+  readonly revokeCredits?: number;
   /** The retry key, which is also the provider's idempotency key and the command id. */
   readonly dedupeKey: string;
 }
@@ -422,8 +428,11 @@ export const RecordPaymentFailure = Binding.Service<RecordPaymentFailure>(
  * - **The provider takes the money, the log records it.** `Payments.refund` is
  *   keyed by `dedupeKey`, so a retry is the same refund at the vendor and the
  *   same command here; the provider's refund id is what the event carries.
- * - **A refund does not touch the pool.** Revoking credits is `ConsumeCredits`,
- *   sent separately, so "money left" and "credits were burned" stay two facts.
+ * - **A refund does not touch the pool unless it says so.** Revoking credits is
+ *   `ConsumeCredits`, sent separately, so "money left" and "credits were burned"
+ *   stay two facts. `revokeCredits` records both in one call and still as two
+ *   events, and both ceilings are checked before the provider is asked
+ *   (ADR 0032).
  *
  * It is implemented where the provider is reachable — the in-process operator
  * layer — because a console backend that owns only the Api cannot move money.
