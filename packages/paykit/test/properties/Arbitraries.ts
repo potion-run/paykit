@@ -3,8 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { catalog, creditRatesOf, planTermsOf, type Catalog } from "../../src/Catalog.ts";
+import { EntityId } from "../../src/Customer.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { prorate } from "../../src/Proration.ts";
+import { ArchiveEntity } from "../../src/Subscription/ArchiveEntity.command.ts";
+import { AttachEntity } from "../../src/Subscription/AttachEntity.command.ts";
 import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.command.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
@@ -15,6 +18,7 @@ import { EnterGrace } from "../../src/Subscription/EnterGrace.command.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
 import { GraceElapsed } from "../../src/Subscription/GraceElapsed.command.ts";
+import { GrantBalance } from "../../src/Subscription/GrantBalance.command.ts";
 import { GrantCredits } from "../../src/Subscription/GrantCredits.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { HoldElapsed } from "../../src/Subscription/HoldElapsed.command.ts";
@@ -28,17 +32,23 @@ import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { SetBillingControls } from "../../src/Subscription/SetBillingControls.command.ts";
+import { SetQuantity } from "../../src/Subscription/SetQuantity.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
+import { SetUsage } from "../../src/Subscription/SetUsage.command.ts";
 import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
   priceOf as statePriceOf,
+  entityRecordsOf,
   initialSubscriptionState,
+  scopeStateOf,
   SubscriptionState,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
+import { TransferBalance } from "../../src/Subscription/TransferBalance.command.ts";
+import { UpdateEntity } from "../../src/Subscription/UpdateEntity.command.ts";
 import { WithdrawTierChange } from "../../src/Subscription/WithdrawTierChange.command.ts";
 import { tier } from "../../src/Tier.ts";
 
@@ -210,15 +220,35 @@ export const HoldId = Schema.Literals(["hold-a", "hold-b", "hold-c"]);
 export const CustomerIdentity = Schema.Literals(["ada", "grace"]);
 
 /**
+ * The two entities a generated script can name. The ids are fixed rather than
+ * generated, so the same plan targets the same scope on every run and a replay
+ * is the same event rather than a second entity.
+ */
+export const EntityPlanId = Schema.Literals(["ent-a", "ent-b"]);
+
+export type EntityPlanId = typeof EntityPlanId.Type;
+
+/** The optional label an attach or a rename carries; absent clears it. */
+const EntityName = Schema.optionalKey(Schema.Literals(["team-a", "team-b"]));
+
+/**
  * One high-level command a script may ask for. A plan is converted to the real
  * command against the current state, because some commands carry values only
- * the state can know (a `ChangeTier` proration, a `ClosePeriod` boundary).
+ * the state can know (a `ChangeTier` proration, a `ClosePeriod` boundary) and a
+ * scoped command has to name a scope that exists (an entity attach).
  */
 export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("Subscribe", { tier: TierName }),
   Schema.TaggedStruct("StartTrial", { tier: TierName, trialDays: TrialDays }),
-  Schema.TaggedStruct("ChangeTier", { tier: TierName }),
-  Schema.TaggedStruct("TrackUsage", { amount: Amount, dedupeKey: DedupeKey }),
+  Schema.TaggedStruct("ChangeTier", {
+    tier: TierName,
+    entityId: Schema.optionalKey(EntityPlanId),
+  }),
+  Schema.TaggedStruct("TrackUsage", {
+    amount: Amount,
+    dedupeKey: DedupeKey,
+    entityId: Schema.optionalKey(EntityPlanId),
+  }),
   Schema.TaggedStruct("TrackCredits", {
     amount: Amount,
     dimension: Schema.Literals(["default", "gpt-large"]),
@@ -234,6 +264,19 @@ export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("SettleHold", { holdId: HoldId, amount: Schema.optionalKey(Amount) }),
   Schema.TaggedStruct("ReleaseHold", { holdId: HoldId }),
   Schema.TaggedStruct("HoldElapsed", { holdId: HoldId }),
+  Schema.TaggedStruct("GrantBalance", {
+    amount: Amount,
+    entityId: Schema.optionalKey(EntityPlanId),
+  }),
+  Schema.TaggedStruct("SetQuantity", {
+    quantity: Amount,
+    dedupeKey: Schema.optionalKey(Schema.Literals(["qty-a", "qty-b"])),
+    entityId: Schema.optionalKey(EntityPlanId),
+  }),
+  Schema.TaggedStruct("SetUsage", {
+    usage: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 5 }))),
+    entityId: Schema.optionalKey(EntityPlanId),
+  }),
   Schema.TaggedStruct("GrantCredits", { amount: Amount }),
   Schema.TaggedStruct("PurchaseCredits", { amount: Amount }),
   Schema.TaggedStruct("ConsumeCredits", { amount: Amount }),
@@ -257,6 +300,14 @@ export const CommandPlan = Schema.Union([
     threshold: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
   }),
   Schema.TaggedStruct("CreateCustomer", { identity: CustomerIdentity }),
+  Schema.TaggedStruct("AttachEntity", { entityId: EntityPlanId, name: EntityName }),
+  Schema.TaggedStruct("UpdateEntity", { entityId: EntityPlanId, name: EntityName }),
+  Schema.TaggedStruct("ArchiveEntity", { entityId: EntityPlanId }),
+  Schema.TaggedStruct("TransferBalance", {
+    from: EntityPlanId,
+    to: EntityPlanId,
+    amount: Amount,
+  }),
 ]);
 
 export type CommandPlan = typeof CommandPlan.Type;
@@ -293,10 +344,60 @@ const termsOf = (tierId: TierName) => {
 
 const priceOf = (tierId: TierName) => termsOf(tierId).price;
 
-/** The `ChangeTier` proration the state says a move at `now` would cost. */
-export const prorationFor = (state: SubscriptionState, tierId: TierName, now: DateTime.Utc) => {
-  if (state._tag !== "Subscribed") return undefined;
+const entityIdOf = (id: EntityPlanId): EntityId => EntityId.make(id);
 
+/** The entities that exist and have not been archived. */
+const liveEntities = (state: SubscriptionState): ReadonlyArray<EntityId> =>
+  entityRecordsOf(state)
+    .filter((record) => record.status === "attached")
+    .map((record) => record.id);
+
+/**
+ * The scope a plan names. An id the log already knows is used as it is, so an
+ * archived scope still earns its terminal refusal. An id the log never created
+ * falls back to a live scope when one exists, because a scoped write has to be
+ * able to attach before it writes; with no live scope it stays the plan's id
+ * and the model answers `EntityUnknown` rather than the generator crashing.
+ */
+const scopeIdOf = (
+  state: SubscriptionState,
+  preferred: EntityPlanId | undefined,
+): EntityId | undefined => {
+  if (preferred === undefined) return undefined;
+
+  if (state.entities?.[preferred] !== undefined) return entityIdOf(preferred);
+
+  return liveEntities(state)[0] ?? entityIdOf(preferred);
+};
+
+/**
+ * The pair a generated transfer addresses. Both endpoints are scopes that
+ * exist: two live entities when the log has two, the only live entity with
+ * itself when it has one (an accepted no-op), and the plan's id when it has
+ * none (an `EntityUnknown` refusal, not a second entity).
+ */
+const transferScopes = (
+  state: SubscriptionState,
+  plan: { readonly from: EntityPlanId; readonly to: EntityPlanId },
+): { readonly from: EntityId; readonly to: EntityId } => {
+  const live = liveEntities(state);
+  const plannedFrom = entityIdOf(plan.from);
+  const plannedTo = entityIdOf(plan.to);
+
+  const from =
+    live.includes(plannedFrom) && live.includes(plannedTo) && plan.from !== plan.to
+      ? plannedFrom
+      : (live[0] ?? plannedFrom);
+
+  const to =
+    live.includes(plannedTo) && plannedTo !== from
+      ? plannedTo
+      : (live.find((id) => id !== from) ?? from);
+
+  return { from, to };
+};
+
+const prorationAt = (state: SubscribedState, tierId: TierName, now: DateTime.Utc) => {
   const priced = prorate({
     from: statePriceOf(state),
     to: priceOf(tierId),
@@ -306,6 +407,10 @@ export const prorationFor = (state: SubscriptionState, tierId: TierName, now: Da
 
   return priced ?? undefined;
 };
+
+/** The `ChangeTier` proration the state says a move at `now` would cost. */
+export const prorationFor = (state: SubscriptionState, tierId: TierName, now: DateTime.Utc) =>
+  state._tag === "Subscribed" ? prorationAt(state, tierId, now) : undefined;
 
 /** Build the real command class for a plan, using only state the model already holds. */
 export const commandOf = (
@@ -325,21 +430,31 @@ export const commandOf = (
         trialEndsAt: DateTime.add(now, { days: plan.trialDays }),
       });
     case "ChangeTier": {
-      const proration = prorationFor(state, plan.tier, now);
+      const entity = plan.entityId === undefined ? undefined : scopeIdOf(state, plan.entityId);
+      const scoped = entity === undefined ? state : scopeStateOf(state, entity);
+
+      const proration =
+        scoped._tag === "Subscribed" ? prorationAt(scoped, plan.tier, now) : undefined;
 
       return new ChangeTier({
         tier: plan.tier,
         ...termsOf(plan.tier),
+        ...(entity === undefined ? {} : { entity }),
         ...(proration === undefined ? {} : { proration }),
       });
     }
 
-    case "TrackUsage":
+    case "TrackUsage": {
+      const entity = plan.entityId === undefined ? undefined : scopeIdOf(state, plan.entityId);
+
       return new TrackUsage({
         feature: "messages",
         amount: plan.amount,
+        ...(entity === undefined ? {} : { entity }),
         ...(plan.dedupeKey === undefined ? {} : { dedupeKey: plan.dedupeKey }),
       });
+    }
+
     case "TrackCredits":
       return new TrackUsage({
         feature: "ai",
@@ -363,6 +478,37 @@ export const commandOf = (
       return new ReleaseHold({ holdId: plan.holdId });
     case "HoldElapsed":
       return new HoldElapsed({ holdId: plan.holdId });
+    case "GrantBalance": {
+      const entity = plan.entityId === undefined ? undefined : scopeIdOf(state, plan.entityId);
+
+      return new GrantBalance({
+        feature: "messages",
+        granted: plan.amount,
+        ...(entity === undefined ? {} : { entity }),
+      });
+    }
+
+    case "SetQuantity": {
+      const entity = plan.entityId === undefined ? undefined : scopeIdOf(state, plan.entityId);
+
+      return new SetQuantity({
+        feature: "seats",
+        quantity: plan.quantity,
+        dedupeKey: plan.dedupeKey ?? "qty-a",
+        ...(entity === undefined ? {} : { entity }),
+      });
+    }
+
+    case "SetUsage": {
+      const entity = plan.entityId === undefined ? undefined : scopeIdOf(state, plan.entityId);
+
+      return new SetUsage({
+        feature: "seats",
+        usage: plan.usage,
+        ...(entity === undefined ? {} : { entity }),
+      });
+    }
+
     case "GrantCredits":
       return new GrantCredits({ amount: plan.amount });
     case "PurchaseCredits":
@@ -430,6 +576,28 @@ export const commandOf = (
         name: plan.identity,
         email: `${plan.identity}@example.com`,
       });
+    case "AttachEntity":
+      return new AttachEntity({
+        entityId: entityIdOf(plan.entityId),
+        ...(plan.name === undefined ? {} : { name: plan.name }),
+      });
+    case "UpdateEntity":
+      return new UpdateEntity({
+        entityId: entityIdOf(plan.entityId),
+        ...(plan.name === undefined ? {} : { name: plan.name }),
+      });
+    case "ArchiveEntity":
+      return new ArchiveEntity({ entityId: entityIdOf(plan.entityId) });
+    case "TransferBalance": {
+      const scopes = transferScopes(state, plan);
+
+      return new TransferBalance({
+        from: { kind: "entity", entityId: scopes.from },
+        to: { kind: "entity", entityId: scopes.to },
+        feature: "messages",
+        amount: plan.amount,
+      });
+    }
   }
 };
 
