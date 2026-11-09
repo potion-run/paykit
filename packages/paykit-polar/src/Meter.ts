@@ -122,9 +122,20 @@ const attrsOf = (meter: Polar.Meter): Meter["Attributes"] => {
 const sameFilter = (left: Polar.Filter, right: Polar.Filter): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
+/**
+ * One aggregation's identity, with a metadata property named the way Polar
+ * reports it.
+ *
+ * `metersCreate` takes `metadata.units`, and every read returns `units` — the
+ * bare property name. Comparing the two spellings literally made every
+ * reconcile see a change and call `metersUpdate` on a meter that was already
+ * right, so the provider never converged (found by the live case).
+ */
+const aggregationPropertyOf = (property: string): string => property.replace(/^metadata\./, "");
+
 const aggregationSignature = (aggregation: Polar.MeterAggregation): string =>
   "property" in aggregation
-    ? `${aggregation.func ?? "count"}:${aggregation.property}`
+    ? `${aggregation.func ?? "count"}:${aggregationPropertyOf(aggregation.property)}`
     : (aggregation.func ?? "count");
 
 const sameAggregation = (left: Polar.MeterAggregation, right: Polar.MeterAggregation): boolean =>

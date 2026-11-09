@@ -50,8 +50,13 @@ const live = Layer.mergeAll(
 
 const readProduct = (id: string) => DistilledPolar.productsGet({ id }).pipe(Effect.provide(live));
 
-const pro = { amount: 1900, currency: "usd", interval: "month" as const };
-const scale = { amount: 19_800, currency: "usd", interval: "annual" as const };
+/**
+ * The two tiers this case sells. They are its own — a product's identity is
+ * `(stage, tier)`, so a case that sold a tier another case sells would ask the
+ * sandbox for one product and be refused it, correctly.
+ */
+const keptPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+const retiringPrice = { amount: 19_800, currency: "usd", interval: "annual" as const };
 
 test.provider.skipIf(!hasToken)(
   "archives the product of a tier that left the catalog, and keeps it readable",
@@ -62,36 +67,43 @@ test.provider.skipIf(!hasToken)(
       // out of the products a previous run left behind.
       yield* stack.destroy();
 
-      const sold = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro, scale } }));
-      const scaleProductId = sold.products.scale;
-      const proProductId = sold.products.pro;
+      const sold = yield* stack.deploy(
+        PolarPrices("Prices", { tiers: { kept: keptPrice, retiring: retiringPrice } }),
+      );
 
-      const before = yield* readProduct(scaleProductId);
+      const retiredProductId = sold.products.retiring;
+      const keptProductId = sold.products.kept;
+
+      const before = yield* readProduct(retiredProductId);
       expect(before.is_archived).toBe(false);
 
       // The tier leaves the catalog. `PolarPrices` retains the product, which
       // is what leaves it purchasable — the gap the sweep closes.
-      yield* stack.deploy(PolarPrices("Prices", { tiers: { pro } }));
-      const retained = yield* readProduct(scaleProductId);
+      yield* stack.deploy(PolarPrices("Prices", { tiers: { kept: keptPrice } }));
+
+      const retained = yield* readProduct(retiredProductId);
       expect(retained.is_archived).toBe(false);
 
-      const retired = yield* stack.deploy(RetiredProducts("Retired", { tiers: { pro } }));
-      expect(retired.archived).toContain(scaleProductId);
+      const retired = yield* stack.deploy(
+        RetiredProducts("Retired", { tiers: { kept: keptPrice } }),
+      );
+
+      expect(retired.archived).toContain(retiredProductId);
       // The tier the catalog still sells is not a candidate.
-      expect(retired.archived).not.toContain(proProductId);
+      expect(retired.archived).not.toContain(keptProductId);
 
       // Archived: not purchasable, and still there. An order may reference it.
-      const after = yield* readProduct(scaleProductId);
+      const after = yield* readProduct(retiredProductId);
       expect(after.is_archived).toBe(true);
-      expect(after.id).toBe(scaleProductId);
+      expect(after.id).toBe(retiredProductId);
 
       // The tier still in the catalog is untouched and still sellable.
-      const kept = yield* readProduct(proProductId);
-      expect(kept.is_archived).toBe(false);
+      const stillKept = yield* readProduct(keptProductId);
+      expect(stillKept.is_archived).toBe(false);
 
       // A second sweep is a no-op: archiving is idempotent, so a deploy that
       // changes nothing archives nothing.
-      const again = yield* stack.deploy(RetiredProducts("Retired", { tiers: { pro } }));
+      const again = yield* stack.deploy(RetiredProducts("Retired", { tiers: { kept: keptPrice } }));
       expect(again.archived).toEqual([]);
     }),
 );

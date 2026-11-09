@@ -23,6 +23,14 @@ import { ProductProvider } from "../src/Product.ts";
  * protocol and schemas; only the HTTP transport is a fake.
  */
 
+/** A metadata property the way Polar reports it: bare, without `metadata.`. */
+const readBackAggregation = (
+  aggregation: DistilledPolar.MeterAggregation,
+): DistilledPolar.MeterAggregation =>
+  "property" in aggregation
+    ? { ...aggregation, property: aggregation.property.replace(/^metadata\./, "") }
+    : aggregation;
+
 interface FakeCreateBody {
   readonly name: string;
   readonly description?: string | null;
@@ -191,7 +199,9 @@ const fakePolar = () => {
             custom_label: null,
             custom_multiplier: null,
             filter: body.filter,
-            aggregation: body.aggregation,
+            // Polar accepts `metadata.units` and reports `units`: a stand-in that
+            // echoed the request would hide a reconcile that never converges.
+            aggregation: readBackAggregation(body.aggregation),
             organization_id: "org_fake",
             metadata: (body.metadata ?? {}) as DistilledPolar.MetadataOutputType,
             archived_at: null,
@@ -242,7 +252,9 @@ const fakePolar = () => {
             ...current,
             ...(body.name == null ? {} : { name: body.name }),
             ...(body.filter == null ? {} : { filter: body.filter }),
-            ...(body.aggregation == null ? {} : { aggregation: body.aggregation }),
+            ...(body.aggregation == null
+              ? {}
+              : { aggregation: readBackAggregation(body.aggregation) }),
             ...(body.metadata === undefined
               ? {}
               : { metadata: body.metadata as DistilledPolar.MetadataOutputType }),
@@ -511,7 +523,7 @@ test.provider("creates a meter and a metered price from the catalog's unit price
     expect(metered?.price_currency).toBe("usd");
 
     const meter = metered === undefined ? undefined : polar.meters.get(metered.meter_id);
-    expect(meter?.aggregation).toEqual({ func: "sum", property: "metadata.units" });
+    expect(meter?.aggregation).toEqual({ func: "sum", property: "units" });
     expect(meter?.filter.clauses[0]).toMatchObject({
       property: "name",
       value: sold.meters.messages,
@@ -534,6 +546,13 @@ test.provider("creates a meter and a metered price from the catalog's unit price
     expect(changed.products.pro).not.toBe(sold.products.pro);
     expect(polar.products.get(sold.products.pro)?.is_archived).toBe(false);
     expect(polar.meters.size).toBe(1);
+
+    // The meter was already right. A reconcile that compared the aggregation it
+    // sent (`metadata.units`) with the one Polar reports (`units`) would update
+    // the meter on every deploy, and never converge.
+    expect(
+      polar.calls.filter((call) => call.startsWith("PATCH") && call.includes("/meters")),
+    ).toEqual([]);
   }),
 );
 

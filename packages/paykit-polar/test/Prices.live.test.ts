@@ -1,6 +1,7 @@
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as DistilledPolar from "@distilled.cloud/polar";
+import { encodeVendorPart } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
@@ -109,7 +110,9 @@ test.provider.skipIf(!hasToken)(
       // The id is Polar's, so the test asserts it round-trips rather than
       // assuming an encoding.
       expect((yield* readProduct(productId)).id).toBe(productId);
-      expect(name).toBe(`paykit:${stack.stage}:pro`);
+      // The stage is encoded into the name, so a stage with a separator in it
+      // cannot forge another identity. Assert the encoding, not the raw value.
+      expect(name).toBe(`paykit:${encodeVendorPart(stack.stage)}:pro`);
 
       const created = yield* productNamed(name);
       expect(created?.id).toBe(productId);
