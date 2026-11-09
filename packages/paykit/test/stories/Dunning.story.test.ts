@@ -91,6 +91,7 @@ const declining = (declined: PaymentDeclined): MoneyProvider<"memory"> => {
       charge: () => Effect.fail(declined),
       refund: () => missing("refund"),
       createPortal: () => missing("createPortal"),
+      setupPayment: () => missing("setupPayment"),
       reportUsage: () => missing("reportUsage"),
       setQuantity: () => missing("setQuantity"),
     }),

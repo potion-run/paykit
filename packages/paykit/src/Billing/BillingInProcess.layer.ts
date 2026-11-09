@@ -104,6 +104,8 @@ import {
 } from "./SetBillingControls.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
+import { SetupPayment, toSetupPaymentError } from "./SetupPayment.binding.ts";
+import { setupPaymentOperation } from "./SetupPayment.operation.ts";
 import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { Subscribe, toSubscribeError } from "./Subscribe.binding.ts";
@@ -1117,6 +1119,18 @@ const BillingCore = Layer.mergeAll(
       return Effect.fn("Paykit.Portal")(function* (account) {
         return Effect.fn("Paykit.Portal.open")(function* () {
           return yield* bound(toPortalError)(portal({ account }));
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    SetupPayment,
+    Effect.gen(function* () {
+      const setupPayment = yield* setupPaymentOperation();
+
+      return Effect.fn("Paykit.SetupPayment")(function* (account) {
+        return Effect.fn("Paykit.SetupPayment.open")(function* () {
+          return yield* bound(toSetupPaymentError)(setupPayment({ account }));
         });
       });
     }),

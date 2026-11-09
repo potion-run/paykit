@@ -1,12 +1,31 @@
+import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { Payments, type MoneyProvider } from "../../src/Payments.ts";
+import * as Layer from "effect/Layer";
+import { allowance } from "../../src/Allowance.ts";
+import { Actor, system } from "../../src/Auth/Actor.ts";
+import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
+import { SetupPayment as SetupPaymentBinding } from "../../src/Billing/SetupPayment.binding.ts";
+import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { catalog } from "../../src/Catalog.ts";
+import { catalogLayer } from "../../src/CatalogService.ts";
+import { messages } from "../../src/Feature.ts";
+import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
+import {
+  Payments,
+  ProviderCapabilityMissing,
+  paymentsRouter,
+  type MoneyProvider,
+} from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { PaymentsPolar, type PolarBindings } from "../../src/PaymentsPolar.ts";
 import { PaymentsStripe, type StripeBindings } from "../../src/PaymentsStripe.ts";
+import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.command.ts";
+import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { tier } from "../../src/Tier.ts";
 
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
@@ -15,6 +34,8 @@ const stripeBindings: StripeBindings = {
     Effect.succeed({ url: `https://stripe.test/checkout/${priceIds.join(",")}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://stripe.test/portal/${account}` }),
+  createSetupSession: ({ account }) =>
+    Effect.succeed({ url: `https://stripe.test/setup/${account}` }),
   createRefund: () => Effect.succeed({ refundId: "re_test" }),
   charge: ({ account }) => Effect.succeed({ chargeId: `ch_${account}` }),
 };
@@ -24,6 +45,8 @@ const polarBindings: PolarBindings = {
     Effect.succeed({ url: `https://polar.test/checkout/${productId}` }),
   createCustomerSession: ({ account }) =>
     Effect.succeed({ url: `https://polar.test/portal/${account}` }),
+  createSetupSession: ({ account }) =>
+    Effect.succeed({ url: `https://polar.test/setup/${account}` }),
   createRefund: () => Effect.succeed({ refundId: "re_polar" }),
 };
 
@@ -39,6 +62,32 @@ const providers: ReadonlyArray<readonly [string, MoneyProvider]> = [
     PaymentsPolar({ bindings: polarBindings, tiers: { pro: { price, productId: "prod_1" } } }),
   ],
 ];
+
+const operationCatalog = Effect.runSync(
+  catalog({
+    features: [messages],
+    tiers: [tier({ id: "pro", price, grants: [allowance(messages, { included: 100 })] })],
+  }),
+);
+
+const OperationModel = PaykitModel.layer(PaykitHandlers).pipe(
+  Layer.provideMerge(MemoryBillingReadStore),
+  Layer.provide(Domain.InMemory),
+  Layer.provideMerge(Layer.succeed(Actor, system("test"))),
+  Layer.provideMerge(catalogLayer(operationCatalog)),
+);
+
+const OperationProviders = paymentsRouter(
+  PaymentsStripe({ bindings: stripeBindings, tiers: { pro: { price, priceId: "price_1" } } }),
+  PaymentsManual(),
+);
+
+const OperationWorld = Layer.mergeAll(
+  OperationModel,
+  BillingInProcess.pipe(Layer.provide(OperationModel), Layer.provide(OperationProviders)),
+  catalogLayer(operationCatalog),
+  OperationProviders,
+);
 
 describe("Payments conformance", () => {
   for (const [name, provider] of providers) {
@@ -205,8 +254,98 @@ describe("Payments conformance", () => {
             }
           }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
       );
+
+      it.effect(
+        "setupPayment succeeds or is missing as declared",
+        () =>
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(
+              (yield* Payments).setupPayment({ account: "acct_1", commandId: "setup:1" }),
+            );
+
+            expect(Exit.isSuccess(exit)).toBe(provider.capabilities.has("setup"));
+
+            if (provider.capabilities.has("setup") && Exit.isSuccess(exit)) {
+              expect(exit.value.url.length).toBeGreaterThan(0);
+            }
+
+            if (!provider.capabilities.has("setup") && Exit.isFailure(exit)) {
+              expect(String(exit.cause)).toContain("ProviderCapabilityMissing");
+            }
+          }).pipe(Effect.provide(provider.payments)) as Effect.Effect<void, never, never>,
+      );
     });
   }
+
+  it.effect("passes the setup command id to each provider's binding", () =>
+    Effect.gen(function* () {
+      const stripeAsked: Array<string | undefined> = [];
+      const polarAsked: Array<string | undefined> = [];
+
+      const stripe = PaymentsStripe({
+        bindings: {
+          ...stripeBindings,
+          createSetupSession: ({ commandId }) => {
+            stripeAsked.push(commandId);
+
+            return Effect.succeed({ url: "https://stripe.test/setup" });
+          },
+        },
+      });
+
+      const polar = PaymentsPolar({
+        bindings: {
+          ...polarBindings,
+          createSetupSession: ({ commandId }) => {
+            polarAsked.push(commandId);
+
+            return Effect.succeed({ url: "https://polar.test/setup" });
+          },
+        },
+      });
+
+      for (const provider of [stripe, polar]) {
+        yield* Effect.gen(function* () {
+          yield* (yield* Payments).setupPayment({
+            account: "acct_1",
+            commandId: "setup:retry",
+          });
+        }).pipe(Effect.provide(provider.payments));
+      }
+
+      expect(stripeAsked).toEqual(["setup:retry"]);
+      expect(polarAsked).toEqual(["setup:retry"]);
+    }),
+  );
+
+  it.live("the setup operation routes to the provider the account pays through", () =>
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+
+      yield* subscription.send(
+        Subscription.ref("acct_setup_stripe"),
+        new AttachProviderRef({ provider: "stripe", refs: { customer: "cus_1" } }),
+      );
+
+      const setup = yield* SetupPaymentBinding("acct_setup_stripe");
+      expect((yield* setup()).url).toBe("https://stripe.test/setup/acct_setup_stripe");
+
+      yield* subscription.send(
+        Subscription.ref("acct_setup_manual"),
+        new AttachProviderRef({ provider: "manual", refs: { customer: "cus_1" } }),
+      );
+
+      const manualSetup = yield* SetupPaymentBinding("acct_setup_manual");
+      const refused = yield* Effect.flip(manualSetup());
+
+      expect(refused).toBeInstanceOf(ProviderCapabilityMissing);
+
+      if (refused._tag === "ProviderCapabilityMissing") {
+        expect(refused.provider).toBe("manual");
+        expect(refused.op).toBe("setupPayment");
+      }
+    }).pipe(Effect.provide(OperationWorld)),
+  );
 
   it("Manual is the reference: it sells through an invoice and refunds", () => {
     const manual = PaymentsManual();

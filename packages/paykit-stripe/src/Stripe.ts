@@ -42,6 +42,21 @@ export interface StripeClient {
     readonly returnUrl: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /**
+   * A Checkout Session in `setup` mode, where the customer adds a payment
+   * method without a purchase. A client that cannot open one declares no
+   * `setup` capability, so the port answers `ProviderCapabilityMissing` rather
+   * than a URL that cannot take a card.
+   */
+  readonly createSetupSession?: (request: {
+    readonly customerExternalId: string;
+    /** Where Stripe returns the customer after the method is saved. */
+    readonly successUrl: string;
+    /** Where an abandoned setup returns to. */
+    readonly cancelUrl: string;
+    /** Stable across retries, for the vendor's idempotency key. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
+  /**
    * Bill one amount on its own: an invoice with a single line item, finalized
    * so Stripe attempts the card. This is what collects a mid-cycle proration;
    * `invoice.paid` or `invoice.payment_failed` arrives later and the model
@@ -196,6 +211,20 @@ export const stripeClientBindings = (client: StripeClient, where: StripeOrigin) 
         Effect.mapError((cause) => declined("createBillingPortalSession", cause)),
         Effect.map((session) => ({ url: session.url })),
       ),
+    ...(client.createSetupSession === undefined
+      ? {}
+      : {
+          createSetupSession: ({ account, commandId }: { account: string; commandId?: string }) =>
+            client.createSetupSession!({
+              customerExternalId: account,
+              successUrl: billing,
+              cancelUrl: billing,
+              ...(commandId === undefined ? {} : { commandId }),
+            }).pipe(
+              Effect.mapError((cause) => declined("createSetupSession", cause)),
+              Effect.map((session) => ({ url: session.url })),
+            ),
+        }),
     createInvoice: ({ account, amount, currency, commandId }) =>
       client
         .createInvoice({

@@ -79,6 +79,20 @@ export const distilledPolarClient = (config: PolarClientConfig): PolarClient => 
         Effect.mapError(declined("createCustomerSession")),
         Effect.provide(live),
       ),
+    // A merchant of record owns the page where a method is managed, so adding a
+    // method without a purchase is the same customer session as the portal.
+    // Polar has no idempotency key for a customer session.
+    createSetupSession: (request) =>
+      Polar.customerSessionsCreate({
+        body: {
+          external_customer_id: request.customerExternalId,
+          return_url: request.returnUrl,
+        },
+      }).pipe(
+        Effect.map((session) => ({ url: String(session.customer_portal_url) })),
+        Effect.mapError(declined("createSetupSession")),
+        Effect.provide(live),
+      ),
     // Polar bills an arbitrary amount as a one-off order: create it as a draft
     // with the proration's amount, then finalize, which attempts the off-session
     // charge against the customer's saved payment method. A decline leaves the

@@ -68,7 +68,7 @@ documented billing surface, not a second implementation.
 | Dunning and billing reliability | `PaymentFailed`, `GraceEntered`, the dunning ladder | shipped — 3DS and the card UI are the provider's |
 | Vendor sync | `StripePrices` / `PolarPrices` provision prices, products and meters; webhooks apply provider facts | partial — one-way provisioning, not a two-way sync |
 | Tax | — | provider — the vendor calculates and collects it |
-| Setup payment | — | missing — the `Payments` port has no setup-intent operation |
+| Setup payment | `Payments.setupPayment`, `Paykit.SetupPayment` | shipped — the provider hosts the page; the library records nothing (ADR 0046) |
 | Migration from a vendor account | — | missing — a deployment migration, not a model rule |
 
 ## The deployment plane — not the library
@@ -111,7 +111,10 @@ documented billing surface, not a second implementation.
    standing.
 5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a
    controls write; the verb and its read belong in the library.
-6. **`setupPayment`** — a provider-port operation for adding a method without a purchase.
+6. **`setupPayment`** — landed ([ADR 0046](./adr/0046-adding-a-payment-method-is-a-port-operation.md)):
+   `Payments.setupPayment` and the `"setup"` capability are on the port, `Paykit.SetupPayment(account)`
+   is the in-process operation binding, Stripe opens a setup-mode Checkout Session and Polar a
+   customer session. The provider hosts the page; the log records nothing.
 
 Nothing on the deployment plane is "missing": a library that grew an edge cache, a chat formatter or
 a marketplace adapter would be a second product.

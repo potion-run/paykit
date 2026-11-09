@@ -53,6 +53,9 @@ export const PaymentsManual = (): MoneyProvider<"manual"> => {
           return { refundId };
         }),
       createPortal: () => missing("createPortal"),
+      // A manual provider has no card rail to add a method to: a setup page is
+      // refused by capability, not faked as an invoice.
+      setupPayment: () => missing("setupPayment"),
       // A manual invoice has a transfer behind it and no card to charge: a
       // charge is refused by capability, not faked as an invoice.
       charge: () => missing("charge"),

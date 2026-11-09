@@ -55,6 +55,7 @@ const stripe = Stripe({
 | `StripeTier` | where a tier lives in Stripe, and the price the catalog states |
 | `StripeProps` | key, origin and the tier mapping |
 | `StripeClient` | the Stripe calls, as an interface a test stands in for |
+| `StripeClient.createSetupSession` | a Checkout Session in `setup` mode, for adding a method without a purchase |
 | `distilledStripeClient` | `@distilled.cloud/stripe` behind those calls |
 | `stripeWebhook(props)` | verifies and translates a Stripe webhook into paykit's `WebhookEvent` |
 | `StripeProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |

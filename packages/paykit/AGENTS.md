@@ -446,7 +446,8 @@ Two table classes, no more: `billing_event` (append-only, the only truth) and `b
 ## Providers are ports
 
 `Payments` is the only door to money, and no provider owns its shape. `Memory`, `Manual`,
-`Stripe` and `Polar` pass one conformance suite — parameterized by declared capabilities — and
+`Stripe` and `Polar` pass one conformance suite — parameterized by declared capabilities
+(`checkout`, `invoice`, `charge`, `refund`, `portal`, `usage`, `quantity`, `setup`) — and
 that suite, not a vendor's docs, defines the port. `Manual` (invoice payable by transfer) is the
 reference: if the port only fits Stripe, it is not a port.
 
@@ -455,10 +456,10 @@ customer portal. The port is what they share, and a provider declares the rest. 
 imports a provider — the adapter is wired by the user, behind the port.
 
 A deployment can run several providers: `paymentsRouter(Primary(), Secondary())` holds them by name,
-and `Subscribe`, `ChargeProration` and `Portal` each resolve *one* for the call — the provider the
-account's `refs` already name, else the first in the list — and provide only that provider's layer.
-Merging provider layers instead would leave one `Payments` in context and the other shadowed.
-`Stack` refuses two providers that share a name, because `refs` is keyed by it.
+and `Subscribe`, `ChargeProration`, `Portal` and `SetupPayment` each resolve *one* for the call — the
+provider the account's `refs` already name, else the first in the list — and provide only that
+provider's layer. Merging provider layers instead would leave one `Payments` in context and the other
+shadowed. `Stack` refuses two providers that share a name, because `refs` is keyed by it.
 
 ```ts
 const world = Layer.mergeAll(
