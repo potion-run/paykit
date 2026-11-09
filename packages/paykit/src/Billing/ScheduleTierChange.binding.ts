@@ -9,6 +9,7 @@ import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { PlanPhaseNamesAddOn } from "../Subscription/PlanPhaseNamesAddOn.rejection.ts";
 import { PlanPhaseNotFuture } from "../Subscription/PlanPhaseNotFuture.rejection.ts";
+import { PlanVersionStale } from "../Subscription/PlanVersionStale.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import type { Price } from "../Tier.ts";
@@ -55,6 +56,7 @@ const scheduleRefusals = [
   PlanPhaseNamesAddOn,
   CurrencyMismatch,
   CatalogMismatch,
+  PlanVersionStale,
   Unauthenticated,
   Forbidden,
 ] as const;
