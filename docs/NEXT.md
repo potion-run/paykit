@@ -354,14 +354,18 @@ are the example's job.
 - **Per-customer custom plans — landed.** [ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)
   makes `custom: true` a catalog opt-in: the plan's `grants` are the quote, and `CatalogGuard` accepts
   a bespoke set that is structurally valid instead of requiring equality. `Paykit.Attach(account)({
-  planId, grants })`, `previewAttach` and the three plan verbs carry the items; they ride the
-  command, the event and therefore the read model, so replay reproduces a deal and a catalog deploy
-  never rewrites one. A custom plan is base-only (no add-on, no `isDefault`, no pack), and a priced
-  custom plan's *first* activation still cannot cross a hosted checkout
-  (`PlanOperationUnsupported`, reason `custom_plan_checkout`) because the webhook rebuilds the
-  activation from the catalog. The brief is [custom-plans](./briefs/custom-plans.md); what remains
-  is the quoted-terms-carrying provider reference, a bespoke add-on (needs the per-plan balance
-  source) and a negotiated price (a per-account price object, not a plan).
+  planId, grants, price })`, `previewAttach` and the three plan verbs carry the items and the
+  negotiated price; they ride the command, the event and therefore the read model, so replay
+  reproduces a deal and a catalog deploy never rewrites one. [ADR
+  0042](./adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md) closes the three gaps: a
+  priced activation stores its `PendingActivation` beside the provider reference and the webhook
+  activates exactly that quote (a missing or stale quote is `PendingActivationMissing` /
+  `PendingActivationStale`); a bespoke add-on is a custom `addOn` plan that stacks through the same
+  attach path; and a negotiated price is the operation's explicit override, with the event carrying
+  it. A custom plan is still refused as a pack or a group's `isDefault`. The brief is
+  [custom-plans](./briefs/custom-plans.md); what remains is the per-plan balance source (one
+  `Balance.breakdown` row per add-on and a single spend shape per feature), a custom fallback, and a
+  quote keyed by provider reference if concurrent checkouts must be distinguished.
 
 ### 3. The configuration surface
 

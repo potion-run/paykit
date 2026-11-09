@@ -556,7 +556,7 @@ const BillingApiCore = Layer.mergeAll(
 
           // The catalog joins the payload here as it does in process, and a
           // bespoke set is judged by the same guard the Api runs (ADR 0041).
-          const granted = withGrants(catalog, scheduled, request.grants);
+          const granted = withGrants(catalog, scheduled, request.grants, request.price);
           const mismatch = granted.mismatch;
 
           if (mismatch !== null) {

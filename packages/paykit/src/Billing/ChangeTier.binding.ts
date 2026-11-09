@@ -15,6 +15,7 @@ import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
+import type { Price } from "../Tier.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /**
@@ -30,6 +31,12 @@ export interface ChangeTierRequest {
    * catalog's defaults (ADR 0041). Omitted means the plan's `grants`.
    */
   readonly grants?: ReadonlyArray<Allowance>;
+  /**
+   * The price a custom plan is moved to at, when it was negotiated (ADR 0042
+   * §3). Omitted means the catalog's price, and the proration is computed from
+   * whichever price is stated.
+   */
+  readonly price?: Price;
   /** The retry key, which is also the command id. */
   readonly dedupeKey: string;
 }

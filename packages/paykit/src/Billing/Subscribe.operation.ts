@@ -2,8 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type { Allowance } from "../Allowance.ts";
 import { asSystem } from "../Auth/Actor.ts";
-import { planItemsOf, planOf } from "../Catalog.ts";
-import { sameAllowances } from "../CatalogGuard.ts";
+import { planOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import {
   type PaymentError,
@@ -21,9 +20,8 @@ import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts"
 import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
-import { priceFor } from "../Tier.ts";
+import { priceFor, samePrice, type Price } from "../Tier.ts";
 import { subscribeInputOf, withGrants } from "../TierCommand.ts";
-import { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 
 /** What `Subscribe` asks for. */
 export interface SubscribeInput {
@@ -35,6 +33,12 @@ export interface SubscribeInput {
   readonly currency?: string;
   /** The bespoke items a custom plan is activated at, when it states any (ADR 0041). */
   readonly grants?: ReadonlyArray<Allowance>;
+  /**
+   * The price a custom plan was negotiated at. Omitted means the catalog's
+   * price for `currency`; a stated price is the deal and is recorded as such
+   * (ADR 0042 §3).
+   */
+  readonly price?: Price;
 }
 
 /** What `Subscribe` gives back: a purchase path, or a free-tier activation. */
@@ -48,6 +52,10 @@ export type SubscribeResult =
  * it has one, a send-invoice when it only has that, and a typed capability
  * error when it has neither. Every provider implements the required port, so
  * this switch is the only place a provider's shape changes the flow.
+ *
+ * A negotiated price asks for an invoice even when a checkout exists: the
+ * vendor's checkout sells the catalog's price object, not an amount, and an
+ * invoice is the port that takes the amount the deal states (ADR 0042 §3).
  */
 const purchasePath = (
   service: PaymentsService,
@@ -57,8 +65,17 @@ const purchasePath = (
   kind: "subscription" | "one_off",
   amount: number,
   currency: string,
+  negotiated: boolean,
 ): Effect.Effect<{ readonly url: string } | { readonly invoiceId: string }, PaymentError> => {
   if (provider !== null) {
+    if (negotiated) {
+      return provider.capabilities.has("invoice")
+        ? service.createInvoice({ account, amount, currency })
+        : Effect.fail(
+            new ProviderCapabilityMissing({ provider: provider.name, op: "createInvoice" }),
+          );
+    }
+
     if (provider.capabilities.has("checkout")) {
       return service.createCheckout({ account, tier, kind });
     }
@@ -71,6 +88,8 @@ const purchasePath = (
       new ProviderCapabilityMissing({ provider: provider.name, op: "createCheckout" }),
     );
   }
+
+  if (negotiated) return service.createInvoice({ account, amount, currency });
 
   return service
     .createCheckout({ account, tier, kind })
@@ -118,22 +137,39 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
 
     const kind = tier.kind ?? "subscription";
 
-    const resolvedPrice =
+    const catalogPrice =
       tier.price === undefined
         ? undefined
         : input.currency === undefined
           ? tier.price
           : priceFor(tier.price, input.currency);
 
-    if (tier.price !== undefined && resolvedPrice === null) {
+    // A stated price is its own currency, so an unsupported `currency` is only
+    // a refusal when the catalog has to resolve the price.
+    if (tier.price !== undefined && catalogPrice === null && input.price === undefined) {
       return yield* new PlanNotInCatalog({ tier: input.tier });
     }
+
+    // A pack is a catalog purchase; its price is not negotiated. A plan may be
+    // sold at the price the caller states, which is what the event records.
+    const price =
+      kind === "one_off" ? (catalogPrice ?? undefined) : (input.price ?? catalogPrice ?? undefined);
+
+    // A stated price that is not the catalog's is a negotiated amount, and the
+    // provider's checkout cannot sell an amount; it sells the catalog's price
+    // object. The invoice path is the one that takes the deal.
+    const negotiated =
+      kind !== "one_off" &&
+      input.price !== undefined &&
+      !samePrice(input.price, catalogPrice ?? undefined);
 
     const ref = Subscription.ref(input.account);
 
     const anchored = {
       ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
-      ...(input.currency === undefined ? {} : { currency: input.currency }),
+      ...(input.price !== undefined || input.currency === undefined
+        ? {}
+        : { currency: input.currency }),
     };
 
     const standing = yield* subscription.state(ref);
@@ -152,47 +188,32 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       });
     }
 
-    // A bespoke set travels on the command, and the activation a checkout
-    // produces is rebuilt from the catalog when the provider's webhook lands.
-    // Recording the plan's defaults instead would sell a different deal at the
-    // same price, so the combination is refused before the provider is asked
-    // (ADR 0041 §7).
-    if (input.grants !== undefined && resolvedPrice !== undefined) {
-      const defaults = planItemsOf(catalog, input.tier) ?? {};
-      const stated: Record<string, Allowance> = {};
+    // The terms an activation would record, before the provider is asked. A
+    // bespoke set and a negotiated price are judged by the same guard a wire
+    // caller meets, so an in-process attach and an HTTP one cannot disagree
+    // about what the plan may grant or what it costs (ADR 0041 §6, ADR 0042).
+    const activation = kind === "one_off" ? null : subscribeInputOf(catalog, input.tier, anchored);
 
-      for (const grant of input.grants) stated[grant.feature] = grant;
-
-      if (!sameAllowances(defaults, stated)) {
-        return yield* new PlanOperationUnsupported({
-          planId: input.tier,
-          reason: "custom_plan_checkout",
-        });
-      }
+    if (kind !== "one_off" && activation === null) {
+      return yield* new PlanNotInCatalog({ tier: input.tier });
     }
 
-    if (resolvedPrice === undefined) {
+    const granted =
+      activation === null ? null : withGrants(catalog, activation, input.grants, input.price);
+
+    if (granted !== null && granted.mismatch !== null) return yield* granted.mismatch;
+
+    const terms = granted?.input ?? null;
+
+    if (price === undefined) {
       // A one-off tier is a pack of credits; without a price there is nothing
       // to buy. The catalog refuses this shape, so a runtime that sees it has
       // a stale catalog rather than a caller mistake.
-      if (kind === "one_off") {
+      if (kind === "one_off" || terms === null) {
         return yield* new PlanNotInCatalog({ tier: input.tier });
       }
 
-      const activation = subscribeInputOf(catalog, input.tier, anchored);
-
-      if (activation === null) {
-        return yield* new PlanNotInCatalog({ tier: input.tier });
-      }
-
-      // A bespoke set is judged by the same guard a wire caller meets, so an
-      // in-process attach and an HTTP one cannot disagree about what the plan
-      // may grant (ADR 0041 §6).
-      const granted = withGrants(catalog, activation, input.grants);
-
-      if (granted.mismatch !== null) return yield* granted.mismatch;
-
-      const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(granted.input)));
+      const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(terms)));
       yield* entitlements.query(ref, { atLeast: receipt });
 
       return { activated: true } as const satisfies SubscribeResult;
@@ -201,12 +222,6 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     // A pack is a purchase, not an activation: the account keeps whatever
     // standing it has (or has none yet), and the payment path is the only thing
     // that runs. Buying one never creates a second standing.
-    // Bound here: narrowing a property does not survive into the generator.
-    if (resolvedPrice === null) {
-      return yield* new PlanNotInCatalog({ tier: input.tier });
-    }
-
-    const price = resolvedPrice;
 
     // The standing says which provider this account already belongs to; a new
     // account starts on the router's fallback. One provider's layer is provided
@@ -238,14 +253,28 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
         kind,
         price.amount,
         price.currency,
+        negotiated,
       );
 
       // The reference is stored before any standing exists, so a webhook that
-      // activates the account can find the purchase it belongs to.
+      // activates the account can find the purchase it belongs to. The quoted
+      // terms travel with it: a checkout names the plan, not the deal, and the
+      // activation must record what was sold (ADR 0042 §1).
       const reference = "url" in purchase ? purchase.url : purchase.invoiceId;
       yield* subscription.send(
         ref,
-        new AttachProviderRef({ provider: providerName, refs: { checkout: reference } }),
+        new AttachProviderRef({
+          provider: providerName,
+          refs: { checkout: reference },
+          ...(terms === null
+            ? {}
+            : {
+                pending: {
+                  ...terms,
+                  ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
+                },
+              }),
+        }),
         { commandId: `checkout:${input.account}:${tier.id}:${reference}` },
       );
 

@@ -15,38 +15,58 @@ modelled after.
   request can opt itself into a weaker guard, and a deployment that sells no custom plan accepts no
   bespoke allowance.
 - **The grants are defaults, not the boundary.** A custom plan's `grants` are the quote a caller gets
-  when it states none. The boundary is structural: declared feature, catalog-valid plan item, exact
-  price and credit terms.
+  when it states none. The boundary is structural: declared feature, catalog-valid plan item, the
+  catalog price or the operation's explicit negotiated price, and exact credit terms.
 - **One structural rule, two callers.** `CatalogGuard` (wire callers) and the plan bindings
   (in-process callers) call the same pure `catalogMismatchOf`, which calls the same
   `allowanceFaultOf` the deploy does. A rule added to the catalog is a rule a bespoke request must
   satisfy, without a second copy.
 - **`decide` stays pure.** The bespoke allowances ride the command and the event. Nothing in
   `decide`, `evolve` or a view reads the catalog.
-- **A custom plan is a plan.** Same group, same price, same credits, same proration, same scheduling,
-  same cancellation. The only difference is who may hold which allowances.
+- **A custom plan is a plan.** Same group, same credits, same proration, same scheduling, same
+  cancellation. The price is the catalog's unless the operation states the negotiated one, and the
+  allowances are the catalog's unless the operation states the bespoke set.
 - **No event is renamed or repurposed.** `SubscriptionActivated`, `PlanChanged` and
-  `PlanChangeScheduled` already carry `allowances`; this slice adds nothing to them.
+  `PlanChangeScheduled` already carry `allowances` and the price; the activation events add nothing.
+  `ProviderRefAttached` gains the pending quote (ADR 0042 §1), which is how the completion reads
+  terms the catalog cannot state.
 - **No model change.** `specs/paykit/*.qnt` has never held the catalogue, and no command or decision
   changed, so there is no action, invariant, mutant or coverage row to add. `pnpm spec` is a gate on
   not having broken one.
 
 ## Status
 
-Landed. [ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md), `Tier.custom` on the plan schema
-(the public spelling is `Plan.custom`), `CatalogFacts` / `allowanceFaultOf` as the one per-item rule
-`defineCatalog` and the guard both run, the three catalog refusals (`CatalogCustomPack`,
-`CatalogCustomAddOn`, `CatalogCustomDefaultPlan`), `sameAllowances` and the guard's structural branch,
-`TierCommand.withGrants`,
-and an optional `grants` on `AttachRequest`, `PreviewAttachRequest`, `SubscribeRequest`,
-`ChangeTierRequest` and `ScheduleTierChangeRequest`, joined in both the in-process and the Api
-bindings. `PlanOperationUnsupported` moved to its own module and gained `custom_plan_checkout`, which
-`Subscribe` and `PreviewAttach` raise before a provider is asked. Tests:
-`test/billing/CustomPlans.test.ts`, `test/catalog/Guard.test.ts`, `test/Catalog.test.ts`,
-`test/Types.test.ts`.
+Landed, then extended by
+[ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md). The first slice is
+[ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md): `Tier.custom` on the plan schema (the
+public spelling is `Plan.custom`), `CatalogFacts` / `allowanceFaultOf` as the one per-item rule
+`defineCatalog` and the guard both run, the pack and fallback catalog refusals
+(`CatalogCustomPack`, `CatalogCustomDefaultPlan`), `sameAllowances` and the guard's structural
+branch, `TierCommand.withGrants`, and an optional `grants` on `AttachRequest`,
+`PreviewAttachRequest`, `SubscribeRequest`, `ChangeTierRequest` and
+`ScheduleTierChangeRequest`, joined in both the in-process and the Api bindings.
 
-What is still open, in the ADR's words: quoted terms across a checkout, a bespoke add-on (blocked on
-the per-plan balance source), a custom plan as a group's fallback, and a negotiated price.
+ADR 0042 closes the three gaps this brief left open:
+
+- **Quoted terms across a checkout.** `Subscribe` writes a `PendingActivation` beside the provider
+  reference; `ProviderRefAttached` carries it into state, and the webhook activates exactly that
+  set. A custom plan with no quote is `PendingActivationMissing`; a quote for another plan is
+  `PendingActivationStale`. `custom_plan_checkout` is gone.
+- **Bespoke add-ons.** `custom: true` with `addOn: true` is accepted, and a custom add-on stacks
+  through the ordinary attach path. `CatalogCustomAddOn` is gone. `Balance.breakdown` still reports
+  the merged plan source until the per-plan balance source lands; that is the read-model follow-up.
+- **A negotiated price.** `price` is optional on the attach, preview and plan-verb requests, and the
+  guard accepts it on a custom plan as the explicit override. The event already carries it
+  (`SubscriptionActivated.price`, `PlanChanged.priceAfter`, `PlanChangeScheduled.price`). A first
+  activation at an amount the catalog does not state is invoiced, because the checkout port sells the
+  vendor's price object rather than an amount.
+
+What remains is the per-plan balance source (so a stacked bespoke item has its own breakdown row and
+one feature's two spend shapes are refused rather than merged), a custom plan as a group's fallback,
+and a quote record keyed by the provider reference if concurrent checkouts must be distinguished.
+
+Tests: `test/billing/CustomPlans.test.ts`, `test/catalog/Guard.test.ts`, `test/Catalog.test.ts`,
+`test/Types.test.ts`.
 
 ## Target surface
 
@@ -76,19 +96,22 @@ const grants = [
   Paykit.planItem(seats, { included: 1_200, overage: "bill", unitPrice: { amount: 1_200, currency: "usd" } }),
 ];
 
+// The negotiated price is the operation's, not the catalog's; the event keeps it.
+const price = { amount: 4_200_000, currency: "usd", interval: "annual" } as const;
+
 const deal = (account: string) =>
   Effect.gen(function* () {
     // the plan operation — the supported surface
     const attach = yield* Paykit.Attach(account);
-    yield* attach({ planId: "enterprise", grants, idempotencyKey: "deal-1" });
+    yield* attach({ planId: "enterprise", grants, price, idempotencyKey: "deal-1" });
 
     // what the same call would record, decided without writing
     const previewAttach = yield* Paykit.PreviewAttach(account);
-    const preview = yield* previewAttach({ planId: "enterprise", grants });
+    const preview = yield* previewAttach({ planId: "enterprise", grants, price });
 
-    // the low-level verbs carry the same field
+    // the low-level verbs carry the same fields
     const changeTier = yield* Paykit.ChangeTier(account);
-    yield* changeTier({ tier: "enterprise", grants, dedupeKey: "deal-2" });
+    yield* changeTier({ tier: "enterprise", grants, price, dedupeKey: "deal-2" });
 
     // the read answers with the deal, not the catalog
     const check = yield* Paykit.Check(account);
@@ -109,7 +132,9 @@ What a caller may not do:
 | `grants` for a custom plan whose price/credits/expiry/top-up/rates disagree | `CatalogMismatch` on that field |
 | `grants` shaped against a rule the catalog would refuse (`cap` without a bill, a flag granted as metered, `"unlimited"` with a bill, …) | `CatalogMismatch` — `actual` is the catalog rule's tag |
 | a plan item that does not decode as `Allowance` | schema failure at the command boundary, not a refusal |
-| a **priced** custom plan's first activation with `grants` that differ from the defaults | `PlanOperationUnsupported` — `reason: "custom_plan_checkout"` |
+| a `price` on a plan that is not custom | `CatalogMismatch` — `field: "price"`, the exact rule |
+| a custom completion with no stored quote | `PendingActivationMissing` at the webhook edge |
+| a custom completion whose quote names another plan | `PendingActivationStale` at the webhook edge |
 
 ## The guard rule
 
@@ -137,7 +162,8 @@ one.
 | Step | Who | Reads | Writes | Refuses |
 | --- | --- | --- | --- | --- |
 | `TierCommand.withGrants(catalog, terms, grants)` | every plan binding | the catalog | — | `CatalogMismatch` |
-| `Attach` (activate) | `Subscribe` binding → `Subscribe` command | the catalog, the standing | `SubscriptionActivated` | `CatalogMismatch`, `PlanOperationUnsupported("custom_plan_checkout")`, `AlreadySubscribed` |
+| `Attach` (activate) | `Subscribe` binding → `Subscribe` command | the catalog, the standing | `SubscriptionActivated` | `CatalogMismatch`, `AlreadySubscribed` |
+| Checkout completion | `Webhook` → `Subscribe` command | the stored quote first, the catalog only when none | `SubscriptionActivated` | `PendingActivationMissing`, `PendingActivationStale`, `PlanNotInCatalog` |
 | `Attach` (move now) | `ChangeTier` binding → `ChangeTier` command | the catalog, the standing, `prorate` | `PlanChanged` | `CatalogMismatch`, `DowngradeBelow*`, `ProrationMismatch`, `CurrencyMismatch` |
 | `Attach` (boundary) | `ScheduleTierChange` binding → command | the catalog, the standing | `PlanChangeScheduled` | `CatalogMismatch`, `PlanPhaseNotFuture`, `PlanPhaseNamesAddOn`, `CurrencyMismatch` |
 | `Attach` (cancel) | `CancelImmediately` / `ScheduleCancellation` | the standing | `SubscriptionCanceled` | `StandingEnded` |
@@ -152,7 +178,7 @@ behaviour and the quantity rules are the ones the event recorded.
 | Rule | Tag | Why |
 | --- | --- | --- |
 | `custom` on a `kind: "one_off"` pack | `CatalogCustomPack` | a pack grants nothing, so nothing is bespoke |
-| `custom` with `addOn: true` | `CatalogCustomAddOn` | an add-on stacks, and the plan set's merge is single-source per feature until the balance ledger reports one source per plan |
+| `custom` with `addOn: true` | accepted | it is a custom plan that stacks; the read model's per-plan source is a follow-up (ADR 0042 §2) |
 | `custom` with `isDefault: true` | `CatalogCustomDefaultPlan` | `isDefault` is the cancellation fallback, and a fallback must be the catalogue's terms |
 | a variant of a custom plan | inherited, not stated | `mergeVariant` keeps the base's `custom`; a variant of a non-custom base cannot add it |
 
@@ -166,14 +192,17 @@ behaviour and the quantity rules are the ones the event recorded.
 | a bespoke set on a fixed plan is refused | `test/catalog/Guard.test.ts` | the non-custom rule survives |
 | price, credits, expiry, top-up and rates are still exact on a custom plan | `test/catalog/Guard.test.ts` | money is not negotiable by the allowance door |
 | `custom` round-trips the public constructor; a variant inherits it | `test/Plan.test.ts` | `Paykit.plan({ custom: true })`, `Plan.custom` |
-| the three catalog refusals | `test/Catalog.test.ts` | `CatalogCustomPack`, `CatalogCustomAddOn`, `CatalogCustomDefaultPlan` |
+| the two catalog refusals, and a custom add-on accepted | `test/Catalog.test.ts` | `CatalogCustomPack`, `CatalogCustomDefaultPlan`, and `custom` + `addOn` |
 | a custom plan attaches with a bespoke set | `test/billing/CustomPlans.test.ts` | `SubscriptionActivated.allowances` and `state.plans[id].allowances` are the deal |
 | `check` and `BillingState` report the deal | `test/billing/CustomPlans.test.ts` | the read model folds the event, not the catalog |
 | an undeclared feature is refused end to end | `test/billing/CustomPlans.test.ts` | no event recorded, `CatalogMismatch` |
 | a move to and from a custom plan | `test/billing/CustomPlans.test.ts` | `PlanChanged` carries the bespoke set; a move back records the catalog's |
 | the same plan with a new bespoke set | `test/billing/CustomPlans.test.ts` | it is a move, not a replay: scheduled by default, then immediate on request |
 | a scheduled custom phase freezes the terms | `test/billing/CustomPlans.test.ts` | `PlanChangeScheduled.allowances`, `pendingPlanOf(state)` |
-| a priced custom attach refuses a checkout | `test/billing/CustomPlans.test.ts` | `PlanOperationUnsupported` / `custom_plan_checkout`, no provider call |
+| a priced custom attach carries the quote through a checkout | `test/billing/CustomPlans.test.ts` | `PendingActivation` on state, then `SubscriptionActivated.allowances` from the quote |
+| a custom completion with no quote, or a quote for another plan | `test/billing/CustomPlans.test.ts` | `PendingActivationMissing`, `PendingActivationStale`, no standing recorded |
+| a negotiated price on a checkout and on a move | `test/billing/CustomPlans.test.ts` | `PendingActivation.price`, `state.plans[id].price`, `PlanChanged.priceAfter` |
+| a bespoke add-on stacks beside the base plan | `test/billing/CustomPlans.test.ts` | `PlanChanged.addOn`, both plan rows, the merged allowances |
 | replay reproduces the deal | `test/billing/CustomPlans.test.ts` | folding `AccountEvents` rebuilds the same plan row |
 | a wire caller gets the same guard | `test/Api.test.ts` | `BillingApi.clientInProcess` `ChangeTier` with bespoke items, and the refusal for an undeclared feature |
 
@@ -193,6 +222,11 @@ behaviour and the quantity rules are the ones the event recorded.
 | 10 | `packages/paykit/src/Billing/Preview.operation.ts` | `grants?` on the three plan commands, `CatalogMismatch` in the preview's answer |
 | 11 | `packages/paykit/src/Billing/BillingInProcess.layer.ts`, `BillingApi.layer.ts` | apply `withGrants` and pass `CatalogMismatch` through the binding error |
 | 12 | `packages/paykit/src/Billing/index.ts`, `src/index.ts` | re-export the moved refusal and the request types |
-| 13 | the tests in the matrix | guard, catalog, plan, billing, Api |
+| 13 | `packages/paykit/src/Subscription/PendingActivation.ts` | the quote schema, `PendingActivationMissing`, `PendingActivationStale` (ADR 0042) |
+| 14 | `packages/paykit/src/Subscription/AttachProviderRef.command.ts`, `Subscription.state.ts`, `Subscription.aggregate.ts`, `Webhooks.ts` | the quote rides the reference, the state and the completion |
+| 15 | `Attach.binding.ts`, `Preview.operation.ts`, the three verb bindings and layers | `price?`, the quote instead of the checkout refusal, the add-on path |
+| 16 | the tests in the matrix | guard, catalog, plan, billing, webhook, Api |
 
-Nothing here changes `Subscription.state.ts`, a command, an event, a view or a spec.
+ADR 0041 changed no command, event, view or spec. ADR 0042 adds `pending` to
+`ProviderRefAttached` and `pendingActivation` to the standing, but no decision changed; the spec
+does not model provider references.

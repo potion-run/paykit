@@ -2716,7 +2716,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ];
     },
     AttachProviderRef: (_state, command) => [
-      new ProviderRefAttached({ provider: command.provider, refs: command.refs }),
+      new ProviderRefAttached({
+        provider: command.provider,
+        refs: command.refs,
+        ...(command.pending === undefined ? {} : { pending: command.pending }),
+      }),
     ],
   },
   evolve: {
@@ -3395,6 +3399,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ProviderRefAttached: (state, event) => ({
       ...state,
       refs: { ...state.refs, [event.provider]: event.refs },
+      // The latest purchase's quote wins. A reference attached without one
+      // (a customer id from a portal, say) leaves the standing quote alone.
+      ...(event.pending === undefined ? {} : { pendingActivation: event.pending }),
     }),
     // The customer's controls are its own: a plan change, a close and a
     // cancellation leave them where they were. `SetBillingControls` replaces

@@ -45,10 +45,17 @@ const bespokeTier = tier({
   grants: [allowance(messages, { included: 10_000, overage: "bill" })],
 });
 
+const bespokeRider = tier({
+  id: "rider",
+  custom: true,
+  addOn: true,
+  grants: [allowance(messages, { included: 5, overage: "bill" })],
+});
+
 const testCatalog = Effect.runSync(
   catalog({
     features: [messages],
-    tiers: [freeTier, proTier, supportTier, ceilTier, bespokeTier],
+    tiers: [freeTier, proTier, supportTier, ceilTier, bespokeTier, bespokeRider],
   }),
 );
 
@@ -61,6 +68,7 @@ const ceilPrice = { amount: 4900, currency: "usd", interval: "month" as const };
 const proTerms = creditTermsOf(testCatalog, "pro")!;
 const freeTerms = creditTermsOf(testCatalog, "free")!;
 const supportTerms = creditTermsOf(testCatalog, "support")!;
+const riderTerms = creditTermsOf(testCatalog, "rider")!;
 
 describe("the catalog guard", () => {
   it("accepts a command whose fields match the catalog", () => {
@@ -333,15 +341,27 @@ describe("the catalog guard and a custom plan", () => {
     expect(mismatch?.actual.startsWith("[")).toBe(true);
   });
 
-  it("still checks the price and the credit terms on a custom plan", () => {
+  it("accepts a negotiated price on a custom plan and refuses it on a fixed one", () => {
     const allowances = { messages: allowance(messages, { included: 40_000 }) };
+    const negotiated = { amount: 1, currency: "usd", interval: "month" as const };
 
+    // The catalog's price is the custom plan's default; a stated price is the
+    // deal the command carries and the event records (ADR 0042 §3).
     expect(
       catalogMismatchOf(testCatalog, {
         tier: "bespoke",
         allowances,
-        price: { amount: 1, currency: "usd", interval: "month" },
+        price: negotiated,
         ...terms,
+      }),
+    ).toBe(null);
+
+    expect(
+      catalogMismatchOf(testCatalog, {
+        tier: "pro",
+        allowances: pro,
+        price: negotiated,
+        ...proTerms,
       })?.field,
     ).toBe("price");
 
@@ -376,5 +396,18 @@ describe("the catalog guard and a custom plan", () => {
     });
 
     expect(rates?.field).toBe("rates");
+  });
+
+  it("accepts a bespoke set on a custom add-on", () => {
+    // A bespoke add-on is a custom plan that stacks: the same structural rule
+    // accepts its items (ADR 0042 §2).
+    const mismatch = catalogMismatchOf(testCatalog, {
+      tier: "rider",
+      addOn: true,
+      allowances: { messages: allowance(messages, { included: 77, overage: "bill" }) },
+      ...riderTerms,
+    });
+
+    expect(mismatch).toBe(null);
   });
 });

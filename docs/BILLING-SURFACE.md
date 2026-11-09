@@ -43,12 +43,12 @@ documented billing surface, not a second implementation.
 | Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
 | Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
 | Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
-| Add-ons | `plans` plus `schedule` in the standing, one plan per group, add-ons stack (ADR 0039) | partial — `multiAttach` / `multiUpdate` and an `addAddOn` binding remain |
+| Add-ons | `plans` plus `schedule` in the standing, one plan per group, add-ons stack, including a bespoke custom add-on (ADRs 0039, 0042) | partial — `multiAttach` / `multiUpdate` and an `addAddOn` binding remain; `Balance.breakdown` still merges a feature into one plan source |
 | Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
 | Entity plans | `EntityId`, `ScopeState` per entity, `entityId` on `ChangeTier` (ADR 0040) | shipped — `attach`/`update` do not carry a scope yet; the advanced command does |
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | partial — the model, reads and events are in; `Entities` / `TransferBalance` bindings, `Atom` verbs and the SQL-backed entity list remain |
-| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants })` (ADR 0041) | shipped — the quote rides the command; a priced first activation through a checkout is refused until a pending activation can carry it |
+| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout (ADRs 0041, 0042) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote and the webhook activates exactly it |
 | Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
@@ -96,10 +96,14 @@ documented billing surface, not a second implementation.
    `0002_entities` column are in (ADR 0040). Remaining: `Paykit.Entities` and
    `Paykit.TransferBalance` bindings and layers, `entityId` on the `Balances`/`Attach` bindings, the
    `Atom` verbs, and entity-scoped tests over the Api/SQL paths.
-3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a
-   plan may declare `custom: true`, and the guard accepts a bespoke allowance set that is
-   structurally valid. What remains is carrying quoted terms across a checkout, a bespoke add-on
-   (which needs the per-plan balance source) and a negotiated price.
+3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md)), and
+   the three gaps closed ([ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md)):
+   a plan may declare `custom: true`, the guard accepts a bespoke allowance set that is structurally
+   valid, a hosted checkout carries its quote as a pending activation, a custom add-on stacks, and a
+   negotiated price is the operation's explicit override. What remains is the per-plan balance
+   source (a breakdown row per add-on and a single spend shape per feature), a custom plan as a
+   group's fallback, and a quote keyed by provider reference if concurrent checkouts must be told
+   apart.
 4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
    is new data, not a migration of existing subscribers.
 5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a

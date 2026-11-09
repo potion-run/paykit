@@ -407,16 +407,6 @@ export class CatalogCustomPack extends Schema.TaggedError<CatalogCustomPack>()(
 ) {}
 
 /**
- * An add-on asks to be custom. An add-on stacks beside every group, and the
- * plan set merges one feature's items into one count, so a bespoke add-on needs
- * a per-plan balance source before it has an answer (ADR 0041 §5).
- */
-export class CatalogCustomAddOn extends Schema.TaggedError<CatalogCustomAddOn>()(
-  "CatalogCustomAddOn",
-  { tier: Schema.String },
-) {}
-
-/**
  * A plan claims to be both custom and its group's default. A default is the
  * plan a cancellation falls back to, and a fallback has to be the catalogue's
  * terms, not a bespoke set nobody quoted as one (ADR 0041 §5).
@@ -485,7 +475,6 @@ export const CatalogError = Schema.Union([
   CatalogQuantityCap,
   CatalogProrateOnMetered,
   CatalogCustomPack,
-  CatalogCustomAddOn,
   CatalogCustomDefaultPlan,
   CatalogInvalid,
 ]);
@@ -1034,9 +1023,10 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
       return Result.fail(new CatalogCustomPack({ tier: tier.id }));
     }
 
-    if (custom && tier.addOn === true) {
-      return Result.fail(new CatalogCustomAddOn({ tier: tier.id }));
-    }
+    // A bespoke add-on is allowed: it stacks beside every group, and its items
+    // are judged by the same structural rule as any other custom plan's. The
+    // plan set still merges one feature into one count until the per-plan
+    // balance source lands (ADR 0042 §2).
 
     // A fallback is the catalogue's terms by definition, and a bespoke set is
     // not something anyone quoted as one (ADR 0041 §5).

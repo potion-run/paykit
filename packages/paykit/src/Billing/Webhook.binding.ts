@@ -1,18 +1,29 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
+import {
+  PendingActivationMissing,
+  PendingActivationStale,
+} from "../Subscription/PendingActivation.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { WebhookInvalid } from "../Webhooks.ts";
 import type { WebhookAction, WebhookEvent } from "../Webhooks.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
-const refusals = [WebhookInvalid, PlanNotInCatalog] as const;
+const refusals = [
+  WebhookInvalid,
+  PlanNotInCatalog,
+  PendingActivationMissing,
+  PendingActivationStale,
+] as const;
 
 /**
- * Every refusal applying a delivery can answer. Both are the *edge's* own
- * judgement — a payload that names no tier, or a tier the deploy does not sell.
- * A model rejection that reaches here becomes `BindingFailed` on purpose: a
+ * Every refusal applying a delivery can answer. They are the *edge's* own
+ * judgement — a payload that names no tier, a tier the deploy does not sell, or
+ * a completion whose quoted terms are missing or belong to another purchase. A
+ * model rejection that reaches here becomes `BindingFailed` on purpose: a
  * delivery paykit could not apply is one the provider should retry, and "we do
- * not know" is the honest answer to retry on.
+ * not know" is the honest answer to retry on. A quote that is gone is different:
+ * retrying it would find the same nothing, so it is a refusal the edge answers.
  */
 export type WebhookRefusal = InstanceType<(typeof refusals)[number]>;
 
