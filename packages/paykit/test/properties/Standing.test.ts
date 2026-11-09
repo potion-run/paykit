@@ -149,6 +149,7 @@ const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
     schedule: [
       {
         planId: "pending",
+        version: 1,
         group: "default",
         addOn: false,
         at: start,

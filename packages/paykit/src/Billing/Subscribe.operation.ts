@@ -268,12 +268,19 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
           refs: { checkout: reference },
           ...(terms === null
             ? {}
-            : {
-                pending: {
-                  ...terms,
-                  ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
-                },
-              }),
+            : (() => {
+                // The first generation is omitted, like a default group, so a
+                // quote for an unbumped plan does not grow a field (ADR 0047).
+                const { version, ...quoted } = terms;
+
+                return {
+                  pending: {
+                    ...quoted,
+                    ...(version === undefined || version === 1 ? {} : { version }),
+                    ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
+                  },
+                };
+              })()),
         }),
         { commandId: `checkout:${input.account}:${tier.id}:${reference}` },
       );

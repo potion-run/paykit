@@ -40,6 +40,7 @@ const customerOf = (account: string, view: BillingStateView | null): Customer =>
 
     return {
       planId: PlanId.make(row.planId),
+      version: row.version,
       status: view!.status,
       ...(row.addOn || next === undefined || next === row.planId
         ? {}

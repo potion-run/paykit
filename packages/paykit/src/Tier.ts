@@ -14,6 +14,24 @@ export type TierId = typeof TierId.Type;
 /** The billing cadence a tier is sold on. */
 export const Interval = Schema.Literals(["month", "annual"]);
 
+/**
+ * One generation of a plan's terms. The catalog's `version` is the generation a
+ * new move buys; a standing's row keeps the generation it was sold at. A catalog
+ * that changes a plan's price, grants, credits, top-up line or rate card bumps
+ * the version, and the next move is the migration (ADR 0047).
+ *
+ * It is a positive integer, absent means `1`, so a catalog written before this
+ * field existed decodes as the first generation. It is not the vendor's price
+ * id and not a consumer generation: the plan id stays stable, and the version
+ * is what makes "pro as sold in March" distinguishable from "pro today".
+ */
+export const PlanVersion = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(1)));
+
+export type PlanVersion = typeof PlanVersion.Type;
+
+/** The generation a plan has when it states none. */
+export const INITIAL_PLAN_VERSION: PlanVersion = 1;
+
 export type Interval = typeof Interval.Type;
 
 /** One currency's amount for a price, alongside the base currency. */
@@ -211,6 +229,13 @@ export type PlanTrial = typeof PlanTrial.Type;
 export const Tier = Schema.Struct({
   id: TierId,
   name: Schema.optionalKey(Schema.String),
+  /**
+   * The generation of this plan's terms. Absent means `1`. A catalog deploy
+   * that changes what a plan grants, credits or costs bumps it, so a standing
+   * can say which generation it was sold at and `Verify` can report drift
+   * (ADR 0047).
+   */
+  version: Schema.optionalKey(PlanVersion),
   /** The plan group a move replaces within. Absent means the default group. */
   group: Schema.optionalKey(Schema.String),
   /** Whether this plan stacks alongside the current plan instead of replacing it. */
@@ -261,6 +286,12 @@ export type Tier = typeof Tier.Type;
 /** A subscription tier as an author writes it: at least one grant. */
 export interface SubscriptionTierInput {
   readonly id: string;
+  /**
+   * The generation of this plan's terms. Omit for the first generation; bump it
+   * in the same deploy that changes what the plan grants, credits or costs
+   * (ADR 0047).
+   */
+  readonly version?: number;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
   /** The group a move replaces within. */
@@ -307,6 +338,8 @@ export interface SubscriptionTierInput {
 /** A one-off credit pack as an author writes it: a price, credits, no grants. */
 export interface OneOffTierInput {
   readonly id: string;
+  /** The generation of this pack's terms; a pack is bought, never moved onto. */
+  readonly version?: number;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
   readonly group?: string;
@@ -354,6 +387,12 @@ export interface VariantTierInput {
    * base cannot grow a bespoke child (ADR 0041 §5).
    */
   readonly custom?: never;
+  /**
+   * Inherited from the base, and never stated on a variant: a variant carries
+   * the base's terms at another price, so a base generation is the variant's
+   * generation (ADR 0047).
+   */
+  readonly version?: never;
   readonly variantOf: string;
   readonly customize?: TierCustomize;
   readonly rateCard?: Readonly<Record<string, RateCard>>;
@@ -411,6 +450,7 @@ export const tier = (input: TierInput): Tier => {
   // SAFETY: the catalog schema validates the id and variant when the tier is declared.
   return {
     id: input.id as TierId,
+    ...(input.version === undefined ? {} : { version: input.version }),
     ...(input.name === undefined ? {} : { name: input.name }),
     ...(input.group === undefined ? {} : { group: input.group }),
     ...(input.addOn === undefined ? {} : { addOn: input.addOn }),

@@ -112,6 +112,7 @@ const billing: BillingStateView = {
   plans: {
     pro: {
       planId: "pro",
+      version: 1,
       group: "default",
       addOn: false,
       allowances: {},

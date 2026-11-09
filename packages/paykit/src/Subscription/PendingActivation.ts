@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { Allowances } from "../Allowance.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 
 /**
  * The terms a hosted purchase quoted, held until the provider's completion
@@ -17,6 +17,8 @@ import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 export const PendingActivation = Schema.Struct({
   /** The plan the checkout was opened for. */
   tier: Schema.String,
+  /** The catalog generation the checkout quoted (ADR 0047). */
+  version: Schema.optionalKey(PlanVersion),
   /** The group the plan fills; absent means the default group. */
   group: Schema.optionalKey(Schema.String),
   /** Whether the plan stacks beside every group instead of filling one. */

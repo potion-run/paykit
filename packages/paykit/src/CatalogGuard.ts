@@ -15,11 +15,20 @@ import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { pricingKey } from "./Pricing.ts";
-import { priceFor, topUpKey, type Price, type Tier, type TopUpTerms } from "./Tier.ts";
+import {
+  INITIAL_PLAN_VERSION,
+  priceFor,
+  topUpKey,
+  type Price,
+  type Tier,
+  type TopUpTerms,
+} from "./Tier.ts";
 
 /** The catalog-derived fields a command may carry on the wire. */
 interface CatalogCarried {
   readonly tier?: string;
+  /** The generation of the plan's terms the command was built from. */
+  readonly version?: number;
   readonly group?: string;
   readonly addOn?: boolean;
   readonly allowances?: Readonly<Record<string, Allowance>>;
@@ -212,6 +221,23 @@ export const catalogMismatchOf = (
       field: "addOn",
       expected: String(tier.addOn === true),
       actual: String(input.addOn === true),
+    });
+  }
+
+  // A plan's generation is a catalog term like its price: a command built from
+  // an older catalog generation would record a deal the deploy no longer sells
+  // under that version (ADR 0047). An absent version is the first generation,
+  // so a command written before the field existed still validates against a
+  // catalog that has never been bumped.
+  const expectedVersion = tier.version ?? INITIAL_PLAN_VERSION;
+  const actualVersion = input.version ?? INITIAL_PLAN_VERSION;
+
+  if (expectedVersion !== actualVersion) {
+    return new CatalogMismatch({
+      tier: tier.id,
+      field: "version",
+      expected: String(expectedVersion),
+      actual: String(actualVersion),
     });
   }
 

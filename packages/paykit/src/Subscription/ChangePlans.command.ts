@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { GroupCancellationScheduled, GroupCancellationWithdrawn } from "./CancelGroup.command.ts";
 import { DefaultPlanNotCancelable, PlanGroupEmpty } from "./CancelGroup.command.ts";
@@ -36,6 +36,8 @@ import { AccountId } from "./Subscription.id.ts";
  */
 export const PlanMove = Schema.Struct({
   tier: Schema.String,
+  /** The catalog generation of the plan's terms this move buys (ADR 0047). */
+  version: Schema.optionalKey(PlanVersion),
   /** The group the plan fills; absent means the default group. */
   group: Schema.optionalKey(Schema.String),
   /** Whether the plan stacks beside every group instead of filling one. */

@@ -152,7 +152,7 @@ describe("customers", () => {
 
       const customer = yield* customers.get();
 
-      expect(customer.plans).toEqual([{ planId: "team", status: "active" }]);
+      expect(customer.plans).toEqual([{ planId: "team", version: 1, status: "active" }]);
       expect(customer.billingControls?.autoTopUp).toEqual({ enabled: true, threshold: 500 });
     }),
   );

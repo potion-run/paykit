@@ -12,7 +12,16 @@ import {
 import { CreditRateCards, Feature, type FeatureKind, RateCard, cardFromRates } from "./Feature.ts";
 import type { Plan } from "./Plan.ts";
 import { currencyOfPricing, unitsOf, type Pricing } from "./Pricing.ts";
-import { CreditsExpire, Price, Tier, priceFor, type TierKind, type TopUpTerms } from "./Tier.ts";
+import {
+  CreditsExpire,
+  INITIAL_PLAN_VERSION,
+  Price,
+  Tier,
+  priceFor,
+  type PlanVersion,
+  type TierKind,
+  type TopUpTerms,
+} from "./Tier.ts";
 
 /**
  * The deploy-time catalog: every declared feature and every purchasable tier.
@@ -1154,6 +1163,26 @@ export const catalog = (input: CatalogInput): Effect.Effect<Catalog, CatalogErro
 export const planOf = (catalog: Catalog, planId: string): Tier | null =>
   catalog.tiers.find((plan) => plan.id === planId) ?? null;
 
+/**
+ * The generation of a plan's terms the catalog currently sells, or `null` when
+ * the catalog has no such plan. A standing keeps the generation it was sold at,
+ * so this is the version the next move buys, not the one already in force
+ * (ADR 0047).
+ *
+ * ### Reading the generation a move would buy
+ * **Example:** A console label for a plan that moved on
+ * ```typescript
+ * planVersionOf(catalog, "pro"); // 2
+ * ```
+ *
+ * @primitive
+ */
+export const planVersionOf = (catalog: Catalog, planId: string): PlanVersion | null => {
+  const tier = planOf(catalog, planId);
+
+  return tier === null ? null : (tier.version ?? INITIAL_PLAN_VERSION);
+};
+
 /** A declared feature, or `null` when the catalog has no such feature. */
 export const featureOf = (catalog: Catalog, featureId: string): Feature | null =>
   catalog.features.find((feature) => feature.id === featureId) ?? null;
@@ -1213,6 +1242,8 @@ export const ratesOf = (catalog: Catalog, tierId: string): CreditRateCards | nul
 /** The credit terms a tier sells: its grant, when it expires, every rate, and its top-up line. */
 export interface PlanCreditTerms {
   readonly kind: TierKind;
+  /** The generation of the plan's terms a move buys (ADR 0047). */
+  readonly version: PlanVersion;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
   readonly rates: CreditRateCards;
@@ -1228,6 +1259,7 @@ export const creditTermsOf = (catalog: Catalog, tierId: string): PlanCreditTerms
 
   return {
     kind: tier.kind ?? "subscription",
+    version: tier.version ?? INITIAL_PLAN_VERSION,
     credits: tier.credits ?? 0,
     creditsExpire: tier.creditsExpire ?? "period",
     rates: ratesOf(catalog, tierId) ?? {},

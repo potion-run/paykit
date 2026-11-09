@@ -137,8 +137,10 @@ ADR records the gap rather than papering it with the catalog's defaults.
 changes what the next command may state:
 
 - The plan's id, group and price still validate on every new command against the deployed catalog.
-  A price change applies to the next plan move, not to the standing in force; there is no versioned
-  plan migration ([BILLING-SURFACE](../BILLING-SURFACE.md) keeps that gap).
+  A price change applies to the next plan move, not to the standing in force. The plan's generation
+  is now recorded on the row and the event, so the drift is visible and the next move is the
+  migration ([0047](./0047-a-plan-is-versioned-and-a-move-is-its-migration.md)); there is still no
+  automatic migration ([BILLING-SURFACE](../BILLING-SURFACE.md)).
 - The allowances a customer already holds are history. A changed `grants` list is a changed default
   and quote; it is never diffed against a standing, and a replay still produces the deal that was
   sold.

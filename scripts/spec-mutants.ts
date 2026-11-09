@@ -443,17 +443,24 @@ const SCHEDULES_MUTANTS: ReadonlyArray<Mutant> = [
 const PLANS_MUTANTS: ReadonlyArray<Mutant> = [
   {
     name: "upgrade-is-scheduled",
-    invariant: "scheduledChangeIsADowngrade",
-    from: "    else if (isUpgrade(state.plan, plan)) Upgrade",
-    to: "    else if (isUpgrade(state.plan, plan)) Schedule",
+    invariant: "scheduledChangeIsNotAnUpgrade",
+    from: "    else if (isUpgrade(held(state), target)) Upgrade",
+    to: "    else if (isUpgrade(held(state), target)) Schedule",
     why: "a more expensive plan left waiting for the boundary instead of applied now",
   },
   {
     name: "schedule-the-current-plan",
-    invariant: "scheduledChangeIsADowngrade",
-    from: "          pending: Pending(plan),",
-    to: "          pending: Pending(state.plan),",
+    invariant: "pendingIsNotCurrent",
+    from: "          pending: Pending(target),",
+    to: "          pending: Pending(held(state)),",
     why: "a scheduled change that names the plan already running",
+  },
+  {
+    name: "attach-a-generation-the-catalogue-never-had",
+    invariant: "activePlanIsKnown",
+    from: "  pure def versionsOf(plan: PlanId): Set[int] = 1.to(latestVersion(plan))",
+    to: "  pure def versionsOf(plan: PlanId): Set[int] = 1.to(latestVersion(plan) + 1)",
+    why: "a catalogue that lets a caller attach a generation it does not state",
   },
   {
     name: "cancellation-keeps-the-pending-plan",

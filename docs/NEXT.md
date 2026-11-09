@@ -43,6 +43,14 @@ a bespoke allowance set travels on the plan command and into the event.
 `format:check`, `lint`, `typecheck`, `test` (every project; the vendor live cases skip without a
 key), `build`, `exports:check`, `validate:publish-packages`.
 
+A plan now states its generation ([ADR
+0047](./adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)). `Plan.version` is the catalog
+generation a new move buys; every plan row, phase and activation event keeps the generation it was
+sold at, and a version move is the ordinary `attach` / `update` / scheduled phase. `Verify` reports
+`PlanVersionOutdated` (the account is on an older generation), `PlanVersionAhead` (the deploy is
+behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a bump). No deploy
+rewrites a standing and there is no automatic migration.
+
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver` with a `carryCap`, credits with a rate card (a `creditRates` shorthand, or a
 `rateCard` with property `rules` and `multipliers`, overridable per tier), a spend cap (`cap`), a
@@ -99,7 +107,7 @@ shared pool, the transfer and the archive ([ADR
 phases, `controls.qnt` the customer's spend ceiling and usage alerts, and `money.qnt` the refund,
 reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with its
 witnesses on every push; `pnpm spec:test` runs nine scenario modules; `scripts/spec-mutants.ts`
-kills 76 mutants across the nine, so no invariant can survive as a tautology;
+kills 77 mutants across the nine, so no invariant can survive as a tautology;
 `scripts/spec-coverage.ts` holds all 44 commands against the nine action tables, so a command
 lands modelled or with a written reason. Three spend-path findings are still recorded rather than
 fixed: a credit-priced feature's stored `remaining` is stale after

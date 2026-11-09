@@ -49,7 +49,7 @@ documented billing surface, not a second implementation.
 | Entity plans | `EntityId`, `ScopeState` per entity, `entityId` on `ChangeTier`, `Attach`, `Update` and previews (ADR 0040) | shipped |
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `Entities` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | shipped — the model, reads, bindings, layers, Api commands, `Atom` verbs and the SQL-backed entity list |
 | Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout (ADRs 0041, 0042) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote and the webhook activates exactly it |
-| Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
+| Versioning plans | `Plan.version`, the generation on every plan row and event, and `Verify`'s outdated / ahead / drift findings (ADR 0047) | shipped — a catalog deploy never reprices history; attaching the plan again is the migration, and there is no automatic migration |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
 | Checking access | `Check` | shipped |
@@ -103,8 +103,12 @@ documented billing surface, not a second implementation.
    carries its quote as a pending activation, a custom add-on stacks, and a negotiated price is the
    operation's explicit override. What remains is a custom plan as a group's fallback and a quote
    keyed by provider reference if concurrent checkouts must be told apart.
-4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
-   is new data, not a migration of existing subscribers.
+4. **Plan versioning / migration** — landed ([ADR
+   0047](../adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)): a plan states its
+   generation, every row and event records the one it bought, attaching the plan again is an
+   ordinary move to the current generation, and `Verify` reports an outdated row, a deploy behind
+   the state, and a change that forgot its version bump. There is no automatic rewrite of a
+   standing.
 5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a
    controls write; the verb and its read belong in the library.
 6. **`setupPayment`** — a provider-port operation for adding a method without a purchase.

@@ -386,6 +386,7 @@ export class BillingState extends Domain.View("BillingState", {
           plans: {
             [event.tier]: {
               planId: event.tier,
+              version: event.version ?? 1,
               group: event.group ?? "default",
               addOn: event.addOn ?? false,
               allowances: event.allowances,
@@ -439,6 +440,7 @@ export class BillingState extends Domain.View("BillingState", {
           plans: {
             [event.tier]: {
               planId: event.tier,
+              version: event.version ?? 1,
               group: event.group ?? "default",
               addOn: event.addOn ?? false,
               allowances: event.allowances,
@@ -482,6 +484,7 @@ export class BillingState extends Domain.View("BillingState", {
 
       const row: PlanRow = {
         planId: event.tier,
+        version: event.versionAfter ?? 1,
         group: event.group ?? "default",
         addOn: event.addOn ?? false,
         allowances: event.allowances,
@@ -703,6 +706,7 @@ export class BillingState extends Domain.View("BillingState", {
           ...view,
           schedule: withPhase(view.schedule, {
             planId: event.tier,
+            version: event.version ?? 1,
             group: event.group ?? "default",
             addOn: event.addOn ?? false,
             allowances: event.allowances,

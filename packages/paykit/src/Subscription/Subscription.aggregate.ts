@@ -24,6 +24,7 @@ import {
 } from "../Customer.ts";
 import { soleUnitPriceOf } from "../Pricing.ts";
 import { prorate, prorateQuantity, sameProration } from "../Proration.ts";
+import { INITIAL_PLAN_VERSION } from "../Tier.ts";
 import {
   capacityOf,
   downgradeOf,
@@ -389,6 +390,7 @@ const remainingAfterPlanMove = (
 /** The plan row a move writes, before its event exists. */
 const rowOfMove = (move: PlanMove, state: SubscribedState): PlanRow => ({
   planId: move.tier,
+  version: move.version ?? INITIAL_PLAN_VERSION,
   group: move.group ?? DEFAULT_PLAN_GROUP,
   addOn: move.addOn === true,
   allowances: move.allowances,
@@ -401,6 +403,18 @@ const rowOfMove = (move: PlanMove, state: SubscribedState): PlanRow => ({
     ? {}
     : { currency: (move.price?.currency ?? currencyOf(state))! }),
   ...(move.price === undefined ? {} : { price: move.price }),
+});
+
+/**
+ * The version fields an event records. The first generation is the log's
+ * ordinary case and stays unwritten, like a default group, so an event for an
+ * unbumped plan does not grow a field (ADR 0047).
+ */
+const versionField = (version: number) => (version === INITIAL_PLAN_VERSION ? {} : { version });
+
+const versionFields = (before: number, after: number) => ({
+  ...(before === INITIAL_PLAN_VERSION ? {} : { versionBefore: before }),
+  ...(after === INITIAL_PLAN_VERSION ? {} : { versionAfter: after }),
 });
 
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
@@ -491,6 +505,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     cancellationEvents.push(
       new PlanChanged({
         tier: row.planId,
+        ...versionFields(current.version, row.version),
         ...(group === DEFAULT_PLAN_GROUP ? {} : { group }),
         allowances: row.allowances,
         remaining,
@@ -554,6 +569,10 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     (phase) =>
       new PlanChanged({
         tier: phase.planId,
+        ...versionFields(
+          planInGroup(state.plans, phase.group)?.version ?? phase.version,
+          phase.version,
+        ),
         ...(phase.group === DEFAULT_PLAN_GROUP ? {} : { group: phase.group }),
         ...(phase.addOn ? { addOn: true } : {}),
         allowances: phase.allowances,
@@ -1147,6 +1166,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new TrialStarted({
           ...activationOf({
             tier: command.tier,
+            version: command.version ?? INITIAL_PLAN_VERSION,
             allowances: command.allowances,
             credits: command.credits + prepaid,
             prepaidCredits: prepaid,
@@ -1202,6 +1222,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new SubscriptionActivated({
           ...activationOf({
             tier: command.tier,
+            version: command.version ?? INITIAL_PLAN_VERSION,
             group: command.group,
             addOn: command.addOn,
             allowances: command.allowances,
@@ -1335,6 +1356,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return [
         new PlanChanged({
           tier: command.tier,
+          ...versionFields(
+            planInGroup(scoped.plans, command.group ?? DEFAULT_PLAN_GROUP)?.version ??
+              command.version ??
+              INITIAL_PLAN_VERSION,
+            command.version ?? INITIAL_PLAN_VERSION,
+          ),
           ...(command.group === undefined || command.group === DEFAULT_PLAN_GROUP
             ? {}
             : { group: command.group }),
@@ -1529,6 +1556,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         if (at !== undefined) {
           return new PlanChangeScheduled({
             tier: move.tier,
+            ...versionField(move.version ?? INITIAL_PLAN_VERSION),
             ...(row.group === DEFAULT_PLAN_GROUP ? {} : { group: row.group }),
             allowances: move.allowances,
             ...(move.price === undefined ? {} : { price: move.price }),
@@ -1549,6 +1577,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
         return new PlanChanged({
           tier: move.tier,
+          ...versionFields(
+            planInGroup(current.plans, row.group)?.version ?? move.version ?? INITIAL_PLAN_VERSION,
+            move.version ?? INITIAL_PLAN_VERSION,
+          ),
           ...(row.group === DEFAULT_PLAN_GROUP ? {} : { group: row.group }),
           ...(row.addOn ? { addOn: true } : {}),
           allowances: move.allowances,
@@ -1622,6 +1654,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return [
         new PlanChanged({
           tier: phase.planId,
+          ...versionFields(
+            planInGroup(state.plans, phase.group)?.version ?? phase.version,
+            phase.version,
+          ),
           ...(phase.group === DEFAULT_PLAN_GROUP ? {} : { group: phase.group }),
           ...(phase.addOn ? { addOn: true } : {}),
           allowances: phase.allowances,
@@ -3070,6 +3106,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return [
         new PlanChangeScheduled({
           tier: command.tier,
+          ...versionField(command.version ?? INITIAL_PLAN_VERSION),
           ...(command.group === undefined || command.group === DEFAULT_PLAN_GROUP
             ? {}
             : { group: command.group }),
@@ -3320,6 +3357,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // next boundary is `planCredits`; the live pool is the event's `credits`.
       const row: PlanRow = {
         planId: event.tier,
+        version: event.versionAfter ?? INITIAL_PLAN_VERSION,
         group: event.group ?? DEFAULT_PLAN_GROUP,
         addOn: event.addOn ?? false,
         allowances: event.allowances,
@@ -3737,6 +3775,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             // the same plan again moves its phase; another plan appends.
             schedule: withPhase(state.schedule, {
               planId: event.tier,
+              version: event.version ?? INITIAL_PLAN_VERSION,
               group: event.group ?? DEFAULT_PLAN_GROUP,
               addOn: event.addOn ?? false,
               allowances: event.allowances,

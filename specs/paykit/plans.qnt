@@ -6,6 +6,12 @@
 // this models the plan move that precedes it. The two meet at `close`: a pending
 // plan is applied and a pending cancellation ends the plan.
 //
+// A plan is a *generation*: an id and a version (ADR 0047). The catalogue has
+// one current generation per id; a standing keeps the generation it bought, so
+// a move to a newer one is an ordinary move and a standing may legitimately be
+// older than the catalogue. A version this catalogue does not have is the one
+// state the model refuses to reach.
+//
 // Source correspondence:
 //   attach              ↔ the classification an attach operation performs
 //   upgrade             ↔ ChangeTier.command.ts (immediate)
@@ -26,12 +32,18 @@ module plans {
 
   type PlanId = Free | Pro | Scale
 
+  // One generation of a plan. The id is stable; the version is what a catalog
+  // deploy bumps when the terms change (ADR 0047).
+  type Generation = { plan: PlanId, version: int }
+
   // A plan that has not been bought yet, one that is running, and one that has
   // ended. An ended plan can be reactivated by a new attach.
   type Phase = NoPlan | Active | Canceled
 
-  // The one change a plan may have waiting at its boundary.
-  type Change = NoChange | Pending(PlanId)
+  // The one change a plan may have waiting at its boundary. A phase carries the
+  // generation it lands on, so a version move waits for the boundary like any
+  // other non-upgrade.
+  type Change = NoChange | Pending(Generation)
 
   // What an attach request becomes. The classification is pure; the action is
   // disabled when the request is a no-op.
@@ -41,6 +53,7 @@ module plans {
     now: int,
     phase: Phase,
     plan: PlanId,
+    version: int,
     periodEnd: int,
     pending: Change,
     cancelAtPeriodEnd: bool,
@@ -52,6 +65,7 @@ module plans {
     immediateCancels: int,
     uncancels: int,
     reactivations: int,
+    versionMoves: int,
   }
 
   // ── the catalogue ──────────────────────────────────────────────────────────
@@ -62,11 +76,34 @@ module plans {
   pure def priceOf(plan: PlanId): int =
     if (plan == Free) 0 else if (plan == Pro) 20 else 40
 
-  pure def isUpgrade(current: PlanId, target: PlanId): bool =
-    priceOf(target) > priceOf(current)
+  // The catalogue's current generation per plan. Pro is at its second
+  // generation, so the model can hold an outdated standing and migrate it.
+  pure def latestVersion(plan: PlanId): int =
+    if (plan == Pro) 2 else 1
 
-  pure def isDowngrade(current: PlanId, target: PlanId): bool =
-    priceOf(target) < priceOf(current)
+  pure def versionsOf(plan: PlanId): Set[int] = 1.to(latestVersion(plan))
+
+  pure def generation(plan: PlanId, version: int): Generation =
+    { plan: plan, version: version }
+
+  pure def held(state: State): Generation =
+    generation(state.plan, state.version)
+
+  pure def sameGeneration(left: Generation, right: Generation): bool =
+    left.plan == right.plan and left.version == right.version
+
+  // A newer generation of the same plan is not an upgrade in price, so it waits
+  // for the boundary unless the caller asks for it now. A rollback is a
+  // downgrade, and the same rule keeps it at the boundary.
+  pure def isUpgrade(current: Generation, target: Generation): bool =
+    priceOf(target.plan) > priceOf(current.plan)
+
+  pure def isDowngrade(current: Generation, target: Generation): bool =
+    priceOf(target.plan) < priceOf(current.plan)
+      or (target.plan == current.plan and target.version < current.version)
+
+  pure def isVersionMove(current: Generation, target: Generation): bool =
+    target.plan == current.plan and target.version != current.version
 
   pure def hasPending(change: Change): bool =
     match change {
@@ -74,51 +111,64 @@ module plans {
       | Pending(_) => true
     }
 
-  pure def pendingPlan(change: Change): PlanId =
+  pure def pendingGeneration(change: Change): Generation =
     match change {
-      | NoChange => Free
-      | Pending(plan) => plan
+      | NoChange => generation(Free, 1)
+      | Pending(target) => target
     }
+
+  pure def pendingPlan(change: Change): PlanId =
+    pendingGeneration(change).plan
+
+  pure def pendingVersion(change: Change): int =
+    pendingGeneration(change).version
 
   // ── classification ─────────────────────────────────────────────────────────
 
-  // A new plan is activated; a more expensive plan is immediate; a cheaper plan
-  // is scheduled unless the caller asks for it now; the same plan is a no-op.
+  // A new plan is activated; a more expensive one is immediate; a cheaper one
+  // (or a newer generation at the same price) is scheduled unless the caller
+  // asks for it now; the same generation is a no-op.
+  //
   // The request cannot turn an upgrade into a scheduled change: that would let a
   // caller keep a cheap plan after asking for an expensive one.
-  pure def attachMode(state: State, plan: PlanId, immediate: bool): AttachMode =
+  pure def attachMode(state: State, target: Generation, immediate: bool): AttachMode =
     if (state.phase != Active) Activate
-    else if (plan == state.plan) Noop
-    else if (isUpgrade(state.plan, plan)) Upgrade
+    else if (sameGeneration(held(state), target)) Noop
+    else if (isUpgrade(held(state), target)) Upgrade
     else if (immediate) Upgrade
     else Schedule
 
-  pure def canAttach(state: State, plan: PlanId, immediate: bool): bool =
-    attachMode(state, plan, immediate) != Noop
+  pure def canAttach(state: State, target: Generation, immediate: bool): bool =
+    attachMode(state, target, immediate) != Noop
 
-  pure def applyAttach(state: State, plan: PlanId, immediate: bool): State = {
-    val mode = attachMode(state, plan, immediate)
+  pure def applyAttach(state: State, target: Generation, immediate: bool): State = {
+    val mode = attachMode(state, target, immediate)
+    val moved = isVersionMove(held(state), target)
     match mode {
       | Activate => {
           ...state,
           phase: Active,
-          plan: plan,
+          plan: target.plan,
+          version: target.version,
           periodEnd: state.now + PERIOD_LENGTH,
           pending: NoChange,
           cancelAtPeriodEnd: false,
           attaches: state.attaches + 1,
+          versionMoves: if (moved) state.versionMoves + 1 else state.versionMoves,
           reactivations: if (state.phase == NoPlan) state.reactivations else state.reactivations + 1,
         }
       | Upgrade => {
           ...state,
-          plan: plan,
+          plan: target.plan,
+          version: target.version,
           pending: NoChange,
           attaches: state.attaches + 1,
           upgrades: state.upgrades + 1,
+          versionMoves: if (moved) state.versionMoves + 1 else state.versionMoves,
         }
       | Schedule => {
           ...state,
-          pending: Pending(plan),
+          pending: Pending(target),
           attaches: state.attaches + 1,
           downgrades: state.downgrades + 1,
         }
@@ -140,17 +190,16 @@ module plans {
         closes: state.closes + 1,
       }
     else {
-      val nextPlan =
-        match state.pending {
-          | NoChange => state.plan
-          | Pending(plan) => plan
-        }
+      val landing = pendingGeneration(state.pending)
+      val moved = hasPending(state.pending) and isVersionMove(held(state), landing)
       {
         ...state,
-        plan: nextPlan,
+        plan: landing.plan,
+        version: landing.version,
         pending: NoChange,
         periodEnd: state.periodEnd + PERIOD_LENGTH,
         closes: state.closes + 1,
+        versionMoves: if (moved) state.versionMoves + 1 else state.versionMoves,
       }
     }
 
@@ -169,23 +218,37 @@ module plans {
 
   // ── invariants ─────────────────────────────────────────────────────────────
 
-  // An active plan is a real plan.
+  // An active plan is a real generation: a declared plan at a version this
+  // catalogue states (ADR 0047).
   val activePlanIsKnown: bool =
-    state.phase != Active or PLANS.contains(state.plan)
+    state.phase != Active
+      or (PLANS.contains(state.plan)
+        and state.version >= 1
+        and state.version <= latestVersion(state.plan))
 
-  // A scheduled change is a downgrade. An upgrade is always immediate; a
-  // request to defer one would be a different operation.
-  val scheduledChangeIsADowngrade: bool =
+  // A scheduled change names a generation the catalogue states, so a phase
+  // cannot invent a version the next deploy does not know.
+  val pendingVersionIsKnown: bool =
+    not(hasPending(state.pending))
+      or (PLANS.contains(pendingPlan(state.pending))
+        and pendingVersion(state.pending) >= 1
+        and pendingVersion(state.pending) <= latestVersion(pendingPlan(state.pending)))
+
+  // A scheduled change is never an upgrade. An upgrade is always immediate; a
+  // request to defer one would be a different operation. A newer generation at
+  // the same price is not an upgrade, so it may wait.
+  val scheduledChangeIsNotAnUpgrade: bool =
     match state.pending {
       | NoChange => true
-      | Pending(plan) => isDowngrade(state.plan, plan)
+      | Pending(target) => not(isUpgrade(held(state), target))
     }
 
-  // A pending change never names the plan that is already active.
+  // A pending change never names the generation that is already active. A
+  // version move is a change; the same generation is the no-op (ADR 0047).
   val pendingIsNotCurrent: bool =
     match state.pending {
       | NoChange => true
-      | Pending(plan) => plan != state.plan
+      | Pending(target) => not(sameGeneration(held(state), target))
     }
 
   // A canceled plan carries no future intent. The close and the immediate
@@ -206,7 +269,8 @@ module plans {
 
   val plansInvariant: bool = and {
     activePlanIsKnown,
-    scheduledChangeIsADowngrade,
+    pendingVersionIsKnown,
+    scheduledChangeIsNotAnUpgrade,
     pendingIsNotCurrent,
     terminalHasNoIntent,
     noPlanHasNoIntent,
@@ -215,9 +279,10 @@ module plans {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  action attach(plan: PlanId, immediate: bool): bool = all {
-    canAttach(state, plan, immediate),
-    state' = applyAttach(state, plan, immediate),
+  action attach(plan: PlanId, version: int, immediate: bool): bool = all {
+    versionsOf(plan).contains(version),
+    canAttach(state, generation(plan, version), immediate),
+    state' = applyAttach(state, generation(plan, version), immediate),
   }
 
   action cancelAtBoundary: bool = all {
@@ -262,9 +327,10 @@ module plans {
 
   action step: bool = {
     nondet plan = PLANS.oneOf()
+    nondet version = versionsOf(plan).oneOf()
     nondet immediate = Set(false, true).oneOf()
     any {
-      attach(plan, immediate),
+      attach(plan, version, immediate),
       cancelAtBoundary,
       uncancel,
       cancelImmediately,
@@ -278,6 +344,7 @@ module plans {
       now: 0,
       phase: NoPlan,
       plan: Free,
+      version: 1,
       periodEnd: PERIOD_LENGTH,
       pending: NoChange,
       cancelAtPeriodEnd: false,
@@ -288,6 +355,7 @@ module plans {
       immediateCancels: 0,
       uncancels: 0,
       reactivations: 0,
+      versionMoves: 0,
     },
   }
 
@@ -302,6 +370,8 @@ module plans {
 
   val pendingApplied: bool =
     state.closes > 0 and state.phase == Active and not(hasPending(state.pending))
+
+  val versionMoved: bool = state.versionMoves > 0 and state.phase == Active
 
   val cancellationScheduled: bool =
     state.cancelAtPeriodEnd and state.phase == Active

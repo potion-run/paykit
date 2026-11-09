@@ -661,6 +661,7 @@ export const devToolsBilling = (
     plans: {
       [tier]: {
         planId: tier,
+        version: 1,
         group: "default",
         addOn: false,
         allowances: catalogAllowances,

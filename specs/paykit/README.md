@@ -10,7 +10,7 @@ machines `src/Subscription` implements, and `entities.qnt` is the scope model [A
 | [`paykit.qnt`](./paykit.qnt) | the spend path | activation, counted and credit usage, holds, the pool, the period boundary |
 | [`standing.qnt`](./standing.qnt) | the phase machine | trial, grace, dunning, cancellation, a scheduled tier change, the refill budget |
 | [`windows.qnt`](./windows.qnt) | the clocks the period does not own | reset windows, a quantity that is set, a cooldown, retry rungs |
-| [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, cancellation, uncancel, reactivation |
+| [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, a generation move, cancellation, uncancel, reactivation |
 | [`schedules.qnt`](./schedules.qnt) | the plan set and its phases | plan groups, the one-plan rule, the add-on, a multi-phase schedule, cancellation, the terminal close |
 | [`balances.qnt`](./balances.qnt) | the balance ledger | plan, rollover, expiring and lifetime grants; deduction order; what a close and a plan change preserve |
 | [`entities.qnt`](./entities.qnt) | the entity scopes | a child scope's plans and balances, the shared pool, the transfer, what an archive returns |
@@ -353,8 +353,8 @@ charge into a payout (ADR 0042).
 
 ## The mutants
 
-`pnpm spec:mutants` kills 76 mutants across the nine models: 17 for the spend path, 4 for the
-standing, 6 for the windows, 4 for the plan operations, 13 for the plan set and its schedules, 7 for
+`pnpm spec:mutants` kills 77 mutants across the nine models: 17 for the spend path, 4 for the
+standing, 6 for the windows, 5 for the plan operations, 13 for the plan set and its schedules, 7 for
 the balance ledger, 9 for the entities, 10 for the money protocol and 6 for customer controls. Each
 mutant is a textual replacement and the gate fails when an invariant **survives** it. The new
 models' mutants are the same discipline as the original: an invariant with nothing behind it is a

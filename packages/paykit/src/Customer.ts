@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { PlanId } from "./Plan.ts";
-import { TopUpThreshold } from "./Tier.ts";
+import { PlanVersion, TopUpThreshold } from "./Tier.ts";
 
 /** The account a deployment bills. */
 export const CustomerId = Schema.String.pipe(Schema.brand("CustomerId"));
@@ -10,6 +10,11 @@ export type CustomerId = typeof CustomerId.Type;
 /** One plan a customer holds, and the status the deployment sees. */
 export const CustomerPlan = Schema.Struct({
   planId: PlanId,
+  /**
+   * The catalog generation the customer holds. A deploy that changes the plan
+   * bumps it; this row keeps the generation it was sold at (ADR 0047).
+   */
+  version: PlanVersion,
   status: Schema.Literals(["trialing", "active", "grace", "canceled", "expired"]),
   scheduledPlanId: Schema.optionalKey(PlanId),
 });

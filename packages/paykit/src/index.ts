@@ -63,8 +63,10 @@ export type { PricingValue } from "./Pricing.ts";
 export {
   AdditionalCurrency,
   CreditsExpire,
+  INITIAL_PLAN_VERSION,
   Interval,
   PlanTrial,
+  PlanVersion,
   Price,
   TopUpPackId,
   TopUpTerms,
@@ -76,6 +78,8 @@ export {
 export type { TopUpTermsInput } from "./Tier.ts";
 
 export { Plan, PlanCustomize, PlanId, PlanKind, plan } from "./Plan.ts";
+
+export { planVersionOf } from "./Catalog.ts";
 
 export {
   Balance,
@@ -574,6 +578,9 @@ export { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 export {
   MissingProviderRef,
   OrphanProviderRef,
+  PlanVersionAhead,
+  PlanVersionDrift,
+  PlanVersionOutdated,
   TierHasNoPurchasePath,
   Verify,
   VerifyMismatch,

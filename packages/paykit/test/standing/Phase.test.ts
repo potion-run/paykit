@@ -163,6 +163,7 @@ describe("standingConditionsOf", () => {
       schedule: [
         {
           planId: "pro",
+          version: 1,
           group: "default",
           addOn: false,
           at: start,

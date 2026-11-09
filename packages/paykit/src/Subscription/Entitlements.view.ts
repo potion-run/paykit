@@ -534,7 +534,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       return withAccount(writeScope(debited, event.to, event.toAfter, targetRow), context);
     },
     TrialStarted: (view, event, context): EntitlementsState => {
-      const plans = { [event.tier]: planRowOf(event) };
+      const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
 
       return withAccount(
         {
@@ -571,7 +571,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     SubscriptionActivated: (view, event, context): EntitlementsState => {
-      const plans = { [event.tier]: planRowOf(event) };
+      const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
 
       return withAccount(
         {
@@ -615,7 +615,7 @@ export class Entitlements extends Domain.View("Entitlements", {
 
         if (entity === undefined) return withAccount(view, context);
 
-        const plans = withPlan(entity.plans, planRowOf(event));
+        const plans = withPlan(entity.plans, planRowOf(event, event.versionAfter ?? 1));
 
         const updated = withEntityFeatures(
           view,
@@ -653,7 +653,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       // A new tier change replaces what the old one owed and the invoice that
       // settled it; carrying either forward would report stale money.
       const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
-      const plans = withPlan(view.plans, planRowOf(event));
+      const plans = withPlan(view.plans, planRowOf(event, event.versionAfter ?? 1));
 
       return withAccount(
         {
@@ -1820,23 +1820,27 @@ const planSourcesOf = (plans: Plans | undefined, feature: string): ReadonlyArray
         ];
   });
 
-/** The plan row an activation event leaves behind. */
-const planRowOf = (event: {
-  readonly tier: string;
-  readonly group?: string;
-  readonly addOn?: boolean;
-  readonly allowances: PlanRow["allowances"];
-  readonly credits: number;
-  readonly planCredits?: number;
-  readonly prepaidCredits?: number;
-  readonly creditsExpire: PlanRow["creditsExpire"];
-  readonly topUp?: PlanRow["topUp"];
-  readonly rates: PlanRow["rates"];
-  readonly interval?: NonNullable<PlanRow["interval"]>;
-  readonly currency?: string;
-  readonly price?: NonNullable<PlanRow["price"]>;
-}): PlanRow => ({
+/** The plan row an activation or a move leaves behind, at a stated generation. */
+const planRowOf = (
+  event: {
+    readonly tier: string;
+    readonly group?: string;
+    readonly addOn?: boolean;
+    readonly allowances: PlanRow["allowances"];
+    readonly credits: number;
+    readonly planCredits?: number;
+    readonly prepaidCredits?: number;
+    readonly creditsExpire: PlanRow["creditsExpire"];
+    readonly topUp?: PlanRow["topUp"];
+    readonly rates: PlanRow["rates"];
+    readonly interval?: NonNullable<PlanRow["interval"]>;
+    readonly currency?: string;
+    readonly price?: NonNullable<PlanRow["price"]>;
+  },
+  version: number,
+): PlanRow => ({
   planId: event.tier,
+  version,
   group: event.group ?? "default",
   addOn: event.addOn ?? false,
   allowances: event.allowances,

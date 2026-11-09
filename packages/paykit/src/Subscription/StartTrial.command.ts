@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -16,6 +16,8 @@ import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 /** The account's trial began and its first period is open. */
 export class TrialStarted extends Domain.Event("TrialStarted", {
   tier: Schema.String,
+  /** The catalog generation of the plan's terms this trial bought (ADR 0047). */
+  version: Schema.optionalKey(PlanVersion),
   /** The group the plan fills; absent means the default group. */
   group: Schema.optionalKey(Schema.String),
   /** Whether the plan stacks beside every group instead of filling one. */
@@ -50,6 +52,8 @@ export class StartTrial extends Domain.Command("StartTrial", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The catalog generation of the plan's terms this command carries (ADR 0047). */
+    version: Schema.optionalKey(PlanVersion),
     allowances: Allowances,
     credits: Schema.Int,
     creditsExpire: CreditsExpire,

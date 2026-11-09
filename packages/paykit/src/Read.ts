@@ -69,7 +69,9 @@ export { Proration } from "./Proration.ts";
 export {
   AdditionalCurrency,
   CreditsExpire,
+  INITIAL_PLAN_VERSION,
   Interval,
+  PlanVersion,
   Price,
   Tier,
   TierCustomize,
@@ -171,7 +173,15 @@ export {
   initialTimeline,
 } from "./Timeline.ts";
 
-export { VerifyMismatch } from "./Verify.ts";
+export {
+  MissingProviderRef,
+  OrphanProviderRef,
+  PlanVersionAhead,
+  PlanVersionDrift,
+  PlanVersionOutdated,
+  TierHasNoPurchasePath,
+  VerifyMismatch,
+} from "./Verify.ts";
 
 export { PlanItemReset } from "./Subscription/ResetAllowance.command.ts";
 
@@ -211,6 +221,6 @@ export { plan } from "./Plan.ts";
 
 export { planItem } from "./PlanItem.ts";
 
-export { planTermsOf } from "./Catalog.ts";
+export { planTermsOf, planVersionOf } from "./Catalog.ts";
 
 export { schedulePlanChangeInputOf, subscribePlanInputOf, withGrants } from "./TierCommand.ts";

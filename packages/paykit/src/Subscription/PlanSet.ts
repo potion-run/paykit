@@ -1,8 +1,9 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Allowances, type Allowance, type Included } from "../Allowance.ts";
 import { CreditRateCards } from "../Feature.ts";
 import type { RateCard } from "../Feature.ts";
-import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, Interval, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 
 /**
  * The group a plan belongs to when it states none. A catalog may name as many
@@ -21,6 +22,12 @@ export const DEFAULT_PLAN_GROUP = "default";
 export const PlanRow = Schema.Struct({
   /** The catalog plan this row was sold as. */
   planId: Schema.String,
+  /**
+   * The generation of the catalog plan this row was sold at (ADR 0047). A
+   * catalog deploy that changes the plan's terms bumps it; the row keeps the
+   * generation it bought, so a later deploy never rewrites what was sold.
+   */
+  version: PlanVersion.pipe(Schema.withDecodingDefaultKey(Effect.succeed(1))),
   /** The group a move to another plan replaces within. */
   group: Schema.String,
   /** Whether this plan stacks beside every group instead of filling one. */

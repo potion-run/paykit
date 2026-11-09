@@ -201,6 +201,14 @@ period, and `EnterGrace` is refused once the standing is terminal.
 - Prices are logged. `SubscriptionActivated` carries `price`, `PlanChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
+- **A plan is versioned, and a move is its migration** ([ADR
+  0047](../../docs/adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)). `Plan.version`
+  is the catalog generation a new move buys; `PlanRow.version`, `CustomerPlan.version` and every
+  activation / change event keep the generation that was sold. A move to the same plan id at the
+  same version is a replay; a different version is an ordinary move, classified by price like any
+  other. `Verify` reports an outdated row, a row ahead of the deploy and a fixed plan whose terms
+  changed without a bump. A deploy never rewrites a standing and there is no automatic migration.
+
 - Every command has one typed rejection per way it can refuse.
 
 - Customer controls are state, not catalog ([ADR 0038](../../docs/adr/0038-customer-controls-are-state.md)).

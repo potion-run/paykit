@@ -17,6 +17,7 @@ import type { SubscribedState } from "../../src/Subscription/Subscription.state.
  */
 export const planRow = (planId: string, overrides: Partial<PlanRow> = {}): PlanRow => ({
   planId,
+  version: 1,
   group: DEFAULT_PLAN_GROUP,
   addOn: false,
   allowances: {} as Allowances,

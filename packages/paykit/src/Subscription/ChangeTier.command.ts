@@ -7,7 +7,7 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { EntityId } from "../Customer.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { Proration as ProrationValue } from "../Proration.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { EntityArchived } from "./EntityArchived.rejection.ts";
 import { EntityUnknown } from "./EntityUnknown.rejection.ts";
@@ -65,6 +65,10 @@ export class DowngradeBelowCeiling extends Domain.Rejection("DowngradeBelowCeili
 /** The account is now on another tier; the prices it moved between, and any proration. */
 export class PlanChanged extends Domain.Event("PlanChanged", {
   tier: Schema.String,
+  /** The generation the account was on before the move (ADR 0047). */
+  versionBefore: Schema.optionalKey(PlanVersion),
+  /** The generation the account is on after the move (ADR 0047). */
+  versionAfter: Schema.optionalKey(PlanVersion),
   /**
    * The group this plan fills. Absent means the default group.
    */
@@ -121,6 +125,8 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The catalog generation of the plan's terms this command carries (ADR 0047). */
+    version: Schema.optionalKey(PlanVersion),
     /** The group the plan fills; absent means the default group (ADR 0039 §1). */
     group: Schema.optionalKey(Schema.String),
     /** Whether the plan is an add-on rather than a group's plan. */

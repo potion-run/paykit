@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
@@ -14,6 +14,8 @@ import { AccountId } from "./Subscription.id.ts";
 /** The account's standing was activated for a tier, with a fresh period. */
 export class SubscriptionActivated extends Domain.Event("SubscriptionActivated", {
   tier: Schema.String,
+  /** The catalog generation of the plan's terms this activation bought (ADR 0047). */
+  version: Schema.optionalKey(PlanVersion),
   /**
    * The group the plan fills. Absent means the default group, which is also
    * the default group an activation that names none fills (ADR 0039 §1).
@@ -55,6 +57,8 @@ export class Subscribe extends Domain.Command("Subscribe", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The catalog generation of the plan's terms this command carries (ADR 0047). */
+    version: Schema.optionalKey(PlanVersion),
     /** The group the plan fills; absent means the default group (ADR 0039 §1). */
     group: Schema.optionalKey(Schema.String),
     /** Whether the plan is an add-on rather than a group's plan. */

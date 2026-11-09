@@ -34,6 +34,12 @@ import type { CreditsExpire, Price, TopUpTerms } from "./Tier.ts";
  */
 export interface TierGrantInput {
   readonly tier: string;
+  /**
+   * The catalog generation of the plan's terms this command carries. Omitted
+   * for the first generation, so a command for an unbumped plan does not grow a
+   * field (ADR 0047).
+   */
+  readonly version?: number;
   readonly allowances: Allowances;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
@@ -123,6 +129,7 @@ export const withGrants = <A extends TierGrantInput>(
 /** The catalog fields every tier command shares, in one shape. */
 const grantOf = (tierId: string, terms: PlanTerms): TierGrantInput => ({
   tier: tierId,
+  ...(terms.version === 1 ? {} : { version: terms.version }),
   allowances: terms.allowances,
   credits: terms.credits,
   creditsExpire: terms.creditsExpire,

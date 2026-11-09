@@ -5,7 +5,7 @@ import { Session } from "../Auth/Guards.ts";
 import { CatalogGuard } from "../CatalogGuard.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
-import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import { CreditsExpire, Interval, PlanVersion, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
@@ -17,6 +17,8 @@ import { AccountId } from "./Subscription.id.ts";
 /** The standing will move to `tier` at `at`, carrying the terms it needs there. */
 export class PlanChangeScheduled extends Domain.Event("PlanChangeScheduled", {
   tier: Schema.String,
+  /** The catalog generation of the plan's terms this phase will apply (ADR 0047). */
+  version: Schema.optionalKey(PlanVersion),
   /**
    * The group the phase moves. Absent means the default group.
    */
@@ -59,6 +61,8 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The catalog generation of the plan's terms this phase carries (ADR 0047). */
+    version: Schema.optionalKey(PlanVersion),
     /** The group the phase moves; absent means the default group. */
     group: Schema.optionalKey(Schema.String),
     /** Whether the plan is an add-on rather than a group's plan. */

@@ -61,7 +61,7 @@ describe("the public plan item, customer and balance shapes", () => {
   it("carries a customer and a balance with its sources", () => {
     const customer = {
       id: CustomerId.make("cus_1"),
-      plans: [{ planId: "pro", status: "active" as const }],
+      plans: [{ planId: "pro", version: 1, status: "active" as const }],
       billingControls: {},
       entities: [],
     };

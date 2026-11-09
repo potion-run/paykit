@@ -2,6 +2,7 @@ import type * as DateTime from "effect/DateTime";
 import { isQuantityGrant, pricingOf, type Allowances } from "../Allowance.ts";
 import type { CreditRateCards } from "../Feature.ts";
 import { currencyOfPricing } from "../Pricing.ts";
+import { INITIAL_PLAN_VERSION } from "../Tier.ts";
 import type { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
 import { DEFAULT_PLAN_GROUP } from "./PlanSet.ts";
 import {
@@ -106,6 +107,8 @@ export const carriedPrepaidOf = (
 /** The terms an activation records, as a command carries them. */
 export interface ActivationInput<S extends SubscriptionStatus = SubscriptionStatus> {
   readonly tier: string;
+  /** The catalog generation of the plan's terms this activation buys (ADR 0047). */
+  readonly version?: number;
   /** The group the plan fills; absent means the default group (ADR 0039 §1). */
   readonly group?: string;
   /** Whether the plan stacks beside every group instead of filling one. */
@@ -152,6 +155,12 @@ export const resetWindowsOf = (
 /** The fields an activation event records, in the shape both events share. */
 export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStatus> {
   readonly tier: string;
+  /**
+   * The catalog generation of the plan's terms this activation bought. Omitted
+   * for the first generation, like a default group, so an ordinary activation
+   * does not grow a field (ADR 0047).
+   */
+  readonly version?: number;
   /** The group the plan fills; absent means the default group (ADR 0039 §1). */
   readonly group?: string;
   /** Whether the plan stacks beside every group instead of filling one. */
@@ -211,8 +220,11 @@ export const activationOf = <S extends SubscriptionStatus>(
 
   const resetAt = resetWindowsOf(input.allowances, input.period.start);
 
+  const version = input.version ?? INITIAL_PLAN_VERSION;
+
   return {
     tier: input.tier,
+    ...(version === INITIAL_PLAN_VERSION ? {} : { version }),
     // A plan in the default group is the log's ordinary case and stays
     // unwritten (ADR 0039 §1).
     ...(input.group === undefined || input.group === DEFAULT_PLAN_GROUP
@@ -244,6 +256,8 @@ export const activationOf = <S extends SubscriptionStatus>(
  */
 export interface StandingGrant {
   readonly tier: string;
+  /** The catalog generation of the plan's terms the event bought (ADR 0047). */
+  readonly version?: number;
   /** The group the plan fills; absent means the default group (ADR 0039 §1). */
   readonly group?: string;
   /** Whether the plan stacks beside every group instead of filling one. */
@@ -331,6 +345,7 @@ export const standingFrom = (
     plans: {
       [grant.tier]: {
         planId: grant.tier,
+        version: grant.version ?? INITIAL_PLAN_VERSION,
         group: grant.group ?? DEFAULT_PLAN_GROUP,
         addOn: grant.addOn ?? false,
         allowances: grant.allowances,

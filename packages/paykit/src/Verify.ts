@@ -2,11 +2,13 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { type Catalog, planOf } from "./Catalog.ts";
+import { catalogMismatchOf } from "./CatalogGuard.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { PaymentCapability, PaymentsProvider, PaymentsRouter, providerFor } from "./Payments.ts";
+import { DEFAULT_PLAN_GROUP } from "./Subscription/PlanSet.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
-import { planIdOf } from "./Subscription/Subscription.state.ts";
+import { planIdOf, planRowsOf } from "./Subscription/Subscription.state.ts";
 
 /**
  * A priced tier is in force but the account carries no vendor reference for
@@ -47,11 +49,62 @@ export class TierHasNoPurchasePath extends Schema.TaggedError<TierHasNoPurchaseP
   },
 ) {}
 
+/**
+ * A standing holds an older generation of a plan than the catalog sells. It is
+ * not an error: a catalog deploy never rewrites what was sold, and the next
+ * move is the migration (ADR 0047). It is drift a console shows so an operator
+ * can decide when to move the account.
+ */
+export class PlanVersionOutdated extends Schema.TaggedError<PlanVersionOutdated>()(
+  "PlanVersionOutdated",
+  {
+    account: Schema.String,
+    tier: Schema.String,
+    /** The generation the standing was sold at. */
+    version: Schema.Int,
+    /** The generation the catalog sells now. */
+    catalogVersion: Schema.Int,
+  },
+) {}
+
+/**
+ * A standing holds a newer generation than the running catalog knows. The
+ * deploy is behind the state it serves, so nothing may move the account until
+ * the deploy catches up: recording an older generation over a newer one is the
+ * one direction a version may never take.
+ */
+export class PlanVersionAhead extends Schema.TaggedError<PlanVersionAhead>()("PlanVersionAhead", {
+  account: Schema.String,
+  tier: Schema.String,
+  /** The generation the standing was sold at. */
+  version: Schema.Int,
+  /** The newest generation this deploy knows. */
+  catalogVersion: Schema.Int,
+}) {}
+
+/**
+ * The catalog changed a fixed plan's terms without bumping its version. The
+ * standing is valid, but it claims a generation the deploy no longer sells
+ * under that number, so a replay and a fresh move would disagree about what
+ * "pro v2" means. A custom plan is exempt: its bespoke terms are the deal, not
+ * the catalog's.
+ */
+export class PlanVersionDrift extends Schema.TaggedError<PlanVersionDrift>()("PlanVersionDrift", {
+  account: Schema.String,
+  tier: Schema.String,
+  version: Schema.Int,
+  /** The first catalog field that disagreed, for an operator to find it. */
+  field: Schema.String,
+}) {}
+
 /** Every way an account's standing disagrees with the deploy. */
 export const VerifyMismatch = Schema.Union([
   MissingProviderRef,
   OrphanProviderRef,
   TierHasNoPurchasePath,
+  PlanVersionOutdated,
+  PlanVersionAhead,
+  PlanVersionDrift,
 ]);
 
 export type VerifyMismatch = typeof VerifyMismatch.Type;
@@ -100,17 +153,83 @@ export const verifyState = (
 
   if (tier === null) return [];
 
+  const mismatches: Array<VerifyMismatch> = [];
+
   if (tier.price !== undefined) {
     if (provider !== null && refs[provider.name] === undefined) {
-      return [new MissingProviderRef({ account, tier: tier.id, provider: providerName })];
+      mismatches.push(new MissingProviderRef({ account, tier: tier.id, provider: providerName }));
     }
 
     if (!sellsAnything(provider)) {
-      return [new TierHasNoPurchasePath({ account, tier: tier.id, provider: providerName })];
+      mismatches.push(
+        new TierHasNoPurchasePath({ account, tier: tier.id, provider: providerName }),
+      );
     }
   }
 
-  return [];
+  // Every active plan carries the catalog generation it was sold at. An older
+  // one is drift the operator can migrate; a newer one means this deploy is
+  // serving state it cannot judge (ADR 0047).
+  for (const row of planRowsOf(state)) {
+    const sold = planOf(catalog, row.planId);
+
+    // A plan the catalog removed leaves its standing alone: there is no
+    // generation to compare it with, and deleting it would be the destruction
+    // ADR 0003 refuses.
+    if (sold === null) continue;
+
+    const catalogVersion = sold.version ?? 1;
+
+    if (row.version !== catalogVersion) {
+      mismatches.push(
+        row.version < catalogVersion
+          ? new PlanVersionOutdated({
+              account,
+              tier: row.planId,
+              version: row.version,
+              catalogVersion,
+            })
+          : new PlanVersionAhead({
+              account,
+              tier: row.planId,
+              version: row.version,
+              catalogVersion,
+            }),
+      );
+
+      continue;
+    }
+
+    // A fixed plan at the catalog's own generation must describe the catalog's
+    // terms. A custom plan's bespoke set is the deal, so it is exempt.
+    if (sold.custom === true) continue;
+
+    const drift = catalogMismatchOf(catalog, {
+      tier: row.planId,
+      version: row.version,
+      ...(row.group === DEFAULT_PLAN_GROUP ? {} : { group: row.group }),
+      addOn: row.addOn,
+      allowances: row.allowances,
+      ...(row.price === undefined ? {} : { price: row.price }),
+      credits: row.credits,
+      creditsExpire: row.creditsExpire,
+      ...(row.topUp === undefined ? {} : { topUp: row.topUp }),
+      rates: row.rates,
+    });
+
+    if (drift !== null) {
+      mismatches.push(
+        new PlanVersionDrift({
+          account,
+          tier: row.planId,
+          version: row.version,
+          field: drift.field,
+        }),
+      );
+    }
+  }
+
+  return mismatches;
 };
 
 /**

@@ -137,6 +137,7 @@ const moveOf = (
 
   return {
     tier: request.planId,
+    version: input.version,
     ...(terms.group === undefined ? {} : { group: terms.group }),
     ...(terms.addOn === true ? { addOn: true } : {}),
     allowances: input.allowances,

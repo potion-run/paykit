@@ -122,15 +122,25 @@ describe("standing verification", () => {
 
         if (target === null) return tags.length === 0;
 
+        const canSell = target.capabilities.has("checkout") || target.capabilities.has("invoice");
+
+        // Both findings are true at once when the reference is missing and the
+        // provider cannot sell: `Verify` reports every reason, not the first.
         if (!refs.includes(target.name)) {
+          const expected = canSell
+            ? ["MissingProviderRef"]
+            : ["MissingProviderRef", "TierHasNoPurchasePath"];
+
           return (
-            tags.length === 1 &&
-            tags[0] === "MissingProviderRef" &&
-            (findings[0] as MissingProviderRef).provider === target.name
+            tags.length === expected.length &&
+            expected.every((tag) => tags.includes(tag as never)) &&
+            (
+              findings.find(
+                (finding) => finding._tag === "MissingProviderRef",
+              ) as MissingProviderRef
+            ).provider === target.name
           );
         }
-
-        const canSell = target.capabilities.has("checkout") || target.capabilities.has("invoice");
 
         return canSell
           ? tags.length === 0

@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Allowance, type Allowances } from "../Allowance.ts";
 import { asSystem } from "../Auth/Actor.ts";
-import { planOf, planTermsOf, type Catalog } from "../Catalog.ts";
+import { planOf, planTermsOf, planVersionOf, type Catalog } from "../Catalog.ts";
 import { sameAllowances } from "../CatalogGuard.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { EntityId } from "../Customer.ts";
@@ -19,6 +19,7 @@ import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
 import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import type { PlanRow } from "../Subscription/PlanSet.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import {
   entityOf,
@@ -259,6 +260,40 @@ const termsOf = (request: {
 });
 
 /**
+ * Whether attaching a plan again is a new deal rather than a replay. Three
+ * things make it a deal: a bespoke allowance set that differs from the one in
+ * force (ADR 0041 §6), a negotiated price that differs (ADR 0042 §3), or a
+ * catalog generation that moved on (ADR 0047). The last one is how an existing
+ * subscriber is migrated: the standing keeps the generation it bought, and
+ * attaching the plan again is the ordinary move to the current one.
+ *
+ * Pure, so a caller can quote the answer without a store.
+ */
+export const planRedealOf = (
+  catalog: Catalog,
+  row: PlanRow | undefined,
+  terms: {
+    readonly grants?: ReadonlyArray<Allowance>;
+    readonly price?: Price;
+  },
+): boolean => {
+  if (row === undefined) return true;
+
+  const catalogVersion = planVersionOf(catalog, row.planId);
+
+  if (catalogVersion !== null && row.version !== catalogVersion) return true;
+
+  if (
+    terms.grants !== undefined &&
+    !sameAllowances(row.allowances, allowancesOfGrants(terms.grants))
+  ) {
+    return true;
+  }
+
+  return terms.price !== undefined && !samePrice(row.price, terms.price);
+};
+
+/**
  * The refusal a named scope earns before a plan operation reads or writes it.
  * An entity is created first; a write never invents a detached scope.
  */
@@ -368,19 +403,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   // move path and its timing (the boundary unless the caller asks for it now),
   // and the phase it writes carries the terms (ADR 0041 §6).
   if (planIdOf(state) === request.planId || state.plans[request.planId] !== undefined) {
-    const inForce = state.plans[request.planId]?.allowances;
-
-    // A stated price that differs from the one in force is a new deal too. A
-    // negotiated price can change without the allowances moving, and that is a
-    // move, not a replay (ADR 0042 §3).
-    const redeal =
-      (request.grants !== undefined &&
-        inForce !== undefined &&
-        !sameAllowances(inForce, allowancesOfGrants(request.grants))) ||
-      (request.price !== undefined &&
-        !samePrice(state.plans[request.planId]?.price, request.price));
-
-    if (!redeal) {
+    if (!planRedealOf(deps.catalog, state.plans[request.planId], termsOf(request))) {
       return yield* applyQuantities(deps, account, request, {
         outcome: "updated",
         planId: request.planId,
@@ -657,16 +680,7 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   }
 
   if (planIdOf(state) === request.planId) {
-    const inForce = state.plans[request.planId]?.allowances;
-
-    const redeal =
-      (request.grants !== undefined &&
-        inForce !== undefined &&
-        !sameAllowances(inForce, allowancesOfGrants(request.grants))) ||
-      (request.price !== undefined &&
-        !samePrice(state.plans[request.planId]?.price, request.price));
-
-    if (!redeal) {
+    if (!planRedealOf(deps.catalog, state.plans[request.planId], termsOf(request))) {
       return { outcome: "updated", planId: request.planId } as const satisfies PreviewAttachResult;
     }
   }

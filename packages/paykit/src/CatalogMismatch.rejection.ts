@@ -15,7 +15,10 @@ export class CatalogMismatch extends Domain.Rejection("CatalogMismatch", {
   tier: Schema.optionalKey(Schema.String),
   /** The feature the command named, when the disagreement is about a control. */
   feature: Schema.optionalKey(Schema.String),
-  /** Which field disagreed: `tier`, `allowances`, `price`, `topUp`, `rates` or `features`. */
+  /**
+   * Which field disagreed: `tier`, `version`, `group`, `addOn`, `allowances`,
+   * `price`, `topUp`, `rates` or `features`.
+   */
   field: Schema.String,
   expected: Schema.String,
   actual: Schema.String,

@@ -32,6 +32,7 @@ export const defaultPlanFor = (
     ? undefined
     : {
         planId: tier.id,
+        version: terms.version,
         group,
         addOn: false,
         allowances: terms.allowances,
