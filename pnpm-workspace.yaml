@@ -149,3 +149,6 @@ tasks:
     dependsOn: []
   test:
     dependsOn: []
+
+patchedDependencies:
+  "@distilled.cloud/polar@1.0.0-rc.18": patches/@distilled.cloud__polar@1.0.0-rc.18.patch

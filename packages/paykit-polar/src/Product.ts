@@ -22,7 +22,15 @@ import {
 } from "./Metadata.ts";
 import type { Providers } from "./Providers.ts";
 
-/** The stage-qualified name a tier's Polar product carries, and its identity. */
+/**
+ * The stage-qualified name a tier's Polar product carries, and its identity.
+ *
+ * Polar caps a product name at 64 characters, and `encodeVendorPart` expands
+ * every non-alphanumeric character (`_` becomes `_5f_`), so the stage and tier
+ * share that budget. A name that does not fit is refused by Polar at create
+ * with `RequestValidationError`; a worktree test stage is long enough to feel
+ * this, which is why the live sweep suite keeps a short suffix.
+ */
 export const productNameOf = (stage: string, tier: string): string =>
   `paykit:${encodeVendorPart(stage)}:${encodeVendorPart(tier)}`;
 
@@ -200,12 +208,14 @@ const isMeteredTiersPrice = (price: VendorPrice): price is VendorPrice & Metered
 type SeatPrice = {
   readonly id: string;
   readonly price_currency: string;
-  readonly tiers: { readonly tiers: ReadonlyArray<{ readonly unit_amount: number | string }> };
+  readonly seat_tiers: {
+    readonly tiers: ReadonlyArray<{ readonly price_per_seat: number | string }>;
+  };
   readonly is_archived: boolean;
 };
 
 const isSeatPrice = (price: VendorPrice): price is VendorPrice & SeatPrice =>
-  "tiers" in price && !("meter_id" in price);
+  "seat_tiers" in price && !("meter_id" in price);
 
 const intervalOf = (interval: Price["interval"]): Polar.RecurringInterval =>
   interval === "annual" ? "year" : "month";
@@ -287,7 +297,7 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
       .filter((candidate) => !candidate.is_archived)
       .map((candidate) => ({
         unitPrice: {
-          amount: Number(candidate.tiers.tiers[0]?.unit_amount ?? 0),
+          amount: Number(candidate.seat_tiers.tiers[0]?.price_per_seat ?? 0),
           currency: candidate.price_currency,
         },
       })),
@@ -545,9 +555,11 @@ export const ProductProvider = () =>
               ...desiredSeats(news).map((seat) => ({
                 amount_type: "seat_based",
                 price_currency: seat.unitPrice.currency,
-                tiers: {
-                  type: "volume" as const,
-                  tiers: [{ bound: null, unit_amount: seat.unitPrice.amount }],
+                // The API prices seats as ranges: the first seat in a range
+                // and what each seat in it costs. paykit states one flat seat
+                // price, so its single range starts at seat one.
+                seat_tiers: {
+                  tiers: [{ min_seats: 1, price_per_seat: seat.unitPrice.amount }],
                 },
               })),
             ],

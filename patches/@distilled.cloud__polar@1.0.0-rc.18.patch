@@ -1,0 +1,140 @@
+diff --git a/lib/services/polar.d.ts b/lib/services/polar.d.ts
+index 367f61b97d9a424d38754e2702488e0b4135a6c8..0f2c403c6eccf4d22097782e7adbd298fb702487 100644
+--- a/lib/services/polar.d.ts
++++ b/lib/services/polar.d.ts
+@@ -1178,6 +1178,20 @@ export interface Tiers {
+     type: TierType;
+     tiers: TiersTiersList;
+ }
++/** One seat range a seat-based price charges for. */
++export interface SeatTier {
++    min_seats: number;
++    max_seats: number | null;
++    price_per_seat: number;
++}
++export type SeatTiersTiersList = Array<SeatTier>;
++/** The seat ranges a seat-based price carries, as the API reports them. */
++export interface SeatTiers {
++    seat_tier_type: TierType | (string & {});
++    tiers: SeatTiersTiersList;
++    minimum_seats: number | null;
++    maximum_seats: number | null;
++}
+ /** A seat-based price for a product. */
+ export interface ProductPriceSeatBased {
+     /** Creation timestamp of the object. */
+@@ -1198,11 +1212,9 @@ export interface ProductPriceSeatBased {
+     /** The ID of the product owning the price. */
+     product_id: string;
+     /** Tiered pricing based on the purchased seat quantity. */
+-    tiers: Tiers;
+-    /** The minimum purchasable seat quantity (inclusive). */
+-    minimum_units: number | null;
+-    /** The maximum purchasable seat quantity, from the last tier's bound. `null` for unlimited. */
+-    maximum_units: number | null;
++    seat_tiers: SeatTiers;
++    /** The price per seat, reported beside the ranges. */
++    price_per_seat: number;
+ }
+ export type ProductPriceUnitBasedUnitLabelValueMap = {
+     [key: string]: string | undefined;
+@@ -1733,7 +1745,17 @@ export interface TiersInput {
+     type: TierType | (string & {});
+     tiers: TiersInputTiersList;
+ }
+-/** Schema to create a seat-based price with volume-based tiers. */
++/** One seat range submitted through the API. */
++export interface SeatTierInput {
++    min_seats: number;
++    price_per_seat: number;
++}
++export type SeatTiersInputTiersList = Array<SeatTierInput>;
++/** The seat ranges submitted through the API. */
++export interface SeatTiersInput {
++    tiers: SeatTiersInputTiersList;
++}
++/** Schema to create a seat-based price with volume-based seat ranges. */
+ export interface ProductPriceSeatBasedCreate {
+     amount_type: string;
+     /** The currency in which the customer will be charged. */
+@@ -1741,9 +1763,7 @@ export interface ProductPriceSeatBasedCreate {
+     /** The tax behavior of the price. If not set, it will default to the organization's default tax behavior. */
+     tax_behavior?: TaxBehaviorOption | (string & {}) | null;
+     /** Tiered pricing based on the purchased seat quantity. */
+-    tiers: TiersInput;
+-    /** The minimum purchasable seat quantity (inclusive). Defaults to 1 when not set. */
+-    minimum_units?: number | null;
++    seat_tiers: SeatTiersInput;
+ }
+ export type ProductPriceUnitBasedCreateUnitLabelValueMap = {
+     [key: string]: string | undefined;
+diff --git a/src/services/polar.ts b/src/services/polar.ts
+index 9fd70f3acdf023b70f36b20c7c99abb36755de88..6bcc81d2b52f4233326bc186d5008ceb00f79daa 100644
+--- a/src/services/polar.ts
++++ b/src/services/polar.ts
+@@ -1523,6 +1523,20 @@ export interface Tiers {
+   type: TierType;
+   tiers: TiersTiersList;
+ }
++/** One seat range a seat-based price charges for. */
++export interface SeatTier {
++  min_seats: number;
++  max_seats: number | null;
++  price_per_seat: number;
++}
++export type SeatTiersTiersList = Array<SeatTier>;
++/** The seat ranges a seat-based price carries, as the API reports them. */
++export interface SeatTiers {
++  seat_tier_type: TierType | (string & {});
++  tiers: SeatTiersTiersList;
++  minimum_seats: number | null;
++  maximum_seats: number | null;
++}
+ /** A seat-based price for a product. */
+ export interface ProductPriceSeatBased {
+   /** Creation timestamp of the object. */
+@@ -1543,11 +1557,9 @@ export interface ProductPriceSeatBased {
+   /** The ID of the product owning the price. */
+   product_id: string;
+   /** Tiered pricing based on the purchased seat quantity. */
+-  tiers: Tiers;
+-  /** The minimum purchasable seat quantity (inclusive). */
+-  minimum_units: number | null;
+-  /** The maximum purchasable seat quantity, from the last tier's bound. `null` for unlimited. */
+-  maximum_units: number | null;
++  seat_tiers: SeatTiers;
++  /** The price per seat, reported beside the ranges. */
++  price_per_seat: number;
+ }
+ export type ProductPriceUnitBasedUnitLabelValueMap = { [key: string]: string | undefined };
+ export type ProductPriceUnitBasedUnitLabelMap = {
+@@ -2469,7 +2481,17 @@ export interface TiersInput {
+   type: TierType | (string & {});
+   tiers: TiersInputTiersList;
+ }
+-/** Schema to create a seat-based price with volume-based tiers. */
++/** One seat range submitted through the API. */
++export interface SeatTierInput {
++  min_seats: number;
++  price_per_seat: number;
++}
++export type SeatTiersInputTiersList = Array<SeatTierInput>;
++/** The seat ranges submitted through the API. */
++export interface SeatTiersInput {
++  tiers: SeatTiersInputTiersList;
++}
++/** Schema to create a seat-based price with volume-based seat ranges. */
+ export interface ProductPriceSeatBasedCreate {
+   amount_type: string;
+   /** The currency in which the customer will be charged. */
+@@ -2477,9 +2499,7 @@ export interface ProductPriceSeatBasedCreate {
+   /** The tax behavior of the price. If not set, it will default to the organization's default tax behavior. */
+   tax_behavior?: TaxBehaviorOption | (string & {}) | null;
+   /** Tiered pricing based on the purchased seat quantity. */
+-  tiers: TiersInput;
+-  /** The minimum purchasable seat quantity (inclusive). Defaults to 1 when not set. */
+-  minimum_units?: number | null;
++  seat_tiers: SeatTiersInput;
+ }
+ export type ProductPriceUnitBasedCreateUnitLabelValueMap = { [key: string]: string | undefined };
+ export type ProductPriceUnitBasedCreateUnitLabelMap = {

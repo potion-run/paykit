@@ -49,6 +49,12 @@ interface FakeCreateBody {
         readonly unit_amount: number | string;
       }>;
     };
+    readonly seat_tiers?: {
+      readonly tiers: Array<{
+        readonly min_seats: number;
+        readonly price_per_seat: number;
+      }>;
+    };
   }>;
 }
 
@@ -81,6 +87,10 @@ const vendorProduct = (input: {
         readonly unit_amount: number | string;
       }>;
     };
+  }>;
+  readonly seats?: ReadonlyArray<{
+    readonly amount: number;
+    readonly currency: string;
   }>;
 }): DistilledPolar.Product => ({
   id: input.id,
@@ -150,6 +160,24 @@ const vendorProduct = (input: {
             },
           };
     }),
+    ...(input.seats ?? []).map((seat, index) => ({
+      id: `${input.id}_seat_${index}`,
+      created_at: input.createdAt,
+      modified_at: null,
+      source: "catalog" as const,
+      amount_type: "seat_based",
+      price_currency: seat.currency,
+      tax_behavior: null,
+      is_archived: false,
+      product_id: input.id,
+      seat_tiers: {
+        seat_tier_type: "volume" as const,
+        tiers: [{ min_seats: 1, max_seats: null, price_per_seat: seat.amount }],
+        minimum_seats: 1,
+        maximum_seats: null,
+      },
+      price_per_seat: seat.amount,
+    })),
   ],
   benefits: [],
   medias: [],
@@ -288,6 +316,13 @@ const fakePolar = () => {
               ...(candidate.tiers === undefined ? {} : { tiers: candidate.tiers }),
             }));
 
+          const seats = (body.prices ?? [])
+            .filter((candidate) => candidate.amount_type === "seat_based")
+            .map((candidate) => ({
+              amount: candidate.seat_tiers?.tiers[0]?.price_per_seat ?? 0,
+              currency: candidate.price_currency ?? "usd",
+            }));
+
           const productId = `prod_${++created}`;
 
           const product = vendorProduct({
@@ -306,6 +341,7 @@ const fakePolar = () => {
             archived: false,
             createdAt: new Date(Date.UTC(2030, 0, 1, 0, 0, created)).toISOString(),
             metered,
+            seats,
           });
 
           products.set(productId, product);
@@ -442,6 +478,25 @@ test.provider("creates one product per tier, and a second deploy changes nothing
     expect(first.products.pro.startsWith("prod_")).toBe(true);
     expect(second.products.pro).toBe(first.products.pro);
     expect(polar.calls.filter((call) => call.startsWith("POST")).length).toBe(creates);
+  }),
+);
+
+test.provider("creates a seat price as one range starting at seat one", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const unitPrice = { amount: 1_500, currency: "usd" };
+
+    const sold = yield* stack.deploy(
+      PolarPrices("Prices", {
+        tiers: { pro: { price: proPrice, seats: { seats: unitPrice } } },
+      }),
+    );
+
+    const product = polar.products.get(sold.products.pro);
+    const seat = product?.prices.find((price) => "seat_tiers" in price);
+
+    expect(sold.seats.pro.seats).toEqual(unitPrice);
+    expect(seat === undefined ? undefined : seat.seat_tiers.tiers[0]?.price_per_seat).toBe(1_500);
   }),
 );
 
