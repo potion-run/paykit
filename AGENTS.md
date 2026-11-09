@@ -324,10 +324,38 @@ Inventory and rationale live in [`.agent_sources/README.md`](./.agent_sources/RE
 Mirrors are reference material, never runtime dependencies: they are gitignored and excluded
 from typecheck, lint and format. Do not import from them and do not commit them.
 
+## Formal model
+
+The spend path is modelled in Quint, the way [ADR 0034](./docs/adr/0034-one-quint-model-per-protocol.md)
+records: **one model per protocol, not one per module**. `specs/paykit/paykit.qnt` is the machine
+(activation, counted and credit usage, holds, the pool, the standing, the clock) and
+`specs/paykit/paykit_test.qnt` is the named scenarios. `specs/paykit/README.md` maps every action to
+its command, every invariant to its ADR, and lists what the slice deliberately leaves out.
+
+- **A refusing command is a disabled action.** `quint` never reports a rejection tag, so the model
+  checks the accept-set and a `run` checks the refusal. A rule that conserves nothing — "a terminal
+  standing may not settle" — is a test and not an invariant, on purpose.
+- **The model is smaller than the code.** `int` credits, a step counter instead of a clock, three
+  features, one account. Derived where the state is a cache, a history variable where the log is the
+  truth. Do not model the arithmetic: `Pricing.test.ts` owns the formulas.
+- **`scripts/spec-mutants.ts` proves the invariants bite.** It inverts one rule at a time and fails when
+  the named invariant does not notice, so an invariant cannot survive as a tautology. Adding an
+  invariant means adding its mutant in the same change.
+- **`scripts/spec-coverage.ts` is the drift gate.** Every `*.command.ts` needs a row: the action that
+  models it, or why it is out of the slice. A new command fails `pnpm spec:coverage` until it is
+  classified, which is the one place this repo asks for a decision per command rather than per
+  protocol.
+- **`quint run` is the gate, `quint verify` is not.** Simulation is seconds and needs no JVM;
+  Apalache is minutes and a JVM, so it is a manual run for a named property, recorded in the
+  `specs/paykit/README.md` when it happens. Same split as `check.yml` and `live.yml`.
+- **Quint 0.33 ships no formatter.** `specs/**` is ignored by `oxfmt`; the files are laid out by hand.
+- **The spec is not a second implementation.** When a modelled command changes what it accepts or
+  writes, run `pnpm spec` before changing the command: a red model is cheaper than a red deploy.
+
 ## Gates
 
 Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
-`pnpm build`. None of the gates before `pnpm build` compile `lib/`; that build and
+`pnpm spec`, `pnpm build`. None of the gates before `pnpm build` compile `lib/`; that build and
 `node scripts/smoke-artifact.mjs` are what prove a published artifact loads.
 
 `.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
