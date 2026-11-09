@@ -54,6 +54,12 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     case "Forbidden":
     case "CrossOrigin":
       return 403;
+    // The command conflicts with the state it names: an older plan generation
+    // than the standing already holds, or a completion that cannot be matched
+    // to one of several quotes (ADR 0044 §1, ADR 0047 §5).
+    case "PlanVersionStale":
+    case "PendingActivationAmbiguous":
+      return 409;
     // The provider does not implement the capability the deployment asked for.
     case "ProviderCapabilityMissing":
       return 501;

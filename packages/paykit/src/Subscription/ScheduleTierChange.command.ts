@@ -11,6 +11,7 @@ import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { PlanPhaseNamesAddOn } from "./PlanPhaseNamesAddOn.rejection.ts";
 import { PlanPhaseNotFuture } from "./PlanPhaseNotFuture.rejection.ts";
+import { PlanVersionStale } from "./PlanVersionStale.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 
@@ -88,6 +89,7 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
     PlanPhaseNamesAddOn,
     CurrencyMismatch,
     CatalogMismatch,
+    PlanVersionStale,
   ],
   middleware: [Session, CatalogGuard],
 }) {}

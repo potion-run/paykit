@@ -125,6 +125,7 @@ import {
   withPhase,
   withPlan,
 } from "./PlanSet.ts";
+import { PlanVersionStale } from "./PlanVersionStale.rejection.ts";
 import { PooledItemOnEntity } from "./PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts";
@@ -1264,6 +1265,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (scopeRefusal !== null) return scopeRefusal;
 
       const scoped = scopeStateOf(current, command.entity);
+      const requestedVersion = command.version ?? INITIAL_PLAN_VERSION;
+      const heldVersion = scoped.plans[command.tier]?.version;
+
+      // A deploy that is older than the state it serves must not write the
+      // older generation over the newer one (ADR 0047 §5).
+      if (heldVersion !== undefined && heldVersion > requestedVersion) {
+        return new PlanVersionStale({
+          tier: command.tier,
+          current: heldVersion,
+          requested: requestedVersion,
+        });
+      }
 
       for (const [feature, allowance] of Object.entries(command.allowances)) {
         // A pooled grant belongs to the customer: attaching one on an entity
@@ -1436,6 +1449,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       for (const move of command.moves) {
         if (emptyAllowances(move.allowances)) {
           return new PlanNotInCatalog({ tier: move.tier });
+        }
+
+        const requestedVersion = move.version ?? INITIAL_PLAN_VERSION;
+        const heldVersion = current.plans[move.tier]?.version;
+
+        if (heldVersion !== undefined && heldVersion > requestedVersion) {
+          return new PlanVersionStale({
+            tier: move.tier,
+            current: heldVersion,
+            requested: requestedVersion,
+          });
         }
 
         const priceCurrency = move.price?.currency ?? unitPriceCurrencyOf(move.allowances);
@@ -3072,6 +3096,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // with the pack's credits.
       if (emptyAllowances(command.allowances)) {
         return new PlanNotInCatalog({ tier: command.tier });
+      }
+
+      const requestedVersion = command.version ?? INITIAL_PLAN_VERSION;
+      const heldVersion = state.plans[command.tier]?.version;
+
+      if (heldVersion !== undefined && heldVersion > requestedVersion) {
+        return new PlanVersionStale({
+          tier: command.tier,
+          current: heldVersion,
+          requested: requestedVersion,
+        });
       }
 
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);

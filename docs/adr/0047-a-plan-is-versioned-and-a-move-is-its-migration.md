@@ -85,8 +85,10 @@ plan row against the catalog:
 - `row.version < catalog.version` is `PlanVersionOutdated`: the customer is on an older generation
   and the next move is the migration. It is drift, not an error.
 - `row.version > catalog.version` is `PlanVersionAhead`: the running deploy is older than the state
-  it serves. Nothing should move the account until the deploy catches up, because recording an
-  older generation over a newer one is the one direction a version may never take.
+  it serves. Nothing may move the account until the deploy catches up, because recording an older
+  generation over a newer one is the one direction a version may never take. `decide` enforces it
+  too: a `ChangeTier`, `ScheduleTierChange` or `ChangePlans` move that names an older generation
+  than the standing already holds is refused with `PlanVersionStale`.
 - `row.version === catalog.version` on a **fixed** plan compares the recorded terms with the
   catalog's (`catalogMismatchOf`, the same rule the guard runs). A difference is
   `PlanVersionDrift({ field })`: the deploy changed the plan without bumping it. A custom plan is
@@ -118,7 +120,8 @@ model has no previous deploy to compare with.
   replay or a new deal". `Attach` and `PreviewAttach` call it; it is exported because it is the
   classification, not an implementation detail.
 - `CatalogMismatch` can name `field: "version"`.
-- `PlanVersionOutdated`, `PlanVersionAhead` and `PlanVersionDrift` join `VerifyMismatch`.
+- `PlanVersionOutdated`, `PlanVersionAhead` and `PlanVersionDrift` join `VerifyMismatch`;
+  `PlanVersionStale` is the command refusal for a backwards move.
 - `plans.qnt` gains generations; its scenarios gain a scheduled version move, an immediate one, a
   boundary landing, the same-generation no-op and an unknown-generation refusal. `spec-mutants`
   gains one mutant for the generation bound.

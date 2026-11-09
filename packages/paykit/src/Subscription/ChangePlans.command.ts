@@ -24,6 +24,7 @@ import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { PlanPhaseAtSameInstant } from "./PlanPhaseAtSameInstant.rejection.ts";
 import { PlanPhaseNamesAddOn } from "./PlanPhaseNamesAddOn.rejection.ts";
 import { PlanPhaseNotFuture } from "./PlanPhaseNotFuture.rejection.ts";
+import { PlanVersionStale } from "./PlanVersionStale.rejection.ts";
 import { PlanChangeScheduled } from "./ScheduleTierChange.command.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
@@ -97,6 +98,7 @@ export class ChangePlans extends Domain.Command("ChangePlans", {
     DowngradeBelowSpend,
     DowngradeBelowCeiling,
     CatalogMismatch,
+    PlanVersionStale,
   ],
   middleware: [Session, CatalogGuard],
 }) {}

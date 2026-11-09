@@ -13,6 +13,7 @@ import { EntityArchived } from "./EntityArchived.rejection.ts";
 import { EntityUnknown } from "./EntityUnknown.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
+import { PlanVersionStale } from "./PlanVersionStale.rejection.ts";
 import { PooledItemOnEntity } from "./PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
@@ -156,6 +157,7 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     EntityUnknown,
     EntityArchived,
     PooledItemOnEntity,
+    PlanVersionStale,
   ],
   middleware: [Session, CatalogGuard],
 }) {}

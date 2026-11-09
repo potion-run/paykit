@@ -1075,6 +1075,8 @@ export { FeaturePricedInCredits } from "./Subscription/FeaturePricedInCredits.re
 
 export { PooledItemOnEntity } from "./Subscription/PooledItemOnEntity.rejection.ts";
 
+export { PlanVersionStale } from "./Subscription/PlanVersionStale.rejection.ts";
+
 export {
   ApplyQuantityCredit,
   NoQuantityProrationDue,

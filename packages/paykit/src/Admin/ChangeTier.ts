@@ -30,6 +30,7 @@ import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
 import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import { PlanVersionStale } from "../Subscription/PlanVersionStale.rejection.ts";
 import { PooledItemOnEntity } from "../Subscription/PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
@@ -68,6 +69,7 @@ export const ChangeTierRejection = Schema.Union([
   EntityUnknown,
   EntityArchived,
   PooledItemOnEntity,
+  PlanVersionStale,
 ]);
 
 export type ChangeTierRejection = typeof ChangeTierRejection.Type;

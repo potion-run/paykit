@@ -10,6 +10,7 @@ import { catalog, planTermsOf, planVersionOf, type Catalog } from "../../src/Cat
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { messages } from "../../src/Feature.ts";
 import { ChangeTier, PlanChanged } from "../../src/Subscription/ChangeTier.command.ts";
+import { PlanVersionStale } from "../../src/Subscription/PlanVersionStale.rejection.ts";
 import {
   PlanChangeScheduled,
   ScheduleTierChange,
@@ -150,6 +151,26 @@ describe("a generation move is an ordinary plan move", () => {
 
     if (state._tag !== "Subscribed") return;
     expect(state.plans.pro?.version).toBe(2);
+  });
+
+  it("refuses to write an older generation over a newer one", () => {
+    const outcome = Subscription.predict(
+      subscribed(2, v2Catalog),
+      new ChangeTier({
+        tier: "pro",
+        version: 1,
+        allowances: items(v1Catalog, "pro"),
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+      }),
+      { id: Subscription.ref(account).id, now: at, context },
+    );
+
+    expect(outcome._tag).toBe("Rejected");
+
+    if (outcome._tag !== "Rejected") return;
+    expect(outcome.rejection).toBeInstanceOf(PlanVersionStale);
   });
 
   it("is scheduled for the boundary like any other move, and the phase freezes the generation", () => {
