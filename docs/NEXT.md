@@ -6,13 +6,14 @@ disagree, the ADR wins and this file is wrong.
 
 ## Where it stands
 
-The next slice is the plan/customer/balance API, recorded in
+The current slice is the plan/customer/balance API, recorded in
 [ADR 0035](./adr/0035-plans-plan-items-and-balance-sources.md),
 [ADR 0036](./adr/0036-a-seat-is-purchased-and-occupied.md) and
 [ADR 0037](./adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words become `Plan`,
 `PlanItem`, `Customer` and `Balance`; `attach` and `update` replace the command list; a seat has a
-purchased quantity and an occupied count; a lifetime grant is a balance source. The command-level
-notes below remain the shipped surface until that migration lands.
+purchased quantity and an occupied count; a lifetime grant is a balance source. `attach`,
+`update`, their previews, immediate cancellation and the typed HTTP routes have landed. The
+command-level notes below remain the shipped surface until the remaining migration lands.
 The working plan is [the API brief](./briefs/plan-customer-balance-api.md).
 
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
@@ -145,6 +146,15 @@ The next work is the API migration, not another command. The order is:
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
 the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated `windows.qnt` are.
+
+**Immediate next actions**
+
+- Rename the internal command and event words: `TierChanged`, `TierChangeScheduled`,
+  `TierNotInCatalog`, `AllowanceReset`, and the source helpers `tierOf`, `tierTermsOf`,
+  `allowancesOf`. They are no longer public, but the code still reads them.
+- Land Phase 3: `check` returns a balance object, `track` takes `value` and an idempotency key,
+  `balances.list/get/update/create` and `balances.finalize`, with `SetUsage` for seat occupancy.
+- Then balance sources, customer controls, multiple plans/schedules and entities, in that order.
 
 ### 1. The remaining surfaces
 
