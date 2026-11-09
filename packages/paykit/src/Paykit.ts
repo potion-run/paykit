@@ -107,6 +107,8 @@ export const Paykit = {
   CheckOverTransport: Billing.CheckOverTransport,
   TrackUsage: Billing.TrackUsage,
   Balances: Billing.Balances,
+  Customers: Billing.Customers,
+  SetBillingControls: Billing.SetBillingControls,
   GrantBalance: Billing.GrantBalance,
   SetQuantity: Billing.SetQuantity,
   SetUsage: Billing.SetUsage,
@@ -152,6 +154,7 @@ export const Paykit = {
   BillingInProcess: Billing.BillingInProcess,
   BillingApiLayer: Billing.BillingApiLayer,
   BalancesLive: Billing.BalancesLive,
+  CustomersLive: Billing.CustomersLive,
   BillingAdminInProcess: Billing.BillingAdminInProcess,
   BillingAdminApiLayer: Billing.BillingAdminApiLayer,
   // runtime — the operator surface

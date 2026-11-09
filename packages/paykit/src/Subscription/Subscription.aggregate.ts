@@ -14,6 +14,7 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { controlsKey, normalizeBillingControls, type BillingControls } from "../Customer.ts";
 import { soleUnitPriceOf } from "../Pricing.ts";
 import { prorate, prorateQuantity, sameProration } from "../Proration.ts";
 import {
@@ -105,6 +106,14 @@ import {
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
 import { ScheduleTierChange, PlanChangeScheduled } from "./ScheduleTierChange.command.ts";
 import {
+  BillingControlsSet,
+  ControlsDuplicate,
+  ControlsFeatureNotPriced,
+  ControlsFeatureUnknown,
+  SetBillingControls,
+  type ControlFeature,
+} from "./SetBillingControls.command.ts";
+import {
   QuantityCapExceeded,
   QuantityChanged,
   QuantityExceeded,
@@ -114,6 +123,7 @@ import {
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
 import { UsageInvalid } from "./SetUsage.command.ts";
 import { SetUsage, UsageSet } from "./SetUsage.command.ts";
+import { SpendLimitExceeded } from "./SpendLimitExceeded.rejection.ts";
 import {
   activationOf,
   carriedPrepaidOf,
@@ -128,6 +138,8 @@ import { Subscribe, SubscriptionActivated } from "./Subscribe.command.ts";
 import { AccountId } from "./Subscription.id.ts";
 import {
   addInterval,
+  alertThresholdsOf,
+  alertsFiredOf,
   allowsUsage,
   chargedWith,
   availableOf,
@@ -173,6 +185,7 @@ import {
   resetOf,
   resetOfFeature,
   standingOf,
+  spendLimitOf,
   topUpAttemptsOf,
   topUpOf,
   statusOf,
@@ -196,6 +209,7 @@ import {
 } from "./TrackUsage.command.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
+import { UsageAlertFired } from "./UsageAlertFired.event.ts";
 import {
   NoTierChangeScheduled,
   TierChangeWithdrawn,
@@ -480,6 +494,7 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
     carried,
     ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
     ...(pricingOf(allowance ?? {}) === null ? {} : { pricing: pricingOf(allowance ?? {})! }),
+    ...(spendLimitOf(state, feature) === null ? {} : { spendLimit: spendLimitOf(state, feature)! }),
     billed: billedOf(state, feature),
     used,
     reserved,
@@ -525,12 +540,116 @@ const moneyCapRefusalOf = (
   });
 };
 
+/**
+ * The alerts a usage fact reaches. One per configured threshold the period has
+ * now passed and has not latched, delivered with the fact that crossed it: an
+ * alert alone would have no usage event to attach to, and a redelivery would
+ * fire it twice (ADR 0038).
+ */
+const alertsFor = (
+  state: SubscribedState,
+  feature: string,
+  usedAfter: number,
+  firedAt: DateTime.Utc,
+): ReadonlyArray<UsageAlertFired> => {
+  const fired = alertsFiredOf(state, feature);
+
+  return alertThresholdsOf(state, feature)
+    .filter((at) => usedAfter >= at && !fired.includes(at))
+    .map((at) => new UsageAlertFired({ feature, at, usedAfter, firedAt }));
+};
+
+/**
+ * The refusal a `SetBillingControls` payload means, or `null` when it is valid.
+ * The catalog facts ride the command, so a control survives a plan that does
+ * not grant its feature; `decide` never reads the catalog (ADR 0038).
+ */
+const controlsRefusalOf = (command: {
+  readonly billingControls?: BillingControls;
+  readonly features: Readonly<Record<string, ControlFeature>>;
+}): ControlsFeatureUnknown | ControlsFeatureNotPriced | ControlsDuplicate | null => {
+  const controls = normalizeBillingControls(command.billingControls);
+
+  if (controls === undefined) return null;
+
+  const seenLimits = new Set<string>();
+
+  for (const limit of controls.spendLimits ?? []) {
+    if (seenLimits.has(limit.featureId)) {
+      return new ControlsDuplicate({ list: "spendLimits", featureId: limit.featureId });
+    }
+
+    seenLimits.add(limit.featureId);
+
+    const fact = command.features[limit.featureId];
+
+    if (fact === undefined) return new ControlsFeatureUnknown({ featureId: limit.featureId });
+
+    if (!fact.priced) return new ControlsFeatureNotPriced({ featureId: limit.featureId });
+  }
+
+  const seenAlerts = new Set<string>();
+
+  for (const alert of controls.usageAlerts ?? []) {
+    const key = `${alert.featureId}@${alert.at}`;
+
+    if (seenAlerts.has(key)) {
+      return new ControlsDuplicate({
+        list: "usageAlerts",
+        featureId: alert.featureId,
+        at: alert.at,
+      });
+    }
+
+    seenAlerts.add(key);
+
+    if (command.features[alert.featureId] === undefined) {
+      return new ControlsFeatureUnknown({ featureId: alert.featureId });
+    }
+  }
+
+  return null;
+};
+
+/** The money evidence a capacity `Limit` verdict carries, in the command's split. */
+const spendLimitRefusalOf = (
+  verdict: Extract<Capacity, { readonly _tag: "Limit" }>,
+  state: SubscribedState,
+  feature: string,
+  amount: number,
+): SpendLimitExceeded => {
+  const allowance = state.allowances[feature];
+  const used = usedOf(state, feature);
+  const reserved = reservedOf(state, feature);
+
+  const reservedCharge = chargeOf(
+    pricingOf(allowance ?? {}),
+    allowance?.included ?? null,
+    used,
+    reserved,
+  );
+
+  return new SpendLimitExceeded({
+    feature,
+    limit: verdict.limit,
+    billed: verdict.billed,
+    ...(reservedCharge === 0 ? {} : { reserved: reservedCharge }),
+    charge: chargeOf(
+      pricingOf(allowance ?? {}),
+      allowance?.included ?? null,
+      used + reserved,
+      amount,
+    ),
+  });
+};
+
 /** Every refusal a capacity verdict means for `TrackUsage`. */
 type UsageRefusal =
   | AllowanceExceeded
   | StandingBlocksUsage
   | SpendCapExceeded
   | MoneyCapExceeded
+  | SpendLimitExceeded
   | CreditExceeded;
 
 /** The rejection a capacity verdict means for `TrackUsage`, or `null` when it allowed. */
@@ -567,6 +686,8 @@ const usageRefusalOf = (
       });
     case "Money":
       return moneyCapRefusalOf(verdict, state, feature, amount);
+    case "Limit":
+      return spendLimitRefusalOf(verdict, state, feature, amount);
     case "Credits": {
       const reserved = reservedCreditsOf(state);
 
@@ -581,7 +702,12 @@ const usageRefusalOf = (
 };
 
 /** Every refusal a capacity verdict means for `Hold`. */
-type HoldRefusal = HoldExceeded | StandingBlocksUsage | SpendCapExceeded | MoneyCapExceeded;
+type HoldRefusal =
+  | HoldExceeded
+  | StandingBlocksUsage
+  | SpendCapExceeded
+  | MoneyCapExceeded
+  | SpendLimitExceeded;
 
 /** The rejection a capacity verdict means for `Hold`, or `null` when it allowed. */
 const holdRefusalOf = (
@@ -619,6 +745,8 @@ const holdRefusalOf = (
       });
     case "Money":
       return moneyCapRefusalOf(verdict, state, feature, amount);
+    case "Limit":
+      return spendLimitRefusalOf(verdict, state, feature, amount);
   }
 };
 
@@ -670,6 +798,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ResetAllowance,
     SetQuantity,
     SetUsage,
+    SetBillingControls,
     RecordQuantityProrationInvoice,
   ],
   decide: {
@@ -893,7 +1022,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
-    TrackUsage: (state, command) => {
+    TrackUsage: (state, command, { now }) => {
       if (state._tag === "Unsubscribed") {
         // A pack can be spent before a plan exists. The purchase captured the
         // catalog's rate cards, so this is the same credit math as a standing,
@@ -1029,7 +1158,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             : { grantsUsed: grantsForSpend(state, command.feature, command.amount) }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
+        ...alertsFor(state, command.feature, used + command.amount, now),
       ];
+    },
+    SetBillingControls: (state, command) => {
+      const refusal = controlsRefusalOf(command);
+
+      if (refusal !== null) return refusal;
+
+      const billingControls = normalizeBillingControls(command.billingControls);
+
+      if (controlsKey(billingControls) === controlsKey(state.billingControls)) return [];
+
+      return [new BillingControlsSet(billingControls === undefined ? {} : { billingControls })];
     },
     SetQuantity: (state, command, { id, now }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
@@ -1428,6 +1569,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // did not bill comes back here. An unlimited allowance stays `null`.
       const available = availableOf(state, hold.feature);
 
+      const alerts = alertsFor(state, hold.feature, used + (creditPriced ? cost : billed), now);
+
       const remaining = remainingAfterRelease(
         available,
         creditPriced ? released * hold.rate : released,
@@ -1473,6 +1616,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ? {}
             : { grantsReturned: grantsReturnedFor(hold.grantsUsed, released) }),
         }),
+        ...alerts,
       ];
     },
     ReleaseHold: (state, command) => {
@@ -2383,6 +2527,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             // The period reset the pool, so a failure from the last one is not
             // this account's current problem and its budget is spent.
             topUpAttempts: 0,
+            // An alert is once per standing period, so a close re-arms every
+            // threshold (ADR 0038). An allowance's own reset window does not.
+            alertsFired: {},
           }
         : state,
     PlanItemReset: (state, event) => {
@@ -2501,6 +2648,30 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       ...state,
       refs: { ...state.refs, [event.provider]: event.refs },
     }),
+    // The customer's controls are its own: a plan change, a close and a
+    // cancellation leave them where they were. `SetBillingControls` replaces
+    // the whole object, so the last write is the state (ADR 0038).
+    BillingControlsSet: (state, event) => {
+      if (event.billingControls === undefined) {
+        const { billingControls: _cleared, ...rest } = state;
+
+        return rest;
+      }
+
+      return { ...state, billingControls: event.billingControls };
+    },
+    // An alert moves no counter. It latches its threshold under the feature so
+    // a redelivery and a second fact past the same threshold record once.
+    UsageAlertFired: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            alertsFired: {
+              ...state.alertsFired,
+              [event.feature]: [...(state.alertsFired?.[event.feature] ?? []), event.at],
+            },
+          }
+        : state,
   },
   reply: {
     SetQuantity: (_state, events) => {

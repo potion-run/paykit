@@ -12,6 +12,8 @@ import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import { toCustomersError } from "./Customers.binding.ts";
+import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
 import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { ReleaseHold, toReleaseHoldError } from "./ReleaseHold.binding.ts";
@@ -21,6 +23,11 @@ import {
   toWithdrawTierChangeError,
   WithdrawTierChange,
 } from "./ScheduleTierChange.binding.ts";
+import {
+  SetBillingControls,
+  controlFeaturesOf,
+  toSetBillingControlsError,
+} from "./SetBillingControls.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
@@ -204,6 +211,53 @@ const BillingApiCore = Layer.mergeAll(
           };
         });
       });
+    }),
+  ),
+  Layer.effect(
+    SetBillingControls,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const catalog = yield* CatalogService;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return Effect.fn("Paykit.SetBillingControls")(function* (account) {
+        const id = Subscription.ref(account).id;
+
+        return Effect.fn("Paykit.SetBillingControls.set")(function* (request) {
+          const receipt = yield* bound(toSetBillingControlsError)(
+            client.SetBillingControls(
+              id,
+              {
+                ...(request.billingControls === undefined
+                  ? {}
+                  : { billingControls: request.billingControls }),
+                features: controlFeaturesOf(catalog, request.billingControls),
+              },
+              options(),
+            ),
+          );
+
+          const view = yield* bound(toSetBillingControlsError)(
+            client.BillingState.get(id, { atLeast: receipt, ...options() }),
+          );
+
+          const billingControls = view?.billingControls;
+
+          return billingControls === undefined ? {} : { billingControls };
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    CustomersRead,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return {
+        view: (account: string) =>
+          bound(toCustomersError)(client.BillingState.get(Subscription.ref(account).id, options())),
+      };
     }),
   ),
   Layer.effect(
@@ -571,4 +625,5 @@ const BillingApiCore = Layer.mergeAll(
 export const BillingApiLayer = Layer.mergeAll(
   BillingApiCore,
   BalancesLive.pipe(Layer.provide(BillingApiCore)),
+  CustomersLive.pipe(Layer.provide(BillingApiCore)),
 );

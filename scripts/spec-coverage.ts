@@ -5,11 +5,13 @@
 //
 // `specs/paykit` is one model per protocol, not one per file: `paykit.qnt` is
 // the spend path, `standing.qnt` the phase machine, `windows.qnt` the clocks the
-// period does not own, and `money.qnt` the money facts. A command can be
-// modelled in more than one protocol (a purchase is a phase reset and a pool
-// grant), and a command can be deliberately out of every slice. The table below
-// is that decision written down; this gate fails when the code and the table
-// disagree in either direction:
+// period does not own, `balances.qnt` the sources behind one count, `entities.qnt`
+// the scopes under one customer, `schedules.qnt` the plan set and its phase
+// schedule, and `money.qnt` the money facts. A command can be modelled in more
+// than one protocol (a purchase is a phase reset and a pool grant), and a
+// command can be deliberately out of every slice. The table below is that
+// decision written down; this gate fails when the code and the table disagree
+// in either direction:
 //
 //   - a new `*.command.ts` with no row, so a command cannot land unsorted;
 //   - a row naming a spec or action the model does not define, so a rename is
@@ -33,6 +35,9 @@ const SPEC_FILES = {
   windows: "specs/paykit/windows.qnt",
   plans: "specs/paykit/plans.qnt",
   balances: "specs/paykit/balances.qnt",
+  controls: "specs/paykit/controls.qnt",
+  schedules: "specs/paykit/schedules.qnt",
+  entities: "specs/paykit/entities.qnt",
   money: "specs/paykit/money.qnt",
 } as const;
 
@@ -50,13 +55,19 @@ type Coverage = Partial<Record<SpecName, ReadonlyArray<string>>>;
  */
 const SPEC_COVERAGE = {
   // ── the spend path ─────────────────────────────────────────────────────────
-  Hold: { paykit: ["hold"], balances: ["spend"] },
-  GrantBalance: { balances: ["createGrant"] },
+  Hold: { paykit: ["hold"], balances: ["spend"], controls: ["refuse"] },
+  GrantBalance: { balances: ["createGrant"], entities: ["grant"] },
   ExpireGrant: { balances: ["expireGrant"] },
   HoldElapsed: { paykit: ["expireHold"] },
   ReleaseHold: { paykit: ["releaseHold"] },
   SettleHold: { paykit: ["settleHold"] },
-  TrackUsage: { paykit: ["trackUsage"], windows: ["track"], balances: ["spend"] },
+  TrackUsage: {
+    paykit: ["trackUsage"],
+    windows: ["track"],
+    balances: ["spend"],
+    controls: ["track", "fireAlert", "refuse"],
+    entities: ["spend"],
+  },
   ConsumeCredits: {
     paykit: ["consumeCredits"],
     standing: ["spendCredits"],
@@ -65,7 +76,13 @@ const SPEC_COVERAGE = {
 
   // ── the phase machine ──────────────────────────────────────────────────────
   StartTrial: { standing: ["startTrial"] },
-  Subscribe: { paykit: ["subscribe"], standing: ["subscribe"], plans: ["attach"] },
+  Subscribe: {
+    paykit: ["subscribe"],
+    standing: ["subscribe"],
+    plans: ["attach"],
+    schedules: ["attach", "addAddOn"],
+    entities: ["attachPlan"],
+  },
   ExtendTrial: { standing: ["extendTrial"] },
   EnterGrace: { paykit: ["enterGrace"], standing: ["enterGrace"] },
   RecordPayment: { standing: ["recordPayment"], money: ["charge"] },
@@ -73,21 +90,32 @@ const SPEC_COVERAGE = {
   Recover: { paykit: ["recover"], standing: ["recover"] },
   GraceElapsed: { standing: ["graceElapsed"], windows: ["endStanding"] },
   Expire: { paykit: ["cancelStanding"], standing: ["expire"], windows: ["endStanding"] },
-  CancelImmediately: { plans: ["cancelImmediately"] },
+  CancelImmediately: { plans: ["cancelImmediately"], schedules: ["cancelNow"] },
   ScheduleCancellation: {
     paykit: ["cancelStanding"],
     standing: ["scheduleCancellation"],
     plans: ["cancelAtBoundary"],
+    schedules: ["cancelGroup"],
   },
-  Resume: { standing: ["resume"], plans: ["uncancel"] },
-  ScheduleTierChange: { standing: ["scheduleTier"], plans: ["attach"], balances: ["changePlan"] },
-  WithdrawTierChange: { standing: ["withdrawTier"], plans: ["uncancel"] },
+  Resume: { standing: ["resume"], plans: ["uncancel"], schedules: ["uncancelGroup"] },
+  ScheduleTierChange: {
+    standing: ["scheduleTier"],
+    plans: ["attach"],
+    balances: ["changePlan"],
+    schedules: ["schedulePlan"],
+  },
+  WithdrawTierChange: {
+    standing: ["withdrawTier"],
+    plans: ["uncancel"],
+    schedules: ["withdrawPhase"],
+  },
   ChangeTier: {
     standing: ["changeTier"],
     plans: ["attach"],
     money: ["changeTier"],
     windows: ["changeTierCap"],
     balances: ["changePlan"],
+    schedules: ["attach", "addAddOn"],
   },
   DunningRetry: { standing: ["dunningRung"] },
 
@@ -98,16 +126,26 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
     balances: ["closePeriod"],
+    controls: ["closePeriod"],
+    schedules: ["close"],
+    entities: ["closePeriod"],
   },
   PeriodEnded: {
     paykit: ["closePeriod"],
     standing: ["closePeriod"],
     windows: ["closePeriod"],
     plans: ["close"],
+    schedules: ["close"],
+    entities: ["closePeriod"],
   },
-  ResetAllowance: { windows: ["resetWindow"], balances: ["closePeriod"] },
+  ResetAllowance: {
+    windows: ["resetWindow"],
+    balances: ["closePeriod"],
+    controls: ["closePeriod"],
+  },
   SetQuantity: { windows: ["setQuantity"], money: ["setQuantity"] },
   SetUsage: { windows: ["setUsage"] },
+  SetBillingControls: { controls: ["setControls", "clearControls"] },
   PurchaseCredits: {
     standing: ["buyTopUp"],
     windows: ["buyTopUp"],
@@ -132,6 +170,13 @@ const SPEC_COVERAGE = {
  * Actions that are part of a machine rather than of the protocol: the entry
  * points, the clock a policy runs on, and a scheduler's choice among queued
  * rungs. They are named here rather than in a command row.
+ *
+ * `entities` is the one planned exception. `attachEntity`, `archiveEntity` and
+ * `transfer` are modelled by ADR 0040 before their commands land, so they have
+ * no `*.command.ts` to name them. Each joins a command row the moment its
+ * command exists; until then naming them here is what keeps the action
+ * accounted for without inventing a row for a file that is not there. The
+ * README says the same thing beside the model.
  */
 const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   paykit: ["init", "step", "tick"],
@@ -139,6 +184,12 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   windows: ["init", "step", "tick", "fireAnyRung"],
   plans: ["init", "step", "tick", "cancelImmediately"],
   balances: ["init", "step", "tick"],
+  controls: ["init", "step", "tick", "block", "unblock"],
+  // A phase is applied by the scheduler that runs at its `startsAt`, the way a
+  // rung is fired by the retry policy; the command that owns it lands with the
+  // implementation, and until then it is the clock's own transition.
+  schedules: ["init", "step", "tick", "applyPhase"],
+  entities: ["init", "step", "tick", "attachEntity", "archiveEntity", "transfer"],
   money: ["init", "step"],
 };
 

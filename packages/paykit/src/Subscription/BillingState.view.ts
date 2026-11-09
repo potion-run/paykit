@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { BillingControls } from "../Customer.ts";
 import { Proration } from "../Proration.ts";
 import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
@@ -39,6 +40,19 @@ export type RefundView = typeof RefundView.Type;
 /** What may still come back from one refund. */
 export const outstandingRefundOf = (refund: RefundView): number =>
   Math.max(0, refund.amount - (refund.reversed ?? 0));
+
+/** One usage alert this period has recorded. */
+export const AlertFiredView = Schema.Struct({
+  featureId: Schema.String,
+  /** The configured threshold, in the feature's own units. */
+  at: Schema.Int,
+  /** The period's usage after the fact that reached it. */
+  usedAfter: Schema.Int,
+  /** When the crossing was recorded. */
+  firedAt: Schema.DateTimeUtc,
+});
+
+export type AlertFiredView = typeof AlertFiredView.Type;
 
 /** What a billing page shows. */
 export const BillingStateView = Schema.Struct({
@@ -109,6 +123,14 @@ export const BillingStateView = Schema.Struct({
    * one that withdraws it, never both.
    */
   pendingTier: Schema.optionalKey(PendingTier),
+  /**
+   * The controls the customer states: its auto top-up line, spend ceilings and
+   * usage alerts. They belong to the customer, so a plan change and a close
+   * leave them alone (ADR 0038).
+   */
+  billingControls: Schema.optionalKey(BillingControls),
+  /** The alerts this period has recorded, oldest first. */
+  alertsFired: Schema.optionalKey(Schema.Array(AlertFiredView)),
 });
 
 export type BillingStateView = typeof BillingStateView.Type;
@@ -178,6 +200,7 @@ export class BillingState extends Domain.View("BillingState", {
         pendingTier: _previousPending,
         topUp: _previousTopUp,
         topUpCooldownUntil: _previousCooldown,
+        alertsFired: _previousAlerts,
         ...rest
       } = view;
 
@@ -214,6 +237,7 @@ export class BillingState extends Domain.View("BillingState", {
         currency: _previousCurrency,
         pendingTier: _previousPending,
         topUp: _previousTopUp,
+        alertsFired: _previousAlerts,
         ...rest
       } = view;
 
@@ -433,6 +457,9 @@ export class BillingState extends Domain.View("BillingState", {
           periodStart: event.nextPeriodStart,
           periodEnd: event.nextPeriodEnd,
           cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
+          // An alert is once per standing period, so a close re-arms every
+          // threshold; an allowance's own reset window does not (ADR 0038).
+          alertsFired: [],
         },
         context,
       ),
@@ -453,6 +480,40 @@ export class BillingState extends Domain.View("BillingState", {
     UsageSettled: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReleased: (view, _event, context): BillingStateView => withAccount(view, context),
     UsageReset: (view, _event, context): BillingStateView => withAccount(view, context),
+    // The customer's controls are its own: a plan change, a close and a
+    // cancellation leave them where they were, and `SetBillingControls`
+    // replaces the whole object (ADR 0038).
+    BillingControlsSet: (view, event, context): BillingStateView => {
+      const { billingControls: _previous, ...rest } = view;
+
+      return withAccount(
+        {
+          ...rest,
+          ...(event.billingControls === undefined
+            ? {}
+            : { billingControls: event.billingControls }),
+        },
+        context,
+      );
+    },
+    // An alert moves no page counter. It is a row in `alertsFired`, so an
+    // operator sees the crossing and a console can say "90% used, paged at 80%".
+    UsageAlertFired: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          alertsFired: [
+            ...(view.alertsFired ?? []),
+            {
+              featureId: event.feature,
+              at: event.at,
+              usedAfter: event.usedAfter,
+              firedAt: event.firedAt,
+            },
+          ],
+        },
+        context,
+      ),
     ProviderRefAttached: (view, _event, context): BillingStateView => withAccount(view, context),
   },
 }) {}

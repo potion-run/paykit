@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { BillingControls } from "./Customer.ts";
 import { Proration } from "./Proration.ts";
 import { FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
@@ -25,6 +26,8 @@ export const BillingReadRow = Schema.Struct({
   proration: Schema.optionalKey(Proration),
   prorationInvoice: Schema.optionalKey(Schema.String),
   currency: Schema.optionalKey(Schema.String),
+  /** The customer's controls, so a list row can report a spend ceiling. */
+  billingControls: Schema.optionalKey(BillingControls),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
 

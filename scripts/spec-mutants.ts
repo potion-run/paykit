@@ -305,6 +305,113 @@ interface SpecMutants {
   readonly mutants: ReadonlyArray<Mutant>;
 }
 
+// ADR 0039: the plan set, its groups, the add-on that stacks beside them and
+// the multi-phase schedule. Each mutant is one way that shape can be got wrong:
+// a second plan admitted into a group, an add-on filling a slot, a move that
+// takes the add-on with it, a phase scheduled in the past or applied to the
+// wrong group, a cancellation that keeps or loses the wrong plan, a clock that
+// walks past a phase or a boundary, and a terminal close that leaves a future.
+const SCHEDULES_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "attach-stacks-instead-of-replacing",
+    invariant: "oneActivePerGroup",
+    from: "    val moved = withPlansOf(s, group, Set(plan))",
+    to: "    val moved = withPlansOf(s, group, plansOf(s, group).union(Set(plan)))",
+    why: "a move inside a group that adds a second plan to the group instead of replacing it",
+  },
+  {
+    name: "add-on-fills-a-group-slot",
+    invariant: "addOnsStack",
+    from: "  pure def applyAddAddOn(s: State): State = {\n    ...s,\n    addOn: true,",
+    to: "  pure def applyAddAddOn(s: State): State = {\n    ...s,\n    plansA: Set(AddOn),\n    addOn: true,",
+    why: "an add-on attached into a group's slot instead of stacking beside it",
+  },
+  {
+    name: "move-clears-the-add-on",
+    invariant: "addOnsSurviveGroupChange",
+    from: "      schedule: dropPhasesOf(s.schedule, group),\n" + "      attaches: s.attaches + 1,",
+    to:
+      "      schedule: dropPhasesOf(s.schedule, group),\n" +
+      "      addOn: false,\n" +
+      "      attaches: s.attaches + 1,",
+    why: "a group move that drops an add-on the account is still paying for",
+  },
+  {
+    name: "schedule-a-past-phase",
+    invariant: "phasesAreFuture",
+    from: "    at > s.now,",
+    to: "    at >= 0,",
+    why: "a phase accepted at an instant the clock has already passed",
+  },
+  {
+    name: "append-phases-without-ordering",
+    invariant: "phasesAreOrdered",
+    from: "          if (phase.at < first.at) TwoPhases((phase, first)) else TwoPhases((first, phase))",
+    to: "          TwoPhases((first, phase))",
+    why: "a schedule inserted in arrival order, so a later phase can start earlier",
+  },
+  {
+    name: "phase-writes-both-groups",
+    invariant: "phaseNeverSkipsAGroup",
+    from:
+      "      plansA: if (group == A) Set(due.plan) else s.plansA,\n" +
+      "      plansB: if (group == B) Set(due.plan) else s.plansB,",
+    to:
+      "      plansA: if (group == A) Set(due.plan) else s.plansA,\n" +
+      "      plansB: Set(due.plan),",
+    why: "a phase for one group that overwrites the other group's plan on its way through",
+  },
+  {
+    name: "phase-names-the-add-on",
+    invariant: "phaseNeverSkipsAGroup",
+    from: "    isGroupPlan(plan),\n    at > s.now,",
+    to: "    at > s.now,",
+    why: "a phase that names the add-on, which has no group to move",
+  },
+  {
+    name: "cancel-the-default-plan",
+    invariant: "cancelNeverNamesTheDefault",
+    from: "      and not(plansOf(s, group).exists(plan => isDefaultPlan(plan)))",
+    to: "      and true",
+    why: "a cancellation accepted on the group's floor, where the fallback is the plan itself",
+  },
+  {
+    name: "cancellation-empties-a-group-with-a-default",
+    invariant: "cancelFallsBackToTheDefault",
+    from: "    val plansA = if (s.cancelPendingA) defaultOf(A) else s.plansA",
+    to: "    val plansA = if (s.cancelPendingA) NO_PLANS else s.plansA",
+    why: "a boundary that empties a group the catalogue gives a default plan",
+  },
+  {
+    name: "cancellation-keeps-a-group-without-a-default",
+    invariant: "noPlanAfterCancel",
+    from: "    val plansB = if (s.cancelPendingB) defaultOf(B) else s.plansB",
+    to: "    val plansB = if (s.cancelPendingB) s.plansB else s.plansB",
+    why: "a boundary that marks a cancellation resolved and leaves the cancelled plan running",
+  },
+  {
+    name: "tick-passes-the-boundary",
+    invariant: "noPeriodPastEnd",
+    from: "    state.now + 1 <= state.periodEnd,",
+    to: "    true,",
+    why: "a clock that walks past the boundary instead of stopping for the close",
+  },
+  {
+    name: "clock-skips-a-due-phase",
+    invariant: "phasesAreFuture",
+    from: "    not(phaseDue(state)),",
+    to: "    true,",
+    why: "a clock that walks past a phase's instant, leaving it to be applied late",
+  },
+  {
+    name: "close-leaves-the-schedule-behind",
+    invariant: "terminalHasNoIntent",
+    from: "      schedule: if (stillOpen) s.schedule else NoPhases,",
+    to: "      schedule: s.schedule,",
+    why: "a terminal close that leaves a phase to fire against an account that has ended",
+  },
+];
+
 const PLANS_MUTANTS: ReadonlyArray<Mutant> = [
   {
     name: "upgrade-is-scheduled",
@@ -404,12 +511,150 @@ const BALANCES_MUTANTS: ReadonlyArray<Mutant> = [
   },
 ];
 
+const CONTROLS_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "controls-limit-forgets-the-charge",
+    invariant: "limitIsACeiling",
+    from: "    not(s.hasLimit) or s.billed + chargeOf(units) <= s.limit",
+    to: "    not(s.hasLimit) or s.billed <= s.limit",
+    why: "a ceiling that accepts a charge past itself",
+  },
+  {
+    name: "controls-refusal-bills-the-request",
+    invariant: "limitIsACeiling",
+    from: "    refusals: s.refusals + 1,\n  }\n\n  // A close resets",
+    to: "    refusals: s.refusals + 1,\n    billed: s.billed + chargeOf(units),\n  }\n\n  // A close resets",
+    why: "a refusal that bills the request it refused",
+  },
+  {
+    name: "controls-fire-twice",
+    invariant: "alertFiresOncePerPeriod",
+    from: "    state.used >= ALERT_AT,\n    not(state.fired),",
+    to: "    state.used >= ALERT_AT,",
+    why: "an alert that counts twice for one threshold",
+  },
+  {
+    name: "controls-fire-early",
+    invariant: "alertOnlyAtOrPastItsThreshold",
+    from: "    state.used >= ALERT_AT,\n    not(state.fired),",
+    to: "    not(state.fired),",
+    why: "an alert that fires with no usage to reach it",
+  },
+  {
+    name: "controls-limit-dropped-on-close",
+    invariant: "limitSurvivesAClose",
+    from: "    hadLimitAtClose: s.hasLimit,\n    limitAtClose: s.limit,",
+    to: "    hasLimit: false,\n    hadLimitAtClose: s.hasLimit,\n    limitAtClose: s.limit,",
+    why: "a close that clears the customer's ceiling",
+  },
+  {
+    name: "controls-tick-passes-the-boundary",
+    invariant: "noTrackPastPeriod",
+    from: "    state.now + 1 <= state.periodEnd,\n    state.now < MAX_TIME,",
+    to: "    state.now < MAX_TIME,",
+    why: "a clock that walks past the boundary it owns",
+  },
+];
+
+const ENTITIES_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "transfer-creates-units",
+    invariant: "totalConservedAcrossScopes",
+    from: "      plan: s.plan.set(from, s.plan.get(from) - fromPlan).set(target, s.plan.get(target) + fromPlan),",
+    to: "      plan: s.plan.set(from, s.plan.get(from) - fromPlan),",
+    why: "a transfer that debits the source without crediting the target",
+  },
+  {
+    name: "transfer-overdraws-the-source",
+    invariant: "entityBalancesNonNegative",
+    from: "    amount <= ownOf(state, from),",
+    to: "    true,",
+    why: "a transfer for more than the source owns, borrowing from nowhere",
+  },
+  {
+    name: "transfer-crosses-customers",
+    invariant: "transferStaysInsideOneCustomer",
+    from:
+      "  action transfer(from: Scope, target: Scope, amount: int): bool = all {\n" +
+      "    owns(from),\n" +
+      "    owns(target),",
+    to:
+      "  action transfer(from: Scope, target: Scope, amount: int): bool = all {\n" +
+      "    true,\n" +
+      "    true,",
+    why: "a transfer whose endpoints are not both scopes of this customer",
+  },
+  {
+    name: "pool-reported-only-at-the-parent",
+    invariant: "pooledGrantShared",
+    from: "      if (attached(s, scope)) acc.set(scope, poolAfter) else acc.set(scope, 0)),",
+    to: "      if (scope == Parent) acc.set(scope, poolAfter) else acc.set(scope, 0)),",
+    why: "a pool reported on the parent while every entity keeps a stale copy",
+  },
+  {
+    name: "archive-keeps-the-balance",
+    invariant: "archivedEntityHoldsNothing",
+    from: "      plan: s.plan.set(scope, 0).set(Parent, s.plan.get(Parent) + movedPlan),",
+    to: "      plan: s.plan.set(Parent, s.plan.get(Parent) + movedPlan),",
+    why: "an archive that copies the entity's plan to the parent without emptying it",
+  },
+  {
+    name: "spend-reaches-the-pool-first",
+    invariant: "spendOnlyFromOwnOrPooled",
+    from:
+      "    val fromPlan = if (amount <= s.plan.get(scope)) amount else s.plan.get(scope)\n" +
+      "    val afterPlan = amount - fromPlan\n" +
+      "    val fromGrant = if (afterPlan <= s.grant.get(scope)) afterPlan else s.grant.get(scope)\n" +
+      "    val afterOwn = afterPlan - fromGrant\n" +
+      "    val fromPool = afterOwn",
+    to:
+      "    val fromPlan = 0\n" +
+      "    val fromGrant = 0\n" +
+      "    val fromPool = amount\n" +
+      "    val afterOwn = amount",
+    why: "a spend that draws the shared pool while the scope still holds its own units",
+  },
+  {
+    name: "spend-after-archive",
+    invariant: "noSpendAfterArchive",
+    from:
+      "  action spend(scope: Scope, amount: int): bool = all {\n" +
+      "    owns(scope),\n" +
+      "    attached(state, scope),",
+    to:
+      "  action spend(scope: Scope, amount: int): bool = all {\n" +
+      "    owns(scope),\n" +
+      "    true,",
+    why: "a spend that an archived entity can still draw from the shared pool",
+  },
+  {
+    name: "spend-debits-the-parent",
+    invariant: "scopedConservation",
+    from: "      plan: s.plan.set(scope, s.plan.get(scope) - fromPlan),",
+    to: "      plan: s.plan.set(Parent, s.plan.get(Parent) - fromPlan),",
+    why: "a spend that charges the customer's source instead of the spending scope's",
+  },
+  {
+    name: "close-zeros-the-lifetime-grant",
+    invariant: "lifetimeConserved",
+    from: "      expired: expiredPlans,\n      plan: resetPlans,",
+    to:
+      "      expired: expiredPlans,\n" +
+      "      plan: resetPlans,\n" +
+      "      grant: SCOPES.fold(s.grant, (acc, scope) => acc.set(scope, 0)),",
+    why: "a close that empties a lifetime grant along with the plan source",
+  },
+];
+
 const SPECS: ReadonlyArray<SpecMutants> = [
   { file: SPEC, maxSteps: 30, mutants: PAYKIT_MUTANTS },
   { file: "specs/paykit/standing.qnt", maxSteps: 30, mutants: STANDING_MUTANTS },
   { file: "specs/paykit/windows.qnt", maxSteps: 20, mutants: WINDOWS_MUTANTS },
   { file: "specs/paykit/plans.qnt", maxSteps: 30, mutants: PLANS_MUTANTS },
+  { file: "specs/paykit/schedules.qnt", maxSteps: 30, mutants: SCHEDULES_MUTANTS },
   { file: "specs/paykit/balances.qnt", maxSteps: 30, mutants: BALANCES_MUTANTS },
+  { file: "specs/paykit/controls.qnt", maxSteps: 25, mutants: CONTROLS_MUTANTS },
+  { file: "specs/paykit/entities.qnt", maxSteps: 30, mutants: ENTITIES_MUTANTS },
   { file: "specs/paykit/money.qnt", maxSteps: 30, mutants: MONEY_MUTANTS },
 ];
 

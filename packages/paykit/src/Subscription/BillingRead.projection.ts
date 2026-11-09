@@ -39,6 +39,9 @@ export const BillingReadLive = BillingRead.toLayer(
             ? {}
             : { prorationInvoice: input.state.prorationInvoice }),
           ...(input.state.currency === undefined ? {} : { currency: input.state.currency }),
+          ...(input.state.billingControls === undefined
+            ? {}
+            : { billingControls: input.state.billingControls }),
           features: input.state.features,
         };
 

@@ -67,6 +67,30 @@ export {
 } from "./Check.binding.ts";
 
 export {
+  Customers,
+  type CustomersError,
+  type CustomersRefusal,
+  type CustomersVerb,
+  type CustomerUpdateRequest,
+  isCustomersRefusal,
+  toCustomersError,
+} from "./Customers.binding.ts";
+
+export { CustomersLive, CustomersRead } from "./Customers.layer.ts";
+
+export {
+  SetBillingControls,
+  type SetBillingControlsError,
+  type SetBillingControlsRefusal,
+  type SetBillingControlsRequest,
+  type SetBillingControlsResult,
+  type SetBillingControlsVerb,
+  controlFeaturesOf,
+  isSetBillingControlsRefusal,
+  toSetBillingControlsError,
+} from "./SetBillingControls.binding.ts";
+
+export {
   BalanceCreateRequest,
   BalanceFinalizeRequest,
   BalanceGetRequest,

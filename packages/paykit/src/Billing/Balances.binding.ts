@@ -18,6 +18,7 @@ import {
 } from "../Subscription/Hold.command.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { UsageInvalid } from "../Subscription/SetUsage.command.ts";
+import { SpendLimitExceeded } from "../Subscription/SpendLimitExceeded.rejection.ts";
 import {
   FeatureNotMetered,
   MoneyCapExceeded,
@@ -98,6 +99,7 @@ const refusals = [
   UsageInvalid,
   StandingBlocksUsage,
   MoneyCapExceeded,
+  SpendLimitExceeded,
   HoldUnknown,
   HoldSettled,
   HoldExpired,

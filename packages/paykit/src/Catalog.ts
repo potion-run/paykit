@@ -1104,6 +1104,24 @@ export const featureOf = (catalog: Catalog, featureId: string): Feature | null =
   catalog.features.find((feature) => feature.id === featureId) ?? null;
 
 /**
+ * Whether some plan in the catalog bills a feature postpaid, or `null` when the
+ * catalog does not declare it at all. It is the catalog fact a customer's spend
+ * limit is validated against: a limit is money, so a feature no plan prices has
+ * nothing for it to bound (ADR 0038).
+ */
+export const pricedInCatalog = (catalog: Catalog, featureId: string): boolean | null => {
+  if (featureOf(catalog, featureId) === null) return null;
+
+  for (const tier of catalog.tiers) {
+    const allowance = planItemsOf(catalog, tier.id)?.[featureId];
+
+    if (allowance !== undefined && pricingOf(allowance) !== null) return true;
+  }
+
+  return false;
+};
+
+/**
  * Every credit-priced feature's rate card, keyed by feature id. A command
  * carries this because `decide` is pure and never sees the catalog.
  */

@@ -260,6 +260,24 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "BillingControlsSet",
+    body: body({
+      billingControls: {
+        spendLimits: [{ featureId: "messages", amount: 5_000 }],
+        usageAlerts: [{ featureId: "messages", at: 1_000 }],
+      },
+    }),
+  },
+  {
+    tag: "UsageAlertFired",
+    body: body({
+      feature: "messages",
+      at: 1_000,
+      usedAfter: 1_010,
+      firedAt: "2030-01-15T00:00:00.000Z",
+    }),
+  },
+  {
     tag: "BalanceExpired",
     body: body({
       feature: "messages",

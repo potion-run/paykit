@@ -35,6 +35,20 @@ export const BalanceSource = Schema.Struct({
 export type BalanceSource = typeof BalanceSource.Type;
 
 /**
+ * The customer's money ceiling on one feature, and the headroom left under it.
+ * `remaining` is money, not units: it is the `Balance.remaining` for a feature
+ * the customer capped.
+ */
+export const SpendLimitView = Schema.Struct({
+  /** The ceiling for this period, in minor units. */
+  amount: Schema.Int,
+  /** What may still bill: `max(0, amount - billed)`. */
+  remaining: Schema.Int,
+});
+
+export type SpendLimitView = typeof SpendLimitView.Type;
+
+/**
  * What a customer can spend of one feature, and where it came from. This is the
  * object `check()` and `track()` answer with, so a caller never has to read the
  * entitlement view and rebuild it.
@@ -61,6 +75,8 @@ export const Balance = Schema.Struct({
   purchased: Schema.optionalKey(Schema.Int),
   /** The quantity in use, for a non-consumable feature. */
   occupied: Schema.optionalKey(Schema.Int),
+  /** The customer's money ceiling for this feature, when it states one. */
+  spendLimit: Schema.optionalKey(SpendLimitView),
 });
 
 export type Balance = typeof Balance.Type;
@@ -87,6 +103,10 @@ export interface BalanceFeature {
   readonly included?: Included | null;
   readonly carried?: number;
   readonly used?: number;
+  /** Money this feature billed this period, which a spend ceiling bounds. */
+  readonly billed?: number;
+  /** The customer's money ceiling for this feature this period, in minor units. */
+  readonly spendLimit?: number;
   readonly quantity?: number;
   readonly creditRates?: RateCard;
   /** The standalone grants the feature holds, as the read model carries them. */
@@ -139,6 +159,14 @@ export const balanceOfFeature = (
   const credits = plan.credits ?? 0;
   const prepaid = Math.min(plan.prepaidCredits ?? 0, credits);
 
+  const spendLimit =
+    feature.spendLimit === undefined
+      ? undefined
+      : {
+          amount: feature.spendLimit,
+          remaining: Math.max(0, feature.spendLimit - (feature.billed ?? 0)),
+        };
+
   // A credit-priced feature has no items of its own: its balance is the shared
   // pool, and the pool has two sources — the plan's grant and a lifetime pack.
   if (feature.creditRates !== undefined) {
@@ -180,6 +208,7 @@ export const balanceOfFeature = (
       overageAllowed: feature.overage !== "block",
       nextResetAt: feature.resetsAt,
       breakdown: sources,
+      ...(spendLimit === undefined ? {} : { spendLimit }),
     };
   }
 
@@ -196,6 +225,7 @@ export const balanceOfFeature = (
       overageAllowed: false,
       nextResetAt: null,
       breakdown: [],
+      ...(spendLimit === undefined ? {} : { spendLimit }),
     };
   }
 
@@ -217,6 +247,7 @@ export const balanceOfFeature = (
       breakdown: [planSource(featureId, feature, tier, purchased, feature.remaining, occupied)],
       purchased,
       occupied,
+      ...(spendLimit === undefined ? {} : { spendLimit }),
     };
   }
 
@@ -281,6 +312,7 @@ export const balanceOfFeature = (
     overageAllowed: feature.overage !== "block",
     nextResetAt: feature.resetsAt,
     breakdown: sources,
+    ...(spendLimit === undefined ? {} : { spendLimit }),
   };
 };
 

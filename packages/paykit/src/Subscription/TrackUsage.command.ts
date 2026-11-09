@@ -4,8 +4,10 @@ import { UnitPrice } from "../Allowance.ts";
 import { Session } from "../Auth/Guards.ts";
 import { PricedLine } from "../Pricing.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
+import { SpendLimitExceeded } from "./SpendLimitExceeded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { Standing } from "./Subscription.state.ts";
+import { UsageAlertFired } from "./UsageAlertFired.event.ts";
 
 /** A blocking allowance has no room for the request. */
 export class AllowanceExceeded extends Domain.Rejection("AllowanceExceeded", {
@@ -138,7 +140,7 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
     dedupeKey: Schema.optionalKey(Schema.String),
   },
-  events: [UsageRecorded],
+  events: [UsageRecorded, UsageAlertFired],
   rejects: [
     AllowanceExceeded,
     StandingBlocksUsage,
@@ -147,6 +149,7 @@ export class TrackUsage extends Domain.Command("TrackUsage", {
     CreditExceeded,
     SpendCapExceeded,
     MoneyCapExceeded,
+    SpendLimitExceeded,
   ],
   middleware: [Session],
 }) {}
