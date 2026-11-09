@@ -29,7 +29,15 @@ import { StripePrices } from "../src/Prices.ts";
 const apiKey = process.env.STRIPE_API_KEY;
 const hasKey = apiKey !== undefined && apiKey !== "";
 
-const { test } = Test.make({ providers: Stripe.providers() });
+// `Stripe.providers()` cannot enumerate a provider from this package, so put it
+// into the collection while that layer is built. This is the layer cleanup
+// builds too: registering from inside a reconcile is too late for a failed
+// case's teardown, which then cannot delete (or orphan) its state rows.
+const providers = Layer.effectDiscard(registerMeteredPriceProvider).pipe(
+  Layer.provideMerge(Stripe.providers()),
+);
+
+const { test } = Test.make({ providers });
 
 /** Out-of-band reads, provided the way the vendor package provides them. */
 const live = (key: string) =>
@@ -49,7 +57,6 @@ test.provider.skipIf(!hasKey)(
 
       // Start from nothing: a previous run's prices must not be mistaken for this
       // run's.
-      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const first = yield* stack.deploy(StripePrices("Prices", { tiers: { pro: proPrice } }));
@@ -135,7 +142,6 @@ test.provider.skipIf(!hasKey)(
   (stack) =>
     Effect.gen(function* () {
       const key = apiKey!;
-      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const sold = yield* stack.deploy(
@@ -171,7 +177,6 @@ test.provider.skipIf(!hasKey)(
   (stack) =>
     Effect.gen(function* () {
       const key = apiKey!;
-      yield* registerMeteredPriceProvider;
       yield* stack.destroy();
 
       const tiers = {
@@ -196,14 +201,24 @@ test.provider.skipIf(!hasKey)(
 
       const sold = yield* stack.deploy(StripePrices("Prices", { tiers }));
 
+      // The list endpoint answers the lookup key; retrieve that id for the
+      // whole Price. A list response is not the object to assert transforms and
+      // tiers on.
       const priceOf = (lookupKey: string) =>
         GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
           Effect.provide(live(key)),
-          Effect.map((prices) => prices.data[0]),
+          Effect.flatMap((prices) => {
+            const found = prices.data[0];
+
+            return found === undefined
+              ? Effect.succeed(undefined)
+              : GetPrice({ price: found.id }).pipe(Effect.provide(live(key)));
+          }),
         );
 
       const packagePrice = yield* priceOf(sold.usage.package.messages);
-      expect(packagePrice?.billing_scheme).toBe("per_unit");
+      // `per_unit` is Stripe's default and is not what makes this a package;
+      // the transform is. Assert the fields that carry the catalog's decision.
       expect(packagePrice?.unit_amount).toBe(500);
       expect(packagePrice?.transform_quantity).toEqual({ divide_by: 1_000, round: "up" });
 

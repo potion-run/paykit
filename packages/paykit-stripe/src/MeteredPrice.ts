@@ -29,6 +29,7 @@ import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import { tagRecord } from "alchemy/Tags";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -189,6 +190,8 @@ const matches = (price: StripePrice, props: MeteredPriceProps): boolean => {
   const transform = stripeTransformOf(pricing);
 
   return (
+    price.active &&
+    price.lookup_key === props.lookupKey &&
     price.billing_scheme === (pricing._tag === "unit" ? "per_unit" : "tiered") &&
     price.currency === currencyOf(pricing) &&
     price.recurring?.interval === props.interval &&
@@ -248,12 +251,18 @@ const listAll = Effect.fn(function* () {
 
 const findByAlchemyId = Effect.fn(function* (id: string) {
   const prices = yield* listAll();
+  const found: StripePrice[] = [];
 
   for (const price of prices) {
-    if (yield* hasAlchemyMetadata(id, tagRecord(price.metadata))) return price;
+    if (yield* hasAlchemyMetadata(id, tagRecord(price.metadata))) found.push(price);
   }
 
-  return undefined;
+  // A failed destroy leaves every retained generation behind with the same
+  // ownership metadata. Prefer the newest one; the oldest may predate a
+  // field this provider now states, and reusing it would hide that drift.
+  found.sort((left, right) => right.created - left.created);
+
+  return found.at(0);
 });
 
 const observe = Effect.fn(function* (input: { id?: string; logicalId: string }) {
@@ -268,6 +277,26 @@ const observe = Effect.fn(function* (input: { id?: string; logicalId: string }) 
 
 const desiredMetadata = Effect.fn(function* (id: string) {
   return yield* createInternalMetadata(id);
+});
+
+export class MeteredPriceLookupKeyNotTransferred extends Data.TaggedError(
+  "Paykit.Stripe.MeteredPriceLookupKeyNotTransferred",
+)<{ readonly id: string; readonly lookupKey: string }> {}
+
+const ensureLookupKey = Effect.fn(function* (price: StripePrice, lookupKey: string) {
+  if ((price.lookup_key ?? "") === lookupKey) return price;
+
+  const updated = yield* UpdatePrice({
+    price: price.id,
+    lookup_key: lookupKey,
+    transfer_lookup_key: true,
+  });
+
+  if ((updated.lookup_key ?? "") !== lookupKey) {
+    return yield* new MeteredPriceLookupKeyNotTransferred({ id: updated.id, lookupKey });
+  }
+
+  return updated;
 });
 
 export const MeteredPriceProvider = () =>
@@ -325,6 +354,8 @@ export const MeteredPriceProvider = () =>
         });
       }
 
+      current = yield* ensureLookupKey(current, desiredLookupKey);
+
       const observedMetadata = tagRecord(current.metadata);
       const { upsert, removed } = diffMetadata(observedMetadata, metadata);
       const metadataChanged = upsert.length > 0 || removed.length > 0;
@@ -345,7 +376,7 @@ export const MeteredPriceProvider = () =>
           : {}),
       });
 
-      return attrsOf(updated);
+      return attrsOf(yield* ensureLookupKey(updated, desiredLookupKey));
     }),
 
     delete: Effect.fn(function* ({ output }) {
