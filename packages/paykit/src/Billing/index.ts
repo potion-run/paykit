@@ -270,6 +270,14 @@ export {
   type PortalVerb,
 } from "./Portal.binding.ts";
 
+export {
+  SetupPayment,
+  type SetupPaymentError,
+  type SetupPaymentRefusal,
+  type SetupPaymentResult,
+  type SetupPaymentVerb,
+} from "./SetupPayment.binding.ts";
+
 export { List, type ListError, type ListVerb } from "./List.binding.ts";
 
 export { Webhook, type WebhookApplyError, type WebhookVerb } from "./Webhook.binding.ts";

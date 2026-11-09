@@ -71,6 +71,7 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.ChangeTier.key).toBe("Paykit.ChangeTier");
   expect(Paykit.Subscribe.key).toBe("Paykit.Subscribe");
   expect(Paykit.Portal.key).toBe("Paykit.Portal");
+  expect(Paykit.SetupPayment.key).toBe("Paykit.SetupPayment");
   expect(Paykit.Webhook.key).toBe("Paykit.Webhook");
   // the retiring names are gone: one spelling, not two
   expect((Paykit as Record<string, unknown>).Track).toBeUndefined();

@@ -32,6 +32,15 @@ export interface PolarBindings {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
   /**
+   * Optional: open a hosted page where the customer adds a payment method
+   * without a purchase. A caller that cannot declares no `setup` capability.
+   */
+  readonly createSetupSession?: (args: {
+    readonly account: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  /**
    * Optional: bill an amount on its own, which is how a mid-cycle proration is
    * collected. A merchant of record that can sell a tier can usually also open
    * a one-off charge, but not always, so the adapter declares it only when it
@@ -164,6 +173,7 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
     "checkout",
     "refund",
     "portal",
+    ...(props.bindings.createSetupSession === undefined ? [] : (["setup"] as const)),
     ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
     ...(props.bindings.reportUsage === undefined ? [] : (["usage"] as const)),
     ...(props.bindings.setQuantity === undefined ? [] : (["quantity"] as const)),
@@ -243,6 +253,13 @@ export const PaymentsPolar = (props: PolarProps): MoneyProvider<"merchant_of_rec
       charge: () => missing("charge"),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
+      setupPayment: ({ account, commandId }: { account: string; commandId?: string }) =>
+        props.bindings.createSetupSession === undefined
+          ? missing("setupPayment")
+          : props.bindings.createSetupSession({
+              account,
+              ...(commandId === undefined ? {} : { commandId }),
+            }),
       setQuantity: ({
         subscription,
         quantity,

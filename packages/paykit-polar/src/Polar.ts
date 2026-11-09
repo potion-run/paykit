@@ -45,6 +45,16 @@ export interface PolarClient {
     readonly returnUrl: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /**
+   * A customer session where the customer adds or replaces a payment method,
+   * with no purchase. Polar owns the portal, so this is the same call as
+   * `createCustomerSession`; a client that cannot open one declares no `setup`
+   * capability. Polar has no idempotency key for a customer session.
+   */
+  readonly createSetupSession?: (request: {
+    readonly customerExternalId: string;
+    readonly returnUrl: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
+  /**
    * Bill one amount on its own: a one-off order on the configured product,
    * finalized so Polar charges the customer's saved payment method. This is
    * what collects a mid-cycle proration.
@@ -173,6 +183,20 @@ export const polarBindings = (
         Effect.mapError((cause) => declined("createCustomerSession", cause)),
         Effect.map((session) => ({ url: session.url })),
       ),
+    ...(client.createSetupSession === undefined
+      ? {}
+      : {
+          // Polar has no idempotency key for a customer session, so the port's
+          // command id is accepted and not sent.
+          createSetupSession: ({ account }: { account: string; commandId?: string }) =>
+            client.createSetupSession!({
+              customerExternalId: account,
+              returnUrl: billing,
+            }).pipe(
+              Effect.mapError((cause) => declined("createSetupSession", cause)),
+              Effect.map((session) => ({ url: session.url })),
+            ),
+        }),
     // No invoice product, no invoice capability: a proration charge that
     // silently collected nothing would be worse than a typed refusal.
     ...(where.invoiceProductId === undefined

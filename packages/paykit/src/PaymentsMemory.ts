@@ -18,6 +18,7 @@ const capabilities: ReadonlySet<PaymentCapability> = new Set([
   "portal",
   "usage",
   "quantity",
+  "setup",
 ]);
 
 /** One charge the memory provider took. */
@@ -211,6 +212,10 @@ export const PaymentsMemory = (): MemoryPayments => {
         createPortal: ({ account }: { account: string }) =>
           Effect.succeed({
             url: `https://paykit.memory/portal/${encodeURIComponent(account)}`,
+          }),
+        setupPayment: ({ account }: { account: string; commandId?: string }) =>
+          Effect.succeed({
+            url: `https://paykit.memory/setup/${encodeURIComponent(account)}`,
           }),
         setQuantity: (args: {
           account: string;

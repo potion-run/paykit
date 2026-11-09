@@ -363,6 +363,13 @@ service. A console is not one of them: what a library owes is the read model a c
 `Preview`, `List`, `BillingRead`, `AccountEvents` and the timeline are that. The screens themselves
 are the example's job.
 
+**Setup payment — landed.** [ADR
+0046](./adr/0046-adding-a-payment-method-is-a-port-operation.md) adds `Payments.setupPayment` and the
+`"setup"` capability, `Paykit.SetupPayment(account)` as an in-process operation binding beside
+`Portal`, Stripe's setup-mode Checkout Session and Polar's customer session. A provider without
+`setup` answers `ProviderCapabilityMissing`, and the log records nothing: adding a method is not a
+standing change.
+
 - **Per-customer custom plans — landed.** [ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)
   makes `custom: true` a catalog opt-in: the plan's `grants` are the quote, and `CatalogGuard` accepts
   a bespoke set that is structurally valid instead of requiring equality. `Paykit.Attach(account)({

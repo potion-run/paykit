@@ -31,6 +31,12 @@ const recording = (asked: Array<Record<string, unknown>> = []): StripeClient => 
 
       return { url: "https://billing.stripe.test/portal" };
     }),
+  createSetupSession: (request) =>
+    Effect.sync(() => {
+      asked.push(request as never);
+
+      return { url: "https://checkout.stripe.test/setup" };
+    }),
   createInvoice: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
@@ -259,6 +265,39 @@ describe("Stripe as a paykit provider", () => {
     }),
   );
 
+  it.effect("opens a setup-mode checkout to add a method without a purchase", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+
+      const provider = Stripe({
+        secretKey: Redacted.make("sk_test_1"),
+        origin: "https://app.example.com",
+        tiers,
+        client: recording(asked),
+      });
+
+      expect(provider.capabilities.has("setup")).toBe(true);
+
+      const session = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).setupPayment({
+            account: "acct_1",
+            commandId: "setup:1",
+          });
+        }),
+      );
+
+      expect(session.url).toContain("setup");
+      expect(asked[0]).toMatchObject({
+        customerExternalId: "acct_1",
+        successUrl: "https://app.example.com/billing",
+        cancelUrl: "https://app.example.com/billing",
+        commandId: "setup:1",
+      });
+    }),
+  );
+
   it.effect("bills a proration as one invoice with one line item", () =>
     Effect.gen(function* () {
       const asked: Array<Record<string, unknown>> = [];
@@ -369,6 +408,7 @@ describe("Stripe as a paykit provider", () => {
     expect(provider.capabilities.has("invoice")).toBe(true);
     expect(provider.capabilities.has("refund")).toBe(true);
     expect(provider.capabilities.has("charge")).toBe(true);
+    expect(provider.capabilities.has("setup")).toBe(true);
     expect(provider.prices).toEqual({ pro: proPrice });
     expect(stripePriceOf({ tiers }, "pro")).toEqual(proPrice);
     expect(stripePriceOf({ tiers }, "scale")).toBe(null);
@@ -391,6 +431,7 @@ describe("Stripe as a paykit provider", () => {
 
       expect(provider.capabilities.has("refund")).toBe(false);
       expect(provider.capabilities.has("charge")).toBe(false);
+      expect(provider.capabilities.has("setup")).toBe(false);
 
       const error = yield* Effect.flip(
         runWith(
@@ -450,6 +491,7 @@ describe("Stripe as a paykit provider", () => {
     const client = distilledStripeClient({ secretKey: Redacted.make("sk_test_1") });
     expect(typeof client.createCheckoutSession).toBe("function");
     expect(typeof client.createBillingPortalSession).toBe("function");
+    expect(typeof client.createSetupSession).toBe("function");
     expect(typeof client.createInvoice).toBe("function");
     expect(typeof client.createRefund).toBe("function");
   });
@@ -458,6 +500,7 @@ describe("Stripe as a paykit provider", () => {
     const { bindings } = stripeClientBindings(recording(), { origin: "https://app.example.com" });
     expect(typeof bindings.createCheckoutSession).toBe("function");
     expect(typeof bindings.createCustomerSession).toBe("function");
+    expect(typeof bindings.createSetupSession).toBe("function");
     expect(typeof bindings.createInvoice).toBe("function");
   });
 });

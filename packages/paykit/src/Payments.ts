@@ -56,6 +56,12 @@ export const PaymentCapability = Schema.Literals([
   "portal",
   "usage",
   /**
+   * Open a hosted page where the customer adds a payment method without a
+   * purchase. A provider that cannot declares no `setup`, and asking for one is
+   * `ProviderCapabilityMissing` rather than a URL that cannot take a card.
+   */
+  "setup",
+  /**
    * Set a subscription item's quantity, which is how a seat change reaches the
    * vendor's next invoice. A provider that cannot declares no `quantity`, and
    * the seat change stays a local proration for `ChargeQuantityProration`.
@@ -120,6 +126,15 @@ export const Payments = Domain.ExternalSystem("Payments", {
   },
   createPortal: {
     args: { account: Schema.String },
+    success: { url: Schema.String },
+    error: [ProviderCapabilityMissing, PaymentDeclined],
+  },
+  setupPayment: {
+    args: {
+      account: Schema.String,
+      /** Idempotency key for the session, when the provider supports one. */
+      commandId: Schema.optionalKey(Schema.String),
+    },
     success: { url: Schema.String },
     error: [ProviderCapabilityMissing, PaymentDeclined],
   },
@@ -194,6 +209,11 @@ export interface PaymentsService {
   }) => Effect.Effect<{ readonly refundId: string }, PaymentError>;
   readonly createPortal: (args: {
     readonly account: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  readonly setupPayment: (args: {
+    readonly account: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
   readonly reportUsage: (args: {
     readonly account: string;

@@ -86,6 +86,26 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         Effect.mapError(declined("createBillingPortalSession")),
         Effect.provide(live),
       ),
+    // A setup session collects a method without a purchase: no line items, no
+    // subscription, just the customer and where to send them back to. The
+    // command id is Stripe's idempotency key, so a retried setup is the session
+    // it already opened rather than a second one.
+    createSetupSession: (request) =>
+      CreateCheckoutSession({
+        mode: "setup",
+        customer: request.customerExternalId,
+        client_reference_id: request.customerExternalId,
+        success_url: request.successUrl,
+        cancel_url: request.cancelUrl,
+      }).pipe(
+        (session) =>
+          request.commandId === undefined
+            ? session
+            : session.pipe(Stripe.withRequestOptions({ idempotencyKey: request.commandId })),
+        Effect.map((session) => ({ url: String(session.url) })),
+        Effect.mapError(declined("createSetupSession")),
+        Effect.provide(live),
+      ),
     // Stripe bills an arbitrary amount as an invoice with one line item. It is
     // created as a draft, given the proration's amount, then finalized with
     // `auto_advance`, which makes Stripe attempt the card. A decline surfaces

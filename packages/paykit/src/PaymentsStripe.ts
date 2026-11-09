@@ -30,6 +30,15 @@ export interface StripeBindings {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;
   /**
+   * Optional: open a hosted page where the customer adds a payment method
+   * without a purchase. A caller that cannot declares no `setup` capability.
+   */
+  readonly createSetupSession?: (args: {
+    readonly account: string;
+    /** Stable across retries; a provider that can dedupe must use it. */
+    readonly commandId?: string;
+  }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  /**
    * Optional: resolve a tier's `lookupKey` to the price that answers for it
    * right now. Required to configure a tier by key instead of by id.
    */
@@ -172,6 +181,7 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
   const capabilities: ReadonlySet<PaymentCapability> = new Set<PaymentCapability>([
     "checkout",
     "portal",
+    ...(props.bindings.createSetupSession === undefined ? [] : (["setup"] as const)),
     ...(props.bindings.createInvoice === undefined ? [] : (["invoice"] as const)),
     ...(props.bindings.charge === undefined ? [] : (["charge"] as const)),
     ...(props.bindings.createRefund === undefined ? [] : (["refund"] as const)),
@@ -295,6 +305,13 @@ export const PaymentsStripe = (props: StripeProps): MoneyProvider<"processor"> =
             }),
       createPortal: ({ account }: { account: string }) =>
         props.bindings.createCustomerSession({ account }),
+      setupPayment: ({ account, commandId }: { account: string; commandId?: string }) =>
+        props.bindings.createSetupSession === undefined
+          ? missing("setupPayment")
+          : props.bindings.createSetupSession({
+              account,
+              ...(commandId === undefined ? {} : { commandId }),
+            }),
       setQuantity: ({
         account: _account,
         subscription,

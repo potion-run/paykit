@@ -27,6 +27,12 @@ const recording = (asked: Array<Record<string, unknown>>): PolarClient => ({
 
       return { url: "https://polar.sh/portal/cs_1" };
     }),
+  createSetupSession: (request) =>
+    Effect.sync(() => {
+      asked.push(request as never);
+
+      return { url: "https://polar.sh/setup/cs_1" };
+    }),
   createInvoice: (request) =>
     Effect.sync(() => {
       asked.push(request as never);
@@ -197,6 +203,34 @@ describe("Polar as a paykit provider", () => {
     }),
   );
 
+  it.effect("opens a customer session to add a method without a purchase", () =>
+    Effect.gen(function* () {
+      const asked: Array<Record<string, unknown>> = [];
+
+      const provider = Polar({
+        accessToken: "polar_t",
+        origin: "https://app.example.com",
+        tiers,
+        client: recording(asked),
+      });
+
+      expect(provider.capabilities.has("setup")).toBe(true);
+
+      const session = yield* runWith(
+        provider,
+        Effect.gen(function* () {
+          return yield* (yield* Payments).setupPayment({ account: "acct_1" });
+        }),
+      );
+
+      expect(session.url).toContain("setup");
+      expect(asked[0]).toMatchObject({
+        customerExternalId: "acct_1",
+        returnUrl: "https://app.example.com/billing",
+      });
+    }),
+  );
+
   it.effect("a vendor failure is a declined payment the model can record", () =>
     Effect.gen(function* () {
       const provider = Polar({
@@ -271,6 +305,7 @@ describe("Polar as a paykit provider", () => {
 
     expect(provider.kind).toBe("merchant_of_record");
     expect(provider.capabilities.has("checkout")).toBe(true);
+    expect(provider.capabilities.has("setup")).toBe(true);
     // Polar owns tax and receipts; paykit still owns the entitlement.
     expect(provider.prices).toEqual({ pro: proPrice });
     expect(polarPriceOf({ tiers }, "pro")).toEqual(proPrice);
@@ -289,6 +324,7 @@ describe("Polar as a paykit provider", () => {
       const client = distilledPolarClient({ accessToken: Redacted.make("polar_t") });
       expect(typeof client.createCheckoutSession).toBe("function");
       expect(typeof client.createCustomerSession).toBe("function");
+      expect(typeof client.createSetupSession).toBe("function");
       expect(typeof client.createRefund).toBe("function");
     }),
   );
@@ -297,6 +333,7 @@ describe("Polar as a paykit provider", () => {
     const bindings = polarBindings(recording([]), { origin: "https://app.example.com" });
     expect(typeof bindings.createCheckoutSession).toBe("function");
     expect(typeof bindings.createCustomerSession).toBe("function");
+    expect(typeof bindings.createSetupSession).toBe("function");
   });
 
   it.effect("bills a one-off order when an invoice product is configured", () =>

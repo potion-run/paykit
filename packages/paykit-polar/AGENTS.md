@@ -51,7 +51,8 @@ const polar = Polar({
 | `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.BillingStack` |
 | `PolarTier` | where a tier lives in Polar, and the price the catalog states |
 | `PolarProps` | token, server, origin and the tier mapping |
-| `PolarClient` | the three Polar calls, as an interface a test stands in for |
+| `PolarClient` | the Polar calls, as an interface a test stands in for |
+| `PolarClient.createSetupSession` | the customer session where a customer adds a method, without a purchase |
 | `distilledPolarClient` | `@distilled.cloud/polar` behind those three calls |
 | `PolarPrices(id, { tiers })` | creates the products, meters and metered prices the catalog states, and returns `{ products, meters }` |
 | `soldTiers(tiers, sold)` | the pure join from catalog prices and created products to the `Polar({ tiers })` map |
