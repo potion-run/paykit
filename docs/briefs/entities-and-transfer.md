@@ -357,8 +357,8 @@ Replay rules:
   absent writes the customer's, exactly as today.
 
 **Versioning.** The library is unpublished, so there is no old state to decode and no deploy backfill.
-The SQL read table gains a nullable `entities TEXT` column in the additive `0002_entities`
-migration; the projection writes it and `doctor` compares it. No event is rewritten.
+The SQL read table has a nullable `entities TEXT` column from its first schema; the projection
+writes it and `doctor` compares it. No event is rewritten.
 
 ## The read model
 
@@ -430,7 +430,7 @@ Also:
   tenant layer still provides no operator verb.
 - `test/check/Entities.test.ts` — `check`/`track`/`balances` per scope; a pooled balance; an
   archived read is `allowed: false`; an unknown id is `EntityUnknown`.
-- `test/sql` — the `0002_entities` migration, an upsert/read round trip and `doctor` agreement.
+- `test/sql` — the `entities` column, an upsert/read round trip and `doctor` agreement.
 - `test/PublicSurface.test.ts` — the names above and no aliases.
 
 ## Files to touch, in dependency order
@@ -449,7 +449,7 @@ Also:
 | 10 | `packages/paykit/src/Subscription/Entitlements.view.ts` | entity scope state, the four event handlers, scoped row handlers, `pooled` row |
 | 11 | `packages/paykit/src/Subscription/BillingState.view.ts` | `entities` list, three handlers |
 | 12 | `packages/paykit/src/Subscription/BillingRead.projection.ts` | `entities` on the row |
-| 13 | `packages/paykit/src/BillingReadStore.ts`, `Store/SqlEventLog.ts`, `Store/Migrations/index.ts` | `entities` schema, column, decode/encode, `0002_entities` |
+| 13 | `packages/paykit/src/BillingReadStore.ts`, `Store/SqlEventLog.ts`, `Store/Migrations/index.ts` | `entities` schema, column, decode/encode |
 | 14 | `packages/paykit/src/Doctor.ts` | `rowFromState` carries `entities` |
 | 15 | `packages/paykit/src/Check.ts`, `Billing/Check.binding.ts` | `entityId?`, entity state, archived read |
 | 16 | `packages/paykit/src/Billing/Entities.binding.ts` | `Entities`, requests, refusals, `EntitiesRead` |

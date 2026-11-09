@@ -23,7 +23,7 @@ import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
 import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
-const shipped = ["0001_init", "0002_entities"] as const;
+const shipped = ["0001_init"] as const;
 
 const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
   sql.all<{

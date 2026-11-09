@@ -213,7 +213,7 @@ The next work is the API migration, not another command. The order is:
    attached scope's plan and leaves its lifetime grants. The reads carry the scope: `Balance.scope`,
    `BalanceSource.scope` / `pooled`, `balanceOfEntity`, `Entitlements.entities`,
    `BillingStateView.entities`, `Customer.entities`, `BillingReadRow.entities` and the additive
-   `0002_entities` migration. The surface is in too: `Paykit.Entities` and
+   entities column. The surface is in too: `Paykit.Entities` and
    `Paykit.TransferBalance` with their layers, `entityId` on `Balances`, `Attach`, `Update` and the
    previews, the four Api commands, `Atom.entities` / `createEntity` / `updateEntity` /
    `archiveEntity` / `transferBalance`, and `check` for a scope over both transports. Tests:
@@ -272,7 +272,7 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   item, the transfer and the archive. The code has `ScopeState`/`EntityRecord` on both state tags,
   the four commands (`AttachEntity`, `UpdateEntity`, `ArchiveEntity`, `TransferBalance`), `entity`
   on the four scoped commands, the per-scope close, and the scoped read model down to the
-  `0002_entities` SQL column. The `Entities` / `TransferBalance` bindings and layers, `entityId` on
+  entities SQL column. The `Entities` / `TransferBalance` bindings and layers, `entityId` on
   `Balances` / `Attach` / `Update` / previews, the `Atom` verbs and the Api/SQL tests landed after
   it; the remaining rows are the property generators.
 
