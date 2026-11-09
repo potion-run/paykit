@@ -179,6 +179,18 @@ export const TierCustomize = Schema.Struct({
 
 export type TierCustomize = typeof TierCustomize.Type;
 
+/** An optional trial a plan offers when it is attached. */
+export const PlanTrial = Schema.Struct({
+  /** How long the trial lasts. Absent means the plan's own interval. */
+  days: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))),
+  /** Whether a payment method is required before the trial starts. */
+  cardRequired: Schema.optionalKey(Schema.Boolean),
+  /** What happens when the trial ends. */
+  onEnd: Schema.optionalKey(Schema.Literals(["bill", "revert"])),
+});
+
+export type PlanTrial = typeof PlanTrial.Type;
+
 /**
  * A purchasable bundle: an id, what it grants, and optionally what it costs.
  * The catalog never carries provider ids, so the same tier runs on every
@@ -187,6 +199,14 @@ export type TierCustomize = typeof TierCustomize.Type;
 export const Tier = Schema.Struct({
   id: TierId,
   name: Schema.optionalKey(Schema.String),
+  /** The plan group a move replaces within. Absent means the default group. */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether this plan stacks alongside the current plan instead of replacing it. */
+  addOn: Schema.optionalKey(Schema.Boolean),
+  /** Whether this is the plan an account gets when it has none. */
+  isDefault: Schema.optionalKey(Schema.Boolean),
+  /** A trial the plan offers when it is attached. */
+  trial: Schema.optionalKey(PlanTrial),
   /** @default "subscription" */
   kind: Schema.optionalKey(TierKind),
   price: Schema.optionalKey(Price),
@@ -222,6 +242,14 @@ export interface SubscriptionTierInput {
   readonly id: string;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
+  /** The group a move replaces within. */
+  readonly group?: string;
+  /** Whether this plan stacks beside the current plan. */
+  readonly addOn?: boolean;
+  /** Whether this is the plan an account gets when it has none. */
+  readonly isDefault?: boolean;
+  /** A trial the plan offers when attached. */
+  readonly trial?: PlanTrial;
   /** @default "subscription" */
   readonly kind?: "subscription";
   /** Omit for a free subscription tier. */
@@ -253,6 +281,10 @@ export interface OneOffTierInput {
   readonly id: string;
   /** Human-facing label for pricing pages and the console. */
   readonly name?: string;
+  readonly group?: string;
+  readonly addOn?: boolean;
+  readonly isDefault?: boolean;
+  readonly trial?: PlanTrial;
   readonly kind: "one_off";
   /** A pack is bought, so it must state a price. */
   readonly price: Price;
@@ -276,6 +308,10 @@ export interface OneOffTierInput {
 export interface VariantTierInput {
   readonly id: string;
   readonly name?: string;
+  readonly group?: string;
+  readonly addOn?: boolean;
+  readonly isDefault?: boolean;
+  readonly trial?: PlanTrial;
   readonly kind?: "subscription";
   readonly price?: Price;
   readonly credits?: number;
@@ -340,6 +376,10 @@ export const tier = (input: TierInput): Tier => {
   return {
     id: input.id as TierId,
     ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.group === undefined ? {} : { group: input.group }),
+    ...(input.addOn === undefined ? {} : { addOn: input.addOn }),
+    ...(input.isDefault === undefined ? {} : { isDefault: input.isDefault }),
+    ...(input.trial === undefined ? {} : { trial: input.trial }),
     ...(input.kind === undefined ? {} : { kind }),
     ...(input.price === undefined ? {} : { price: { ...input.price } }),
     ...(input.credits === undefined ? {} : { credits: input.credits }),

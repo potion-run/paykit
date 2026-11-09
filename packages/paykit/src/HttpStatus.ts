@@ -31,6 +31,9 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     case "WebhookInvalid":
     case "CatalogInvalid":
     case "CatalogMismatch":
+    case "NotSubscribed":
+    case "StandingEnded":
+    case "PlanOperationUnsupported":
       return 400;
     // The caller is not signed in, or the delivery is not signed by the vendor.
     case "Unauthenticated":

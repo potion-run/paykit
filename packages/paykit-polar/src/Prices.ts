@@ -6,7 +6,7 @@ import {
   type Price,
   type Pricing,
   type PricingValue,
-  type TierKind,
+  type PlanKind,
   type UnitPrice,
 } from "@potion.run/paykit";
 import type { Output } from "alchemy/Output";
@@ -46,7 +46,7 @@ export interface ProductDeclaration {
   /** The tier the product belongs to, and the key of the returned map. */
   readonly tier: string;
   /** A subscription repeats; a one-off pack is a single payment. */
-  readonly kind: TierKind;
+  readonly kind: PlanKind;
   /** Logical id of the product resource. */
   readonly productResource: string;
   /** `paykit:<stage>:<tier>` — the name, which carries the stage. */
@@ -64,7 +64,7 @@ export type TierPrice =
   | Price
   | {
       readonly price: Price;
-      readonly kind?: TierKind;
+      readonly kind?: PlanKind;
       /**
        * One unit price per billable feature. Polar embeds a metered price in
        * the product, so a change to any unit price is a new product.
@@ -78,7 +78,7 @@ const normalize = (
   value: TierPrice,
 ): {
   readonly price: Price;
-  readonly kind: TierKind;
+  readonly kind: PlanKind;
   readonly usage: Readonly<Record<string, PricingValue>>;
   readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>

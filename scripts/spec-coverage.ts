@@ -1,19 +1,21 @@
-// Holds the paykit model's coverage table against the commands it claims to
+// Holds the paykit models' coverage tables against the commands they claim to
 // cover.
 //
 //   pnpm spec:coverage
 //
-// `specs/paykit/paykit.qnt` models a protocol, not a file, so there is no one
-// action per command and never will be: two commands can be one action
-// (`ScheduleCancellation` and `Expire` both end the standing) and a command can
-// be deliberately out of scope for a slice. The table below is that decision
-// written down, and this gate fails when the code and the table disagree in
-// either direction:
+// `specs/paykit` is one model per protocol, not one per file: `paykit.qnt` is
+// the spend path, `standing.qnt` the phase machine, `windows.qnt` the clocks the
+// period does not own, and `money.qnt` the money facts. A command can be
+// modelled in more than one protocol (a purchase is a phase reset and a pool
+// grant), and a command can be deliberately out of every slice. The table below
+// is that decision written down; this gate fails when the code and the table
+// disagree in either direction:
 //
 //   - a new `*.command.ts` with no row, so a command cannot land unsorted;
-//   - a row naming an action the model does not define, so a rename is caught;
-//   - an `action` in the model that neither a row nor `MACHINE_ACTIONS` names,
-//     so an action cannot be silently dropped.
+//   - a row naming a spec or action the model does not define, so a rename is
+//     caught;
+//   - an action in a model that neither a row nor `MACHINE_ACTIONS` names, so an
+//     action cannot be silently dropped.
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
@@ -22,63 +24,117 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-/** Where the model and the commands it grounds live. */
-const SPEC = "specs/paykit/paykit.qnt";
+/** The commands whose moves the models ground. */
 const COMMANDS = "packages/paykit/src/Subscription";
+
+const SPEC_FILES = {
+  paykit: "specs/paykit/paykit.qnt",
+  standing: "specs/paykit/standing.qnt",
+  windows: "specs/paykit/windows.qnt",
+  plans: "specs/paykit/plans.qnt",
+  money: "specs/paykit/money.qnt",
+} as const;
+
+type SpecName = keyof typeof SPEC_FILES;
+
+const isSpecName = (value: string): value is SpecName => Object.hasOwn(SPEC_FILES, value);
+
+/** The actions one command is modelled by, per protocol. */
+type Coverage = Partial<Record<SpecName, ReadonlyArray<string>>>;
 
 /**
  * The command behind each modelled action, and why everything else is out. A
- * row is a claim about this slice; moving a command in is a change to
- * `paykit.qnt` first.
+ * row is a claim about the slices; moving a command in is a change to a model
+ * first.
  */
 const SPEC_COVERAGE = {
-  // Modelled. The value is the action in `paykit.qnt`.
-  ClosePeriod: "closePeriod",
-  ConsumeCredits: "consumeCredits",
-  EnterGrace: "enterGrace",
-  Expire: "cancelStanding",
-  Hold: "hold",
-  HoldElapsed: "expireHold",
-  PeriodEnded: "closePeriod",
-  Recover: "recover",
-  ReleaseHold: "releaseHold",
-  ScheduleCancellation: "cancelStanding",
-  SettleHold: "settleHold",
-  Subscribe: "subscribe",
-  TrackUsage: "trackUsage",
+  // ── the spend path ─────────────────────────────────────────────────────────
+  Hold: { paykit: ["hold"] },
+  HoldElapsed: { paykit: ["expireHold"] },
+  ReleaseHold: { paykit: ["releaseHold"] },
+  SettleHold: { paykit: ["settleHold"] },
+  TrackUsage: { paykit: ["trackUsage"], windows: ["track"] },
+  ConsumeCredits: {
+    paykit: ["consumeCredits"],
+    standing: ["spendCredits"],
+    windows: ["spendCredits"],
+  },
 
-  // Out of this slice, with the reason. Every one of these moves a counter the
-  // model does not have yet, or needs a vendor the model must not know about.
+  // ── the phase machine ──────────────────────────────────────────────────────
+  StartTrial: { standing: ["startTrial"] },
+  Subscribe: { paykit: ["subscribe"], standing: ["subscribe"], plans: ["attach"] },
+  ExtendTrial: { standing: ["extendTrial"] },
+  EnterGrace: { paykit: ["enterGrace"], standing: ["enterGrace"] },
+  RecordPayment: { standing: ["recordPayment"], money: ["charge"] },
+  RecordPaymentFailure: { standing: ["failPayment"] },
+  Recover: { paykit: ["recover"], standing: ["recover"] },
+  GraceElapsed: { standing: ["graceElapsed"], windows: ["endStanding"] },
+  Expire: { paykit: ["cancelStanding"], standing: ["expire"], windows: ["endStanding"] },
+  CancelImmediately: { plans: ["cancelImmediately"] },
+  ScheduleCancellation: {
+    paykit: ["cancelStanding"],
+    standing: ["scheduleCancellation"],
+    plans: ["cancelAtBoundary"],
+  },
+  Resume: { standing: ["resume"], plans: ["uncancel"] },
+  ScheduleTierChange: { standing: ["scheduleTier"], plans: ["attach"] },
+  WithdrawTierChange: { standing: ["withdrawTier"], plans: ["uncancel"] },
+  ChangeTier: {
+    standing: ["changeTier"],
+    plans: ["attach"],
+    money: ["changeTier"],
+    windows: ["changeTierCap"],
+  },
+  DunningRetry: { standing: ["dunningRung"] },
+
+  // ── the clocks and the quantity ────────────────────────────────────────────
+  ClosePeriod: {
+    paykit: ["closePeriod"],
+    standing: ["closePeriod"],
+    windows: ["closePeriod"],
+    plans: ["close"],
+  },
+  PeriodEnded: {
+    paykit: ["closePeriod"],
+    standing: ["closePeriod"],
+    windows: ["closePeriod"],
+    plans: ["close"],
+  },
+  ResetAllowance: { windows: ["resetWindow"] },
+  // Occupancy is the second half of the seat API; the command lands with it.
+  SetQuantity: { windows: ["setQuantity", "setUsage"], money: ["setQuantity"] },
+  PurchaseCredits: {
+    standing: ["buyTopUp"],
+    windows: ["buyTopUp"],
+    money: ["charge"],
+  },
+  RecordTopUpFailure: { standing: ["failTopUp"], windows: ["failTopUp"] },
+  RetryTopUp: { standing: ["topUpRung"], windows: ["fireRung"] },
+  TopUpCooldownElapsed: { windows: ["cooldownElapsed"] },
+
+  // ── money facts ────────────────────────────────────────────────────────────
+  RecordProrationInvoice: { money: ["invoiceProration"] },
+  QuantityProration: { money: ["invoiceQuantity"] },
+  Refund: { money: ["refund"] },
+  ReverseRefund: { money: ["reverse"] },
+
+  // ── out of every slice, with the reason ────────────────────────────────────
   AttachProviderRef: null, // provider ids, never read by `decide`
-  ChangeTier: null, // tier state, proration and the two ceilings — next slice
-  DunningRetry: null, // the dunning ladder needs a payment sitting
-  ExtendTrial: null, // the model has no trial
-  GraceElapsed: null, // the model's grace window has no deadline
-  GrantCredits: null, // a second grant path; the model grants once, at activation
-  PurchaseCredits: null, // a one-off pack, which needs the catalog to price
-  QuantityProration: null, // quantity proration — next slice
-  RecordPayment: null, // the payment plane, not the entitlement plane
-  RecordPaymentFailure: null, // the payment plane
-  RecordProrationInvoice: null, // the proration money plane
-  RecordTopUpFailure: null, // auto top-up
-  Refund: null, // the money plane and the refund ceiling
-  ResetAllowance: null, // a window the period does not own: a second clock, next slice
-  Resume: null, // a terminal standing is replaced, not moved (ADR 0020)
-  RetryTopUp: null, // auto top-up
-  ReverseRefund: null, // the money plane
-  ScheduleTierChange: null, // tier state — next slice
-  SetQuantity: null, // quantities (seats) — next slice
-  StartTrial: null, // the model has no trial
-  TopUpCooldownElapsed: null, // auto top-up
-  WithdrawTierChange: null, // tier state — next slice
-} as const satisfies Readonly<Record<string, string | null>>;
+  GrantCredits: null, // goodwill, not a price or a fact about a sale
+} as const satisfies Readonly<Record<string, Coverage | null>>;
 
 /**
- * Actions that are part of the machine rather than of the protocol: `init` and
- * `step` are the entry points, and `tick` is the platform clock the policy
- * scheduler runs on, not a command.
+ * Actions that are part of a machine rather than of the protocol: the entry
+ * points, the clock a policy runs on, and a scheduler's choice among queued
+ * rungs. They are named here rather than in a command row.
  */
-const MACHINE_ACTIONS: ReadonlyArray<string> = ["init", "step", "tick"];
+const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
+  paykit: ["init", "step", "tick"],
+  standing: ["init", "step", "tick"],
+  windows: ["init", "step", "tick", "fireAnyRung"],
+  plans: ["init", "step", "tick", "cancelImmediately"],
+  money: ["init", "step"],
+};
 
 class SpecCoverageViolated extends Data.TaggedError("SpecCoverageViolated")<{
   readonly problems: ReadonlyArray<string>;
@@ -99,12 +155,46 @@ const coverage = Effect.fn("SpecCoverage.check")(function* () {
   const path = yield* Path.Path;
 
   const root = path.resolve(import.meta.dirname, "..");
-  const spec = yield* fs.readFileString(path.join(root, SPEC));
-  const actions = actionsIn(spec);
-  const commands = commandNamesIn(yield* fs.readDirectory(path.join(root, COMMANDS)));
-  const modelled = new Set<string>(Object.values(SPEC_COVERAGE).filter((row) => row !== null));
+  const actions = new Map<SpecName, ReadonlySet<string>>();
 
+  for (const name of Object.keys(SPEC_FILES)) {
+    if (!isSpecName(name)) continue;
+    const text = yield* fs.readFileString(path.join(root, SPEC_FILES[name]));
+
+    actions.set(name, actionsIn(text));
+  }
+
+  const commands = commandNamesIn(yield* fs.readDirectory(path.join(root, COMMANDS)));
+  const named = new Set<string>();
   const problems: Array<string> = [];
+
+  for (const [command, coverageOfCommand] of Object.entries(SPEC_COVERAGE)) {
+    if (coverageOfCommand === null) continue;
+
+    for (const [name, actionsOfCommand] of Object.entries(coverageOfCommand)) {
+      if (!isSpecName(name)) {
+        problems.push(`SPEC_COVERAGE: "${command}" names unknown spec "${name}"`);
+        continue;
+      }
+
+      const defined = actions.get(name);
+
+      if (defined === undefined) {
+        problems.push(`SPEC_COVERAGE: "${command}" names unknown spec "${name}"`);
+        continue;
+      }
+
+      for (const action of actionsOfCommand ?? []) {
+        named.add(`${name}:${action}`);
+
+        if (!defined.has(action)) {
+          problems.push(
+            `SPEC_COVERAGE: "${command}" names "${action}", which ${SPEC_FILES[name]} does not define`,
+          );
+        }
+      }
+    }
+  }
 
   for (const command of [...commands].sort()) {
     if (!(command in SPEC_COVERAGE)) {
@@ -118,15 +208,11 @@ const coverage = Effect.fn("SpecCoverage.check")(function* () {
     }
   }
 
-  for (const action of modelled) {
-    if (!actions.has(action)) {
-      problems.push(`SPEC_COVERAGE names "${action}", which ${SPEC} does not define`);
+  for (const [name, defined] of actions) {
+    for (const action of defined) {
+      if (named.has(`${name}:${action}`) || MACHINE_ACTIONS[name].includes(action)) continue;
+      problems.push(`${SPEC_FILES[name]}: action "${action}" has no row in SPEC_COVERAGE`);
     }
-  }
-
-  for (const action of [...actions].sort()) {
-    if (modelled.has(action) || MACHINE_ACTIONS.includes(action)) continue;
-    problems.push(`${SPEC}: action "${action}" has no row in SPEC_COVERAGE`);
   }
 
   if (problems.length > 0) {
@@ -135,9 +221,11 @@ const coverage = Effect.fn("SpecCoverage.check")(function* () {
     return yield* new SpecCoverageViolated({ problems });
   }
 
+  const modelled = Object.values(SPEC_COVERAGE).filter((row) => row !== null).length;
+
   yield* Console.log(
-    `Checked ${commands.size} commands against ${actions.size} actions: ` +
-      `${modelled.size} modelled, ${commands.size - modelled.size} out of this slice with a reason.`,
+    `Checked ${commands.size} commands against ${actions.size} specs: ` +
+      `${modelled} modelled, ${commands.size - modelled} out of every slice with a reason.`,
   );
 });
 

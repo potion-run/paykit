@@ -1,5 +1,10 @@
 # 0002 — Credits are the unit of account, and the catalog prices them
 
+> **Amended by [0037](./0037-a-lifetime-grant-is-a-balance-source.md).** A plan's credits are a
+> plan source that expires or is replaced with the plan; a lifetime grant is a separate `one_off`
+> source. `creditsExpire: "never"` is not a subscription plan-item setting.
+
+
 - **Status:** Accepted
 - **Date:** 2026-11-04
 - **Supersedes:** none

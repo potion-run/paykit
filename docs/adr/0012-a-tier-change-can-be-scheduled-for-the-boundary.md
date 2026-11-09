@@ -1,5 +1,9 @@
 # 0012 — A tier change can be scheduled for the boundary
 
+> **Amended by [0037](./0037-a-lifetime-grant-is-a-balance-source.md).** A scheduled change replaces
+> the old plan's balance source and grants the new plan's source. Lifetime sources survive; a
+> plan's unused allowance does not.
+
 - **Status:** Accepted
 - **Date:** 2026-11-05
 - **Follows:** [0009](./0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md), [0011](./0011-a-tier-change-cannot-move-into-a-ceiling-already-passed.md)

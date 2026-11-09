@@ -45,12 +45,12 @@ export const TopUpTerms = Schema.Struct({
 The author-facing input is the same shape, and `tier()` copies it:
 
 ```ts
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   price: { amount: 1_900, currency: "usd", interval: "month" },
   credits: 50_000,
   topUp: { threshold: 5_000, cooldown: Duration.hours(1), pack: "credits_100k" },
-  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
 });
 ```
 

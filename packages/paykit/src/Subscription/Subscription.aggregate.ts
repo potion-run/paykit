@@ -26,6 +26,7 @@ import {
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
+import { CancelImmediately, SubscriptionCanceled } from "./CancelImmediately.command.ts";
 import {
   ChangeTier,
   DowngradeBelowCeiling,
@@ -140,6 +141,7 @@ import {
   remainingAfterSpending,
   nextResetAt,
   remainingOf,
+  openHoldsOf,
   refundedOf,
   refundedWith,
   refundOfProviderId,
@@ -591,6 +593,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     RetryTopUp,
     TopUpCooldownElapsed,
     ConsumeCredits,
+    CancelImmediately,
     ScheduleCancellation,
     ScheduleTierChange,
     WithdrawTierChange,
@@ -701,6 +704,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ...(command.topUp === undefined ? {} : { topUp: command.topUp }),
             rates: command.rates,
             ...(command.price === undefined ? {} : { price: command.price }),
+            ...(command.chargeId === undefined ? {} : { chargeId: command.chargeId }),
             period,
             previousCurrency: currentCurrency,
             statusAfter: "active",
@@ -1071,6 +1075,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new PaymentRecorded({
           amount: command.amount,
           currency: command.currency,
+          ...(command.chargeId === undefined ? {} : { chargeId: command.chargeId }),
           statusAfter: "active",
         }),
       ];
@@ -1605,6 +1610,48 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         }),
       ];
     },
+    CancelImmediately: (state, command, { id, commandId, now }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
+      if (isTerminalStatus(state.status)) {
+        return new StandingEnded({ account: id, status: state.status });
+      }
+
+      const refund = command.refund;
+
+      if (refund !== undefined && refund.amount > refundableOf(state, refund.currency)) {
+        return new RefundExceedsCharged({
+          currency: refund.currency,
+          charged: refundableOf(state, refund.currency) + (refundedOf(state)[refund.currency] ?? 0),
+          refunded: refundedOf(state)[refund.currency] ?? 0,
+          requested: refund.amount,
+        });
+      }
+
+      const released = openHoldsOf(state).map((hold) => releaseEvent(state, hold, "released"));
+      const expiring = expiringCreditsOf(state);
+
+      return [
+        ...released,
+        new SubscriptionCanceled({ canceledAt: now, statusAfter: "canceled" }),
+        ...(expiring > 0
+          ? [new CreditsExpired({ amount: expiring, balanceAfter: state.credits - expiring })]
+          : []),
+        ...(refund === undefined
+          ? []
+          : [
+              new RefundRecorded({
+                chargeId: refund.chargeId,
+                refundId: refund.refundId,
+                amount: refund.amount,
+                currency: refund.currency,
+                commandId,
+                ...(refund.reason === undefined ? {} : { reason: refund.reason }),
+                refundedAfter: (refundedOf(state)[refund.currency] ?? 0) + refund.amount,
+              }),
+            ]),
+      ];
+    },
     ScheduleTierChange: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
 
@@ -1771,6 +1818,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       standingFrom(event, state, {
         trialUsed: state._tag === "Subscribed" ? state.trialUsed : false,
       }),
+    SubscriptionCanceled: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { pendingTier: _pending, ...rest } = state;
+
+      return {
+        ...rest,
+        status: event.statusAfter,
+        cancelAtPeriodEnd: false,
+        period: { ...state.period, end: event.canceledAt },
+      };
+    },
     TierChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
 
@@ -1921,6 +1979,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         graceUntil: undefined,
         dunningAttempts: 0,
         charged: chargedWith(state, event.currency, event.amount),
+        ...(event.chargeId === undefined ? {} : { lastChargeId: event.chargeId }),
       };
     },
     PaymentFailed: (state, event, envelope) =>

@@ -109,6 +109,43 @@ describe("the request handler", () => {
     }),
   );
 
+  it.live("serves the plan operations at their own paths", () =>
+    Effect.gen(function* () {
+      const attached = yield* ask({ accountOf, surfaces: "none" }, "/plans/attach", {
+        method: "POST",
+        body: JSON.stringify({ planId: "free", idempotencyKey: "h-attach" }),
+      });
+
+      expect(attached.status).toBe(200);
+      expect(attached.body).toMatchObject({ outcome: "activated", planId: "free" });
+
+      const preview = yield* ask({ accountOf, surfaces: "none" }, "/plans/preview-attach", {
+        method: "POST",
+        body: JSON.stringify({ planId: "free" }),
+      });
+
+      expect(preview.status).toBe(200);
+      expect(preview.body).toMatchObject({ outcome: "activated", planId: "free" });
+    }),
+  );
+
+  it.live("refuses a plan request with no account or a bad body", () =>
+    Effect.gen(function* () {
+      const anonymous = yield* ask({ accountOf: () => null, surfaces: "none" }, "/plans/attach", {
+        method: "POST",
+        body: JSON.stringify({ planId: "free", idempotencyKey: "h-anon" }),
+      });
+
+      expect(anonymous.status).toBe(401);
+
+      const invalid = yield* ask({ accountOf, surfaces: "none" }, "/plans/attach", {
+        method: "POST",
+        body: JSON.stringify({ planId: "free" }),
+      });
+
+      expect(invalid.status).toBe(400);
+    }),
+  );
   it.live("mounts the two Api surfaces, and only the ones it was asked for", () =>
     Effect.gen(function* () {
       const tenantOnly = yield* ask({ accountOf, surfaces: "tenant" }, "/admin/absent");

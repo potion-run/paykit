@@ -2,10 +2,10 @@ import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
 import { NodeHttpServer } from "@effect/platform-node";
 import {
-  allowance,
+  planItem,
   catalog,
   messages,
-  tier,
+  plan,
   Actor,
   system,
   BillingAdminInProcess,
@@ -37,7 +37,7 @@ import * as Layer from "effect/Layer";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as RpcServer from "effect/rpc/RpcServer";
 
-const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+const freeTier = plan({ id: "free", grants: [planItem(messages, { included: 100 })] });
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
 
 const Model = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
@@ -161,7 +161,7 @@ it.live("refuses a tenant session on the console reads", () =>
   }).pipe(Effect.provide(World)),
 );
 
-it.live("routes the tier-change RPC through the same server group", () =>
+it.live("routes the plan-change RPC through the same server group", () =>
   Effect.gen(function* () {
     const reads = yield* AdminReadsHandlers;
     const changes = yield* AdminChangeTierHandlers;

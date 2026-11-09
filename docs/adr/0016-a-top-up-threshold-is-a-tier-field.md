@@ -26,12 +26,12 @@ next decision and left the field out on purpose.
 integer on a subscription tier:
 
 ```ts
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   price: { amount: 1_900, currency: "usd", interval: "month" },
   credits: 50_000,
   topUp: 5_000,
-  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
 });
 ```
 

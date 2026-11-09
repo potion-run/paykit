@@ -1,4 +1,4 @@
-import { scheduleTierChangeInputOf } from "@potion.run/paykit";
+import { schedulePlanChangeInputOf } from "@potion.run/paykit";
 import { AdminAction } from "@potion.run/paykit/Admin";
 import { BillingAdmin } from "@potion.run/paykit/Foldkit";
 import type { Catalog, AccountId } from "@potion.run/paykit/Read";
@@ -360,7 +360,7 @@ export const OperatorActions = operatorActionTable({
       // No catalog, or no such tier: send an empty grant so the model answers
       // `TierNotInCatalog` instead of the console guessing.
       const input =
-        catalog === null ? null : scheduleTierChangeInputOf(catalog, intent.tier, currency);
+        catalog === null ? null : schedulePlanChangeInputOf(catalog, intent.tier, currency);
 
       return Command.mapMessage(
         BillingAdmin.ScheduleTierChange({

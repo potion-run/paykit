@@ -8,6 +8,8 @@ import { AccountId } from "./Subscription.id.ts";
 export class PaymentRecorded extends Domain.Event("PaymentRecorded", {
   amount: Schema.Int,
   currency: Schema.String,
+  /** The provider's charge, when the payment reports one. */
+  chargeId: Schema.optionalKey(Schema.String),
   statusAfter: Schema.Literal("active"),
 }) {}
 
@@ -17,6 +19,7 @@ export class RecordPayment extends Domain.Command("RecordPayment", {
   input: {
     amount: Schema.Int,
     currency: Schema.String,
+    chargeId: Schema.optionalKey(Schema.String),
   },
   events: [PaymentRecorded],
   rejects: [NotInGrace],

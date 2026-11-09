@@ -10,6 +10,7 @@ import {
   type Allowance,
 } from "./Allowance.ts";
 import { CreditRateCards, Feature, RateCard, cardFromRates } from "./Feature.ts";
+import type { Plan } from "./Plan.ts";
 import { currencyOfPricing, unitsOf, type Pricing } from "./Pricing.ts";
 import { CreditsExpire, Price, Tier, priceFor, type TierKind, type TopUpTerms } from "./Tier.ts";
 
@@ -30,7 +31,10 @@ export type Catalog = typeof Catalog.Type;
 /** A catalog as an author writes it. */
 export interface CatalogInput {
   readonly features: ReadonlyArray<Feature>;
-  readonly tiers: ReadonlyArray<Tier>;
+  /** The internal spelling; `plans` is the public alias. */
+  readonly tiers?: ReadonlyArray<Tier>;
+  /** The public plan list. One of `plans` or `tiers` is required. */
+  readonly plans?: ReadonlyArray<Plan>;
 }
 
 /** The same feature id was declared twice. */
@@ -764,7 +768,10 @@ const featureCardOf = (feature: Feature): Result.Result<RateCard | null, Catalog
  * ```
  */
 export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, CatalogError> => {
-  const decoded = Schema.decodeResult(Catalog)(input);
+  const decoded = Schema.decodeResult(Catalog)({
+    ...input,
+    tiers: input.tiers ?? input.plans ?? [],
+  });
 
   if (Result.isFailure(decoded)) {
     return Result.fail(new CatalogInvalid({ message: decoded.failure.message }));
@@ -1092,6 +1099,9 @@ export const catalog = (input: CatalogInput): Effect.Effect<Catalog, CatalogErro
 export const tierOf = (catalog: Catalog, tierId: string): Tier | null =>
   catalog.tiers.find((tier) => tier.id === tierId) ?? null;
 
+/** The public spelling of `tierOf`. */
+export const planOf = tierOf;
+
 /** A declared feature, or `null` when the catalog has no such feature. */
 export const featureOf = (catalog: Catalog, featureId: string): Feature | null =>
   catalog.features.find((feature) => feature.id === featureId) ?? null;
@@ -1205,3 +1215,9 @@ export const allowancesOf = (catalog: Catalog, tierId: string): Allowances | nul
 
   return allowances;
 };
+
+/** The public spelling of `allowancesOf`. */
+export const planItemsOf = allowancesOf;
+
+/** The public spelling of `tierTermsOf`. */
+export const planTermsOf = tierTermsOf;

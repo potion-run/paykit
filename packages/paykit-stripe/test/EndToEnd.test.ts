@@ -6,14 +6,14 @@ import {
   Model as PaykitModel,
   PaykitHandlers,
   Subscription,
-  allowance,
-  allowancesOf,
+  planItem,
+  planItemsOf,
   catalog,
   catalogLayer,
   messages,
   prorate,
   system,
-  tier,
+  plan,
   ChangeTierCommand,
 } from "@potion.run/paykit";
 // These suites drive the implementation modules the binding layers delegate to:
@@ -32,20 +32,20 @@ import { stripeWebhook } from "../src/Webhooks.ts";
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const scalePrice = { amount: 9900, currency: "usd", interval: "month" as const };
 
-const proTier = tier({
+const proTier = plan({
   id: "pro",
   price: proPrice,
-  grants: [allowance(messages, { included: 2_000 })],
+  grants: [planItem(messages, { included: 2_000 })],
 });
 
-const scaleTier = tier({
+const scaleTier = plan({
   id: "scale",
   price: scalePrice,
-  grants: [allowance(messages, { included: 9_000 })],
+  grants: [planItem(messages, { included: 9_000 })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, scaleTier] }));
-const scale = allowancesOf(testCatalog, "scale")!;
+const scale = planItemsOf(testCatalog, "scale")!;
 const account = "acct_e2e";
 const secret = "whsec_stripe_e2e";
 

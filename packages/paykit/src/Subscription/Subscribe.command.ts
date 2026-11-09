@@ -38,6 +38,8 @@ export class SubscriptionActivated extends Domain.Event("SubscriptionActivated",
   price: Schema.optionalKey(Price),
   /** The next boundary of every allowance that runs on its own schedule. */
   resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
+  /** The provider's charge this activation was paid by, when it reported one. */
+  chargeId: Schema.optionalKey(Schema.String),
   statusAfter: Schema.Literal("active"),
 }) {}
 
@@ -54,6 +56,8 @@ export class Subscribe extends Domain.Command("Subscribe", {
     topUp: Schema.optionalKey(TopUpTerms),
     rates: CreditRateCards,
     anchorTz: Schema.optionalKey(Schema.String),
+    /** The provider's charge this activation was paid by, when it reported one. */
+    chargeId: Schema.optionalKey(Schema.String),
   },
   events: [SubscriptionActivated],
   rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch, AlreadySubscribed],

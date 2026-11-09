@@ -26,6 +26,12 @@ import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.comm
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
 import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 import { webhookOperation } from "../Webhooks.ts";
+import {
+  AttachInProcess,
+  PreviewAttachInProcess,
+  PreviewUpdateInProcess,
+  UpdateInProcess,
+} from "./Attach.binding.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
@@ -98,7 +104,7 @@ const viewTier = (
  * @product Usage
  * @provides Paykit.TrackUsage
  */
-export const BillingInProcess = Layer.mergeAll(
+const BillingCore = Layer.mergeAll(
   Layer.effect(
     TrackUsage,
     Effect.gen(function* () {
@@ -678,4 +684,12 @@ export const BillingInProcess = Layer.mergeAll(
       });
     }),
   ),
+);
+
+export const BillingInProcess = Layer.mergeAll(
+  BillingCore,
+  AttachInProcess.pipe(Layer.provide(BillingCore)),
+  UpdateInProcess.pipe(Layer.provide(BillingCore)),
+  PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),
+  PreviewUpdateInProcess.pipe(Layer.provide(BillingCore)),
 );

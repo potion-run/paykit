@@ -438,6 +438,11 @@ export class BillingState extends Domain.View("BillingState", {
       ),
     SubscriptionExpired: (view, _event, context): BillingStateView =>
       withAccount({ ...view, status: "expired" }, context),
+    SubscriptionCanceled: (view, event, context): BillingStateView =>
+      withAccount(
+        { ...view, status: "canceled", periodEnd: event.canceledAt, cancelAtPeriodEnd: false },
+        context,
+      ),
     TrialExtended: (view, event, context): BillingStateView =>
       withAccount({ ...view, trialEndsAt: event.trialEndsAt, periodEnd: event.periodEnd }, context),
     // A credit-priced feature spends the shared pool, so the billing page

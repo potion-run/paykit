@@ -5,7 +5,7 @@ import {
   type PolarTier,
   type MoneyProvider,
   type Price,
-  type TierKind,
+  type PlanKind,
   type UnitPrice,
   type UsageLine,
   unitPriceKey,
@@ -37,7 +37,7 @@ export interface PolarClient {
     readonly successUrl: string;
     readonly returnUrl: string;
     /** A subscription product opens a period; a one-off product does not. */
-    readonly kind: TierKind;
+    readonly kind: PlanKind;
   }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
   /** A customer session, which is Polar's way into the customer portal. */
   readonly createCustomerSession: (request: {

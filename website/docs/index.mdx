@@ -38,10 +38,10 @@ calling a payment provider.
     import { Paykit } from "@potion.run/paykit";
 
     const messages = Paykit.feature({ id: "messages", name: "Messages" });
-    const pro = Paykit.tier({
+    const pro = Paykit.plan({
       id: "pro",
       price: { amount: 1900, currency: "usd", interval: "month" },
-      grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+      grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
     });
     ```
   </Step>

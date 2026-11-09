@@ -4,6 +4,7 @@ import type { CreditRateCards } from "../Feature.ts";
 import { currencyOfPricing } from "../Pricing.ts";
 import type { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
+  chargedWith,
   includedRemainingOf,
   nextResetAt,
   periodTiedReset,
@@ -113,6 +114,8 @@ export interface ActivationInput<S extends SubscriptionStatus = SubscriptionStat
   readonly topUp?: TopUpTerms;
   readonly rates: CreditRateCards;
   readonly price?: Price;
+  /** The provider's charge this activation was paid by, when it reported one. */
+  readonly chargeId?: string;
   /** The period the activation opens. */
   readonly period: Period;
   /**
@@ -156,6 +159,8 @@ export interface ActivationGrant<S extends SubscriptionStatus = SubscriptionStat
   readonly anchorTz: string;
   readonly currency?: string;
   readonly price?: Price;
+  /** The provider's charge this activation was paid by, when it reported one. */
+  readonly chargeId?: string;
   /** The first boundary of every allowance that runs on its own schedule. */
   readonly resetAt?: Record<string, DateTime.Utc>;
   readonly statusAfter: S;
@@ -211,6 +216,7 @@ export const activationOf = <S extends SubscriptionStatus>(
     anchorTz: input.period.anchorTz,
     ...(currency === undefined ? {} : { currency }),
     ...(input.price === undefined ? {} : { price: input.price }),
+    ...(input.chargeId === undefined ? {} : { chargeId: input.chargeId }),
     ...(Object.keys(resetAt).length === 0 ? {} : { resetAt }),
     statusAfter: input.statusAfter,
   } satisfies ActivationGrant<S>;
@@ -237,6 +243,8 @@ export interface StandingGrant {
   readonly interval?: Interval;
   readonly currency?: string;
   readonly price?: Price;
+  /** The provider's charge this activation was paid by, when it reported one. */
+  readonly chargeId?: string;
   /** The next boundary of every allowance that runs on its own schedule. */
   readonly resetAt?: Record<string, DateTime.Utc>;
   readonly statusAfter: SubscriptionStatus;
@@ -305,6 +313,10 @@ export const standingFrom = (
         : {}
       : { currency: grant.currency }),
     ...(grant.price === undefined ? {} : { price: grant.price }),
+    ...(grant.price === undefined || grant.chargeId === undefined
+      ? {}
+      : { charged: chargedWith(previous, grant.price.currency, grant.price.amount) }),
+    ...(grant.chargeId === undefined ? {} : { lastChargeId: grant.chargeId }),
     ...(grant.resetAt === undefined ? {} : { resetAt: grant.resetAt }),
     ...(grant.trialEndsAt === undefined ? {} : { trialEndsAt: grant.trialEndsAt }),
     usage: {},

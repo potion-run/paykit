@@ -3,10 +3,10 @@ import {
   AccountId,
   BillingReadPage,
   Catalog,
-  allowance,
+  planItem,
   catalog,
   messages,
-  tier,
+  plan,
 } from "@potion.run/paykit";
 import { BillingOverview } from "@potion.run/paykit/Admin";
 import { AdminQueries } from "@potion.run/paykit/Foldkit";
@@ -26,12 +26,12 @@ import type { Model } from "../src/Model.ts";
 import { update } from "../src/update.ts";
 import { view } from "../src/view.ts";
 
-const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+const free = plan({ id: "free", grants: [planItem(messages, { included: 100 })] });
 
-const pro = tier({
+const pro = plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2_000 })],
+  grants: [planItem(messages, { included: 2_000 })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));

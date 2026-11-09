@@ -15,21 +15,21 @@ import {
   PaymentsRouter,
   ProviderCapabilityMissing,
   Subscription,
-  allowance,
+  planItem,
   catalog,
   catalogLayer,
   messages,
   paymentsRouter,
   system,
-  tier,
+  plan,
 } from "../../src/index.ts";
+import type { PlanId } from "../../src/Plan.ts";
 import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.command.ts";
-import type { TierId } from "../../src/Tier.ts";
 
-const proTier = tier({
+const proTier = plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2_000 })],
+  grants: [planItem(messages, { included: 2_000 })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
@@ -76,7 +76,7 @@ describe("a Stack with two providers", () => {
   it.live("a new account buys through the first provider, and its ref names that one", () =>
     Effect.gen(function* () {
       const purchase = yield* (yield* SubscribeBinding("acct_new"))({
-        tier: "pro" as TierId,
+        tier: "pro" as PlanId,
       });
 
       expect("url" in purchase).toBe(true);
@@ -94,7 +94,7 @@ describe("a Stack with two providers", () => {
       // `manual` has no checkout, so the purchase is an invoice — proof the
       // router picked the provider the standing names, not the fallback.
       const purchase = yield* (yield* SubscribeBinding("acct_manual"))({
-        tier: "pro" as TierId,
+        tier: "pro" as PlanId,
       });
 
       expect("invoiceId" in purchase).toBe(true);

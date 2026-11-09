@@ -104,6 +104,7 @@ describe("Polar webhooks", () => {
         tier: "pro",
         amount: 1900,
         currency: "usd",
+        chargeId: "ord_1",
       });
     }),
   );

@@ -492,6 +492,11 @@ export class Entitlements extends Domain.View("Entitlements", {
       withAccount({ ...withStanding(view, "active", "good"), dunningAttempts: 0 }, context),
     SubscriptionExpired: (view, _event, context): EntitlementsState =>
       withAccount(withStanding(view, "expired", "blocked"), context),
+    SubscriptionCanceled: (view, event, context): EntitlementsState =>
+      withAccount(
+        withStanding({ ...view, periodEnd: event.canceledAt }, "canceled", "blocked"),
+        context,
+      ),
     PeriodClosed: (view, event, context): EntitlementsState =>
       withAccount(
         withStanding(

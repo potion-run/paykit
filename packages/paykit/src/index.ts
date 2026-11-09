@@ -23,14 +23,11 @@ export {
 export type { FeatureInput, RateCardInput } from "./Feature.ts";
 
 export {
-  Allowance,
-  Allowances,
   Included,
   Overage,
   ResetEvery,
   Resets,
   UnitPrice,
-  allowance,
   carryCapOf,
   grant,
   pricingOf,
@@ -38,7 +35,11 @@ export {
   unitPriceKey,
 } from "./Allowance.ts";
 
-export type { AllowanceInput, PriceBand, Pricing, PricingInput } from "./Allowance.ts";
+export type { PriceBand, Pricing, PricingInput } from "./Allowance.ts";
+
+export { PlanItem, PlanItems, planItem } from "./PlanItem.ts";
+
+export type { PlanItemInput } from "./PlanItem.ts";
 
 export {
   BillingUnits,
@@ -63,19 +64,17 @@ export {
   AdditionalCurrency,
   CreditsExpire,
   Interval,
+  PlanTrial,
   Price,
-  Tier,
-  TierCustomize,
-  TierId,
-  TierKind,
   TopUpPackId,
   TopUpTerms,
   TopUpThreshold,
   priceFor,
-  tier,
 } from "./Tier.ts";
 
-export type { TierInput, TopUpTermsInput } from "./Tier.ts";
+export type { TopUpTermsInput } from "./Tier.ts";
+
+export { Plan, PlanCustomize, PlanId, PlanKind, plan } from "./Plan.ts";
 
 export {
   Catalog,
@@ -132,15 +131,12 @@ export {
   CatalogUnknownFeature,
   CatalogUnlimitedOverage,
   CatalogFlagOnMetered,
-  allowancesOf,
   catalog,
   creditRatesOf,
   creditTermsOf,
   defineCatalog,
   ratesOf,
   featureOf,
-  tierOf,
-  tierTermsOf,
 } from "./Catalog.ts";
 
 export type { CatalogInput } from "./Catalog.ts";
@@ -448,7 +444,9 @@ export {
   planChangeTier,
   purchaseCreditsInputOf,
   scheduleTierChangeInputOf,
+  schedulePlanChangeInputOf,
   subscribeInputOf,
+  subscribePlanInputOf,
 } from "./TierCommand.ts";
 
 export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
@@ -794,6 +792,11 @@ export {
 
 export { Expire as ExpireCommand, SubscriptionExpired } from "./Subscription/Expire.command.ts";
 
+export {
+  CancelImmediately as CancelImmediatelyCommand,
+  SubscriptionCanceled,
+} from "./Subscription/CancelImmediately.command.ts";
+
 export { GraceElapsed } from "./Subscription/GraceElapsed.command.ts";
 
 export { DunningRetry as DunningRetryCommand } from "./Subscription/DunningRetry.command.ts";
@@ -901,3 +904,5 @@ export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from 
 export { UsageLine } from "./Payments.ts";
 
 export type { PricedUnits } from "./Subscription/Entitlements.view.ts";
+
+export { planItemsOf, planOf, planTermsOf } from "./Catalog.ts";

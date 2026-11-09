@@ -6,6 +6,15 @@ disagree, the ADR wins and this file is wrong.
 
 ## Where it stands
 
+The next slice is the plan/customer/balance API, recorded in
+[ADR 0035](./adr/0035-plans-plan-items-and-balance-sources.md),
+[ADR 0036](./adr/0036-a-seat-is-purchased-and-occupied.md) and
+[ADR 0037](./adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words become `Plan`,
+`PlanItem`, `Customer` and `Balance`; `attach` and `update` replace the command list; a seat has a
+purchased quantity and an occupied count; a lifetime grant is a balance source. The command-level
+notes below remain the shipped surface until that migration lands.
+The working plan is [the API brief](./briefs/plan-customer-balance-api.md).
+
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
 `format:check`, `lint`, `typecheck`, `test` (every project; the vendor live cases skip without a
@@ -55,18 +64,20 @@ and leaves the rest to `routes`. Two money facts the log used to lose are record
 when a provider will not collect a refill, and `RefundReversed`, when a provider takes a refund back.
 Both are evidence that moves no counter, and both fold into the timeline.
 
-The spend path is modelled in Quint ([ADR
-0034](./adr/0034-one-quint-model-per-protocol.md)): `specs/paykit/paykit.qnt` is one machine —
-activation, counted and credit usage, holds, the pool, the standing, the clock, and the period
-boundary — with nine invariants, and `pnpm spec` simulates ten thousand traces on every push. It is
-the gate the property suite cannot be: `walk()` folds one sequential script, so it never interleaves
-a sweep with a settle or races two holds against one spend. `scripts/spec-mutants.ts` kills seventeen
-mutants, one per way to get a rule wrong, so no invariant can survive as a tautology.
-`scripts/spec-coverage.ts` holds the model's table against all 35 commands, so a command lands either
-modelled or with a written reason. Three things it surfaced are recorded rather than fixed: a
-credit-priced feature's stored `remaining` is stale after `ConsumeCredits` (nothing observable reads
-it), the pool has no counter for a direct consume, and `used` is per-period so the pool's law needs
-its own `spent`.
+The billing machine is modelled in Quint ([ADR
+0034](./adr/0034-one-quint-model-per-protocol.md)) as five protocols: `specs/paykit/paykit.qnt` is
+the spend path, `standing.qnt` the phase machine (trial, grace, dunning, cancellation, a scheduled
+tier change and the refill budget), `windows.qnt` the clocks the period does not own (reset windows,
+seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, and `money.qnt` the
+refund, reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with
+its witnesses on every push; `pnpm spec:test` runs five scenario modules; `scripts/spec-mutants.ts`
+kills 37 mutants across the five, so no invariant can survive as a tautology; `scripts/spec-coverage.ts`
+holds all 36 commands against the five action tables, so a command lands modelled or with a written
+reason. Three spend-path findings
+are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
+`ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
+`used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
+are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md); they are review, not yet fixed.
 
 The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
@@ -110,23 +121,30 @@ period has already billed past is refused with `DowngradeBelowSpend`, and a chan
 it has already passed with `DowngradeBelowCeiling`. Both were previously reachable, and both produced a
 standing no command could leave until the period reset.
 
-### 0. The model's next slice
+### 0. The current slice
 
-`specs/paykit` now rolls a period: `closePeriod` carries the remainder up to a cap, drops the holds
-of the features it resets, keeps a `resets: "never"` counter, and expires the plan's credits, with
-`countedConserved` reading `included + carried`. What it still leaves out, each with a row in
-`SPEC_COVERAGE`:
+The next work is the API migration, not another command. The order is:
 
-- **`SetQuantity`** — a count that is bought, not spent, so its remaining is `cap - quantity` rather
-  than a grant. It is the third shape a counted allowance can have, after carry and carry-never.
-- **A scheduled tier change at the boundary** — `ClosePeriod` applies `TierChanged` first, and a
-  change re-grants the pool instead of expiring it. That needs `pendingTier` and `ScheduleTierChange`
-  in the model, and it is the one branch of `closePeriodEvents` the model does not take.
-- **`ResetAllowance`** — the same carry arithmetic on a per-feature clock (`resetAt`) instead of the
-  period's, with its own chain of scheduled commands.
+1. **Vocabulary and catalog** — `Plan` and `PlanItem` public aliases are in, with `plan()` and
+   `planItem()`, `plans` on the catalog, and plan `group`, `addOn`, `isDefault` and `trial` fields.
+   `Customer` and `Balance` schemas and the `resetOf`/`prorationOf`/`rolloverOf` views are in. The
+   old public names are gone from the namespace and root; internal commands and events still carry
+   `Tier`/`Allowance` and are the remaining rename.
+2. **Plan operations** — `billing.attach`, `billing.update`, `previewAttach`, `previewUpdate`.
+   A downgrade is scheduled by default; a cancellation drops a pending change; `uncancel` removes
+   either a cancellation or a scheduled change. Fold the proration charge into the operation.
+3. **Entitlement reads** — `check`, `track`, `balances`, locks and finalize. `check` returns a
+   balance object; `track` takes `value` and an idempotency key; `balances.update({ usage })`
+   writes occupancy for seats.
+4. **Balance sources** — plan, add-on, one-off, rollover and standalone grants; deduction order;
+   lifetime sources survive a plan change and plan sources do not.
+5. **Customer controls** — auto top-up, spend limits and usage alerts on the customer/entity.
+6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
+   `multiAttach` / `multiUpdate`.
+7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`.
 
-Turning one of those into an action is the whole change: a row, an invariant or a note saying why it
-has none, and its mutant.
+Each step starts with its Quint model and its named scenarios. The command coverage table is not
+the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated `windows.qnt` are.
 
 ### 1. The remaining surfaces
 
@@ -301,19 +319,18 @@ continues.
 
 - **`decide` is pure.** No clock, no provider, no ambient read; anything it needs travels in the
   command, then the event, then the state.
-- **One standing per account, one credit pool per account.** Credits are not per feature.
+- **One writer per account, not one plan.** An account may hold a plan plus add-ons; every command for the account still has one writer. A credit system is a feature, and a balance is a list of sources.
 - **Events carry the money.** `UsageRecorded.cost` and `.charge`/`.billedAfter`,
   `Pricing`/`TierChanged` prices, the captured hold rate — a replay must reproduce every number, and
   a catalog change must never reprice history.
-- **A cap is a ceiling, not a standing.** `allowed: false` at a quantity or money ceiling while
-  `standing` stays `good`.
+- **A cap is a purchase ceiling, not a standing.** `allowed: false` at a quantity or money ceiling while `standing` stays `good`. For seats, `cap` limits what may be purchased; `remaining` is `purchased - occupied` and may be negative.
 - **A deadline is a command, not a timer.** A policy schedules a command that never rejects, and
   `decide` reads the clock from its context: past the deadline it acts, before it or after the entity
   closed it records nothing. That is how `PeriodEnded`, `GraceElapsed` and `HoldElapsed` stay
   replayable.
-- **A pack outlives the period.** Credits a one-off pack bought never expire, even on a plan whose
-  own credits do: `prepaidCredits` is protected, spent only after the plan's credits, and a close
-  returns only the difference.
+- **A lifetime grant outlives the period and the plan.** A one-off or standalone grant is a
+  `one_off` source: it is spent after the plan and rollover sources, and a plan change leaves it
+  alone. A plan's own allowance is replaced or expired at the boundary.
 - **A timeline is a fold, not a log.** `timelineOf` / `appendTimeline` read `AccountEvents`; they
   store nothing, add no number an event did not carry, and nothing in `decide` or `check` reads
   them. `lastSeq` makes a redelivered event a no-op.

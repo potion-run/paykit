@@ -5,7 +5,7 @@ import {
   type Price,
   type PriceBand,
   type Pricing,
-  type TierKind,
+  type PlanKind,
   type UnitPrice,
 } from "@potion.run/paykit";
 import { Unowned } from "alchemy/AdoptPolicy";
@@ -44,7 +44,7 @@ export interface ProductProps {
   /** The paykit tier this product sells; with the stage, its identity. */
   readonly tier: string;
   /** A subscription repeats; a one-off pack is a single payment. */
-  readonly kind?: TierKind;
+  readonly kind?: PlanKind;
   /**
    * The catalog's price, embedded in Polar's product rather than a price
    * object. Changing it replaces the product.
@@ -93,7 +93,7 @@ export type Product = Resource<
     /** The paykit tier this product sells. */
     tier: string;
     /** A subscription repeats; a one-off pack is a single payment. */
-    kind: TierKind;
+    kind: PlanKind;
     /** The fixed price Polar embeds in the product. */
     priceId: string;
     /** The catalog price the product currently carries. */
@@ -213,7 +213,7 @@ const intervalOf = (interval: Price["interval"]): Polar.RecurringInterval =>
 const catalogIntervalOf = (product: VendorProduct): Price["interval"] =>
   product.recurring_interval === "year" ? "annual" : "month";
 
-const kindOf = (product: VendorProduct): TierKind =>
+const kindOf = (product: VendorProduct): PlanKind =>
   product.is_recurring ? "subscription" : "one_off";
 
 /** Polar metadata values may be numbers or booleans; ownership is strings. */
@@ -344,7 +344,7 @@ const sameUsage = (
     right.some((other) => usageSignature(other) === usageSignature(candidate)),
   );
 
-const samePrice = (left: Price, right: Price, kind: TierKind = "subscription"): boolean =>
+const samePrice = (left: Price, right: Price, kind: PlanKind = "subscription"): boolean =>
   left.amount === right.amount &&
   left.currency === right.currency &&
   // A one-off pack's cadence is meaningless: the product is charged once, so a

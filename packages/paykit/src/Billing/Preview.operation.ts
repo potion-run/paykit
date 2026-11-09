@@ -9,8 +9,10 @@ import type { Catalog } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import type { Proration } from "../Proration.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
+import { Resume } from "../Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange } from "../Subscription/ScheduleTierChange.command.ts";
+import { SetQuantity } from "../Subscription/SetQuantity.command.ts";
 import { Subscribe } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
@@ -24,7 +26,9 @@ export type PreviewCommand =
   | { readonly kind: "changeTier"; readonly tier: string }
   | { readonly kind: "scheduleTierChange"; readonly tier: string }
   | { readonly kind: "withdrawTierChange" }
-  | { readonly kind: "cancel" };
+  | { readonly kind: "cancel" }
+  | { readonly kind: "resume" }
+  | { readonly kind: "setQuantity"; readonly feature: string; readonly quantity: number };
 
 /** The account and the action to decide without recording. */
 export interface PreviewInput {
@@ -58,7 +62,9 @@ type Previewable =
   | ChangeTier
   | ScheduleTierChange
   | WithdrawTierChange
-  | ScheduleCancellation;
+  | ScheduleCancellation
+  | Resume
+  | SetQuantity;
 
 /**
  * The command a preview describes, built from the catalog the Stack deployed.
@@ -73,6 +79,16 @@ const commandOf = (
   now: DateTime.Utc,
 ): Previewable | null => {
   if (input.kind === "cancel") return new ScheduleCancellation();
+
+  if (input.kind === "resume") return new Resume();
+
+  if (input.kind === "setQuantity") {
+    return new SetQuantity({
+      feature: input.feature,
+      quantity: input.quantity,
+      dedupeKey: "preview",
+    });
+  }
 
   if (input.kind === "withdrawTierChange") return new WithdrawTierChange();
 

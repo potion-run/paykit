@@ -130,6 +130,7 @@ const Envelope = Schema.fromJsonString(
 
 /** The fields of `Polar.Checkout` this translation reads. */
 const CheckoutPayload = Schema.Struct({
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   status: Schema.String,
   external_customer_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   product_id: Schema.NullOr(Schema.String),
@@ -139,6 +140,7 @@ const CheckoutPayload = Schema.Struct({
 
 /** The fields of `Polar.Order` this translation reads. */
 const OrderPayload = Schema.Struct({
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   product_id: Schema.NullOr(Schema.String),
   total_amount: Schema.Int,
   currency: Schema.String,
@@ -291,6 +293,7 @@ export const polarWebhook = (
           ...(yield* tierOf(checkout.product_id)),
           amount: checkout.total_amount,
           currency: checkout.currency,
+          ...(checkout.id === null || checkout.id === undefined ? {} : { chargeId: checkout.id }),
         });
       }
 
@@ -311,6 +314,7 @@ export const polarWebhook = (
           ...(yield* tierOf(order.product_id)),
           amount: order.total_amount,
           currency: order.currency,
+          ...(order.id === null || order.id === undefined ? {} : { chargeId: order.id }),
         });
       }
 

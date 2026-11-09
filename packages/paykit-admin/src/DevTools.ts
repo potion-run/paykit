@@ -1,4 +1,4 @@
-import { Subscription, tierTermsOf, type Allowance } from "@potion.run/paykit";
+import { Subscription, planTermsOf, type PlanItem } from "@potion.run/paykit";
 import type { Catalog } from "@potion.run/paykit";
 import {
   type BillingStateView,
@@ -160,6 +160,10 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
   {
     tag: "SubscriptionExpired",
     body: body({ statusAfter: "expired" }),
+  },
+  {
+    tag: "SubscriptionCanceled",
+    body: body({ canceledAt: "2030-01-20T00:00:00Z", statusAfter: "canceled" }),
   },
   {
     tag: "TrialExtended",
@@ -441,7 +445,7 @@ const seedTier = (catalog: Option.Option<Catalog>): string =>
   });
 
 const seedTerms = (catalog: Option.Option<Catalog>, tier: string) =>
-  Option.flatMap(catalog, (value) => Option.fromNullishOr(tierTermsOf(value, tier)));
+  Option.flatMap(catalog, (value) => Option.fromNullishOr(planTermsOf(value, tier)));
 
 const seedFeature = (catalog: Option.Option<Catalog>): string =>
   Option.match(catalog, {
@@ -454,7 +458,7 @@ const seedFeature = (catalog: Option.Option<Catalog>): string =>
   });
 
 const seedEntitlement = (
-  allowance: Allowance,
+  allowance: PlanItem,
   status: SubscriptionStatus,
   periodEnd: DateTime.Utc,
   reserved: number,
@@ -512,7 +516,7 @@ export const devToolsBilling = (
       Option.flatMap(
         Array.findFirst(value.tiers, (entry) => entry.id !== tier),
         (entry) =>
-          Option.map(Option.fromNullishOr(tierTermsOf(value, entry.id)), (pendingTerms) => ({
+          Option.map(Option.fromNullishOr(planTermsOf(value, entry.id)), (pendingTerms) => ({
             tier: entry.id,
             terms: pendingTerms,
           })),
@@ -595,9 +599,10 @@ export const devToolsEntitlements = (
     },
     onSome: (value) =>
       Object.fromEntries(
-        Object.entries(value).map(([feature, allowance]) => [
+        Object.entries(value).map(([feature, item]) => [
           feature,
-          seedEntitlement(allowance, status, periodEnd, reservedOf(feature)),
+          // SAFETY: the catalog's allowance record is keyed by feature and every value is a plan item.
+          seedEntitlement(item as PlanItem, status, periodEnd, reservedOf(feature)),
         ]),
       ),
   });

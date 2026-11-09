@@ -67,7 +67,11 @@ const grantOf = (tierId: string, terms: TierTerms): TierGrantInput => ({
 export const subscribeInputOf = (
   catalog: Catalog,
   tierId: string,
-  options: { readonly anchorTz?: string; readonly currency?: string } = {},
+  options: {
+    readonly anchorTz?: string;
+    readonly currency?: string;
+    readonly chargeId?: string;
+  } = {},
 ): (TierGrantInput & { readonly anchorTz?: string }) | null => {
   const terms = tierTermsOf(catalog, tierId, options.currency);
 
@@ -76,6 +80,7 @@ export const subscribeInputOf = (
   return {
     ...grantOf(tierId, terms),
     ...(options.anchorTz === undefined ? {} : { anchorTz: options.anchorTz }),
+    ...(options.chargeId === undefined ? {} : { chargeId: options.chargeId }),
   };
 };
 
@@ -206,3 +211,9 @@ export const planChangeTier = (
     proration,
   };
 };
+
+/** The public spelling of `subscribeInputOf`. */
+export const subscribePlanInputOf = subscribeInputOf;
+
+/** The public spelling of `scheduleTierChangeInputOf`. */
+export const schedulePlanChangeInputOf = scheduleTierChangeInputOf;

@@ -103,15 +103,15 @@ export class AutoTopUpConfig extends Context.Service<AutoTopUpConfig, AutoTopUpT
  * **Example:** Buy the tier's own pack when a pro account falls to 5k credits,
  * at most once an hour
  * ```typescript
- * const pro = Paykit.tier({
+ * const pro = Paykit.plan({
  *   id: "pro",
  *   price: { amount: 1_900, currency: "usd", interval: "month" },
  *   credits: 50_000,
  *   topUp: { threshold: 5_000, cooldown: Duration.hours(1), pack: "credits_100k" },
- *   grants: [Paykit.allowance(messages, { included: 2_000 })],
+ *   grants: [Paykit.planItem(messages, { included: 2_000 })],
  * });
  *
- * const credits = Paykit.tier({
+ * const credits = Paykit.plan({
  *   id: "credits_100k",
  *   kind: "one_off",
  *   price: { amount: 4_900, currency: "usd", interval: "month" },

@@ -248,6 +248,8 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   interval: Interval,
   /** What the tier cost when this standing took it. Absent on a free tier. */
   price: Schema.optionalKey(Price),
+  /** The provider's latest plan charge, kept so a cancellation can refund it. */
+  lastChargeId: Schema.optionalKey(Schema.String),
   /**
    * The money the last tier change moved, copied from its event. A positive
    * `due` is what `ChargeProration` bills; a negative one is a credit recorded
@@ -878,6 +880,7 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "PeriodClosed",
   "UsageReset",
   "CreditsExpired",
+  "SubscriptionCanceled",
   "SubscriptionExpired",
   "ProviderRefAttached",
   "AllowanceReset",

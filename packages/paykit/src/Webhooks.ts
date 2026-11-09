@@ -40,6 +40,8 @@ export const WebhookEvent = Schema.Struct({
   tier: Schema.optionalKey(Schema.String),
   amount: Schema.optionalKey(Schema.Int),
   currency: Schema.optionalKey(Schema.String),
+  /** The provider's charge id, when the event reports one. */
+  chargeId: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.String),
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
   anchorTz: Schema.optionalKey(Schema.String),
@@ -228,11 +230,10 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
 
-        const activation = subscribeInputOf(
-          catalog,
-          event.tier,
-          event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz },
-        );
+        const activation = subscribeInputOf(catalog, event.tier, {
+          ...(event.anchorTz === undefined ? {} : { anchorTz: event.anchorTz }),
+          ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
+        });
 
         if (activation === null) {
           return yield* new TierNotInCatalog({ tier: event.tier });
@@ -282,7 +283,11 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           yield* asSystem(
             subscription.send(
               ref,
-              new RecordPayment({ amount: event.amount, currency: event.currency }),
+              new RecordPayment({
+                amount: event.amount,
+                currency: event.currency,
+                ...(event.chargeId === undefined ? {} : { chargeId: event.chargeId }),
+              }),
               { commandId: event.id },
             ),
           );

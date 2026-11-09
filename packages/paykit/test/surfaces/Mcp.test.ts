@@ -7,8 +7,8 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import {
   Actor,
-  allowance,
-  allowancesOf,
+  planItem,
+  planItemsOf,
   catalog,
   CatalogGuardLive,
   catalogLayer,
@@ -19,20 +19,20 @@ import {
   PaykitHandlers,
   Subscription,
   system,
-  tier,
+  plan,
 } from "../../src/index.ts";
 import { BillingMcp } from "../../src/Surfaces.ts";
 
-const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+const freeTier = plan({ id: "free", grants: [planItem(messages, { included: 100 })] });
 
-const proTier = tier({
+const proTier = plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2000, overage: "bill" })],
+  grants: [planItem(messages, { included: 2000, overage: "bill" })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
-const free = allowancesOf(testCatalog, "free")!;
+const free = planItemsOf(testCatalog, "free")!;
 
 const account = Subscription.ref("acct_mcp");
 

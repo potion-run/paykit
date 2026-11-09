@@ -1,4 +1,4 @@
-import { allowance, feature, tier } from "@potion.run/paykit/Read";
+import { feature, plan, planItem } from "@potion.run/paykit/Read";
 
 /**
  * The catalog. Plain data, no provider ids, so the same tiers sell through
@@ -10,17 +10,17 @@ import { allowance, feature, tier } from "@potion.run/paykit/Read";
  */
 export const messages = feature({ id: "messages", name: "Messages" });
 
-export const free = tier({
+export const free = plan({
   id: "free",
   name: "Free",
-  grants: [allowance(messages, { included: 100 })],
+  grants: [planItem(messages, { included: 100 })],
 });
 
-export const pro = tier({
+export const pro = plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [planItem(messages, { included: 2_000, overage: "bill" })],
 });
 
 export const tanstackCatalog = { features: [messages], tiers: [free, pro] };

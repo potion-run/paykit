@@ -27,10 +27,12 @@ Every "just read it from the provider" is a migration we owe later.
 
 ## Vocabulary is API
 
-`Tier`, `Feature`, `Allowance`, `Subscription`, `Period`, `Usage`, `Standing` are fixed words;
-renaming one is a breaking change. Before naming a type, a file or an export, read the
-[vocabulary table](./PLAN.md#vocabulary) — its "Not to be called" column is the collision you
-are about to hit.
+The public words are `Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`,
+`Period`, `Usage` and `Standing` ([ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md)).
+`Tier` and `Allowance` are internal schema names while state and events migrate; they are not a
+second public API. A balance is a list of sources, not one number. Before naming a type, a file or
+an export, read the vocabulary in PLAN.md and the ADR above — a second spelling of an existing
+word is a breaking change.
 
 ## Catalog authoring
 
@@ -42,17 +44,17 @@ The catalog is plain data that `BillingStack` validates and records. `Feature`, 
 ```ts
 const messages = Paykit.feature({ id: "messages", name: "Messages" });
 
-const free = Paykit.tier({
+const free = Paykit.plan({
   id: "free",
   name: "Free",
-  grants: [Paykit.allowance(messages, { included: 100 })],
+  grants: [Paykit.planItem(messages, { included: 100 })],
 });
 
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
 });
 
 Paykit.catalog({ features: [messages], tiers: [free, pro] });
@@ -118,9 +120,20 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   no-op for a hold that already closed, so the caller's release and the sweep cannot both act. A
   hold on a credit-priced feature reserves `amount × rate` at the rate captured when it was placed,
   so a catalog change mid-flight does not reprice work already priced.
-- A period close resets every allowance except `resets: "never"`, which keeps its usage, open
-  holds and remaining count. A close that ends the standing (`canceled` or `expired`) opens no
-  further period, and `EnterGrace` is refused once the standing is terminal.
+- A period close replaces or expires the plan's balance source and records the expiry. A lifetime
+grant is a separate `one_off` source: it survives a close, a plan change and a new activation, and
+it is spent last ([ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md)). A
+consumable subscription plan item may not state `resets: "never"`; a non-consumable seat is the
+exception because it never resets. A lifetime credit grant is a one-off item or a standalone
+balance. A close that ends the standing (`canceled` or `expired`) opens no further
+period, and `EnterGrace` is refused once the standing is terminal.
+
+- A seat has a **purchased** quantity and an **occupied** count
+  ([ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md)). `remaining` is
+  `purchased - occupied` and may be negative. `SetQuantity` sets the purchase and may drop below
+  occupancy; `SetUsage` sets occupancy; `cap` is a purchase ceiling. A plan change keeps the
+  purchase (raising it to a larger free grant) even when the new cap is lower, and never removes an
+  occupied seat. `TrackUsage` and `Hold` still refuse a non-consumable feature.
 - Dunning retries are opt-in (`Paykit.dunning({ retries })`), and each rung is a scheduled
   `DunningRetry` command, not a timer. The first failure of a run records `dunningStartedAt` on the
   standing; the command records `DunningRetryDue` only while the standing is still in grace, the
@@ -132,11 +145,11 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
   close applies it before the reset, so the next period starts on the new tier's allowances; a
   second `ScheduleTierChange` replaces the first and a mid-period `ChangeTier` clears it.
   `WithdrawTierChange` drops it, and refuses (`NoTierChangeScheduled`) when nothing is scheduled.
-  Because the boundary is a new period, it grants the new tier's credits *plus* the pack the account
-  holds and keeps `prepaidCredits` so the pack stays protected. That new grant is for the period
-  starting here, so it expires at the **next** close by the new tier's `creditsExpire`; the closing
-  period expires nothing it did not grant. It also starts every counter over — a `resets: "never"`
-  count belongs to the allowance it was recorded on, not to the one the account is entering.
+  At the boundary the old plan's balance source is expired and the new plan's source is granted;
+  the expiry is recorded, so the pool's fold is complete. A lifetime source is untouched and a
+  pack stays protected. The new plan grant is for the period starting here and expires at the next
+  close. It also starts every counter over — a counter belongs to the plan item it was recorded on,
+  not to the one the account is entering.
 - A trial opens on the cadence its price states: an annual trial converts into an annual period,
   not a monthly one. Its deadline is the first period's end, so it only moves forward:
   `StartTrial` refuses one that is not after `now` and `ExtendTrial` one that is not after the
@@ -198,6 +211,12 @@ use the same total-table shape: a closed hold is absorbing, and an event that re
 `ignored` rather than a missing branch.
 
 ## Surfaces
+
+The recommended runtime surface is plan operations, not one verb per command: `billing.attach`,
+`billing.update`, the two previews, `check`, `track` and `balances` ([ADR
+0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md)). The command bindings in the
+`Billing` barrel are the advanced surface. A public operation folds the money step in; a caller
+must not have to call a second verb to collect a proration.
 
 Tenant and admin are two `Api`s over one model, with different middleware and different blast
 radius. `Foldkit.make(BillingAdminApi)` derives the console — do not hand-write command plumbing

@@ -10,10 +10,10 @@ import {
   SubscriptionActivated,
   UsageRecorded,
   UsageReserved,
-  allowance,
+  planItem,
   catalog,
   messages,
-  tier,
+  plan,
 } from "@potion.run/paykit";
 import {
   AdminReadFailed,
@@ -46,12 +46,12 @@ import { ConsoleRoute } from "../src/Route.ts";
 import { AccountSnapshot } from "../src/Snapshot.ts";
 import { update } from "../src/update.ts";
 
-const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+const free = plan({ id: "free", grants: [planItem(messages, { included: 100 })] });
 
-const pro = tier({
+const pro = plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2_000 })],
+  grants: [planItem(messages, { included: 2_000 })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
@@ -540,7 +540,7 @@ describe("the console model", () => {
     expect(covered).toEqual(served);
   });
 
-  it("quotes a tier change, then applies only the confirmed amount", () => {
+  it("quotes a plan change, then applies only the confirmed amount", () => {
     const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
     expect(quotedRequest.commands?.map((command) => command.name)).toEqual(["ApplyChangeTier"]);
 
@@ -605,7 +605,7 @@ describe("the console model", () => {
     expect(applied.account.value.pending[0]?.status).toBe("Accepted");
   });
 
-  it("keeps an unknown tier-change outcome retryable with the same id", () => {
+  it("keeps an unknown plan-change outcome retryable with the same id", () => {
     const quotedRequest = update(withChangeDraft("free"), Message.ClickedSubmitAction());
 
     if (Option.isNone(quotedRequest.model.account)) return;
@@ -1347,7 +1347,7 @@ describe("a change at the period end", () => {
   });
 
   it("sends a scheduled change at the standing's currency", () => {
-    const bilingual = tier({
+    const bilingual = plan({
       id: "bilingual",
       price: {
         amount: 1_900,
@@ -1355,7 +1355,7 @@ describe("a change at the period end", () => {
         interval: "month",
         additionalCurrencies: [{ currency: "eur", amount: 1_800 }],
       },
-      grants: [allowance(messages, { included: 2_000 })],
+      grants: [planItem(messages, { included: 2_000 })],
     });
 
     const multi = Effect.runSync(catalog({ features: [messages], tiers: [free, pro, bilingual] }));

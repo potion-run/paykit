@@ -25,6 +25,38 @@
 export { BindingCall, BindingFailed, type BindingError } from "./Bindings.ts";
 
 // ── command bindings, served by both layers ────────────────────────────────
+export {
+  Attach,
+  AttachInProcess,
+  Update,
+  UpdateInProcess,
+  PreviewAttach,
+  PreviewAttachInProcess,
+  PreviewUpdate,
+  PreviewUpdateInProcess,
+  PlanOperationUnsupported,
+  type CancelAction,
+  type AttachError,
+  AttachRequest,
+  type AttachResult,
+  type AttachVerb,
+  type UpdateError,
+  UpdateRequest,
+  type UpdateResult,
+  type UpdateVerb,
+  type PreviewAttachError,
+  PreviewAttachRequest,
+  type PreviewAttachResult,
+  type PreviewAttachVerb,
+  type PreviewUpdateError,
+  PreviewUpdateRequest,
+  type PreviewUpdateResult,
+  type PreviewUpdateVerb,
+  type FeatureQuantity,
+  type PlanSchedule,
+  type ProrationBehavior,
+} from "./Attach.binding.ts";
+
 export { Check, type CheckError, type CheckRequest, type CheckVerb } from "./Check.binding.ts";
 
 export {

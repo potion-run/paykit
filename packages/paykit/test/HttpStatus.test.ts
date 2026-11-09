@@ -4,6 +4,8 @@ import { httpStatus } from "../src/HttpStatus.ts";
 it("maps a refusal to the status a caller can act on", () => {
   expect(httpStatus({ _tag: "TierNotInCatalog" })).toBe(400);
   expect(httpStatus({ _tag: "WebhookInvalid" })).toBe(400);
+  expect(httpStatus({ _tag: "NotSubscribed" })).toBe(400);
+  expect(httpStatus({ _tag: "PlanOperationUnsupported" })).toBe(400);
   expect(httpStatus({ _tag: "Unauthenticated" })).toBe(401);
   expect(httpStatus({ _tag: "WebhookSignatureInvalid" })).toBe(401);
   expect(httpStatus({ _tag: "PaymentDeclined" })).toBe(402);

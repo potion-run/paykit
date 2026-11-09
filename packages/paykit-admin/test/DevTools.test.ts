@@ -4,10 +4,10 @@ import {
   BillingReadPage,
   Catalog,
   Subscription,
-  allowance,
+  planItem,
   catalog,
   messages,
-  tier,
+  plan,
 } from "@potion.run/paykit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,12 +20,12 @@ import { init } from "../src/init.ts";
 import { Message } from "../src/Message.ts";
 import { update } from "../src/update.ts";
 
-const free = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
+const free = plan({ id: "free", grants: [planItem(messages, { included: 100 })] });
 
-const pro = tier({
+const pro = plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [allowance(messages, { included: 2_000 })],
+  grants: [planItem(messages, { included: 2_000 })],
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [free, pro] }));
@@ -186,7 +186,7 @@ describe("the event lab", () => {
 
     if (Option.isSome(withStanding.entitlements)) {
       expect(Object.keys(withStanding.entitlements.value.features)).toContain("messages");
-      // The seeded holds are folded into the allowance view, not a second count.
+      // The seeded holds are folded into the planItem view, not a second count.
       expect(withStanding.entitlements.value.features.messages?.reserved).toBe(160);
     }
 

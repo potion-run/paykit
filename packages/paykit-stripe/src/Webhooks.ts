@@ -43,6 +43,8 @@ const CheckoutSession = Schema.Struct({
   amount_total: Schema.optionalKey(Schema.NullOr(Schema.Int)),
   currency: Schema.optionalKey(Schema.NullOr(Schema.String)),
   metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  /** The payment intent is the charge a cancellation refunds. */
+  payment_intent: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
 /** One line of an invoice or a subscription: enough to find the price bought. */
@@ -54,6 +56,8 @@ const PricedLine = Schema.Struct({
 const Billed = Schema.Struct({
   customer: Schema.optionalKey(Schema.NullOr(Schema.String)),
   amount_paid: Schema.optionalKey(Schema.Int),
+  /** The charge the invoice paid. */
+  charge: Schema.optionalKey(Schema.NullOr(Schema.String)),
   currency: Schema.optionalKey(Schema.NullOr(Schema.String)),
   lines: Schema.optionalKey(Schema.Struct({ data: Schema.Array(PricedLine) })),
   items: Schema.optionalKey(Schema.Struct({ data: Schema.Array(PricedLine) })),
@@ -172,6 +176,9 @@ export const stripeWebhook = (
           ...(tier === undefined ? {} : { tier }),
           ...(amount === null || amount === undefined ? {} : { amount }),
           ...(currency === null || currency === undefined ? {} : { currency }),
+          ...(session.payment_intent === null || session.payment_intent === undefined
+            ? {}
+            : { chargeId: session.payment_intent }),
         });
       }
 
@@ -196,6 +203,9 @@ export const stripeWebhook = (
           ...(invoice.currency === null || invoice.currency === undefined
             ? {}
             : { currency: invoice.currency }),
+          ...(invoice.charge === null || invoice.charge === undefined
+            ? {}
+            : { chargeId: invoice.charge }),
           ...(event.type === "invoice.paid" ? {} : { reason: "invoice_payment_failed" }),
         });
       }

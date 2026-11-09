@@ -6,6 +6,15 @@ provider you plug in owns the money plane — never the entitlement one.
 
 Package name: `@potion.run/paykit`. Namespace in code: `Paykit`. No unscoped release.
 
+
+> **Status:** the vocabulary, non-goals and public surface in this document are being migrated by
+> [ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md),
+> [ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md) and
+> [ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words are
+> `Plan`, `PlanItem`, `Customer` and `Balance`; `Tier` and `Allowance` are internal while state
+> migrates. A seat has a purchased quantity and an occupied count. A lifetime grant is a balance
+> source, not a plan setting. Where this file contradicts those ADRs, the ADR wins.
+
 ## What this is
 
 Two planes, deliberately separated:
@@ -31,13 +40,14 @@ a feature needs a compliance officer, it is not in the package.
 
 Three more, each a commitment rather than a backlog item:
 
-- **No customer records.** The account id belongs to your app. Paykit never stores a name, an
-  email or a profile, and never lists accounts it was not asked about by id.
+- **No vendor customer profile.** A customer projection may carry the id, name and billing
+  controls the deployment already owns; paykit never stores a vendor profile, an email history or
+  a second copy of the provider's customer. The account id still belongs to your app.
 - **No runtime catalog mutation.** A tier change is a deploy that `BillingStack` diffs. An API
   that edits a price at runtime has no version and no diff, so it is not in the model.
-- **No multi-subscription per account.** One account, one standing. Allowance extensions are a
-  command (`GrantCredits`, `ChangeTier`), not a second subscription. The single writer per
-  account is what makes `Track` atomic, and it is not negotiable.
+- **One writer per account, not one plan.** An account may hold several plans (a group plan plus
+  add-ons); every command for that account still has one writer, which is what makes `Track`
+  atomic. A second plan is not a second aggregate writer.
 
 ## Vocabulary
 
@@ -45,18 +55,19 @@ Fixed, and treated as API. Renaming one of these is a breaking change.
 
 | Word | Means | Not to be called |
 | --- | --- | --- |
-| `Tier` | a purchasable bundle: `free`, `pro`, `scale` | `Plan` — collides with `alchemy/Plan` and `Backfill.Plan` |
+| `Plan` | a purchasable product: `free`, `pro`, `scale`; `Tier` is the internal schema name while state migrates | `Tier` in new public code |
 | `Feature` | a meterable thing (`messages`, `seats`, `storage_gb`), or an on/off capability (`kind: "flag"`, e.g. `sso`) | `Meter` — this is not the provider's billing meter |
-| `Allowance` | what a tier grants of one feature — a count or `"unlimited"` — what happens past it, whether what is unspent rolls over, and the `cap` that stops the billing | `Limit` — a limit is one field of an allowance |
-| `Credit` | the account's pool, spent by every feature whose rate card prices it, granted by a tier | `Balance` — one balance is not a meter; `Points` |
-| `Subscription` | one account's standing over time, keyed by account id | `Customer` — the provider owns customers |
+| `PlanItem` | one line of a plan: a feature, an included amount, a reset, a price, a rollover, a prompt; `Allowance` is the internal schema name while state migrates | `Limit` — a limit is one field of a plan item |
+| `Balance` | what a customer can spend of one feature, summed from its sources; a credit system is a feature whose balance is also a source | `Credit` as a special plan field — credits are sources like any other |
+| `Customer` | the account the deployment bills, with its plans and balances | `User` or the provider's customer |
+| `Plan instance` | one plan a customer holds over time, keyed by customer and plan | `Subscription` — one account may hold several plans |
 | `Period` | `[start, end)` from the account's anchor and time zone | `BillingCycle` |
 | `Usage` | append-only facts of consumption, deduped by key | `Counter` — a counter is a projection of these |
 | `Hold` | units or credits held, by id, for work in flight and not yet billed | `Reservation`, `Lock` — a hold is addressable, and a lock is a database primitive |
 | `Standing` | `good \| grace \| blocked`, plus per-feature remaining | `Status` |
 | `Actor` | who is calling: an `account`, an `admin`, or the `system` | `User`, `Principal` |
 
-`Allowance.included` is a non-negative count or `"unlimited"`. `Allowance.overage` is one of
+`PlanItem.included` is a non-negative count or `"unlimited"`. `PlanItem.overage` is one of
 `"block"`, `"bill"`, `"allow"`, and is only meaningful for a count: an unlimited allowance
 defaults it to `"allow"` and the catalog refuses any other value beside `"unlimited"`
 (`CatalogUnlimitedOverage`). `Allowance.resets` is one of `"month"`, `"annual"`, `"never"`, and
@@ -64,12 +75,17 @@ defaults it to `"allow"` and the catalog refuses any other value beside `"unlimi
 `included`); it is refused on a flag and on `resets: "never"`. A `never` allowance is not moved
 by a period close: its usage, open holds and remaining count stay where they were.
 
-A feature is priced one of two ways. It counts its own units (`Allowance`), or it declares
+A feature is priced one of two ways. It counts its own units (`PlanItem`), or it declares
 `creditRates: Record<string, Int>` — credits per unit, keyed by a dimension the caller names, with
 a required `"default"` — and spends the account's `Credit` pool. A credit-priced feature has no
 allowance (`CatalogCreditFeatureHasAllowance`) and its `remaining` is the pool, shared with every
-other credit-priced feature. A tier states `credits` and `creditsExpire` (`"period"` by default,
-which zeroes the pool at a close; `"never"` keeps it).
+other credit-priced feature. Credits are a balance source. A plan's credits are a `plan` source that is replaced or expired
+at a close; a lifetime grant is a `one_off` source that survives. A consumable subscription plan item may
+not state `resets: "never"`; a non-consumable seat is the exception. A one-off item or a standalone
+balance expresses a lifetime credit grant
+([ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md)). A seat has a
+`purchased` quantity and an `occupied` count; its balance is `purchased - occupied` and may be
+negative ([ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md)).
 
 ## Package
 
@@ -99,17 +115,17 @@ Four export groups, plus one opt-in entry point. Nothing else is exported.
 // 1. deploy-time — resources with Diff / Read / Reconcile / Delete
 const messages = Paykit.feature({ id: "messages", name: "Messages" });
 
-const free = Paykit.tier({
+const free = Paykit.plan({
   id: "free",
   name: "Free",
-  grants: [Paykit.allowance(messages, { included: 100 })],
+  grants: [Paykit.planItem(messages, { included: 100 })],
 });
 
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(messages, { included: 2000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2000, overage: "bill" })],
 });
 
 const billing = {
@@ -239,6 +255,11 @@ state: {
 
 **`remaining` is the only number `check()` reads**, and it is already net of reservations. A
 hold therefore refuses a second caller the unit the first one holds, without a second read path.
+
+The target state replaces `tier` with a plan collection, `credits`/`prepaidCredits` with balance
+sources (`plan`, `addon`, `one_off`, `rollover`, `grant`), and `quantities` with `purchased` and
+`occupied`. The sketch above is the shipped aggregate until those migrations land; the ADRs are
+the target.
 
 ### Commands → events
 

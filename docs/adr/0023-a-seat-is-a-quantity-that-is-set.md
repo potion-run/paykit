@@ -1,5 +1,9 @@
 # 0023 — A seat is a quantity that is set, not a counter that is spent
 
+> **Partially superseded by [0036](./0036-a-seat-is-purchased-and-occupied.md).** The seat is still
+> set, not spent; §§4–7 are replaced by a purchased quantity, an occupied count and a negative
+> remaining when occupancy exceeds the purchase. `cap` is a purchase ceiling, not a remaining count.
+
 - **Status:** Accepted
 - **Date:** 2026-11-06
 - **Follows:** [0001](./0001-catalog-states-the-pricing-model.md), [0005](./0005-a-spend-cap-is-a-ceiling-in-units.md), [0022](./0022-the-catalog-states-the-price-the-schedule-and-the-rate-card.md)

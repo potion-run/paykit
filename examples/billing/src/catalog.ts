@@ -27,13 +27,13 @@ export const ai = Paykit.feature({
   creditRates: { default: 1, "gpt-large": 10 },
 });
 
-export const free = Paykit.tier({
+export const free = Paykit.plan({
   id: "free",
   name: "Free",
-  grants: [Paykit.allowance(messages, { included: 100 }), Paykit.allowance(seats, { included: 1 })],
+  grants: [Paykit.planItem(messages, { included: 100 }), Paykit.planItem(seats, { included: 1 })],
 });
 
-export const pro = Paykit.tier({
+export const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
@@ -42,12 +42,12 @@ export const pro = Paykit.tier({
     // one month's worth. `check()` reports the carried amount as `remaining`.
     // A cap, in messages, stops the billing at 2,000 included plus 10,000 more
     // this month: past that `check()` says no until the period resets.
-    Paykit.allowance(messages, { included: 2_000, overage: "bill", carryOver: true, cap: 10_000 }),
-    Paykit.allowance(seats, { included: 5, resets: "never" }),
+    Paykit.planItem(messages, { included: 2_000, overage: "bill", carryOver: true, cap: 10_000 }),
+    Paykit.planItem(seats, { included: 5, resets: "never" }),
   ],
 });
 
-export const scale = Paykit.tier({
+export const scale = Paykit.plan({
   id: "scale",
   name: "Scale",
   price: { amount: 9_900, currency: "usd", interval: "month" },
@@ -58,9 +58,9 @@ export const scale = Paykit.tier({
     // Unlimited: `overage` defaults to "allow", because past an allowance that
     // never runs out there is nothing to block and nothing to bill. `check()`
     // reports `remaining: null`, and the period still resets on schedule.
-    Paykit.allowance(messages, { included: "unlimited" }),
+    Paykit.planItem(messages, { included: "unlimited" }),
     Paykit.grant(sso),
-    Paykit.allowance(seats, { included: 25, resets: "never" }),
+    Paykit.planItem(seats, { included: 25, resets: "never" }),
   ],
 });
 

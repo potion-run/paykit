@@ -57,6 +57,7 @@ const session = (overrides: Record<string, unknown> = {}) => ({
       amount_total: 1900,
       currency: "usd",
       metadata: { tier: "pro" },
+      payment_intent: "pi_1",
       ...overrides,
     },
   },
@@ -88,6 +89,7 @@ describe("Stripe webhooks", () => {
         tier: "pro",
         amount: 1900,
         currency: "usd",
+        chargeId: "pi_1",
       });
     }),
   );

@@ -1,4 +1,4 @@
-import { allowance, grant } from "./Allowance.ts";
+import { grant } from "./Allowance.ts";
 import { account as actorAccount, admin as actorAdmin, mayActOn } from "./Auth/Actor.ts";
 import { InsecureDevGuards } from "./Auth/FromHeaders.ts";
 import { AdminFrom, GuardsFrom, SessionFrom, authenticate } from "./Auth/FromResolver.ts";
@@ -7,6 +7,7 @@ import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { providers } from "./BillingStack.resource.ts";
 import { BillingStack as BillingStackDeploy } from "./BillingStack.ts";
+import { planItemsOf, planOf } from "./Catalog.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { evaluateCheck } from "./Check.ts";
@@ -20,6 +21,8 @@ import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
+import { plan } from "./Plan.ts";
+import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
 import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
@@ -28,7 +31,7 @@ import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
 import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
 import { Dunning, dunning } from "./Subscription/Dunning.policy.ts";
 import { PeriodCloseUsage } from "./Subscription/PeriodCloseUsage.policy.ts";
-import { tier } from "./Tier.ts";
+import { PlanTrial } from "./Tier.ts";
 import { appendTimeline, initialTimeline, timelineOf } from "./Timeline.ts";
 import { Verify, verifyState } from "./Verify.ts";
 import { world } from "./World.ts";
@@ -45,14 +48,14 @@ import { world } from "./World.ts";
  * **Example:** A catalog, a Stack, and a purchase
  * ```typescript
  * const messages = Paykit.feature({ id: "messages", name: "Messages" });
- * const free = Paykit.tier({
+ * const free = Paykit.plan({
  *   id: "free",
- *   grants: [Paykit.allowance(messages, { included: 100 })],
+ *   grants: [Paykit.planItem(messages, { included: 100 })],
  * });
- * const pro = Paykit.tier({
+ * const pro = Paykit.plan({
  *   id: "pro",
  *   price: { amount: 1900, currency: "usd", interval: "month" },
- *   grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+ *   grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
  * });
  *
  * const billing = yield* Paykit.BillingStack("Billing", {
@@ -70,9 +73,15 @@ import { world } from "./World.ts";
 export const Paykit = {
   // deploy-time
   feature,
-  allowance,
   grant,
-  tier,
+  plan,
+  planItem,
+  resetOf,
+  prorationOf,
+  rolloverOf,
+  planOf,
+  planItemsOf,
+  PlanTrial,
   catalog,
   defineCatalog,
   CatalogGuard: CatalogGuardLive,
@@ -89,6 +98,10 @@ export const Paykit = {
   SqlBillingReadStore,
   d1Executor,
   // runtime — the tenant surface, one binding per command
+  Attach: Billing.Attach,
+  Update: Billing.Update,
+  PreviewAttach: Billing.PreviewAttach,
+  PreviewUpdate: Billing.PreviewUpdate,
   Check: Billing.Check,
   CheckReadModel: Billing.CheckReadModel,
   CheckOverTransport: Billing.CheckOverTransport,

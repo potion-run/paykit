@@ -8,8 +8,8 @@ import {
   type Pricing,
   type PricingValue,
   type StripeTier,
-  TierId,
-  type TierKind,
+  PlanId,
+  type PlanKind,
   type UnitPrice,
 } from "@potion.run/paykit";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
@@ -61,7 +61,7 @@ export interface PriceDeclaration {
   /** The tier the price belongs to, and the key of the returned map. */
   readonly tier: string;
   /** A subscription repeats; a one-off pack is a single payment. */
-  readonly kind: TierKind;
+  readonly kind: PlanKind;
   /** Logical id of the product resource, and of the price resource. */
   readonly productResource: string;
   readonly priceResource: string;
@@ -82,7 +82,7 @@ export type TierPrice =
   | Price
   | {
       readonly price: Price;
-      readonly kind?: TierKind;
+      readonly kind?: PlanKind;
       /**
        * One unit price per billable feature. `StripePrices` creates a meter and
        * a metered price for each; a one-off pack has none, because Stripe does
@@ -97,7 +97,7 @@ const normalize = (
   value: TierPrice,
 ): {
   readonly price: Price;
-  readonly kind: TierKind;
+  readonly kind: PlanKind;
   readonly usage: Readonly<Record<string, PricingValue>>;
   readonly seats: Readonly<Record<string, UnitPrice>>;
 } =>
@@ -509,5 +509,5 @@ export const StripePrices = Effect.fn("Stripe.Prices")(function* (
 });
 
 /** The tier id a declaration was built from, narrowed for a caller that reads it back. */
-export const tierOfDeclaration = (declaration: PriceDeclaration): TierId =>
-  TierId.make(declaration.tier);
+export const tierOfDeclaration = (declaration: PriceDeclaration): PlanId =>
+  PlanId.make(declaration.tier);

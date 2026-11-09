@@ -7,17 +7,17 @@ import { Paykit } from "@potion.run/paykit";
  */
 export const messages = Paykit.feature({ id: "messages", name: "Messages" });
 
-export const free = Paykit.tier({
+export const free = Paykit.plan({
   id: "free",
   name: "Free",
-  grants: [Paykit.allowance(messages, { included: 100 })],
+  grants: [Paykit.planItem(messages, { included: 100 })],
 });
 
-export const pro = Paykit.tier({
+export const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
 });
 
 export const authCatalog = { features: [messages], tiers: [free, pro] };

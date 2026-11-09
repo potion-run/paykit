@@ -8,15 +8,15 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.validateStack).toBe("function");
   expect(typeof Paykit.world).toBe("function");
   expect("paykitWorld" in Paykit).toBe(false);
-  expect(typeof Paykit.tier).toBe("function");
+  expect(typeof Paykit.plan).toBe("function");
   expect(typeof Paykit.feature).toBe("function");
-  expect(typeof Paykit.allowance).toBe("function");
+  expect(typeof Paykit.planItem).toBe("function");
   expect(typeof Paykit.catalog).toBe("function");
   expect(typeof Paykit.defineCatalog).toBe("function");
-  expect(typeof Paykit.allowancesOf).toBe("function");
+  expect(typeof Paykit.planItemsOf).toBe("function");
   expect(typeof Paykit.featureOf).toBe("function");
   expect(Paykit.FeatureId).toBeDefined();
-  expect(Paykit.TierId).toBeDefined();
+  expect(Paykit.PlanId).toBeDefined();
   expect(Paykit.TopUpThreshold).toBeDefined();
   expect(Paykit.CatalogTopUpOnPack).toBeDefined();
   expect(Paykit.CatalogError).toBeDefined();
@@ -122,15 +122,15 @@ it("exports the four groups from the package root", () => {
 
 it.effect("a catalog built through the public helpers is the same one Stack validates", () =>
   Effect.gen(function* () {
-    const free = Paykit.tier({
+    const free = Paykit.plan({
       id: "free",
-      grants: [Paykit.allowance(Paykit.messages, { included: 100 })],
+      grants: [Paykit.planItem(Paykit.messages, { included: 100 })],
     });
 
-    const pro = Paykit.tier({
+    const pro = Paykit.plan({
       id: "pro",
       price: { amount: 1900, currency: "usd", interval: "month" },
-      grants: [Paykit.allowance(Paykit.messages, { included: 2000, overage: "bill" })],
+      grants: [Paykit.planItem(Paykit.messages, { included: 2000, overage: "bill" })],
     });
 
     const billing = yield* Paykit.validateStack("Billing", {

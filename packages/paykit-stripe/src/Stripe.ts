@@ -6,7 +6,7 @@ import {
   type StripeBindings,
   type StripeTier,
   type StripeUsagePrice,
-  type TierKind,
+  type PlanKind,
   type UsageLine,
   unitPriceKey,
 } from "@potion.run/paykit";
@@ -31,7 +31,7 @@ export interface StripeClient {
     readonly priceIds: ReadonlyArray<string>;
     readonly tier: string;
     /** A subscription opens a period; a one-off pack is a single payment. */
-    readonly kind: TierKind;
+    readonly kind: PlanKind;
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly cancelUrl: string;

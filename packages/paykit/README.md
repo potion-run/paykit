@@ -7,6 +7,10 @@ A subscription is not a payment. A payment is an event that changes a standing. 
 this package derives from that sentence. [PLAN.md](./PLAN.md) is the design of record; this
 README is the quickstart and the honest status of what ships today.
 
+> **Status:** the shipped surface below is command-level. The plan/customer/balance API in
+> [ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md) is in progress; the
+> examples here document what ships until the `Api` subpath lands.
+
 :::warning
 The ledger is application data, not stack state. Use `RemovalPolicy.RETAIN` on catalog and account
 resources, and never let a `destroy` cancel, refund or delete provider state. A `destroy` that
@@ -33,17 +37,17 @@ import * as Layer from "effect/Layer";
 
 const messages = Paykit.feature({ id: "messages", name: "Messages" });
 
-const free = Paykit.tier({
+const free = Paykit.plan({
   id: "free",
   name: "Free",
-  grants: [Paykit.allowance(messages, { included: 100 })],
+  grants: [Paykit.planItem(messages, { included: 100 })],
 });
 
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(messages, { included: 2000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2000, overage: "bill" })],
 });
 
 const billing = {
@@ -79,13 +83,15 @@ so a retry records once.
 
 ## The catalog
 
-`Tier`, `Feature`, `Allowance`, `Subscription`, `Period`, `Usage` and `Standing` are fixed words.
-Renaming one of them is a breaking change.
+`Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`, `Period`, `Usage` and
+`Standing` are the public words. `Tier` and `Allowance` are the internal names while the command
+and event migration lands; new code uses `plan()` and `planItem()`. The examples below still use
+the internal spellings where they describe the shipped command surface.
 
 ```ts
 const seats = Paykit.feature({ id: "seats", name: "Seats" });
 
-const team = Paykit.tier({
+const team = Paykit.plan({
   id: "team",
   name: "Team",
   price: { amount: 4900, currency: "usd", interval: "month" },
@@ -94,34 +100,34 @@ const team = Paykit.tier({
     // most one month's worth, so `remaining` can pass `included`.
     // `cap` bills up to 10,000 units past `included` this period, then stops —
     // a ceiling in the feature's own unit, not in money.
-    Paykit.allowance(Paykit.messages, {
+    Paykit.planItem(Paykit.messages, {
       included: 10_000,
       overage: "bill",
       carryOver: true,
       cap: 2_000,
     }),
-    Paykit.allowance(seats, { included: 10, overage: "block", resets: "never" }),
+    Paykit.planItem(seats, { included: 10, overage: "block", resets: "never" }),
   ],
 });
 
 // An allowance that never runs out. Past it there is nothing to block or to
 // bill, so `overage` defaults to "allow" and the catalog refuses any other.
-const scale = Paykit.tier({
+const scale = Paykit.plan({
   id: "scale",
   name: "Scale",
   price: { amount: 9_900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(Paykit.messages, { included: "unlimited" })],
+  grants: [Paykit.planItem(Paykit.messages, { included: "unlimited" })],
 });
 
 // An on/off capability. A flag is declared once, then granted — not metered:
 // `check()` answers allowed and there is no counter to spend or to reset.
 const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
 
-const enterprise = Paykit.tier({
+const enterprise = Paykit.plan({
   id: "enterprise",
   name: "Enterprise",
   price: { amount: 49_900, currency: "usd", interval: "month" },
-  grants: [Paykit.grant(sso), Paykit.allowance(Paykit.messages, { included: 50_000 })],
+  grants: [Paykit.grant(sso), Paykit.planItem(Paykit.messages, { included: 50_000 })],
 });
 
 // A feature priced in credits: a unit costs credits by the dimension that
@@ -132,12 +138,12 @@ const ai = Paykit.feature({
   creditRates: { default: 1, "gpt-large": 10 },
 });
 
-const credits = Paykit.tier({
+const credits = Paykit.plan({
   id: "credits",
   name: "Credits",
   price: { amount: 9_900, currency: "usd", interval: "month" },
   credits: 50_000, // granted on activation; `creditsExpire: "period"` is the default
-  grants: [Paykit.allowance(Paykit.messages, { included: 50_000 })],
+  grants: [Paykit.planItem(Paykit.messages, { included: 50_000 })],
 });
 
 Paykit.catalog({
@@ -153,14 +159,14 @@ count rather than a rate on one unit:
 
 ```ts
 // $5 for each 1,000 calls. 1,500 calls is two packages.
-Paykit.allowance(Paykit.messages, {
+Paykit.planItem(Paykit.messages, {
   included: 0,
   overage: "bill",
   pricing: { kind: "unit", amount: 500, currency: "usd", units: 1_000 },
 });
 
 // The first 10,000 calls at $0.01, then $0.005.
-Paykit.allowance(Paykit.messages, {
+Paykit.planItem(Paykit.messages, {
   included: 0,
   overage: "bill",
   pricing: {
@@ -211,11 +217,11 @@ free quantity and price the additional ones:
 ```ts
 const seats = Paykit.feature({ id: "seats", name: "Seats", kind: "non_consumable" });
 
-const team = Paykit.tier({
+const team = Paykit.plan({
   id: "team",
   price: { amount: 4_900, currency: "usd", interval: "month" },
   grants: [
-    Paykit.allowance(seats, {
+    Paykit.planItem(seats, {
       included: 5, // free seats
       overage: "bill",
       pricing: { kind: "unit", amount: 1_000, currency: "usd" }, // $10 a seat
@@ -262,7 +268,7 @@ the period; every other schedule has its own boundary and its own
 A tier can be a named alternative of another, stating only what it changes:
 
 ```ts
-const annual = Paykit.tier({
+const annual = Paykit.plan({
   id: "pro_annual",
   variantOf: "pro",
   customize: { price: { amount: 19_000, currency: "usd", interval: "annual" } },

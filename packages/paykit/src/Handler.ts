@@ -3,7 +3,19 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { Subscribe, Webhook } from "./Billing/index.ts";
+import * as Schema from "effect/Schema";
+import {
+  Attach,
+  AttachRequest,
+  PreviewAttach,
+  PreviewAttachRequest,
+  PreviewUpdate,
+  PreviewUpdateRequest,
+  Subscribe,
+  Update,
+  UpdateRequest,
+  Webhook,
+} from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
 import { httpStatus } from "./HttpStatus.ts";
@@ -91,6 +103,8 @@ export interface HandlerMount {
   readonly checkout?: string;
   /** The prefix a provider delivery is posted under. Defaults to `/webhooks`. */
   readonly webhooks?: string;
+  /** The plan-operation paths. Defaults to `/plans`. */
+  readonly plans?: string;
 }
 
 /** Which Api surfaces a handler mounts. Defaults to `"both"`. */
@@ -163,12 +177,17 @@ export const handler = (options: HandlerOptions = {}) =>
     const admin = surfaces === "admin" || surfaces === "both" ? yield* BillingAdminApi : null;
     const money = options.provider === undefined ? null : yield* moneyRoutes(options.provider);
     const accountOf = options.accountOf ?? (() => null);
+    const attach = Option.getOrNull(yield* Effect.serviceOption(Attach));
+    const update = Option.getOrNull(yield* Effect.serviceOption(Update));
+    const previewAttach = Option.getOrNull(yield* Effect.serviceOption(PreviewAttach));
+    const previewUpdate = Option.getOrNull(yield* Effect.serviceOption(PreviewUpdate));
 
     const mount = {
       tenant: options.mount?.tenant ?? "/api",
       admin: options.mount?.admin ?? "/admin",
       checkout: options.mount?.checkout ?? "/checkout",
       webhooks: options.mount?.webhooks ?? "/webhooks",
+      plans: options.mount?.plans ?? "/plans",
     };
 
     return Effect.fn("Paykit.handler")(function* (request: HttpServerRequest.HttpServerRequest) {
@@ -184,6 +203,90 @@ export const handler = (options: HandlerOptions = {}) =>
       if (tenant !== null && path.startsWith(mount.tenant)) return yield* tenant.fetch;
 
       if (admin !== null && path.startsWith(mount.admin)) return yield* admin.fetch;
+
+      if (attach !== null && path === `${mount.plans}/attach`) {
+        const account = accountOf(request);
+
+        if (account === null) return text("an account is required", 401);
+
+        const body = yield* Schema.decodeEffect(Schema.fromJsonString(AttachRequest))(
+          yield* request.text,
+        ).pipe(Effect.result);
+
+        if (Result.isFailure(body)) return text("invalid attach request", 400);
+
+        const result = yield* Effect.result((yield* attach(account))(body.success));
+
+        return Result.isFailure(result)
+          ? HttpServerResponse.jsonUnsafe(
+              { error: result.failure._tag },
+              { status: httpStatus(result.failure) },
+            )
+          : HttpServerResponse.jsonUnsafe(result.success, { status: 200 });
+      }
+
+      if (update !== null && path === `${mount.plans}/update`) {
+        const account = accountOf(request);
+
+        if (account === null) return text("an account is required", 401);
+
+        const body = yield* Schema.decodeEffect(Schema.fromJsonString(UpdateRequest))(
+          yield* request.text,
+        ).pipe(Effect.result);
+
+        if (Result.isFailure(body)) return text("invalid update request", 400);
+
+        const result = yield* Effect.result((yield* update(account))(body.success));
+
+        return Result.isFailure(result)
+          ? HttpServerResponse.jsonUnsafe(
+              { error: result.failure._tag },
+              { status: httpStatus(result.failure) },
+            )
+          : HttpServerResponse.jsonUnsafe(result.success, { status: 200 });
+      }
+
+      if (previewAttach !== null && path === `${mount.plans}/preview-attach`) {
+        const account = accountOf(request);
+
+        if (account === null) return text("an account is required", 401);
+
+        const body = yield* Schema.decodeEffect(Schema.fromJsonString(PreviewAttachRequest))(
+          yield* request.text,
+        ).pipe(Effect.result);
+
+        if (Result.isFailure(body)) return text("invalid preview request", 400);
+
+        const result = yield* Effect.result((yield* previewAttach(account))(body.success));
+
+        return Result.isFailure(result)
+          ? HttpServerResponse.jsonUnsafe(
+              { error: result.failure._tag },
+              { status: httpStatus(result.failure) },
+            )
+          : HttpServerResponse.jsonUnsafe(result.success, { status: 200 });
+      }
+
+      if (previewUpdate !== null && path === `${mount.plans}/preview-update`) {
+        const account = accountOf(request);
+
+        if (account === null) return text("an account is required", 401);
+
+        const body = yield* Schema.decodeEffect(Schema.fromJsonString(PreviewUpdateRequest))(
+          yield* request.text,
+        ).pipe(Effect.result);
+
+        if (Result.isFailure(body)) return text("invalid preview request", 400);
+
+        const result = yield* Effect.result((yield* previewUpdate(account))(body.success));
+
+        return Result.isFailure(result)
+          ? HttpServerResponse.jsonUnsafe(
+              { error: result.failure._tag },
+              { status: httpStatus(result.failure) },
+            )
+          : HttpServerResponse.jsonUnsafe(result.success, { status: 200 });
+      }
 
       if (money !== null && path === mount.checkout) {
         const account = accountOf(request);

@@ -34,7 +34,7 @@ interface Mutant {
   readonly why: string;
 }
 
-const MUTANTS: ReadonlyArray<Mutant> = [
+const PAYKIT_MUTANTS: ReadonlyArray<Mutant> = [
   {
     name: "settle-drops-the-return",
     invariant: "countedConserved",
@@ -158,15 +158,217 @@ const MUTANTS: ReadonlyArray<Mutant> = [
   },
 ];
 
+const STANDING_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "close-expires-a-lifetime-pool",
+    invariant: "creditPoolConserved",
+    from: "      planCredits: closePlanCredits(state, pending),",
+    to: "      planCredits: closePlanCredits(state, pending),\n      lifetimeCredits: 0,",
+    why: "a close that empties a lifetime source without recording a spend or an expiry",
+  },
+  {
+    name: "pending-change-keeps-the-old-plan-pool",
+    invariant: "creditPoolConserved",
+    from: "  pure def closePlanCredits(state: State, pending: bool): int =\n    if (pending) grantOf(pendingTierOf(state.pending)) else 0",
+    to: "  pure def closePlanCredits(state: State, pending: bool): int =\n    if (pending) state.planCredits else 0",
+    why: "a scheduled change that keeps the old plan pool while also granting the new one",
+  },
+  {
+    name: "tick-passes-the-grace-deadline",
+    invariant: "noGracePastDeadline",
+    from: "    state.now + 1 <= nextDeadline(state),",
+    to:
+      "    (if (state.phase == Grace) state.now + 1 <= state.graceEnd + 1\n" +
+      "     else state.now + 1 <= nextDeadline(state)),",
+    why: "a clock that walks one step past a grace deadline",
+  },
+];
+
+const WINDOWS_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "seat-balance-ignores-occupancy",
+    invariant: "seatBalanceIsDerived",
+    from: "  pure def seatBalance(seats: Seats): int = seats.purchased - seats.occupied",
+    to: "  pure def seatBalance(seats: Seats): int = seats.purchased",
+    why: "a seat balance that counts the purchase and forgets the occupied seats",
+  },
+  {
+    name: "seat-check-allows-negative",
+    invariant: "seatCheckAgreesWithBalance",
+    from: "  pure def canCheckSeats(seats: Seats, required: int): bool =\n    required >= 0 and seatBalance(seats) >= required",
+    to: "  pure def canCheckSeats(seats: Seats, required: int): bool =\n    required >= 0",
+    why: "a seat check that allows new occupancy while the balance is negative",
+  },
+  {
+    name: "reset-does-not-advance-the-boundary",
+    invariant: "boundariesAdvance",
+    from: "    boundary: at + window.every,",
+    to: "    boundary: window.boundary,",
+    why: "a reset that moves the last-reset instant but leaves the next boundary behind",
+  },
+  {
+    name: "track-spends-past-a-blocking-count",
+    invariant: "blockingCountsBounded",
+    from: "      not(window.blocking) or amount <= window.remaining,",
+    to: "      true,",
+    why: "a blocking count that accepts more than it has",
+  },
+  {
+    name: "failure-keeps-the-old-rung",
+    invariant: "rungsBelongToTheBudget",
+    from:
+      "        if (nextAttempt <= TOP_UP_BUDGET)\n" +
+      "          Set({ episode: nextEpisode, attempt: nextAttempt, at: state.now + TOP_UP_EVERY })\n" +
+      "        else Set(),",
+    to: "        state.rungs.union(Set({ episode: nextEpisode, attempt: nextAttempt, at: state.now + TOP_UP_EVERY })),",
+    why: "a retry queue that keeps the rung of the episode a new failure ended",
+  },
+  {
+    name: "purchase-keeps-the-old-rungs",
+    invariant: "rungsBelongToTheBudget",
+    from:
+      "    topUpAttempts: 0,\n" +
+      "    rungs: Set(),\n" +
+      "    cooldown: Cooldown({ until: state.now + COOLDOWN_LENGTH }),",
+    to:
+      "    topUpAttempts: 0,\n" +
+      "    rungs: state.rungs,\n" +
+      "    cooldown: Cooldown({ until: state.now + COOLDOWN_LENGTH }),",
+    why: "a success that resets the budget but leaves a rung from the old episode queued",
+  },
+];
+
+const MONEY_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "refund-does-not-move-the-total",
+    invariant: "refundedIsOutstanding",
+    from: "    refunded: state.refunded + amount,",
+    to: "    refunded: state.refunded,",
+    why: "a refund record the currency total does not see",
+  },
+  {
+    name: "reversal-does-not-move-the-total",
+    invariant: "refundedIsOutstanding",
+    from: "      refunded: state.refunded - amount,",
+    to: "      refunded: state.refunded,",
+    why: "a reversal the currency total does not see",
+  },
+  {
+    name: "refund-past-the-charge",
+    invariant: "refundsCoveredByCharges",
+    from: "    state.refunded + amount <= state.charged,",
+    to: "    true,",
+    why: "a refund ceiling that ignores what was charged",
+  },
+  {
+    name: "reversal-past-the-refund",
+    invariant: "reversalsBounded",
+    from: "    amount > 0 and amount <= outstandingOf(record)",
+    to: "    amount > 0",
+    why: "a reversal larger than the refund it names",
+  },
+  {
+    name: "quantity-credit-invoiced",
+    invariant: "quantityCreditsNeverInvoiced",
+    from:
+      "    entry.present\n" +
+      "      and not(entry.invoiced)\n" +
+      "      and entry.due > 0\n" +
+      "      and entry.due == amount",
+    to: "    entry.present\n" + "      and not(entry.invoiced)",
+    why: "a seat reduction's credit booked as money to collect",
+  },
+  {
+    name: "quantity-invoice-ignores-the-due",
+    invariant: "quantityInvoicesMatchDue",
+    from:
+      "    entry.present\n" +
+      "      and not(entry.invoiced)\n" +
+      "      and entry.due > 0\n" +
+      "      and entry.due == amount",
+    to: "    entry.present\n" + "      and not(entry.invoiced)\n" + "      and entry.due > 0",
+    why: "a quantity invoice for an amount other than the change's due",
+  },
+  {
+    name: "proration-invoice-ignores-the-id",
+    invariant: "billedProrationIsCurrent",
+    from: "      | Owed(entry) => entry.id == id and entry.due == amount and entry.due > 0",
+    to: "      | Owed(entry) => entry.due == amount and entry.due > 0",
+    why: "an invoice for an old tier change settling the current proration",
+  },
+];
+
+/** One model, its file, the depth a mutation run needs, and its mutants. */
+interface SpecMutants {
+  readonly file: string;
+  readonly maxSteps: number;
+  readonly mutants: ReadonlyArray<Mutant>;
+}
+
+const PLANS_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "upgrade-is-scheduled",
+    invariant: "scheduledChangeIsADowngrade",
+    from: "    else if (isUpgrade(state.plan, plan)) Upgrade",
+    to: "    else if (isUpgrade(state.plan, plan)) Schedule",
+    why: "a more expensive plan left waiting for the boundary instead of applied now",
+  },
+  {
+    name: "schedule-the-current-plan",
+    invariant: "scheduledChangeIsADowngrade",
+    from: "          pending: Pending(plan),",
+    to: "          pending: Pending(state.plan),",
+    why: "a scheduled change that names the plan already running",
+  },
+  {
+    name: "cancellation-keeps-the-pending-plan",
+    invariant: "terminalHasNoIntent",
+    from:
+      "        phase: Canceled,\n" +
+      "        pending: NoChange,\n" +
+      "        cancelAtPeriodEnd: false,\n" +
+      "        closes: state.closes + 1,",
+    to:
+      "        phase: Canceled,\n" +
+      "        pending: state.pending,\n" +
+      "        cancelAtPeriodEnd: false,\n" +
+      "        closes: state.closes + 1,",
+    why: "a cancellation that ends the plan but leaves the pending change alive",
+  },
+  {
+    name: "immediate-cancel-keeps-the-pending-plan",
+    invariant: "terminalHasNoIntent",
+    from:
+      "      phase: Canceled,\n" +
+      "      pending: NoChange,\n" +
+      "      cancelAtPeriodEnd: false,\n" +
+      "      immediateCancels: state.immediateCancels + 1,",
+    to:
+      "      phase: Canceled,\n" +
+      "      pending: state.pending,\n" +
+      "      cancelAtPeriodEnd: false,\n" +
+      "      immediateCancels: state.immediateCancels + 1,",
+    why: "an immediate cancellation that leaves a future plan intent on a terminal plan",
+  },
+];
+
+const SPECS: ReadonlyArray<SpecMutants> = [
+  { file: SPEC, maxSteps: 30, mutants: PAYKIT_MUTANTS },
+  { file: "specs/paykit/standing.qnt", maxSteps: 30, mutants: STANDING_MUTANTS },
+  { file: "specs/paykit/windows.qnt", maxSteps: 20, mutants: WINDOWS_MUTANTS },
+  { file: "specs/paykit/plans.qnt", maxSteps: 30, mutants: PLANS_MUTANTS },
+  { file: "specs/paykit/money.qnt", maxSteps: 30, mutants: MONEY_MUTANTS },
+];
+
 class MutantSurvived extends Data.TaggedError("MutantSurvived")<{
   readonly problems: ReadonlyArray<string>;
 }> {}
 
-const runQuint = (file: string, invariant: string) =>
+const runQuint = (file: string, invariant: string, maxSteps: number) =>
   Effect.sync(() =>
     spawnSync(
       "quint",
-      ["run", file, `--invariant=${invariant}`, "--max-steps=30", "--verbosity=0"],
+      ["run", file, `--invariant=${invariant}`, `--max-steps=${maxSteps}`, "--verbosity=0"],
       {
         encoding: "utf8",
       },
@@ -177,38 +379,45 @@ const mutants = Effect.fn("SpecMutants.check")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const root = path.resolve(import.meta.dirname, "..");
-  const spec = yield* fs.readFileString(path.join(root, SPEC));
   const problems: Array<string> = [];
+  let killed = 0;
 
-  for (const mutant of MUTANTS) {
-    const occurrences = spec.split(mutant.from).length - 1;
+  for (const spec of SPECS) {
+    const text = yield* fs.readFileString(path.join(root, spec.file));
+    const name = path.basename(spec.file);
 
-    if (occurrences !== 1) {
-      problems.push(
-        `${mutant.name}: anchor occurs ${occurrences} time(s) in ${SPEC} — re-anchor the mutant`,
-      );
-      continue;
-    }
+    for (const mutant of spec.mutants) {
+      const occurrences = text.split(mutant.from).length - 1;
 
-    // The module is named after its file, so the mutant keeps the stem and
-    // changes only the directory.
-    const directory = path.join(root, SCRATCH, mutant.name);
-    const file = path.join(directory, "paykit.qnt");
-    yield* fs.makeDirectory(directory, { recursive: true });
-    yield* fs.writeFileString(file, spec.replace(mutant.from, mutant.to));
+      if (occurrences !== 1) {
+        problems.push(
+          `${mutant.name}: anchor occurs ${occurrences} time(s) in ${spec.file} — re-anchor the mutant`,
+        );
+        continue;
+      }
 
-    const result = yield* runQuint(file, mutant.invariant);
+      // The module is named after its file, so the mutant keeps the stem and
+      // changes only the directory.
+      const directory = path.join(root, SCRATCH, name.replace(/\.qnt$/, ""), mutant.name);
+      const file = path.join(directory, name);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(file, text.replace(mutant.from, mutant.to));
 
-    if (result.error !== undefined) {
-      return yield* Effect.die(result.error);
-    }
+      const result = yield* runQuint(file, mutant.invariant, spec.maxSteps);
 
-    // A non-zero exit is the point: the invariant found the mutant. A zero exit
-    // means the rule changed and nothing noticed.
-    if (result.status === 0) {
-      problems.push(
-        `${mutant.name}: ${mutant.invariant} still holds — ${mutant.why} went unnoticed`,
-      );
+      if (result.error !== undefined) {
+        return yield* Effect.die(result.error);
+      }
+
+      // A non-zero exit is the point: the invariant found the mutant. A zero
+      // exit means the rule changed and nothing noticed.
+      if (result.status === 0) {
+        problems.push(
+          `${mutant.name}: ${mutant.invariant} still holds — ${mutant.why} went unnoticed`,
+        );
+      } else {
+        killed++;
+      }
     }
   }
 
@@ -219,7 +428,7 @@ const mutants = Effect.fn("SpecMutants.check")(function* () {
   }
 
   yield* Console.log(
-    `Killed ${MUTANTS.length} mutants: every invariant above fails when its rule is broken.`,
+    `Killed ${killed} mutants across ${SPECS.length} models: every invariant above fails when its rule is broken.`,
   );
 });
 
