@@ -132,8 +132,9 @@ standing no command could leave until the period reset.
   purchasable. Both halves landed: `retiredPrices` decides and `RetiredPrices` lists and deactivates
   in `paykit-stripe`; `retiredProducts` decides and `RetiredProducts` lists and archives in
   `paykit-polar`. The Stripe live case has run and proves a price is archived rather than deleted;
-  the Polar live case is written and gated on `POLAR_ACCESS_TOKEN`, which is the one thing left —
-  the same secret the rest of the Polar package waits on.
+  the Polar live case ran green on 2026-11-09 — [run
+  42587268198](https://github.com/potion-run/paykit/actions/runs/42587268198), 71 passed and none
+  skipped — so a Polar product is created, retired and archived against the real sandbox.
 
 ### 2. Worth building next
 
@@ -226,8 +227,13 @@ the "replace keeps the old one" claim is actually tested.
 41971381878](https://github.com/potion-run/paykit/actions/runs/41971381878), 48 passed and none
 skipped. So the price the catalog states is created, replaced on a change, and the replaced one is
 retained and still retrievable; the meter and the metered price are created from the same unit price.
-**Polar has not run.** It waits on `POLAR_ACCESS_TOKEN`, and its guard fails rather than skips until
-the secret exists.
+**Polar ran green on 2026-11-09**, from `main`, against the sandbox — [run
+42587268198](https://github.com/potion-run/paykit/actions/runs/42587268198), 71 passed and none
+skipped. Its first runs failed, and every failure was in the case rather than the provider: two cases
+sold one tier on one stage (a product's identity is `(stage, tier)`, so only one of them could own
+it), a meter could never converge because Polar reports `metadata.units` back as `units`, and two
+assertions spelled Polar's encodings as Stripe's. The suite now gives each case its own tier, feature
+and logical id, and runs the archive sweep in a stage of its own.
 
 They run from `.github/workflows/live.yml` — a manual dispatch, from `main`, with a `vendor` input of
 `both`, `stripe` or `polar`. It is separate from `check.yml` for two reasons: the cases mutate a real
