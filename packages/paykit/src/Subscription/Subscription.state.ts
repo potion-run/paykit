@@ -17,6 +17,19 @@ import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import {
+  DEFAULT_PLAN_GROUP,
+  mergeAllowances,
+  mergeRates,
+  duePhases,
+  planInGroup,
+  planOrder,
+  primaryPlan,
+  type PlanPhase,
+  type PlanRow,
+  PlanSchedule,
+  Plans,
+} from "./PlanSet.ts";
 
 export { creditRateOf } from "../Feature.ts";
 
@@ -204,25 +217,10 @@ export type HoldRecord = typeof HoldRecord.Type;
 
 /**
  * The tier the standing moves to when the current period closes, with the terms
- * it carries. The event records them because the close runs without a catalog:
- * the standing has to hold everything the boundary needs, the same way
- * `SubscriptionActivated` does.
+ * it carries. `PlanPhase` is the schema; this alias is the name the scheduled
+ * change's event and the read model still use.
  */
-export const PendingTier = Schema.Struct({
-  tier: Schema.String,
-  allowances: Allowances,
-  price: Schema.optionalKey(Price),
-  /** The pool the standing keeps; a change is not a grant. */
-  credits: Schema.Int,
-  creditsExpire: CreditsExpire,
-  /** Credits at or below which the new tier's spends buy the deployment's pack. */
-  topUp: Schema.optionalKey(TopUpTerms),
-  rates: CreditRateCards,
-  currency: Schema.optionalKey(Schema.String),
-  interval: Schema.optionalKey(Interval),
-});
-
-export type PendingTier = typeof PendingTier.Type;
+export { PlanPhase as PendingTier } from "./PlanSet.ts";
 
 /** Every hold this standing has taken, keyed by id. */
 export const Holds = Schema.Record(Schema.String, HoldRecord);
@@ -286,12 +284,20 @@ export type UnsubscribedState = typeof UnsubscribedState.Type;
 
 /** What an account that has ever had a tier looks like. */
 export const SubscribedState = Schema.TaggedStruct("Subscribed", {
-  tier: Schema.String,
+  /**
+   * Every active plan, one base plan per group and any add-ons beside them
+   * (ADR 0039). The plan set is the account's subscription: a row carries what
+   * the plan grants and the terms the boundary needs to move to it.
+   */
+  plans: Plans,
+  /**
+   * The phases the account moves through, in the order they start. A phase is
+   * future-only and the list is ordered, so the boundary applies them in turn
+   * before it resets the counters (ADR 0039 §3).
+   */
+  schedule: PlanSchedule,
   status: SubscriptionStatus,
   period: Period,
-  interval: Interval,
-  /** What the tier cost when this standing took it. Absent on a free tier. */
-  price: Schema.optionalKey(Price),
   /** The provider's latest plan charge, kept so a cancellation can refund it. */
   lastChargeId: Schema.optionalKey(Schema.String),
   /**
@@ -322,14 +328,6 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * and a period close returns only the difference.
    */
   prepaidCredits: Schema.optionalKey(Schema.Int),
-  /** Whether the plan's own credits expire at a period close. */
-  creditsExpire: CreditsExpire,
-  /**
-   * Credits at or below which a spend buys the deployment's auto top-up pack.
-   * Absent means this tier never refills. It travels on the standing because
-   * `decide` is pure and the policy runs without the catalog.
-   */
-  topUp: Schema.optionalKey(TopUpTerms),
   /**
    * When the last policy-opened top-up's cooldown ends. A crossing while this is
    * set is deferred, not refused: `TopUpCooldownElapsed` clears it at the
@@ -373,9 +371,6 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * reset window does not (ADR 0038).
    */
   alertsFired: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.Int))),
-  /** Every credit-priced feature's rate card, copied from the event that set it. */
-  rates: CreditRateCards,
-  currency: Schema.optional(Schema.String),
   usage: UsageCounts,
   /**
    * Money billed this period, per feature, in the standing's currency. A fold
@@ -413,13 +408,6 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * a credit stays here for the next period to apply.
    */
   quantityProrations: Schema.optionalKey(Schema.Record(Schema.String, QuantityProration)),
-  allowances: Allowances,
-  /**
-   * The tier the standing moves to when this period closes, if one was
-   * scheduled. A close applies it before the counters reset, so the next period
-   * starts on the new tier's allowances.
-   */
-  pendingTier: Schema.optionalKey(PendingTier),
   refs: Refs,
   trialUsed: Schema.Boolean,
   dedupeKeys: Schema.Record(Schema.String, Schema.Boolean),
@@ -538,6 +526,79 @@ export const periodFrom = (start: DateTime.Utc, interval: Interval, anchorTz = "
   anchorTz,
 });
 
+/** The base plan of one group, or `undefined` when the group holds none. */
+export const planOfGroup = (
+  state: SubscribedState,
+  group: string = DEFAULT_PLAN_GROUP,
+): PlanRow | undefined => planInGroup(state.plans, group);
+
+/**
+ * The plan the account is sold under: the default group's plan, else any base
+ * plan. `check` and the spend path read it first; an add-on merges after it.
+ */
+export const primaryPlanOf = (state: SubscribedState): PlanRow | undefined =>
+  primaryPlan(state.plans);
+
+/** Every active plan, in the order a merge reads them. */
+export const planRowsOf = (state: SubscribedState): ReadonlyArray<PlanRow> =>
+  planOrder(state.plans);
+
+/** Every add-on attached to the account. */
+export const addOnsOf = (state: SubscribedState): ReadonlyArray<PlanRow> =>
+  planOrder(state.plans).filter((row) => row.addOn);
+
+/**
+ * The id of the plan the account is sold under, or `""` when the plan set is
+ * empty. A standing always has one plan in this slice; the empty case is what a
+ * cancellation leaves behind, and `standingTierOf` is the null-returning read.
+ */
+export const planIdOf = (state: SubscribedState): string => primaryPlanOf(state)?.planId ?? "";
+
+/**
+ * The allowances a spend path reads: every active plan's items, merged by
+ * feature. One plan merges to itself; an add-on adds its included amount to the
+ * feature it grants (ADR 0039 §2).
+ */
+export const allowancesOf = (state: SubscribedState): Allowances => mergeAllowances(state.plans);
+
+/** Every credit-priced feature's rate card, add-ons included. */
+export const ratesOf = (state: SubscribedState): CreditRateCards => mergeRates(state.plans);
+
+/** The currency the account is sold in, from the plan it is sold under. */
+export const currencyOf = (state: SubscribedState): string | undefined =>
+  primaryPlanOf(state)?.currency;
+
+/** The cadence of the account's period, from the plan it is sold under. */
+export const intervalOf = (state: SubscribedState): Interval =>
+  primaryPlanOf(state)?.interval ?? "month";
+
+/** What the account pays, from the plan it is sold under. */
+export const priceOf = (state: SubscribedState): Price | undefined => primaryPlanOf(state)?.price;
+
+/** Whether the sold plan's own pool expires at a close. */
+export const creditsExpireOf = (state: SubscribedState): CreditsExpire =>
+  primaryPlanOf(state)?.creditsExpire ?? "period";
+
+/** The sold plan's auto top-up line, before the customer's controls apply. */
+export const topUpTermsOf = (state: SubscribedState): TopUpTerms | undefined =>
+  primaryPlanOf(state)?.topUp;
+
+/** The schedule the account will move through, in start order. */
+export const scheduleOf = (state: SubscribedState): PlanSchedule => state.schedule ?? [];
+
+/** The phases due at or before an instant, in start order. */
+export const duePhasesOf = (state: SubscribedState, at: DateTime.Utc): ReadonlyArray<PlanPhase> =>
+  duePhases(state.schedule, at.epochMilliseconds);
+
+/** The next phase of one group, or `undefined` when the group has none. */
+export const pendingPlanOf = (
+  state: SubscribedState,
+  group: string = DEFAULT_PLAN_GROUP,
+): PlanPhase | undefined =>
+  state.schedule
+    .filter((phase) => phase.group === group)
+    .sort((a, b) => a.at.epochMilliseconds - b.at.epochMilliseconds)[0];
+
 /** Sum of a feature's usage. */
 export const usedOf = (state: SubscribedState, feature: string): number =>
   state.usage[feature] ?? 0;
@@ -569,7 +630,7 @@ export const effectiveTopUpOf = (
 
 /** The auto top-up line in force for this customer, or `null` when it never refills. */
 export const topUpOf = (state: SubscriptionState): TopUpTerms | null =>
-  state._tag === "Subscribed" ? effectiveTopUpOf(state.topUp, state.billingControls) : null;
+  state._tag === "Subscribed" ? effectiveTopUpOf(topUpTermsOf(state), state.billingControls) : null;
 
 /** The credits at or below which a spend on this standing is a crossing, or `null`. */
 export const topUpThresholdOf = (state: SubscriptionState): number | null =>
@@ -601,7 +662,7 @@ export const alertsFiredOf = (state: SubscriptionState, feature: string): Readon
 
 /** The tier this standing is on, or `null` when it never subscribed. */
 export const standingTierOf = (state: SubscriptionState): string | null =>
-  state._tag === "Subscribed" ? state.tier : null;
+  state._tag === "Subscribed" ? planIdOf(state) || null : null;
 
 /**
  * The last refill this standing could not buy, or `null` when nothing failed or
@@ -789,7 +850,7 @@ export const remainingOf = (state: SubscribedState, feature: string): number | n
   const remaining = recordedCount(state.remaining, feature);
 
   if (remaining !== undefined) return remaining;
-  const allowance = state.allowances[feature];
+  const allowance = allowancesOf(state)[feature];
 
   return allowance === undefined ? 0 : includedRemainingOf(allowance);
 };
@@ -1063,7 +1124,7 @@ export const prepaidCreditsOf = (state: SubscriptionState): number => state.prep
  * a one-off pack bought. A pool that never expires has nothing to return.
  */
 export const expiringCreditsOf = (state: SubscribedState): number =>
-  state.creditsExpire === "never" ? 0 : state.credits - prepaidCreditsOf(state);
+  creditsExpireOf(state) === "never" ? 0 : state.credits - prepaidCreditsOf(state);
 
 /**
  * The protected portion after the balance moved down. Expiring credits are
@@ -1095,7 +1156,7 @@ export const reservedCreditsOf = (state: SubscribedState): number =>
  * the pool minus what open holds have taken out of it.
  */
 export const availableOf = (state: SubscribedState, feature: string): number | null =>
-  state.rates[feature] === undefined
+  ratesOf(state)[feature] === undefined
     ? remainingOf(state, feature)
     : state.credits - reservedCreditsOf(state);
 

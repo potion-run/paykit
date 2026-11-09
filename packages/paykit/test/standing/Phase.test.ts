@@ -14,10 +14,7 @@ import {
   type StandingPhaseTag,
   type StandingTransition,
 } from "../../src/Subscription/StandingPhase.ts";
-import {
-  initialSubscriptionState,
-  type PendingTier,
-} from "../../src/Subscription/Subscription.state.ts";
+import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import {
   Script,
   type CommandPlan,
@@ -161,15 +158,22 @@ describe("standingConditionsOf", () => {
 
     expect(standingConditionsOf(canceledAtBoundary, start).cancelAtPeriodEnd).toBe(true);
 
-    const pendingTier: PendingTier = {
-      tier: "pro",
-      allowances: {},
-      credits: 0,
-      creditsExpire: "period",
-      rates: {},
+    const scheduled = {
+      ...subscribedAt("free"),
+      schedule: [
+        {
+          planId: "pro",
+          group: "default",
+          addOn: false,
+          at: start,
+          allowances: {},
+          credits: 0,
+          creditsExpire: "period" as const,
+          rates: {},
+        },
+      ],
     };
 
-    const scheduled = { ...subscribedAt("free"), pendingTier };
     expect(standingConditionsOf(scheduled, start).pendingTier).toBe("pro");
   });
 

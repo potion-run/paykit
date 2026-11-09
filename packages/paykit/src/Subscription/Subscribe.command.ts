@@ -14,6 +14,13 @@ import { AccountId } from "./Subscription.id.ts";
 /** The account's standing was activated for a tier, with a fresh period. */
 export class SubscriptionActivated extends Domain.Event("SubscriptionActivated", {
   tier: Schema.String,
+  /**
+   * The group the plan fills. Absent means the default group, which is also
+   * what an event recorded before plan groups existed decodes to (ADR 0039 §1).
+   */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether the plan stacks beside every group instead of filling one. */
+  addOn: Schema.optionalKey(Schema.Boolean),
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   /** The credit pool this activation grants. */
@@ -48,6 +55,10 @@ export class Subscribe extends Domain.Command("Subscribe", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+    group: Schema.optionalKey(Schema.String),
+    /** Whether the plan is an add-on rather than a group's plan. */
+    addOn: Schema.optionalKey(Schema.Boolean),
     allowances: Allowances,
     price: Schema.optionalKey(Price),
     /** What the tier grants in credits, and when they expire. */

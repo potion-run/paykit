@@ -14,6 +14,7 @@ import {
   spendHeadroomOf,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
+import { planRow } from "../support/Plans.ts";
 import { assertProperty } from "../support/Property.ts";
 import { rawAllowance as allowance, rawGrant as grant } from "../support/Raw.ts";
 
@@ -50,7 +51,8 @@ const buildAllowance = (spec: AllowanceSpec): Allowance => {
  */
 const stateAt = (allowance: Allowance, remaining: number | null | undefined): SubscribedState =>
   ({
-    allowances: { messages: allowance },
+    plans: { sold: planRow("sold", { allowances: { messages: allowance } }) },
+    schedule: [],
     remaining: remaining === undefined ? {} : { messages: remaining },
   }) as unknown as SubscribedState;
 

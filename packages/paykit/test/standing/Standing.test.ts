@@ -4,6 +4,9 @@ import { allowance, type Allowances } from "../../src/Allowance.ts";
 import { messages } from "../../src/Feature.ts";
 import { activationOf, standingFrom } from "../../src/Subscription/Standing.ts";
 import {
+  currencyOf,
+  intervalOf,
+  planIdOf,
   initialSubscriptionState,
   type SubscriptionState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -122,11 +125,11 @@ describe("standingFrom", () => {
       ),
     );
 
-    expect(state.tier).toBe("pro");
+    expect(planIdOf(state)).toBe("pro");
     expect(state.status).toBe("trialing");
     expect(state.trialUsed).toBe(true);
     expect(state.trialEndsAt).toBe(end);
-    expect(state.interval).toBe("month");
+    expect(intervalOf(state)).toBe("month");
     expect(state.period).toEqual(period);
     expect(state.usage).toEqual({});
     expect(state.holds).toEqual({});
@@ -156,17 +159,19 @@ describe("standingFrom", () => {
 
     expect(converted.refs).toEqual({ stripe: { customer: "cus_1" } });
     expect(converted.trialUsed).toBe(true);
-    expect(converted.interval).toBe("month");
+    expect(intervalOf(converted)).toBe("month");
     expect("trialEndsAt" in converted).toBe(false);
   });
 
   it("takes the event's interval over the price's", () => {
     expect(
-      subscribed(
-        standingFrom({ ...activation(), interval: "annual" }, initialSubscriptionState, {
-          trialUsed: false,
-        }),
-      ).interval,
+      intervalOf(
+        subscribed(
+          standingFrom({ ...activation(), interval: "annual" }, initialSubscriptionState, {
+            trialUsed: false,
+          }),
+        ),
+      ),
     ).toBe("annual");
   });
 
@@ -177,6 +182,6 @@ describe("standingFrom", () => {
 
     const grant = activation();
     const { currency: _currency, price: _price, ...bare } = grant;
-    expect(subscribed(standingFrom(bare, previous, { trialUsed: false })).currency).toBe("usd");
+    expect(currencyOf(subscribed(standingFrom(bare, previous, { trialUsed: false })))).toBe("usd");
   });
 });

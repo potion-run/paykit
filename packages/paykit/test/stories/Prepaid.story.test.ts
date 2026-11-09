@@ -234,6 +234,7 @@ it.effect("a tier change carries the pack instead of re-granting it", () =>
       account,
       new PlanChanged({
         tier: "next",
+        planCredits: 0,
         allowances: next,
         remaining: { messages: 200 },
         credits: 1_100,

@@ -10,6 +10,7 @@ import { messages } from "../../src/Feature.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { pendingPlanOf } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 import { bindingsWorld } from "../support/Bindings.ts";
 
@@ -148,8 +149,9 @@ it.live("previews a change and a schedule in the standing's currency", () =>
     expect(scheduled._tag).toBe("accepted");
 
     if (scheduled._tag !== "accepted" || scheduled.state._tag !== "Subscribed") return;
-    expect(scheduled.state.pendingTier?.currency).toBe("eur");
-    expect(scheduled.state.pendingTier?.price?.currency).toBe("eur");
+    const pending = pendingPlanOf(scheduled.state);
+    expect(pending?.currency).toBe("eur");
+    expect(pending?.price?.currency).toBe("eur");
   }).pipe(runEur),
 );
 
@@ -244,12 +246,12 @@ it.live("previews scheduling a change without recording it", () =>
     // has ended, so there is nothing to prorate.
     expect(result.proration).toBeUndefined();
     expect(result.events.map((event) => event._tag)).toEqual(["PlanChangeScheduled"]);
-    expect(result.state._tag === "Subscribed" ? result.state.pendingTier?.tier : undefined).toBe(
-      "scale",
-    );
+    expect(
+      result.state._tag === "Subscribed" ? pendingPlanOf(result.state)?.planId : undefined,
+    ).toBe("scale");
     // Nothing was written.
     const state = yield* subscription.state(Subscription.ref(account));
-    expect(state._tag === "Subscribed" ? state.pendingTier : "missing").toBeUndefined();
+    expect(state._tag === "Subscribed" ? pendingPlanOf(state) : "missing").toBeUndefined();
   }).pipe(run),
 );
 
@@ -293,6 +295,6 @@ it.live("previews the withdrawal of a scheduled change", () =>
     expect(result.events.map((event) => event._tag)).toEqual(["TierChangeWithdrawn"]);
     // The schedule is still there: a preview does not record.
     const state = yield* subscription.state(Subscription.ref(account));
-    expect(state._tag === "Subscribed" ? state.pendingTier?.tier : undefined).toBe("scale");
+    expect(state._tag === "Subscribed" ? pendingPlanOf(state)?.planId : undefined).toBe("scale");
   }).pipe(run),
 );

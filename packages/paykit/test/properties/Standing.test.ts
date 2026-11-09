@@ -6,6 +6,13 @@ import { grant, type Allowance, type Allowances } from "../../src/Allowance.ts";
 import { type Feature } from "../../src/Feature.ts";
 import { activationOf, standingFrom, type StandingGrant } from "../../src/Subscription/Standing.ts";
 import {
+  allowancesOf,
+  creditsExpireOf,
+  intervalOf,
+  planIdOf,
+  priceOf,
+  ratesOf,
+  topUpTermsOf,
   initialSubscriptionState,
   SubscriptionState,
   type SubscribedState,
@@ -139,13 +146,18 @@ const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
     cancelAtPeriodEnd: true,
     graceUntil: start,
     trialEndsAt: start,
-    pendingTier: {
-      tier: "pending",
-      allowances: {},
-      credits: 1,
-      creditsExpire: "period",
-      rates: {},
-    },
+    schedule: [
+      {
+        planId: "pending",
+        group: "default",
+        addOn: false,
+        at: start,
+        allowances: {},
+        credits: 1,
+        creditsExpire: "period",
+        rates: {},
+      },
+    ],
     proration: { currency: "usd", credit: 1, charge: 3, due: 2 },
     prorationInvoice: "in_previous",
     prorationId: "proration_previous",
@@ -324,7 +336,7 @@ describe("standingFrom", () => {
 
         const state = stateOf(standingFrom(grant, previous, { trialUsed: input.trialUsed }));
 
-        if (state.tier !== "pro") return false;
+        if (planIdOf(state) !== "pro") return false;
 
         if (state.status !== input.status) return false;
 
@@ -334,19 +346,19 @@ describe("standingFrom", () => {
 
         if (state.credits !== activation.credits) return false;
 
-        if (JSON.stringify(state.allowances) !== JSON.stringify(activation.allowances))
+        if (JSON.stringify(allowancesOf(state)) !== JSON.stringify(activation.allowances))
           return false;
 
         if (JSON.stringify(state.remaining) !== JSON.stringify(activation.remaining)) return false;
 
-        if (state.creditsExpire !== activation.creditsExpire) return false;
+        if (creditsExpireOf(state) !== activation.creditsExpire) return false;
 
-        if ((state.topUp?.threshold ?? null) !== (activation.topUp?.threshold ?? null))
+        if ((topUpTermsOf(state)?.threshold ?? null) !== (activation.topUp?.threshold ?? null))
           return false;
 
-        if (JSON.stringify(state.rates) !== JSON.stringify(activation.rates)) return false;
+        if (JSON.stringify(ratesOf(state)) !== JSON.stringify(activation.rates)) return false;
 
-        if (JSON.stringify(state.price) !== JSON.stringify(activation.price)) return false;
+        if (JSON.stringify(priceOf(state)) !== JSON.stringify(activation.price)) return false;
 
         // The pack part is inside the pool, and omitted only when there is
         // none to protect. A state that says otherwise makes expiry arithmetic
@@ -357,7 +369,7 @@ describe("standingFrom", () => {
 
         if (prepaid < 0 || prepaid > state.credits) return false;
 
-        if (state.interval !== (input.interval ?? activation.price?.interval ?? "month")) {
+        if (intervalOf(state) !== (input.interval ?? activation.price?.interval ?? "month")) {
           return false;
         }
 

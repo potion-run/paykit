@@ -11,6 +11,7 @@ import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { PlanItemReset, ResetAllowance } from "../../src/Subscription/ResetAllowance.command.ts";
 import { resetWindowsOf } from "../../src/Subscription/Standing.ts";
 import {
+  allowancesOf,
   includedRemainingOf,
   nextResetAt,
   periodTiedReset,
@@ -20,6 +21,7 @@ import {
 } from "../../src/Subscription/Subscription.state.ts";
 import { TrackUsage } from "../../src/Subscription/TrackUsage.command.ts";
 import { tier } from "../../src/Tier.ts";
+import { planRow } from "../support/Plans.ts";
 import { assertProperty } from "../support/Property.ts";
 import { decideAt, evolveAt, isAccepted, start, subscribedIn } from "./Arbitraries.ts";
 
@@ -128,7 +130,8 @@ const same = (left: unknown, right: unknown): boolean =>
 
 const stateAt = (built: Allowance, remaining: number | null | undefined): SubscribedState =>
   ({
-    allowances: { messages: built },
+    plans: { sold: planRow("sold", { allowances: { messages: built } }) },
+    schedule: [],
     remaining: remaining === undefined ? {} : { messages: remaining },
   }) as unknown as SubscribedState;
 
@@ -279,7 +282,7 @@ describe("a reset runs on its own schedule", () => {
       ),
       ({ tier: stock, usage, held, lateDays }) => {
         const opened = subscribedIn(schedules, stock);
-        const allowance = opened.allowances.messages!;
+        const allowance = allowancesOf(opened).messages!;
         const boundary = opened.resetAt?.messages;
 
         if (boundary === undefined) return false;
@@ -428,7 +431,7 @@ describe("a reset runs on its own schedule", () => {
       ),
       ({ tier: stock, usage }) => {
         const opened = subscribedIn(schedules, stock);
-        const allowance = opened.allowances.messages!;
+        const allowance = allowancesOf(opened).messages!;
 
         const tracked =
           usage === 0
@@ -487,7 +490,7 @@ describe("a reset runs on its own schedule", () => {
   it("a daily allowance records its boundary at activation", () => {
     const state = subscribedIn(schedules, "daily");
     expect(state.resetAt?.messages).toEqual(DateTime.add(start, { days: 1 }));
-    expect(periodTiedReset(state.allowances.messages!)).toBe(false);
+    expect(periodTiedReset(allowancesOf(state).messages!)).toBe(false);
   });
 
   it("an hourly multiplier is the window it says it is", () => {

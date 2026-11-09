@@ -16,6 +16,7 @@ import { sameProration, type Proration } from "../../src/Proration.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
+import { planIdOf } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 import { planChangeTier } from "../../src/TierCommand.ts";
 import {
@@ -89,7 +90,7 @@ it.live("quotes a tier change without recording it", () =>
 
     const subscription = yield* Subscription;
     const state = yield* subscription.state(Subscription.ref(account));
-    expect(state._tag === "Subscribed" ? state.tier : "").toBe("pro");
+    expect(state._tag === "Subscribed" ? planIdOf(state) : "").toBe("pro");
   }).pipe(run),
 );
 
@@ -117,7 +118,7 @@ it.live("applies only the proration the operator confirmed", () =>
 
     const subscription = yield* Subscription;
     const state = yield* subscription.state(Subscription.ref(account));
-    expect(state._tag === "Subscribed" ? state.tier : "").toBe("scale");
+    expect(state._tag === "Subscribed" ? planIdOf(state) : "").toBe("scale");
   }).pipe(run),
 );
 
@@ -141,7 +142,7 @@ it.live("returns a requote instead of applying a different amount", () =>
 
     const subscription = yield* Subscription;
     const state = yield* subscription.state(Subscription.ref(account));
-    expect(state._tag === "Subscribed" ? state.tier : "").toBe("pro");
+    expect(state._tag === "Subscribed" ? planIdOf(state) : "").toBe("pro");
   }).pipe(run),
 );
 

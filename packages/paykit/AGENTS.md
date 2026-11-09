@@ -149,15 +149,29 @@ period, and `EnterGrace` is refused once the standing is terminal.
   `Payments.charge` keyed by the run and attempt, records `RecordPayment` or
   `RecordPaymentFailure`, and leaves `GraceElapsed` as the one hard stop. A provider without
   `charge` is `ProviderCapabilityMissing`, never a silent no-op.
-- A scheduled tier change is data on the standing (`pendingTier`), not a second command queue. The
-  close applies it before the reset, so the next period starts on the new tier's allowances; a
-  second `ScheduleTierChange` replaces the first and a mid-period `ChangeTier` clears it.
-  `WithdrawTierChange` drops it, and refuses (`NoTierChangeScheduled`) when nothing is scheduled.
-  At the boundary the old plan's balance source is expired and the new plan's source is granted;
-  the expiry is recorded, so the pool's fold is complete. A lifetime source is untouched and a
-  pack stays protected. The new plan grant is for the period starting here and expires at the next
-  close. It also starts every counter over — a counter belongs to the plan item it was recorded on,
-  not to the one the account is entering.
+- **The standing holds a plan set, not one plan.** `SubscribedState.plans` is a row per active plan,
+  keyed by plan id, with the group it fills, its add-on flag and the terms a boundary needs
+  (`allowances`, the pool grant, the expiry rule, `topUp`, rate cards, cadence, currency, price).
+  At most one row per group is a base plan; a plan with `addOn` stacks beside every group and fills
+  no slot. A move writes one row (`withPlan` replaces its group's base plan) and never the whole
+  set; `state.tier`, `state.allowances` and `state.pendingTier` are gone — read `planIdOf`,
+  `allowancesOf`, `ratesOf`, `currencyOf`, `intervalOf`, `priceOf`, `planRowsOf`, `addOnsOf` and
+  `pendingPlanOf`. `check` and the spend path read the merged allowances, so an add-on's feature is
+  spendable beside the plan's; two plans that grant the same feature add their `included` counts
+  until the ledger reports one source per plan (ADR 0039).
+- **A schedule is a list of phases, not one pending change.** `SubscribedState.schedule` is ordered
+  by instant and every phase names its group, its add-on flag and the plan a boundary moves to.
+  `ScheduleTierChange` appends (`PlanChangeScheduled` carries `at`, the boundary when the caller
+  states none) and refuses a phase that is not future (`PlanPhaseNotFuture`) or that names an
+  add-on (`PlanPhaseNamesAddOn`). The close applies every phase due at the boundary, in order,
+  before the counters reset, so the next period starts on the plan it lands on. `WithdrawTierChange`
+  drops the next phase and refuses (`NoTierChangeScheduled`) when none is scheduled. A move drops
+  the phases its own group had waiting and leaves the other group's alone; a terminal standing
+  drops them with the cancellation. At the boundary the old plan's balance source is expired and
+  the new plan's source is granted; the expiry is recorded, so the pool's fold is complete. A
+  lifetime source is untouched and a pack stays protected. The new plan grant is for the period
+  starting here and expires at the next close. It also starts every counter over — a counter
+  belongs to the plan item it was recorded on, not to the one the account is entering.
 - A trial opens on the cadence its price states: an annual trial converts into an annual period,
   not a monthly one. Its deadline is the first period's end, so it only moves forward:
   `StartTrial` refuses one that is not after `now` and `ExtendTrial` one that is not after the
@@ -174,7 +188,7 @@ period, and `EnterGrace` is refused once the standing is terminal.
 - An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, pack,
   cooldown? })` provides `AutoTopUp`, which buys the named `kind: "one_off"` pack when a spend takes
   the pool from above the standing tier's `topUp` line to at or below it. The line is catalog data
-  (`Tier.topUp`) carried on the standing like `pendingTier`, because a free tier and an enterprise
+  (`Tier.topUp`) carried on the plan row, because a free tier and an enterprise
   tier need different lines and `decide` never sees the catalog. A tier without it never refills.
   The balance before the event is derived from the event (`creditsAfter + cost`, `balanceAfter +
   amount`), so a second spend below the line is not a second crossing, and a grant, an expiry or a

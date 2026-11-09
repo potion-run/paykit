@@ -258,7 +258,7 @@ export const standingConditionsOf = (
   return {
     trialUsed: state.trialUsed,
     cancelAtPeriodEnd: state.cancelAtPeriodEnd,
-    pendingTier: state.pendingTier?.tier ?? null,
+    pendingTier: state.schedule[0]?.planId ?? null,
     topUpCooldown: cooldown,
     openHolds: holds.length,
     lapsedHolds,

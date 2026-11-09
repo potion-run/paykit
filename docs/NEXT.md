@@ -220,10 +220,23 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   reads them, `SpendLimitExceeded` is a `capacityOf` variant so `check`, `allowed` and `decide`
   agree, and `UsageAlertFired` is evidence that never refuses. The write is canonical and
   idempotent, works before a plan exists, and survives a plan change and a close.
-- Landed: the plan-set model. `schedules.qnt` and its 27 scenarios are green; ADR
-  [0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) decides one plan per group, add-ons
-  stack, a two-phase schedule and the cancellation fallback to the group's default. The
-  implementation is the next slice.
+- Landed: the plan set in state. `SubscribedState.plans` is one row per active plan keyed by plan
+  id (`planId`, `group`, `addOn`, allowances, pool grant, expiry rule, top-up line, rate cards,
+  cadence, currency, price) and `SubscribedState.schedule` is the ordered phase list `pendingTier`
+  became, so `state.tier`/`state.allowances`/`state.pendingTier` are gone and every read names the
+  plan set (`planIdOf`, `allowancesOf`, `ratesOf`, `pendingPlanOf`, `planRowsOf`). `ScheduleTierChange`
+  appends a future phase (`PlanPhaseNotFuture`, `PlanPhaseNamesAddOn`), the close applies every phase
+  due at the boundary in order before the counters reset, and `PlanChanged`/`PlanChangeScheduled`
+  carry the group and the add-on flag. `BillingState` describes the set (`plans`, `schedule`, the
+  pending phase) and `Customer.plans` is the set, not one row. Implemented in
+  `packages/paykit` with `test/billing/PlanSet.test.ts` beside `test/subscribe/ScheduledTierChange.test.ts`;
+  ADR [0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) is the record.
+- Remaining from the plan-set slice: `multiAttach`/`multiUpdate` as one operation and one command id
+  (the state and the close already accept their result), a per-plan balance source so two plans that
+  grant one feature report two `Balance.breakdown` lines instead of a merged count, the
+  `isDefault`-aware `cancelGroup`/`uncancelGroup` commands (today cancellation is still the
+  standing-level `cancelAtPeriodEnd` that ends the account), a scheduled `applyPhase` command that
+  fires at the phase's own instant rather than at the close, and an `addAddOn` operation binding.
 - Landed: the entity model. `entities.qnt` and its 14 scenarios are green; ADR
   [0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md) decides a child scope, a pooled plan
   item, the transfer and the archive. The implementation is the slice after the plan set.
@@ -232,7 +245,8 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
 
 - **Scheduled tier changes**: done
   ([ADR 0012](./adr/0012-a-tier-change-can-be-scheduled-for-the-boundary.md)). The standing carries
-  `pendingTier`, the close applies it before the reset, and `WithdrawTierChange` takes it back.
+  a phase schedule (`SubscribedState.schedule`), the close applies the phases due at the boundary
+  before the reset, and `WithdrawTierChange` takes the next one back.
   `actionsFor` offers the schedule for tiers `ChangeTier` refuses and the withdrawal only while one is
   pending; `Preview` decides both; `BillingState` carries `pendingTier` so a page can say "on pro,
   moving to small at the period end"; the console sends both, building the scheduled payload from the

@@ -11,6 +11,8 @@ import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { PurchaseCredits } from "../../src/Subscription/PurchaseCredits.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import {
+  creditsExpireOf,
+  ratesOf,
   creditRateOf,
   initialSubscriptionState,
   prepaidCreditsOf,
@@ -61,7 +63,7 @@ const CreditScript = Schema.Struct({
 });
 
 const rateFor = (state: SubscribedState, dimension: "default" | "gpt-large"): number =>
-  creditRateOf(state.rates["ai"]!, { dimension });
+  creditRateOf(ratesOf(state)["ai"]!, { dimension });
 
 describe("credits", () => {
   it.effect("the pool is a fold, never goes negative, and a change does not re-grant", () =>
@@ -244,9 +246,9 @@ describe("credits", () => {
 
               if (!same(event.rates, terms.rates)) return false;
 
-              if (after.creditsExpire !== terms.creditsExpire) return false;
+              if (creditsExpireOf(after) !== terms.creditsExpire) return false;
 
-              if (!same(after.rates, terms.rates)) return false;
+              if (!same(ratesOf(after), terms.rates)) return false;
 
               // A tier change carries the balance and its protected part.
               if (prepaidCreditsOf(after) !== prepaidCreditsOf(before)) return false;
@@ -258,10 +260,12 @@ describe("credits", () => {
                 | { readonly amount: number }
                 | undefined;
 
-              if ((expired !== undefined) !== (before.creditsExpire === "period")) return false;
+              if ((expired !== undefined) !== (creditsExpireOf(before) === "period")) return false;
 
               const expiring =
-                before.creditsExpire === "period" ? before.credits - prepaidCreditsOf(before) : 0;
+                creditsExpireOf(before) === "period"
+                  ? before.credits - prepaidCreditsOf(before)
+                  : 0;
 
               if (expired !== undefined && expired.amount !== expiring) return false;
 

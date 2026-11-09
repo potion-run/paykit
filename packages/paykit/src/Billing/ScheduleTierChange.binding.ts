@@ -6,6 +6,8 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import { PlanPhaseNamesAddOn } from "../Subscription/PlanPhaseNamesAddOn.rejection.ts";
+import { PlanPhaseNotFuture } from "../Subscription/PlanPhaseNotFuture.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
@@ -37,6 +39,8 @@ const scheduleRefusals = [
   NotSubscribed,
   StandingEnded,
   PlanNotInCatalog,
+  PlanPhaseNotFuture,
+  PlanPhaseNamesAddOn,
   CurrencyMismatch,
   CatalogMismatch,
   Unauthenticated,

@@ -14,6 +14,7 @@ import {
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import {
+  allowancesOf,
   billedOf,
   chargeOf,
   holdOf,
@@ -202,7 +203,7 @@ const moneyAgrees = (
 ): boolean => {
   if (state._tag !== "Subscribed") return true;
 
-  for (const feature of Object.keys(state.allowances)) {
+  for (const feature of Object.keys(allowancesOf(state))) {
     const expected = ledger.billed.get(feature) ?? 0;
 
     if (billedOf(state, feature) !== expected) return false;
@@ -390,7 +391,7 @@ describe("money across a period close", () => {
     // `pro` grants `messages` without a `unitPrice`, so the new allowance says
     // nothing about the bill the period already holds.
     run(commandOf({ _tag: "ChangeTier", tier: "pro" }, state, now), "change");
-    const changed = active().allowances["messages"];
+    const changed = allowancesOf(active())["messages"];
 
     if (changed?.unitPrice !== undefined) throw new Error("the fixture tier is priced");
 

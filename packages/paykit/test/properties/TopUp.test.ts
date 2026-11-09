@@ -32,6 +32,7 @@ import {
   TopUpCooldownElapsed,
 } from "../../src/Subscription/TopUpCooldownElapsed.command.ts";
 import { UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
+import { withSoldPlan } from "../support/Plans.ts";
 import { assertProperty } from "../support/Property.ts";
 import { commandOf, decideAt, evolveAt, isAccepted, start, subscribedAt } from "./Arbitraries.ts";
 
@@ -509,14 +510,18 @@ describe("the pack and the bound a standing's line selects", () => {
 describe("the retry budget", () => {
   const hour = DateTime.add(start, { hours: 1 });
 
-  /** A standing under its line, with the count and cooldown a test needs. */
-  const standing = (over: Partial<SubscribedState> = {}): SubscribedState => ({
-    ...subscribedAt("pro"),
-    topUp: { threshold: 1_000 },
-    topUpAttempts: 0,
-    credits: 500,
-    ...over,
-  });
+  /**
+   * A standing under its line, with the count and cooldown a test needs. The
+   * line is the plan's (ADR 0039 §9), so it is replaced on the row.
+   */
+  const standing = (
+    over: Partial<SubscribedState> = {},
+    line: { readonly threshold: number } | null = { threshold: 1_000 },
+  ): SubscribedState =>
+    withSoldPlan(
+      { ...subscribedAt("pro"), topUpAttempts: 0, credits: 500, ...over },
+      line === null ? { topUp: undefined } : { topUp: line },
+    );
 
   it("records a rung only while the attempt it names is still the standing's", () => {
     const live = decideAt(
@@ -558,12 +563,7 @@ describe("the retry budget", () => {
 
     expect(isAccepted(cooling) && cooling).toEqual([]);
 
-    const noLine = decideAt(
-      standing({ topUp: undefined }),
-      new RetryTopUp({ attempt: 0 }),
-      start,
-      "rung",
-    );
+    const noLine = decideAt(standing({}, null), new RetryTopUp({ attempt: 0 }), start, "rung");
 
     expect(isAccepted(noLine) && noLine).toEqual([]);
   });

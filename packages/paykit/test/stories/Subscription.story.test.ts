@@ -29,6 +29,7 @@ import {
 } from "../../src/Subscription/TrackUsage.command.ts";
 import { TrialAlreadyUsed } from "../../src/Subscription/TrialAlreadyUsed.rejection.ts";
 import { tier } from "../../src/Tier.ts";
+import { soldPlan } from "../support/Plans.ts";
 
 const freeTier = tier({
   id: "free",
@@ -102,7 +103,12 @@ it.effect("subscribes to a free tier and exposes its entitlements", () =>
       }),
     ),
     Story.then(account, activatedFree),
-    Story.state(account, { _tag: "Subscribed", tier: "free", status: "active" }),
+    Story.state(account, {
+      _tag: "Subscribed",
+      plans: soldPlan("free", { allowances: freeAllowances }),
+      schedule: [],
+      status: "active",
+    }),
     Story.view(Entitlements, account, {
       account: "acct_1",
       tier: "free",

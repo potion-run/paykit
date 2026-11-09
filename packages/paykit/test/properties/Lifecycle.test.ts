@@ -15,6 +15,7 @@ import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import {
+  creditsExpireOf,
   initialSubscriptionState,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -252,7 +253,7 @@ describe("lifecycle", () => {
                   : before.status;
 
               if (after.status !== expectedStatus) return false;
-              const expectedCredits = before.creditsExpire === "period" ? 0 : before.credits;
+              const expectedCredits = creditsExpireOf(before) === "period" ? 0 : before.credits;
 
               if (after.credits !== expectedCredits) return false;
               break;

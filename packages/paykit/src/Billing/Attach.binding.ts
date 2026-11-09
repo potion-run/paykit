@@ -16,6 +16,7 @@ import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { refundableOf } from "../Subscription/Subscription.state.ts";
+import { planIdOf, priceOf, currencyOf } from "../Subscription/Subscription.state.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
 import type { CancelVerb, ResumeVerb } from "./Cancel.binding.ts";
 import { Resume, ScheduleCancellation } from "./Cancel.binding.ts";
@@ -227,7 +228,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   const terms = planTermsOf(
     deps.catalog,
     request.planId,
-    state._tag === "Subscribed" ? state.currency : undefined,
+    state._tag === "Subscribed" ? currencyOf(state) : undefined,
   );
 
   if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
@@ -274,14 +275,14 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
 
   // The same plan is a replay, not a second activation; quantities can still
   // change.
-  if (state.tier === request.planId) {
+  if (planIdOf(state) === request.planId) {
     return yield* applyQuantities(deps, account, request, {
       outcome: "updated",
       planId: request.planId,
     });
   }
 
-  const upgrade = amountOf(terms.price) > amountOf(state.price);
+  const upgrade = amountOf(terms.price) > amountOf(priceOf(state));
   const immediate = upgrade || request.planSchedule === "immediate";
 
   if (!immediate) {
@@ -299,7 +300,7 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
 
     return {
       outcome: "scheduled",
-      planId: state.tier,
+      planId: planIdOf(state),
       pendingPlanId: scheduled.pendingTier ?? request.planId,
     } as const;
   }
@@ -361,9 +362,9 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
 
   if (state._tag !== "Subscribed") return yield* new NotSubscribed({ account });
 
-  const planId = request.planId ?? state.tier;
+  const planId = request.planId ?? planIdOf(state);
 
-  if (request.planId !== undefined && request.planId !== state.tier) {
+  if (request.planId !== undefined && request.planId !== planIdOf(state)) {
     return yield* new PlanOperationUnsupported({ planId: request.planId, reason: "no_change" });
   }
 
@@ -372,7 +373,7 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
   if (request.cancelAction === "cancel_immediately") {
     const at = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
 
-    const price = state.price;
+    const price = priceOf(state);
 
     const unused =
       price === undefined ? 0 : Math.round(price.amount * unusedFraction(state.period, at));
@@ -428,7 +429,7 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
     yield* cancel({ dedupeKey: `${request.idempotencyKey}:cancel` });
 
     // A cancellation wins the boundary, so a pending plan change is withdrawn.
-    if (state.pendingTier !== undefined) {
+    if (state.schedule.length > 0) {
       const withdraw = yield* deps.withdrawTierChange(account);
 
       yield* withdraw({ dedupeKey: `${request.idempotencyKey}:withdraw` }).pipe(
@@ -442,7 +443,7 @@ const updateWith = Effect.fn("Paykit.Update.update")(function* (
   if (request.cancelAction === "uncancel") {
     let found = false;
 
-    if (state.pendingTier !== undefined) {
+    if (state.schedule.length > 0) {
       const withdraw = yield* deps.withdrawTierChange(account);
 
       yield* withdraw({ dedupeKey: `${request.idempotencyKey}:withdraw` }).pipe(
@@ -493,19 +494,19 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
     } as const satisfies PreviewAttachResult;
   }
 
-  if (state.tier === request.planId) {
+  if (planIdOf(state) === request.planId) {
     return { outcome: "updated", planId: request.planId } as const satisfies PreviewAttachResult;
   }
 
   const terms = planTermsOf(
     deps.catalog,
     request.planId,
-    state._tag === "Subscribed" ? state.currency : undefined,
+    state._tag === "Subscribed" ? currencyOf(state) : undefined,
   );
 
   if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
-  const upgrade = amountOf(terms.price) > amountOf(state.price);
+  const upgrade = amountOf(terms.price) > amountOf(priceOf(state));
   const immediate = upgrade || request.planSchedule === "immediate";
 
   if (!immediate) {
@@ -518,7 +519,7 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
 
     return {
       outcome: "scheduled",
-      planId: state.tier,
+      planId: planIdOf(state),
       pendingPlanId: request.planId,
       preview: yield* preview({
         command: { kind: "scheduleTierChange", tier: request.planId },
@@ -542,9 +543,9 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
 
   if (state._tag !== "Subscribed") return yield* new NotSubscribed({ account });
 
-  const planId = request.planId ?? state.tier;
+  const planId = request.planId ?? planIdOf(state);
 
-  if (request.planId !== undefined && request.planId !== state.tier) {
+  if (request.planId !== undefined && request.planId !== planIdOf(state)) {
     return yield* new PlanOperationUnsupported({ planId: request.planId, reason: "no_change" });
   }
 
@@ -558,7 +559,7 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
   if (request.cancelAction === "cancel_end_of_cycle") {
     previews.push(yield* preview({ command: { kind: "cancel" } }));
 
-    if (state.pendingTier !== undefined) {
+    if (state.schedule.length > 0) {
       previews.push(yield* preview({ command: { kind: "withdrawTierChange" } }));
     }
   }
@@ -566,7 +567,7 @@ const previewUpdateWith = Effect.fn("Paykit.PreviewUpdate.preview")(function* (
   if (request.cancelAction === "uncancel") {
     let found = false;
 
-    if (state.pendingTier !== undefined) {
+    if (state.schedule.length > 0) {
       previews.push(yield* preview({ command: { kind: "withdrawTierChange" } }));
       found = true;
     }

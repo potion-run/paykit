@@ -304,6 +304,7 @@ it.effect("a rate change after the hold does not change the bill", () =>
       account,
       new PlanChanged({
         tier: "smaller",
+        planCredits: 0,
         allowances: planItemsOf(testCatalog, "smaller")!,
         remaining: { messages: 100 },
         credits: 50_000,
@@ -423,6 +424,7 @@ it.effect("a tier change carries the balance over instead of re-granting", () =>
       account,
       new PlanChanged({
         tier: "smaller",
+        planCredits: 0,
         allowances: planItemsOf(testCatalog, "smaller")!,
         remaining: { messages: 100 },
         credits: 40_000,

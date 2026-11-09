@@ -61,6 +61,13 @@ export class DowngradeBelowCeiling extends Domain.Rejection("DowngradeBelowCeili
 /** The account is now on another tier; the prices it moved between, and any proration. */
 export class PlanChanged extends Domain.Event("PlanChanged", {
   tier: Schema.String,
+  /**
+   * The group this plan fills. Absent means the default group, which is also
+   * what an event recorded before plan groups existed decodes to.
+   */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether this plan stacks beside every group instead of filling one. */
+  addOn: Schema.optionalKey(Schema.Boolean),
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
   /**
@@ -70,6 +77,17 @@ export class PlanChanged extends Domain.Event("PlanChanged", {
   credits: Schema.Int,
   /** The part of the pool a one-off pack bought, which a change carries over. */
   prepaidCredits: Schema.optionalKey(Schema.Int),
+  /**
+   * The pool this plan grants when it is the plan a boundary lands on. The
+   * change itself does not re-grant, so `credits` is the live pool and this is
+   * what the plan promises for the next period.
+   */
+  planCredits: Schema.optionalKey(Schema.Int),
+  /**
+   * Whether this move supersedes the phases its group still had waiting. An
+   * explicit move does; a phase the boundary applied does not (ADR 0039 §5–6).
+   */
+  supersedesSchedule: Schema.optionalKey(Schema.Boolean),
   /** The new tier's expiry rule for the pool. */
   creditsExpire: CreditsExpire,
   /** Credits at or below which a spend buys the deployment's auto top-up pack. */
@@ -92,6 +110,10 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
   target: AccountId,
   input: {
     tier: Schema.String,
+    /** The group the plan fills; absent means the default group (ADR 0039 §1). */
+    group: Schema.optionalKey(Schema.String),
+    /** Whether the plan is an add-on rather than a group's plan. */
+    addOn: Schema.optionalKey(Schema.Boolean),
     allowances: Allowances,
     price: Schema.optionalKey(Price),
     /** What the new tier grants; carrying the balance over means it is not re-granted. */

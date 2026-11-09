@@ -26,6 +26,7 @@ import { SettleHold as SettleHoldCommand } from "../Subscription/SettleHold.comm
 import { SetUsage as SetUsageCommand } from "../Subscription/SetUsage.command.ts";
 import { StartTrial as StartTrialCommand } from "../Subscription/StartTrial.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { allowancesOf, planIdOf, currencyOf } from "../Subscription/Subscription.state.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
 import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
@@ -208,7 +209,7 @@ const BillingCore = Layer.mergeAll(
             const vendorSubscription =
               chosen === null ? undefined : state.refs[chosen.name]?.subscription;
 
-            const allowance = state.allowances[request.feature];
+            const allowance = allowancesOf(state)[request.feature];
 
             if (chosen !== null && vendorSubscription !== undefined && allowance !== undefined) {
               if (chosen.capabilities.has("quantity")) {
@@ -225,7 +226,7 @@ const BillingCore = Layer.mergeAll(
                   const result = yield* Option.getOrThrow(payments).setQuantity({
                     account,
                     subscription: vendorSubscription,
-                    tier: state.tier,
+                    tier: planIdOf(state),
                     feature: request.feature,
                     quantity: request.quantity,
                     proration: allowance.prorate === "period_end" ? "none" : "immediate",
@@ -732,7 +733,7 @@ const BillingCore = Layer.mergeAll(
           const scheduled = scheduleTierChangeInputOf(
             catalog,
             request.tier,
-            state._tag === "Subscribed" ? state.currency : undefined,
+            state._tag === "Subscribed" ? currencyOf(state) : undefined,
           );
 
           if (scheduled === null) {

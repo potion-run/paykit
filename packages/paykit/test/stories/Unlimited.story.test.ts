@@ -257,11 +257,9 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
     expect(answer.balance.nextResetAt).not.toBeNull();
     expect(answer.standing).toBe("good");
 
-    // The read-model path and the in-process path agree, as they do for a count.
-    const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
-    expect(yield* readModel({ featureId: "messages" })).toEqual(answer);
-
-    // The row round-trips the absence of a count, not a zero.
+    // The row round-trips the absence of a count, not a zero. Wait for the
+    // projection first: the read-model path below reads that row, and under a
+    // loaded suite it can trail the view a `caughtUp` already reported.
     const store = yield* BillingReadStore;
 
     const row = yield* waitForProjection(
@@ -269,6 +267,10 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
       account.id,
       Option.getOrNull(yield* entitlements.query(Subscription.ref(account.id))),
     );
+
+    // The read-model path and the in-process path agree, as they do for a count.
+    const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
+    expect(yield* readModel({ featureId: "messages" })).toEqual(answer);
 
     expect(row?.features.messages?.included).toBe("unlimited");
     expect(row?.features.messages?.remaining).toBeNull();

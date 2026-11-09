@@ -16,6 +16,7 @@ import { messages } from "../../src/Feature.ts";
 import { priceOf, pricing, type PriceBandInput, type PricingInput } from "../../src/Pricing.ts";
 import { priceFor, tier } from "../../src/Tier.ts";
 import { planChangeTier, scheduleTierChangeInputOf } from "../../src/TierCommand.ts";
+import { withSoldPlan } from "../support/Plans.ts";
 import { assertProperty } from "../support/Property.ts";
 import { start, subscribedIn } from "./Arbitraries.ts";
 
@@ -534,15 +535,15 @@ describe("a standing is quoted in the currency it was sold in", () => {
 
         const base = subscribedIn(source, "pro");
 
-        const standing = {
-          ...base,
+        // The currency and price are the sold plan's, so the row carries them.
+        const standing = withSoldPlan(base, {
           currency: soldIn,
           price: {
             amount: soldIn === "usd" ? proUsd : proEur,
             currency: soldIn,
             interval: "month" as const,
           },
-        };
+        });
 
         const targetAmount = soldIn === "usd" ? scaleUsd : scaleEur;
         const plan = planChangeTier(source, "scale", standing, start);
@@ -569,7 +570,8 @@ describe("a standing is quoted in the currency it was sold in", () => {
 
         // A currency the tier never states is not quoted, scheduled or sold.
         return (
-          planChangeTier(source, "scale", { ...standing, currency: "gbp" }, start) === null &&
+          planChangeTier(source, "scale", withSoldPlan(standing, { currency: "gbp" }), start) ===
+            null &&
           scheduleTierChangeInputOf(source, "scale", "gbp") === null &&
           planTermsOf(source, "scale", "gbp") === null
         );

@@ -14,6 +14,7 @@ import { GraceElapsed } from "./GraceElapsed.command.ts";
 import { RecordPayment } from "./RecordPayment.command.ts";
 import { PaymentFailed, RecordPaymentFailure } from "./RecordPaymentFailure.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
+import { priceOf } from "./Subscription.state.ts";
 
 /**
  * The times, measured from the first failure of a dunning run, at which the
@@ -215,7 +216,7 @@ export const DunningLive = Dunning.toLayer(
       if (config === null || event._tag !== "PaymentFailed") return;
       const startedAt = standing.dunningStartedAt;
 
-      if (startedAt === undefined || standing.price === undefined) return;
+      if (startedAt === undefined || priceOf(standing) === undefined) return;
 
       const graceMillis = DateTime.toEpochMillis(standing.graceUntil);
 

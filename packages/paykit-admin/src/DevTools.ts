@@ -316,6 +316,7 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
       credits: 500,
       creditsExpire: "period",
       rates: {},
+      at: "2030-02-01T00:00:00.000Z",
     }),
   },
   {
@@ -570,9 +571,33 @@ export const devToolsBilling = (
     ),
   );
 
+  const catalogAllowances = Option.getOrElse(
+    Option.map(terms, (value) => value.allowances),
+    () => ({}),
+  );
+
+  const catalogRates = Option.getOrElse(
+    Option.map(terms, (value) => value.rates),
+    () => ({}),
+  );
+
   return {
     account,
     tier,
+    plans: {
+      [tier]: {
+        planId: tier,
+        group: "default",
+        addOn: false,
+        allowances: catalogAllowances,
+        credits,
+        creditsExpire: "period",
+        rates: catalogRates,
+        interval: "month",
+        ...(price === undefined ? {} : { price, currency: price.currency }),
+      },
+    },
+    schedule: [],
     status,
     periodStart: at,
     periodEnd,
@@ -589,6 +614,8 @@ export const devToolsBilling = (
       : {
           pendingTier: {
             tier: pending.tier,
+            group: "default",
+            at: periodEnd,
             allowances: pending.terms.allowances,
             credits: pending.terms.credits,
             creditsExpire: pending.terms.creditsExpire,

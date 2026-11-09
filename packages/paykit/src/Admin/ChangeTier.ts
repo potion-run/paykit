@@ -31,6 +31,7 @@ import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts"
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { currencyOf } from "../Subscription/Subscription.state.ts";
 import { planChangeTier } from "../TierCommand.ts";
 import { AdminReadError, AdminReadFailed } from "./Reads.ts";
 
@@ -140,7 +141,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         const terms = planTermsOf(
           catalog,
           input.tier,
-          state._tag === "Subscribed" ? state.currency : undefined,
+          state._tag === "Subscribed" ? currencyOf(state) : undefined,
         );
 
         if (terms === null || terms.kind === "one_off") {

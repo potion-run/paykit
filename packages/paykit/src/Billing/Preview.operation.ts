@@ -17,6 +17,7 @@ import { SetQuantity } from "../Subscription/SetQuantity.command.ts";
 import { Subscribe } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
+import { currencyOf } from "../Subscription/Subscription.state.ts";
 import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
 import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 
@@ -102,7 +103,7 @@ const commandOf = (
     const scheduled = scheduleTierChangeInputOf(
       catalog,
       input.tier,
-      state._tag === "Subscribed" ? state.currency : undefined,
+      state._tag === "Subscribed" ? currencyOf(state) : undefined,
     );
 
     return scheduled === null ? null : new ScheduleTierChange(scheduled);

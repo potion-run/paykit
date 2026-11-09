@@ -19,6 +19,9 @@ import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.co
 import { QuantityChanged, SetQuantity } from "../../src/Subscription/SetQuantity.command.ts";
 import { SetUsage, UsageSet } from "../../src/Subscription/SetUsage.command.ts";
 import {
+  allowancesOf,
+  planIdOf,
+  priceOf,
   occupiedOf,
   quantityAfterTierChange,
   quantityOf,
@@ -117,7 +120,7 @@ const termsOf = (tier: Stock) => {
   return terms;
 };
 
-const seatsAllowance = (state: SubscribedState): Allowance => state.allowances.seats!;
+const seatsAllowance = (state: SubscribedState): Allowance => allowancesOf(state).seats!;
 
 const includedOf = (allowance: Allowance): number =>
   typeof allowance.included === "number" ? allowance.included : 0;
@@ -435,7 +438,7 @@ describe("a seat is a quantity that is set", () => {
 
           if (next._tag !== "Subscribed") return false;
 
-          if (next.tier !== nextTier) return false;
+          if (planIdOf(next) !== nextTier) return false;
 
           if (quantityOf(next, "seats", seatsAllowance(next)) !== expectedQuantity) return false;
 
@@ -446,7 +449,7 @@ describe("a seat is a quantity that is set", () => {
 
         const proration =
           prorate({
-            from: state.price,
+            from: priceOf(state),
             to: target.price,
             period: state.period,
             at,
@@ -472,7 +475,7 @@ describe("a seat is a quantity that is set", () => {
 
         if (next._tag !== "Subscribed") return false;
 
-        if (next.tier !== nextTier) return false;
+        if (planIdOf(next) !== nextTier) return false;
 
         if (quantityOf(next, "seats", seatsAllowance(next)) !== expectedQuantity) return false;
 

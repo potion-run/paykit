@@ -16,6 +16,8 @@ import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
+import { planIdOf } from "../../src/Subscription/Subscription.state.ts";
+import { pendingPlanOf } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 
 const seats = feature({ id: "seats", name: "Seats", kind: "non_consumable" });
@@ -106,7 +108,7 @@ describe("billing.attach", () => {
       expect(result.planId).toBe("free");
 
       const state = yield* stateOf;
-      expect(state._tag === "Subscribed" ? state.tier : null).toBe("free");
+      expect(state._tag === "Subscribed" ? planIdOf(state) : null).toBe("free");
     }).pipe(Effect.provide(world)),
   );
 
@@ -122,8 +124,8 @@ describe("billing.attach", () => {
       expect(result.proration?.due).toBeGreaterThan(0);
 
       const state = yield* stateOf;
-      expect(state._tag === "Subscribed" ? state.tier : null).toBe("pro");
-      expect(state._tag === "Subscribed" ? state.pendingTier : null).toBeUndefined();
+      expect(state._tag === "Subscribed" ? planIdOf(state) : null).toBe("pro");
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state) : null).toBeUndefined();
     }).pipe(Effect.provide(world)),
   );
 
@@ -140,8 +142,8 @@ describe("billing.attach", () => {
       expect(down.pendingPlanId).toBe("free");
 
       const state = yield* stateOf;
-      expect(state._tag === "Subscribed" ? state.tier : null).toBe("pro");
-      expect(state._tag === "Subscribed" ? state.pendingTier?.tier : null).toBe("free");
+      expect(state._tag === "Subscribed" ? planIdOf(state) : null).toBe("pro");
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state)?.planId : null).toBe("free");
     }).pipe(Effect.provide(world)),
   );
 
@@ -213,7 +215,7 @@ describe("billing.attach", () => {
       }
 
       const state = yield* stateOf;
-      expect(state._tag === "Subscribed" ? state.pendingTier : null).toBeUndefined();
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state) : null).toBeUndefined();
     }).pipe(Effect.provide(world)),
   );
 
@@ -270,7 +272,7 @@ describe("billing.update", () => {
 
       const state = yield* stateOf;
       expect(state._tag === "Subscribed" ? state.cancelAtPeriodEnd : null).toBe(true);
-      expect(state._tag === "Subscribed" ? state.pendingTier : null).toBeUndefined();
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state) : null).toBeUndefined();
     }).pipe(Effect.provide(world)),
   );
 
@@ -288,7 +290,7 @@ describe("billing.update", () => {
       expect(result.outcome).toBe("uncanceled");
 
       const state = yield* stateOf;
-      expect(state._tag === "Subscribed" ? state.pendingTier : null).toBeUndefined();
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state) : null).toBeUndefined();
     }).pipe(Effect.provide(world)),
   );
 
@@ -337,7 +339,7 @@ describe("billing.update", () => {
 
       const state = yield* stateOf;
       expect(state._tag === "Subscribed" ? state.status : null).toBe("canceled");
-      expect(state._tag === "Subscribed" ? state.pendingTier : null).toBeUndefined();
+      expect(state._tag === "Subscribed" ? pendingPlanOf(state) : null).toBeUndefined();
       expect(state._tag === "Subscribed" ? state.refunded?.usd : null).toBe(1_900);
       expect(memory.refunds).toHaveLength(1);
       expect(memory.refunds[0]?.chargeId).toBe("ch_plan_1");
