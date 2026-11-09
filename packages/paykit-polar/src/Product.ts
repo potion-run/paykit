@@ -405,21 +405,25 @@ const findByTier = Effect.fn(function* (stage: string, tier: string) {
 });
 
 /**
- * The newest generation already carrying `price`. A create that outlived its
- * state write leaves exactly this, and adopting it is what makes a retried
- * reconciliation converge instead of creating a duplicate product.
+ * The newest generation, when it already carries `price`. A create that
+ * outlived its state write leaves exactly this, and adopting it is what makes a
+ * retried reconciliation converge instead of creating a duplicate product.
+ *
+ * An older generation that happens to carry the desired price is not adopted:
+ * that would roll the tier back to a price a later generation replaced. The
+ * catalog change is a new generation, per ADR 0003.
  */
 const findByTierAndPrice = Effect.fn(function* (stage: string, tier: string, news: ProductProps) {
-  return (yield* generationsOf(stage, tier)).find((product) => {
-    if (product.is_archived) return false;
-    const attrs = attrsOf(product);
+  const newest = yield* findByTier(stage, tier);
 
-    return (
-      samePrice(attrs.price, news.price, kindOf(product)) &&
-      sameUsage(desiredUsage(news), attrs.usage) &&
-      sameSeats(desiredSeats(news), attrs.seats)
-    );
-  });
+  if (newest === undefined) return undefined;
+  const attrs = attrsOf(newest);
+
+  return samePrice(attrs.price, news.price, kindOf(newest)) &&
+    sameUsage(desiredUsage(news), attrs.usage) &&
+    sameSeats(desiredSeats(news), attrs.seats)
+    ? newest
+    : undefined;
 });
 
 const getById = (id: string) =>

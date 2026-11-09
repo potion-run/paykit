@@ -472,6 +472,29 @@ test.provider("a price change is a new generation, and the old one is kept", (st
   }),
 );
 
+test.provider(
+  "a later catalog price is a new generation, not a rollback to an older one",
+  (stack) =>
+    Effect.gen(function* () {
+      polar.reset();
+      const first = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
+
+      const second = yield* stack.deploy(
+        PolarPrices("Prices", { tiers: { pro: { ...proPrice, amount: 2400 } } }),
+      );
+
+      // Lose the state, then move the catalog back to the first price. The
+      // newest generation is still the 2,400 one, so 1,900 is a new generation;
+      // adopting the older 1,900 product would roll the tier backwards.
+      yield* stack.destroy();
+      const rolledBack = yield* stack.deploy(PolarPrices("Prices", { tiers: { pro: proPrice } }));
+
+      expect(rolledBack.products.pro).not.toBe(first.products.pro);
+      expect(rolledBack.products.pro).not.toBe(second.products.pro);
+      expect(polar.products.size).toBe(3);
+    }),
+);
+
 test.provider("creates a one-time product for a one-off pack", (stack) =>
   Effect.gen(function* () {
     polar.reset();
