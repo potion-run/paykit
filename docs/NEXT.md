@@ -403,9 +403,10 @@ standing change.
   0044](./adr/0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md) keys a quote by the
   provider reference of its purchase, so concurrent checkouts keep their own terms and a completion
   that names no quote while several are held is `PendingActivationAmbiguous`. A custom plan is still
-  refused as a pack. The brief is [custom-plans](./briefs/custom-plans.md); what remains is the
-  per-plan balance source (one `Balance.breakdown` row per add-on and a single spend shape per
-  feature).
+  refused as a pack. The brief is [custom-plans](./briefs/custom-plans.md). The per-plan balance
+  source landed beside it: every active plan, a bespoke add-on included, is its own
+  `Balance.breakdown` row, and a spend consumes those rows in plan-set order before a standalone
+  grant.
 
 ### 3. The configuration surface
 

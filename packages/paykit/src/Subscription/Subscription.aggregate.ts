@@ -2,15 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import {
-  isFlagGrant,
-  isQuantityGrant,
-  pricingOf,
-  type AllowanceKind,
-  type Included,
-  type Overage,
-  type Resets,
-} from "../Allowance.ts";
+import { isFlagGrant, isQuantityGrant, pricingOf } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
@@ -302,48 +294,6 @@ import {
   TierChangeWithdrawn,
   WithdrawTierChange,
 } from "./WithdrawTierChange.command.ts";
-
-/** The part of an allowance `decide` reads when it derives a count. */
-type CountableAllowance = {
-  readonly kind?: AllowanceKind;
-  readonly included: Included;
-  readonly overage: Overage;
-  readonly resets: Resets;
-  readonly cap?: number;
-};
-
-const remainingAfterChange = (
-  state: SubscribedState,
-  allowances: Readonly<Record<string, CountableAllowance>>,
-): Record<string, number | null> =>
-  Object.fromEntries(
-    Object.entries(allowances).map(([feature, allowance]) => {
-      if (isQuantityGrant(allowance)) {
-        const included = typeof allowance.included === "number" ? allowance.included : 0;
-        const quantity = quantityAfterTierChange(state.quantities?.[feature] ?? included, included);
-
-        return [feature, quantity - occupiedOf(state, feature)];
-      }
-
-      // Usage and open reservations both still owe the old period's units. An
-      // allowance with no count — unlimited, or a flag's grant — has none to
-      // owe them against.
-      const spendable = includedRemainingOf(allowance);
-
-      return [
-        feature,
-        spendable === null
-          ? null
-          : spendable -
-            usedOf(state, feature) -
-            reservedOf(state, feature) +
-            // A grant survives a plan change. The total the event records is
-            // the new plan's count plus every standalone grant the customer
-            // still holds (ADR 0037).
-            grantTotalOf(state, feature),
-      ];
-    }),
-  );
 
 const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean =>
   Object.keys(allowances).length === 0;
@@ -1385,6 +1335,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         });
       }
 
+      const row = rowOfMove(command, scoped);
+      const plans = withPlan(scoped.plans, row);
+
       return [
         new PlanChanged({
           tier: command.tier,
@@ -1399,7 +1352,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             : { group: command.group }),
           ...(command.addOn === true ? { addOn: true } : {}),
           allowances: command.allowances,
-          remaining: remainingAfterChange(scoped, command.allowances),
+          // A move re-derives the feature from the whole plan set, not from the
+          // one row it writes: an add-on stacks its grant beside the plans
+          // already there, and a feature two plans grant is still one balance
+          // (ADR 0039 §2).
+          remaining: remainingAfterPlanMove(scoped, plans, [row]),
           ...(command.entity === undefined ? {} : { entity: command.entity }),
           ...((priceCurrency ?? currentCurrency) === undefined
             ? {}

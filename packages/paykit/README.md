@@ -271,9 +271,9 @@ the local path, and `ChargeQuantityProration` collects it. `TrackUsage` and
 
 ### Balance sources
 
-A balance is a list of sources, not one number. `Balance.breakdown` reports the plan item, the
-rollover and every standalone grant, and a spend takes from them in that order: the plan, then
-rollover, then an expiring grant, then a lifetime grant.
+A balance is a list of sources, not one number. `Balance.breakdown` reports one plan item per
+active plan, the rollover and every standalone grant, and a spend takes from them in that order: the
+plan sources in plan-set order, then rollover, then an expiring grant, then a lifetime grant.
 
 ```ts
 const balances = yield* Paykit.Balances(account);
