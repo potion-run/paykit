@@ -26,6 +26,7 @@ import { ReleaseHold } from "../../src/Subscription/ReleaseHold.command.ts";
 import { Resume } from "../../src/Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
+import { SetBillingControls } from "../../src/Subscription/SetBillingControls.command.ts";
 import { SettleHold } from "../../src/Subscription/SettleHold.command.ts";
 import { StartTrial } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -242,6 +243,10 @@ export const CommandPlan = Schema.Union([
   Schema.TaggedStruct("GraceElapsed", {}),
   Schema.TaggedStruct("DunningRetry", {}),
   Schema.TaggedStruct("AttachProviderRef", {}),
+  Schema.TaggedStruct("SetBillingControls", {
+    enabled: Schema.Boolean,
+    threshold: Schema.optionalKey(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
+  }),
 ]);
 
 export type CommandPlan = typeof CommandPlan.Type;
@@ -400,6 +405,16 @@ export const commandOf = (
 
     case "AttachProviderRef":
       return new AttachProviderRef({ provider: "test", refs: { customer: "cus_property" } });
+    case "SetBillingControls":
+      return new SetBillingControls({
+        billingControls: {
+          autoTopUp: {
+            enabled: plan.enabled,
+            ...(plan.threshold === undefined ? {} : { threshold: plan.threshold }),
+          },
+        },
+        features: {},
+      });
   }
 };
 

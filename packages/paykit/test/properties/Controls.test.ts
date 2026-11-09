@@ -2,7 +2,11 @@ import { describe, expect, it } from "@alchemy.run/test";
 import { balanceOfFeature } from "../../src/Balance.ts";
 import { evaluateCheck } from "../../src/Check.ts";
 import { BillingControls, controlsKey, normalizeBillingControls } from "../../src/Customer.ts";
-import { alertThresholdsOf, effectiveTopUpOf } from "../../src/Subscription/Subscription.state.ts";
+import {
+  alertThresholdsOf,
+  effectiveTopUpOf,
+  topUpOf,
+} from "../../src/Subscription/Subscription.state.ts";
 
 const usd = { _tag: "unit" as const, unitPrice: { amount: 2, currency: "usd" } };
 
@@ -56,6 +60,12 @@ describe("the controls object has one representation", () => {
 
     expect(controlsKey(left)).toBe(controlsKey(right));
   });
+
+  it("is stable against the key order of the auto top-up object", () => {
+    expect(controlsKey({ autoTopUp: { threshold: 500, enabled: true } })).toBe(
+      controlsKey({ autoTopUp: { enabled: true, threshold: 500 } }),
+    );
+  });
 });
 
 describe("the effective auto top-up line", () => {
@@ -89,6 +99,17 @@ describe("the effective auto top-up line", () => {
 
   it("has no line when neither side states a threshold", () => {
     expect(effectiveTopUpOf(undefined, { autoTopUp: { enabled: true } })).toBeNull();
+  });
+
+  it("reaches a standing, never a customer with no plan", () => {
+    // A control is customer intent, but a line needs a standing to carry it.
+    expect(
+      topUpOf({
+        _tag: "Unsubscribed",
+        refs: {},
+        billingControls: { autoTopUp: { enabled: true, threshold: 400 } },
+      } as never),
+    ).toBeNull();
   });
 });
 

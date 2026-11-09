@@ -88,11 +88,11 @@ export const CustomersLive = Layer.effect(
         update: Effect.fn("Paykit.Customers.update")(function* (request) {
           const write = yield* setControls(account);
 
-          yield* write({ billingControls: request.billingControls });
+          // The write answers the view it waited for. Reading again would race
+          // the projection and could report the customer before this write.
+          const result = yield* write({ billingControls: request.billingControls });
 
-          const view = yield* viewOf(account);
-
-          return customerOf(account, view);
+          return customerOf(account, result.view);
         }),
       };
     });

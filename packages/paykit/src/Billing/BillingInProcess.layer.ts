@@ -392,9 +392,13 @@ const BillingCore = Layer.mergeAll(
             billing.query(ref, { atLeast: receipt }),
           );
 
-          const billingControls = Option.getOrNull(view)?.billingControls;
+          const state = Option.getOrNull(view);
+          const billingControls = state?.billingControls;
 
-          return billingControls === undefined ? {} : { billingControls };
+          return {
+            ...(billingControls === undefined ? {} : { billingControls }),
+            view: state,
+          };
         });
       });
     }),

@@ -50,6 +50,10 @@ BillingControls = {
   deployment sells and how often it lets itself charge a card — not something a customer may edit. A
   control that states a threshold on a plan with no line brings a line into existence, and it buys
   the deployment's default pack with the deployment's cooldown; there is no per-customer product.
+- **A control is not a crossing.** Enabling auto top-up over a pool that is already at or below the
+  control's line buys nothing on the write; the line takes effect on the next spend that crosses it,
+  exactly as a tier's line does. A control does not reach a customer with no plan: there is no
+  standing to carry the line (ADR 0026).
 - **`spendLimits` is money.** One ceiling per feature, minor units, in the standing's currency. The
   catalog already refuses a tier whose postpaid prices disagree with its price currency, and a plan
   change that would move the currency is `CurrencyMismatch`, so one account bills in one currency and
@@ -106,7 +110,9 @@ same one. This is `SetUsage`'s rule and `topUpKey`'s shape.
 **8. The read model carries the controls and what fired.** `Balance` gains the feature's spend-limit
 headroom, `BillingState` gains the object and this period's fired alerts, and `Customer` is served by
 `Paykit.Customers(account)` with `get()` and `update({ billingControls })`. There is no `getOrCreate`:
-a plan activation, or a controls write, is what makes a customer exist.
+a plan activation, or a controls write, is what makes a customer exist. A read never refuses: an id
+with nothing recorded is a customer with no plans and no controls, and `update({ billingControls: {} })`
+is the documented clear.
 
 **9. Controls are tenant-written.** `SetBillingControls` declares `Session` like every tenant write.
 An operator verb is not in this slice; support changing a customer's guardrail is a different blast

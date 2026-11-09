@@ -106,8 +106,18 @@ export const normalizeBillingControls = (
         : 1,
   );
 
+  const autoTopUp =
+    billingControls.autoTopUp === undefined
+      ? undefined
+      : {
+          enabled: billingControls.autoTopUp.enabled,
+          ...(billingControls.autoTopUp.threshold === undefined
+            ? {}
+            : { threshold: billingControls.autoTopUp.threshold }),
+        };
+
   const normalized = {
-    ...(billingControls.autoTopUp === undefined ? {} : { autoTopUp: billingControls.autoTopUp }),
+    ...(autoTopUp === undefined ? {} : { autoTopUp }),
     ...(spendLimits.length === 0 ? {} : { spendLimits }),
     ...(usageAlerts.length === 0 ? {} : { usageAlerts }),
   };

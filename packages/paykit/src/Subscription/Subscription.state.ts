@@ -275,8 +275,9 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
   /**
    * The controls the customer states over its plan. They are written before a
-   * plan can exist, so they sit on the unsubscribed state too; a spend limit or
-   * an alert needs a feature, so it is refused until a plan grants one.
+   * plan can exist, so they sit on the unsubscribed state too; a control is
+   * validated against the catalog, not the current plan, so it binds when a
+   * plan grants the feature. With no plan there is no top-up line (ADR 0026).
    */
   billingControls: Schema.optionalKey(BillingControls),
 });
@@ -545,10 +546,6 @@ export const usedOf = (state: SubscribedState, feature: string): number =>
 export const billedOf = (state: SubscribedState, feature: string): number =>
   state.billed?.[feature] ?? 0;
 
-/** The controls this customer states, or an empty object when it states none. */
-export const billingControlsOf = (state: SubscriptionState): BillingControls =>
-  state.billingControls ?? {};
-
 /**
  * The auto top-up line in force for this customer, or `null` when it never
  * refills. The customer's own line wins over the tier's; `enabled: false` turns
@@ -572,7 +569,7 @@ export const effectiveTopUpOf = (
 
 /** The auto top-up line in force for this customer, or `null` when it never refills. */
 export const topUpOf = (state: SubscriptionState): TopUpTerms | null =>
-  effectiveTopUpOf(state._tag === "Subscribed" ? state.topUp : undefined, state.billingControls);
+  state._tag === "Subscribed" ? effectiveTopUpOf(state.topUp, state.billingControls) : null;
 
 /** The credits at or below which a spend on this standing is a crossing, or `null`. */
 export const topUpThresholdOf = (state: SubscriptionState): number | null =>

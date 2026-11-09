@@ -42,7 +42,10 @@ export type BalanceSource = typeof BalanceSource.Type;
 export const SpendLimitView = Schema.Struct({
   /** The ceiling for this period, in minor units. */
   amount: Schema.Int,
-  /** What may still bill: `max(0, amount - billed)`. */
+  /**
+   * What may still bill: `max(0, amount - billed)`. Open holds are not
+   * subtracted, so `check` is the authority on a locked spend.
+   */
   remaining: Schema.Int,
 });
 

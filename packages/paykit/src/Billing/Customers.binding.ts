@@ -13,7 +13,8 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** The controls a customer is asked to hold. */
 export interface CustomerUpdateRequest {
-  readonly billingControls?: BillingControls;
+  /** `{}` is the clear; an omitted field is a schema failure, not a wipe. */
+  readonly billingControls: BillingControls;
 }
 
 const refusals = [

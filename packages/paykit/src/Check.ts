@@ -168,7 +168,6 @@ export const rowToState = (row: BillingReadRow): EntitlementsState => ({
   dunningAttempts: row.dunningAttempts,
   ...(row.currency === undefined ? {} : { currency: row.currency }),
   prepaidCredits: row.prepaidCredits,
-  ...(row.billingControls === undefined ? {} : { billingControls: row.billingControls }),
   features: row.features,
 });
 

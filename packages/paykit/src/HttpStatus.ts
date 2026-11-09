@@ -34,6 +34,9 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     case "NotSubscribed":
     case "StandingEnded":
     case "PlanOperationUnsupported":
+    case "ControlsFeatureUnknown":
+    case "ControlsFeatureNotPriced":
+    case "ControlsDuplicate":
       return 400;
     // The caller is not signed in, or the delivery is not signed by the vendor.
     case "Unauthenticated":

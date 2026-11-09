@@ -243,7 +243,10 @@ const BillingApiCore = Layer.mergeAll(
 
           const billingControls = view?.billingControls;
 
-          return billingControls === undefined ? {} : { billingControls };
+          return {
+            ...(billingControls === undefined ? {} : { billingControls }),
+            view: view ?? null,
+          };
         });
       });
     }),

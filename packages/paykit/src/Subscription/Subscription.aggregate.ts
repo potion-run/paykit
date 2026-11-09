@@ -479,6 +479,7 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
   // A credit-priced feature shares one pool: its `reserved` is the credits
   // every open hold kept out, not the units held on this feature.
   const reserved = rates === undefined ? reservedOf(state, feature) : reservedCreditsOf(state);
+  const spendLimit = spendLimitOf(state, feature);
 
   // The write path knows `included`, a read model knows `carried`; the ceiling
   // is written from `remaining`, so the rollover part is derived here.
@@ -494,7 +495,7 @@ const judgedOf = (state: SubscribedState, feature: string): JudgedFeature => {
     carried,
     ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
     ...(pricingOf(allowance ?? {}) === null ? {} : { pricing: pricingOf(allowance ?? {})! }),
-    ...(spendLimitOf(state, feature) === null ? {} : { spendLimit: spendLimitOf(state, feature)! }),
+    ...(spendLimit === null ? {} : { spendLimit }),
     billed: billedOf(state, feature),
     used,
     reserved,

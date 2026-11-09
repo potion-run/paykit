@@ -5,6 +5,7 @@ import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { pricedInCatalog, type Catalog } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import type { BillingControls } from "../Customer.ts";
+import type { BillingStateView } from "../Subscription/BillingState.view.ts";
 import {
   ControlsDuplicate,
   ControlsFeatureNotPriced,
@@ -15,13 +16,18 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** The controls to write. The bound account is not here. */
 export interface SetBillingControlsRequest {
-  /** The whole object, not a patch: the last write is the state. */
-  readonly billingControls?: BillingControls;
+  /**
+   * The whole object, not a patch: the last write is the state. `{}` is the
+   * documented clear, so a caller cannot clear by accident from a missing field.
+   */
+  readonly billingControls: BillingControls;
 }
 
-/** What the write left in force. */
+/** What the write left in force, and the view it waited for. */
 export interface SetBillingControlsResult {
   readonly billingControls?: BillingControls;
+  /** The billing view at the receipt, so a caller need not re-read it. */
+  readonly view: BillingStateView | null;
 }
 
 /**

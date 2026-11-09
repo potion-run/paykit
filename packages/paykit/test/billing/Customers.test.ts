@@ -6,11 +6,13 @@ import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { asSystem } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
+import { Balances } from "../../src/Billing/Balances.binding.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
 import { BillingInProcess } from "../../src/Billing/BillingInProcess.layer.ts";
 import { BindingCall } from "../../src/Billing/Bindings.ts";
 import { Check } from "../../src/Billing/Check.binding.ts";
 import { Customers } from "../../src/Billing/Customers.binding.ts";
+import { Hold } from "../../src/Billing/Hold.binding.ts";
 import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
@@ -295,4 +297,52 @@ it.live("records a controls write once when the same object is sent twice", () =
     expect(first.events.map((event) => event._tag)).toEqual(["BillingControlsSet"]);
     expect(second.events).toEqual([]);
   }).pipe(Effect.provide(inProcessWorld)),
+);
+
+both("refuses a hold past the customer's ceiling", () =>
+  Effect.gen(function* () {
+    yield* subscribe(account);
+    const customers = yield* Customers(account);
+    const hold = yield* Hold(account);
+
+    yield* customers.update({
+      billingControls: { spendLimits: [{ featureId: "requests", amount: 0 }] },
+    });
+
+    const refused = yield* Effect.flip(
+      hold({ feature: "requests", amount: 1, dedupeKey: "hold-over" }),
+    );
+
+    expect(refused._tag).toBe("SpendLimitExceeded");
+  }),
+);
+
+both("accepts a ceiling below the period's bill and binds the next spend", () =>
+  Effect.gen(function* () {
+    yield* subscribe(account);
+    const customers = yield* Customers(account);
+    const track = yield* TrackUsage(account);
+    const balances = yield* Balances(account);
+
+    yield* customers.update({
+      billingControls: { spendLimits: [{ featureId: "requests", amount: 10 }] },
+    });
+    yield* track({ featureId: "requests", value: 5, idempotencyKey: "bill-10" });
+
+    // The money is already billed; lowering the ceiling is accepted and
+    // stops the next spend. It never unbills history.
+    yield* customers.update({
+      billingControls: { spendLimits: [{ featureId: "requests", amount: 4 }] },
+    });
+
+    const refused = yield* Effect.flip(
+      track({ featureId: "requests", value: 1, idempotencyKey: "past-lowered" }),
+    );
+
+    expect(refused._tag).toBe("SpendLimitExceeded");
+
+    const balance = yield* balances.get({ featureId: "requests" });
+
+    expect(balance.spendLimit).toEqual({ amount: 4, remaining: 0 });
+  }),
 );
