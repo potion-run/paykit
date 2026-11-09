@@ -4,6 +4,9 @@ import * as Schema from "effect/Schema";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { Balance } from "../Balance.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "../Subscription/FeatureNotConsumable.rejection.ts";
 import { FeaturePricedInCredits } from "../Subscription/FeaturePricedInCredits.rejection.ts";
 import { FeatureNotCounted, GrantExpiryNotLater } from "../Subscription/GrantBalance.command.ts";
@@ -22,9 +25,19 @@ import {
 } from "../Subscription/TrackUsage.command.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
+/** Ask for one scope's balances. The bound account is not here. */
+export const BalanceListRequest = Schema.Struct({
+  /** The entity scope to list; absent means the customer's own scope. */
+  entityId: Schema.optionalKey(EntityId),
+});
+
+export type BalanceListRequest = typeof BalanceListRequest.Type;
+
 /** Ask for one feature's balance. The bound account is not here. */
 export const BalanceGetRequest = Schema.Struct({
   featureId: Schema.String,
+  /** The entity scope to read; absent means the customer (ADR 0040 §4). */
+  entityId: Schema.optionalKey(EntityId),
 });
 
 export type BalanceGetRequest = typeof BalanceGetRequest.Type;
@@ -32,6 +45,8 @@ export type BalanceGetRequest = typeof BalanceGetRequest.Type;
 /** Set how much of a non-consumable feature is in use. */
 export const BalanceUpdateRequest = Schema.Struct({
   featureId: Schema.String,
+  /** The entity scope whose seats are in use; absent means the customer. */
+  entityId: Schema.optionalKey(EntityId),
   /** The number in use. A count, not a purchase and not a spend. */
   usage: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   /** The retry key. Omitted, it is derived from the feature and the count. */
@@ -43,6 +58,8 @@ export type BalanceUpdateRequest = typeof BalanceUpdateRequest.Type;
 /** Create a standalone grant of a counted feature. */
 export const BalanceCreateRequest = Schema.Struct({
   featureId: Schema.String,
+  /** The entity scope the grant belongs to; absent means the customer. */
+  entityId: Schema.optionalKey(EntityId),
   /** How many units to grant. */
   grantedBalance: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
   /** An optional deadline; omitted, the grant is a lifetime source. */
@@ -65,6 +82,8 @@ export type BalanceCreateRequest = typeof BalanceCreateRequest.Type;
 /** Finish a lock: bill what ran, or return it. */
 export const BalanceFinalizeRequest = Schema.Struct({
   lockId: Schema.String,
+  /** The scope to read the held balance for; a lock itself is customer-scoped. */
+  entityId: Schema.optionalKey(EntityId),
   action: Schema.Literals(["commit", "release"]),
   /** Units to bill. Omitted on `commit` bills the whole lock. */
   overrideValue: Schema.optionalKey(
@@ -86,6 +105,8 @@ export class BalanceNotFound extends Schema.TaggedError<BalanceNotFound>()("Bala
  */
 const refusals = [
   BalanceNotFound,
+  EntityUnknown,
+  EntityArchived,
   NotSubscribed,
   FeatureNotConsumable,
   FeatureNotMetered,
@@ -115,8 +136,8 @@ export type BalancesError = BindingError<BalancesRefusal>;
 
 /** The four reads and writes a customer's balances have. */
 export interface BalancesVerb {
-  /** Every feature the customer holds a balance for. */
-  list(): Effect.Effect<ReadonlyArray<Balance>, BalancesError>;
+  /** Every feature a scope holds a balance for; absent means the customer. */
+  list(request?: BalanceListRequest): Effect.Effect<ReadonlyArray<Balance>, BalancesError>;
   /** One feature's balance, or `BalanceNotFound`. */
   get(request: BalanceGetRequest): Effect.Effect<Balance, BalancesError>;
   /** Create a standalone grant and answer the balance it left. */
@@ -136,6 +157,11 @@ export interface BalancesVerb {
  * non-consumable feature; it never bills and never moves the purchase. `finalize`
  * closes a lock `check({ lock: true })` placed: `commit` bills what ran,
  * `release` returns all of it.
+ *
+ * Every verb takes an optional `entityId`. Absent is the customer's own scope,
+ * so the old call shape is unchanged; present reads or writes that child scope
+ * only. An entity's balance appends the customer's one pooled row, and an
+ * archived scope refuses a write with `EntityArchived` (ADR 0040 §4, §7).
  *
  * ### Reading, then occupying
  * **Example:** One page, one seat count

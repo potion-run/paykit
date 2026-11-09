@@ -94,6 +94,7 @@ export {
   BalanceCreateRequest,
   BalanceFinalizeRequest,
   BalanceGetRequest,
+  BalanceListRequest,
   BalanceNotFound,
   BalanceUpdateRequest,
   Balances,
@@ -103,6 +104,34 @@ export {
 } from "./Balances.binding.ts";
 
 export { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
+
+export {
+  Entities,
+  EntityArchiveRequest,
+  EntityCreateRequest,
+  EntityUpdateRequest,
+  type EntitiesError,
+  type EntitiesRefusal,
+  type EntitiesVerb,
+  isEntitiesRefusal,
+  toEntitiesError,
+} from "./Entities.binding.ts";
+
+export { EntitiesLive, EntitiesRead, EntityWrites } from "./Entities.layer.ts";
+
+export {
+  TransferBalance,
+  TransferBalanceRequest,
+  TransferBalanceResult,
+  TransferCrossCustomer,
+  type TransferBalanceError,
+  type TransferBalanceRefusal,
+  type TransferBalanceVerb,
+  isTransferBalanceRefusal,
+  toTransferBalanceError,
+} from "./TransferBalance.binding.ts";
+
+export { TransferBalanceLive, TransferBalanceWrite } from "./TransferBalance.layer.ts";
 
 export {
   GrantBalance,

@@ -1,21 +1,23 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { balanceOf, emptyBalance } from "../Balance.ts";
+import { balanceOfScope, emptyBalance } from "../Balance.ts";
 import { BillingApi } from "../BillingApi.api.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
-import { EntityId } from "../Customer.ts";
+import { CUSTOMER_SCOPE, EntityId, entityScope } from "../Customer.ts";
 import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { scheduleTierChangeInputOf, subscribeInputOf, withGrants } from "../TierCommand.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
-import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
+import { BindingCall, callOptionsOf, mapBindingFailure, type ReceiptRef } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import { toCustomersError } from "./Customers.binding.ts";
 import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
+import { toEntitiesError } from "./Entities.binding.ts";
+import { EntitiesLive, EntitiesRead, EntityWrites } from "./Entities.layer.ts";
 import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { ReleaseHold, toReleaseHoldError } from "./ReleaseHold.binding.ts";
@@ -35,6 +37,8 @@ import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { toTrackUsageError, TrackUsage, usageOutcome } from "./TrackUsage.binding.ts";
+import { toTransferBalanceError } from "./TransferBalance.binding.ts";
+import { TransferBalanceLive, TransferBalanceWrite } from "./TransferBalance.layer.ts";
 
 /** A layer's own failure, as the union its binding declares. */
 const bound = mapBindingFailure;
@@ -80,6 +84,7 @@ const BillingApiCore = Layer.mergeAll(
               {
                 feature: request.featureId,
                 amount: request.value,
+                ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                 ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
                 ...(request.properties === undefined ? {} : { properties: request.properties }),
                 dedupeKey: request.idempotencyKey,
@@ -113,6 +118,7 @@ const BillingApiCore = Layer.mergeAll(
               {
                 feature: request.feature,
                 quantity: request.quantity,
+                ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                 dedupeKey: request.dedupeKey,
               },
               options(request.dedupeKey),
@@ -126,8 +132,13 @@ const BillingApiCore = Layer.mergeAll(
           // A no-op decision records no event, so the reply cannot carry the
           // quantity; the view just caught up to the change and is the same
           // number a caller reads next.
+          const scoped =
+            request.entityId === undefined
+              ? view?.features[request.feature]
+              : view?.entities?.[request.entityId]?.features[request.feature];
+
           return {
-            quantity: view?.features[request.feature]?.quantity ?? receipt.reply.quantityAfter,
+            quantity: scoped?.quantity ?? receipt.reply.quantityAfter,
             ...(receipt.reply.proration === undefined
               ? {}
               : { proration: receipt.reply.proration }),
@@ -156,6 +167,7 @@ const BillingApiCore = Layer.mergeAll(
               {
                 feature: request.featureId,
                 granted: request.granted,
+                ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                 ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
               },
               options(commandId),
@@ -170,8 +182,12 @@ const BillingApiCore = Layer.mergeAll(
             featureId: request.featureId,
             granted: receipt.reply.granted,
             balance:
-              (view === null ? null : balanceOf(view, request.featureId)) ??
-              emptyBalance(account, request.featureId),
+              (view === null ? null : balanceOfScope(view, request.featureId, request.entityId)) ??
+              emptyBalance(
+                account,
+                request.featureId,
+                request.entityId === undefined ? CUSTOMER_SCOPE : entityScope(request.entityId),
+              ),
           };
         });
       });
@@ -194,7 +210,11 @@ const BillingApiCore = Layer.mergeAll(
           const receipt = yield* bound(toSetUsageError)(
             client.SetUsage(
               id,
-              { feature: request.featureId, usage: request.usage },
+              {
+                feature: request.featureId,
+                usage: request.usage,
+                ...(request.entityId === undefined ? {} : { entity: request.entityId }),
+              },
               options(commandId),
             ),
           );
@@ -208,8 +228,12 @@ const BillingApiCore = Layer.mergeAll(
             usage: receipt.reply.usage,
             remaining: receipt.reply.remaining,
             balance:
-              (view === null ? null : balanceOf(view, request.featureId)) ??
-              emptyBalance(account, request.featureId),
+              (view === null ? null : balanceOfScope(view, request.featureId, request.entityId)) ??
+              emptyBalance(
+                account,
+                request.featureId,
+                request.entityId === undefined ? CUSTOMER_SCOPE : entityScope(request.entityId),
+              ),
           };
         });
       });
@@ -272,9 +296,92 @@ const BillingApiCore = Layer.mergeAll(
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return {
-        view: (account: string) =>
+        view: (account: string, atLeast?: ReceiptRef) =>
           bound(toBalancesReadError)(
-            client.Entitlements.get(Subscription.ref(account).id, options()),
+            client.Entitlements.get(Subscription.ref(account).id, {
+              ...(atLeast === undefined ? {} : { atLeast }),
+              ...options(),
+            }),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
+    EntitiesRead,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return {
+        view: (account: string, atLeast?: ReceiptRef) =>
+          bound(toEntitiesError)(
+            client.BillingState.get(Subscription.ref(account).id, {
+              ...(atLeast === undefined ? {} : { atLeast }),
+              ...options(),
+            }),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
+    EntityWrites,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return {
+        create: (account, request) =>
+          bound(toEntitiesError)(
+            client.AttachEntity(
+              Subscription.ref(account).id,
+              {
+                entityId: request.entityId,
+                ...(request.name === undefined ? {} : { name: request.name }),
+              },
+              options(request.entityId),
+            ),
+          ),
+        update: (account, request) =>
+          bound(toEntitiesError)(
+            client.UpdateEntity(
+              Subscription.ref(account).id,
+              {
+                entityId: request.entityId,
+                ...(request.name === undefined ? {} : { name: request.name }),
+              },
+              options(request.idempotencyKey),
+            ),
+          ),
+        archive: (account, request) =>
+          bound(toEntitiesError)(
+            client.ArchiveEntity(
+              Subscription.ref(account).id,
+              { entityId: request.entityId },
+              options(request.idempotencyKey),
+            ),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
+    TransferBalanceWrite,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return {
+        transfer: (account, request) =>
+          bound(toTransferBalanceError)(
+            client.TransferBalance(
+              Subscription.ref(account).id,
+              {
+                from: request.from,
+                to: request.to,
+                feature: request.featureId,
+                amount: request.amount,
+              },
+              options(request.idempotencyKey),
+            ),
           ),
       };
     }),
@@ -417,7 +524,7 @@ const BillingApiCore = Layer.mergeAll(
             ...receipt.reply,
             featureId: receipt.reply.feature,
             balance:
-              (view === null ? null : balanceOf(view, receipt.reply.feature)) ??
+              (view === null ? null : balanceOfScope(view, receipt.reply.feature)) ??
               emptyBalance(account, receipt.reply.feature),
           };
         });
@@ -451,7 +558,7 @@ const BillingApiCore = Layer.mergeAll(
             ...receipt.reply,
             featureId: receipt.reply.feature,
             balance:
-              (view === null ? null : balanceOf(view, receipt.reply.feature)) ??
+              (view === null ? null : balanceOfScope(view, receipt.reply.feature)) ??
               emptyBalance(account, receipt.reply.feature),
           };
         });
@@ -652,4 +759,6 @@ export const BillingApiLayer = Layer.mergeAll(
   BillingApiCore,
   BalancesLive.pipe(Layer.provide(BillingApiCore)),
   CustomersLive.pipe(Layer.provide(BillingApiCore)),
+  EntitiesLive.pipe(Layer.provide(BillingApiCore)),
+  TransferBalanceLive.pipe(Layer.provide(BillingApiCore)),
 );

@@ -3,6 +3,9 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { Balance } from "../Balance.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "../Subscription/FeatureNotConsumable.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { UsageInvalid } from "../Subscription/SetUsage.command.ts";
@@ -13,6 +16,8 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 export interface SetUsageRequest {
   /** The non-consumable feature, e.g. `seats`. */
   readonly featureId: string;
+  /** The entity scope whose seats are in use; absent means the customer. */
+  readonly entityId?: EntityId;
   /** How many are in use. A count, not a purchase and not a spend. */
   readonly usage: number;
   /**
@@ -34,6 +39,8 @@ export interface SetUsageResult {
 }
 
 const refusals = [
+  EntityUnknown,
+  EntityArchived,
   NotSubscribed,
   FeatureNotConsumable,
   UsageInvalid,

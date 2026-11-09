@@ -9,6 +9,7 @@ import { Actor, system } from "../Auth/Actor.ts";
 import type { Catalog } from "../Catalog.ts";
 import type { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
+import type { EntityId } from "../Customer.ts";
 import type { Proration } from "../Proration.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
@@ -38,6 +39,7 @@ export type PreviewCommand =
   | {
       readonly kind: "changeTier";
       readonly tier: string;
+      readonly entityId?: EntityId;
       readonly grants?: ReadonlyArray<Allowance>;
     }
   | {
@@ -48,7 +50,12 @@ export type PreviewCommand =
   | { readonly kind: "withdrawTierChange" }
   | { readonly kind: "cancel" }
   | { readonly kind: "resume" }
-  | { readonly kind: "setQuantity"; readonly feature: string; readonly quantity: number };
+  | {
+      readonly kind: "setQuantity";
+      readonly feature: string;
+      readonly quantity: number;
+      readonly entityId?: EntityId;
+    };
 
 /** The account and the action to decide without recording. */
 export interface PreviewInput {
@@ -114,6 +121,7 @@ const commandOf = (
       command: new SetQuantity({
         feature: input.feature,
         quantity: input.quantity,
+        ...(input.entityId === undefined ? {} : { entity: input.entityId }),
         dedupeKey: "preview",
       }),
     };
@@ -153,7 +161,12 @@ const commandOf = (
   const granted = withGrants(catalog, plan.input, input.grants);
 
   return granted.mismatch === null
-    ? { command: new ChangeTier(granted.input) }
+    ? {
+        command: new ChangeTier({
+          ...granted.input,
+          ...(input.entityId === undefined ? {} : { entity: input.entityId }),
+        }),
+      }
     : { mismatch: granted.mismatch };
 };
 

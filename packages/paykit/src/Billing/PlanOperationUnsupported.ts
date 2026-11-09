@@ -24,6 +24,8 @@ export class PlanOperationUnsupported extends Schema.TaggedError<PlanOperationUn
       "no_change",
       "refund_charge_unknown",
       "custom_plan_checkout",
+      "entity_on_scheduled_change",
+      "entity_on_unsubscribed_customer",
     ]),
   },
 ) {}

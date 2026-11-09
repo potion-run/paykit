@@ -4,11 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
-import { balanceOf, emptyBalance } from "../Balance.ts";
+import { balanceOfScope, emptyBalance } from "../Balance.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
-import { EntityId } from "../Customer.ts";
+import { CUSTOMER_SCOPE, EntityId, entityScope } from "../Customer.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import { ArchiveEntity as ArchiveEntityCommand } from "../Subscription/ArchiveEntity.command.ts";
+import { AttachEntity as AttachEntityCommand } from "../Subscription/AttachEntity.command.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
@@ -28,8 +30,11 @@ import { SettleHold as SettleHoldCommand } from "../Subscription/SettleHold.comm
 import { SetUsage as SetUsageCommand } from "../Subscription/SetUsage.command.ts";
 import { StartTrial as StartTrialCommand } from "../Subscription/StartTrial.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { scopeStateOf } from "../Subscription/Subscription.state.ts";
 import { allowancesOf, planIdOf, currencyOf } from "../Subscription/Subscription.state.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
+import { TransferBalance as TransferBalanceCommand } from "../Subscription/TransferBalance.command.ts";
+import { UpdateEntity as UpdateEntityCommand } from "../Subscription/UpdateEntity.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
 import {
   planChangeTier,
@@ -45,7 +50,7 @@ import {
   UpdateInProcess,
 } from "./Attach.binding.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
-import { mapBindingFailure } from "./Bindings.ts";
+import { mapBindingFailure, type ReceiptRef } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
 import { chargeProrationOperation } from "./ChargeProration.operation.ts";
@@ -58,6 +63,8 @@ import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import { toCustomersError } from "./Customers.binding.ts";
 import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
+import { toEntitiesError } from "./Entities.binding.ts";
+import { EntitiesLive, EntitiesRead, EntityWrites } from "./Entities.layer.ts";
 import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { List, toListError } from "./List.binding.ts";
@@ -90,6 +97,8 @@ import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { Subscribe, toSubscribeError } from "./Subscribe.binding.ts";
 import { subscribeOperation } from "./Subscribe.operation.ts";
 import { toTrackUsageError, TrackUsage, usageOutcome } from "./TrackUsage.binding.ts";
+import { toTransferBalanceError } from "./TransferBalance.binding.ts";
+import { TransferBalanceLive, TransferBalanceWrite } from "./TransferBalance.layer.ts";
 import { Webhook, toWebhookError } from "./Webhook.binding.ts";
 
 /** A layer's own failure, as the union its binding declares. */
@@ -144,6 +153,7 @@ const BillingCore = Layer.mergeAll(
                 new TrackUsageCommand({
                   feature: request.featureId,
                   amount: request.value,
+                  ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                   ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
                   ...(request.properties === undefined ? {} : { properties: request.properties }),
                   dedupeKey: request.idempotencyKey,
@@ -192,6 +202,7 @@ const BillingCore = Layer.mergeAll(
                 new SetQuantityCommand({
                   feature: request.feature,
                   quantity: request.quantity,
+                  ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                   dedupeKey: request.dedupeKey,
                 }),
                 { commandId: request.dedupeKey },
@@ -270,8 +281,13 @@ const BillingCore = Layer.mergeAll(
           // A no-op decision records no event, so the reply cannot carry the
           // quantity; the read model just caught up to the change and is the
           // same number a caller reads next.
+          const scoped =
+            request.entityId === undefined
+              ? known?.features[request.feature]
+              : known?.entities?.[request.entityId]?.features[request.feature];
+
           return {
-            quantity: known?.features[request.feature]?.quantity ?? receipt.reply.quantityAfter,
+            quantity: scoped?.quantity ?? receipt.reply.quantityAfter,
             ...(receipt.reply.proration === undefined
               ? {}
               : { proration: receipt.reply.proration }),
@@ -301,6 +317,7 @@ const BillingCore = Layer.mergeAll(
                 new GrantBalanceCommand({
                   feature: request.featureId,
                   granted: request.granted,
+                  ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                   ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
                 }),
                 { commandId },
@@ -318,8 +335,14 @@ const BillingCore = Layer.mergeAll(
             featureId: request.featureId,
             granted: receipt.reply.granted,
             balance:
-              (state === null ? null : balanceOf(state, request.featureId)) ??
-              emptyBalance(account, request.featureId),
+              (state === null
+                ? null
+                : balanceOfScope(state, request.featureId, request.entityId)) ??
+              emptyBalance(
+                account,
+                request.featureId,
+                request.entityId === undefined ? CUSTOMER_SCOPE : entityScope(request.entityId),
+              ),
           };
         });
       });
@@ -346,6 +369,7 @@ const BillingCore = Layer.mergeAll(
                 new SetUsageCommand({
                   feature: request.featureId,
                   usage: request.usage,
+                  ...(request.entityId === undefined ? {} : { entity: request.entityId }),
                 }),
                 { commandId },
               ),
@@ -361,8 +385,14 @@ const BillingCore = Layer.mergeAll(
             usage: receipt.reply.usage,
             remaining: receipt.reply.remaining,
             balance:
-              (state === null ? null : balanceOf(state, request.featureId)) ??
-              emptyBalance(account, request.featureId),
+              (state === null
+                ? null
+                : balanceOfScope(state, request.featureId, request.entityId)) ??
+              emptyBalance(
+                account,
+                request.featureId,
+                request.entityId === undefined ? CUSTOMER_SCOPE : entityScope(request.entityId),
+              ),
           };
         });
       });
@@ -434,9 +464,113 @@ const BillingCore = Layer.mergeAll(
       const entitlements = yield* Entitlements;
 
       return {
-        view: (account: string) =>
+        view: (account: string, atLeast?: ReceiptRef) =>
           bound(toBalancesReadError)(
-            Effect.map(entitlements.query(Subscription.ref(account)), Option.getOrNull),
+            Effect.map(
+              atLeast === undefined
+                ? entitlements.query(Subscription.ref(account))
+                : entitlements.query(Subscription.ref(account), { atLeast }),
+              Option.getOrNull,
+            ),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
+    EntitiesRead,
+    Effect.gen(function* () {
+      const billing = yield* BillingState;
+
+      return {
+        view: (account: string, atLeast?: ReceiptRef) =>
+          bound(toEntitiesError)(
+            Effect.map(
+              atLeast === undefined
+                ? billing.query(Subscription.ref(account))
+                : billing.query(Subscription.ref(account), { atLeast }),
+              Option.getOrNull,
+            ),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
+    EntityWrites,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+
+      return {
+        create: (account, request) =>
+          bound(toEntitiesError)(
+            asSystem(
+              subscription.send(
+                Subscription.ref(account),
+                new AttachEntityCommand({
+                  entityId: request.entityId,
+                  ...(request.name === undefined ? {} : { name: request.name }),
+                }),
+                { commandId: request.entityId },
+              ),
+            ),
+          ),
+        update: (account, request) =>
+          Effect.gen(function* () {
+            const commandId =
+              request.idempotencyKey ??
+              `entity-update:${request.entityId}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+            return yield* bound(toEntitiesError)(
+              asSystem(
+                subscription.send(
+                  Subscription.ref(account),
+                  new UpdateEntityCommand({
+                    entityId: request.entityId,
+                    ...(request.name === undefined ? {} : { name: request.name }),
+                  }),
+                  { commandId },
+                ),
+              ),
+            );
+          }),
+        archive: (account, request) =>
+          Effect.gen(function* () {
+            const commandId =
+              request.idempotencyKey ??
+              `entity-archive:${request.entityId}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+            return yield* bound(toEntitiesError)(
+              asSystem(
+                subscription.send(
+                  Subscription.ref(account),
+                  new ArchiveEntityCommand({ entityId: request.entityId }),
+                  { commandId },
+                ),
+              ),
+            );
+          }),
+      };
+    }),
+  ),
+  Layer.effect(
+    TransferBalanceWrite,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+
+      return {
+        transfer: (account, request) =>
+          bound(toTransferBalanceError)(
+            asSystem(
+              subscription.send(
+                Subscription.ref(account),
+                new TransferBalanceCommand({
+                  from: request.from,
+                  to: request.to,
+                  feature: request.featureId,
+                  amount: request.amount,
+                }),
+                { commandId: request.idempotencyKey },
+              ),
+            ),
           ),
       };
     }),
@@ -585,7 +719,7 @@ const BillingCore = Layer.mergeAll(
             ...receipt.reply,
             featureId: receipt.reply.feature,
             balance:
-              (state === null ? null : balanceOf(state, receipt.reply.feature)) ??
+              (state === null ? null : balanceOfScope(state, receipt.reply.feature)) ??
               emptyBalance(account, receipt.reply.feature),
           };
         });
@@ -620,7 +754,7 @@ const BillingCore = Layer.mergeAll(
             ...receipt.reply,
             featureId: receipt.reply.feature,
             balance:
-              (state === null ? null : balanceOf(state, receipt.reply.feature)) ??
+              (state === null ? null : balanceOfScope(state, receipt.reply.feature)) ??
               emptyBalance(account, receipt.reply.feature),
           };
         });
@@ -707,16 +841,17 @@ const BillingCore = Layer.mergeAll(
     Effect.gen(function* () {
       const catalog = yield* CatalogService;
       const subscription = yield* Subscription;
+      const entitlements = yield* Entitlements;
 
       return Effect.fn("Paykit.ChangeTier")(function* (account) {
         const ref = Subscription.ref(account);
 
         return Effect.fn("Paykit.ChangeTier.move")(function* (request) {
           const state = yield* subscription.state(ref);
+          const scoped = scopeStateOf(state, request.entityId);
           const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
 
-          const plan =
-            state._tag === "Subscribed" ? planChangeTier(catalog, request.tier, state, now) : null;
+          const plan = planChangeTier(catalog, request.tier, scoped, now);
 
           if (plan === null) {
             return yield* bound(toChangeTierError)(
@@ -734,13 +869,24 @@ const BillingCore = Layer.mergeAll(
             return yield* bound(toChangeTierError)(Effect.fail(mismatch));
           }
 
-          yield* bound(toChangeTierError)(
+          const receipt = yield* bound(toChangeTierError)(
             asSystem(
-              subscription.send(ref, new ChangeTierCommand(granted.input), {
-                commandId: request.dedupeKey,
-              }),
+              subscription.send(
+                ref,
+                new ChangeTierCommand({
+                  ...granted.input,
+                  ...(request.entityId === undefined ? {} : { entity: request.entityId }),
+                }),
+                { commandId: request.dedupeKey },
+              ),
             ),
           );
+
+          // A plan move changes the entitlement view, so a caller that reads a
+          // balance next must see it. The write waits for its own projection,
+          // exactly as `TrackUsage` does; without this a scoped attach would
+          // answer before the scope's rows existed.
+          yield* bound(toChangeTierError)(entitlements.query(ref, { atLeast: receipt }));
 
           return { tier: request.tier, proration: plan.proration };
         });
@@ -962,6 +1108,8 @@ export const BillingInProcess = Layer.mergeAll(
   BillingCore,
   BalancesLive.pipe(Layer.provide(BillingCore)),
   CustomersLive.pipe(Layer.provide(BillingCore)),
+  EntitiesLive.pipe(Layer.provide(BillingCore)),
+  TransferBalanceLive.pipe(Layer.provide(BillingCore)),
   AttachInProcess.pipe(Layer.provide(BillingCore)),
   UpdateInProcess.pipe(Layer.provide(BillingCore)),
   PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),

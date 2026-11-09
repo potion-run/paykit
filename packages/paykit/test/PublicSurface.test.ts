@@ -53,6 +53,13 @@ it("exports the four groups from the package root", () => {
   // one binding per command, named for the command — no aliases
   expect(Paykit.Check.key).toBe("Paykit.Check");
   expect(Paykit.Customers.key).toBe("Paykit.Customers");
+  expect(Paykit.Entities.key).toBe("Paykit.Entities");
+  expect(Paykit.TransferBalance.key).toBe("Paykit.TransferBalance");
+  expect(Paykit.EntitiesLive).toBeDefined();
+  expect(Paykit.TransferBalanceLive).toBeDefined();
+  expect(typeof Paykit.TransferBalanceRequest).toBe("function");
+  expect(typeof Paykit.EntityCreateRequest).toBe("function");
+  expect(Paykit.TransferCrossCustomer).toBeDefined();
   expect(Paykit.SetBillingControls.key).toBe("Paykit.SetBillingControls");
   expect(Paykit.BillingControls).toBeDefined();
   expect(Paykit.ControlsFeatureUnknown).toBeDefined();

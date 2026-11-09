@@ -4,6 +4,7 @@ import type { Allowance } from "../Allowance.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
+import { EntityId } from "../Customer.ts";
 import type { Proration } from "../Proration.ts";
 import {
   DowngradeBelowCeiling,
@@ -11,8 +12,11 @@ import {
   DowngradeBelowUsage,
 } from "../Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
+import { PooledItemOnEntity } from "../Subscription/PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
@@ -25,6 +29,8 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  */
 export interface ChangeTierRequest {
   readonly tier: string;
+  /** The entity scope the plan set belongs to; absent means the customer. */
+  readonly entityId?: EntityId;
   /**
    * The plan items a custom plan is moved to with, when they differ from the
    * catalog's defaults (ADR 0041). Omitted means the plan's `grants`.
@@ -41,6 +47,9 @@ export interface ChangeTierResult {
 }
 
 const refusals = [
+  EntityUnknown,
+  EntityArchived,
+  PooledItemOnEntity,
   PlanNotInCatalog,
   NotSubscribed,
   StandingEnded,

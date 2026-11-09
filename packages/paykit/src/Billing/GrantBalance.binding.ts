@@ -4,6 +4,9 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import type { Balance } from "../Balance.ts";
+import { EntityId } from "../Customer.ts";
+import { EntityArchived } from "../Subscription/EntityArchived.rejection.ts";
+import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { FeatureNotConsumable } from "../Subscription/FeatureNotConsumable.rejection.ts";
 import { FeaturePricedInCredits } from "../Subscription/FeaturePricedInCredits.rejection.ts";
 import { FeatureNotCounted, GrantExpiryNotLater } from "../Subscription/GrantBalance.command.ts";
@@ -14,6 +17,8 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 /** A standalone grant of a counted feature. The bound account is not here. */
 export interface GrantBalanceRequest {
   readonly featureId: string;
+  /** The entity scope the grant belongs to; absent means the customer. */
+  readonly entityId?: EntityId;
   /** How many units to grant. */
   readonly granted: number;
   /** An optional deadline; omitted, the grant never expires. */
@@ -33,6 +38,8 @@ export interface GrantBalanceResult {
 }
 
 const refusals = [
+  EntityUnknown,
+  EntityArchived,
   NotSubscribed,
   FeatureNotConsumable,
   FeatureNotMetered,
