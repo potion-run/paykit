@@ -68,6 +68,19 @@ jobs:
             exit 1
           fi
 
+          # Stripe's test mode is a property of the key, not a flag on the
+          # client. A live key would create real prices, and the RetiredPrices
+          # sweep would archive real ones, so refuse it before the runner buys
+          # the write. Polar is pinned to `server: "sandbox"` instead, which is
+          # why it needs no equivalent check.
+          case "$STRIPE_API_KEY" in
+            sk_test_*|rk_test_*) ;;
+            *)
+              echo "::error::STRIPE_API_KEY is not a test-mode key (sk_test_/rk_test_)."
+              exit 1
+              ;;
+          esac
+
       - name: Require the Polar token
         if: inputs.vendor != 'stripe'
         env:

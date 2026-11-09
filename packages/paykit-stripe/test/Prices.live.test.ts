@@ -1,23 +1,26 @@
 import * as Stripe from "@alchemy.run/stripe";
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
-import { StripeProtocol } from "@distilled.cloud/stripe";
-import { GetPrice, GetPrices } from "@distilled.cloud/stripe/stripe";
+import { GetBillingMeter, GetPrice, GetPrices, GetProduct } from "@distilled.cloud/stripe/stripe";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { registerMeteredPriceProvider } from "../src/MeteredPrice.ts";
 import { StripePrices } from "../src/Prices.ts";
+import { StripeBilling } from "../src/StripeBilling.ts";
+import { live, stripeLiveKey } from "./support/Live.ts";
 
 /**
  * The engine half of `StripePrices`, tested the way Alchemy tests a resource:
  * `test.provider` with a scratch stack, `stack.deploy` and `stack.destroy`, and
- * the cloud state verified out of band through distilled.
+ * the cloud state verified out of band through distilled — the vendor's own
+ * fields, never the provider's returned attributes.
  *
  * It needs a real Stripe key, so it is gated: without `STRIPE_API_KEY` the case
- * is skipped, and CI stays green with no vendor account. Run it with a test-mode
- * key:
+ * is skipped, and CI stays green with no vendor account. The key must be
+ * test-mode (`sk_test_`/`rk_test_`); a live key fails the file rather than
+ * running, because Stripe's test mode is a property of the key and this suite
+ * creates prices and meters. Run it with a test-mode key:
  *
  * ```sh
  * STRIPE_API_KEY=sk_test_… pnpm --filter @potion.run/paykit-stripe test
@@ -26,8 +29,8 @@ import { StripePrices } from "../src/Prices.ts";
  * `process.env` at module scope is the one place the Effect rule does not reach:
  * a skip gate runs before any Effect exists.
  */
-const apiKey = process.env.STRIPE_API_KEY;
-const hasKey = apiKey !== undefined && apiKey !== "";
+const apiKey = stripeLiveKey(process.env.STRIPE_API_KEY);
+const hasKey = apiKey !== undefined;
 
 // `Stripe.providers()` cannot enumerate a provider from this package, so put it
 // into the collection while that layer is built. This is the layer cleanup
@@ -39,13 +42,8 @@ const providers = Layer.effectDiscard(registerMeteredPriceProvider).pipe(
 
 const { test } = Test.make({ providers });
 
-/** Out-of-band reads, provided the way the vendor package provides them. */
-const live = (key: string) =>
-  Layer.mergeAll(
-    Stripe.credentials({ apiKey: Redacted.make(key) }),
-    StripeProtocol,
-    FetchHttpClient.layer,
-  );
+const productIdOf = (product: { readonly id: string } | string): string =>
+  typeof product === "string" ? product : product.id;
 
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 
@@ -55,8 +53,9 @@ test.provider.skipIf(!hasKey)(
     Effect.gen(function* () {
       const key = apiKey!;
 
-      // Start from nothing: a previous run's prices must not be mistaken for this
-      // run's.
+      // Clear this test's state. The provider's objects are retained by design,
+      // so a previous run's price is adopted by its metadata, not mistaken for
+      // this run's.
       yield* stack.destroy();
 
       const first = yield* stack.deploy(StripePrices("Prices", { tiers: { pro: proPrice } }));
@@ -71,11 +70,22 @@ test.provider.skipIf(!hasKey)(
       );
 
       expect(created.data.length).toBe(1);
-      const createdPrice = created.data[0];
-      expect(createdPrice?.unit_amount).toBe(1900);
-      expect(createdPrice?.currency).toBe("usd");
-      expect(createdPrice?.recurring?.interval).toBe("month");
-      expect(createdPrice?.id).toBeDefined();
+      const createdPrice = created.data[0]!;
+      expect(createdPrice.unit_amount).toBe(1900);
+      expect(createdPrice.currency).toBe("usd");
+      expect(createdPrice.recurring?.interval).toBe("month");
+      expect(createdPrice.lookup_key).toBe(lookupKey);
+      expect(createdPrice.livemode).toBe(false);
+
+      // The product is ours, and the tier is the metadata a restore finds it
+      // by. Without this, a deploy that silently created a second product named
+      // `pro` would still pass every price assertion.
+      const createdProduct = yield* GetProduct({ id: productIdOf(createdPrice.product) }).pipe(
+        Effect.provide(live(key)),
+      );
+
+      expect(createdProduct.name).toBe("pro");
+      expect(createdProduct.metadata.paykit_tier).toBe("pro");
 
       // A changed amount is a replacement: Stripe prices are create-only, so a
       // new price answers for the same lookup key.
@@ -89,22 +99,39 @@ test.provider.skipIf(!hasKey)(
         Effect.provide(live(key)),
       );
 
-      expect(replaced.data[0]?.unit_amount).toBe(2400);
-      expect(replaced.data[0]?.id).not.toBe(createdPrice?.id);
+      expect(replaced.data.length).toBe(1);
+      const replacedPrice = replaced.data[0]!;
+      expect(replacedPrice.unit_amount).toBe(2400);
+      expect(replacedPrice.id).not.toBe(createdPrice.id);
+      expect(replacedPrice.lookup_key).toBe(lookupKey);
 
       // The old price is retained: not deleted, and still readable, because an
-      // invoice may reference it. It is not archived either — retention is not
-      // archival, and the docs say so.
-      const previous = yield* GetPrice({ price: createdPrice!.id! }).pipe(
+      // invoice may reference it. Retention is not archival, so it stays
+      // active; the replacement took the one lookup key Stripe allows per price.
+      const previous = yield* GetPrice({ price: createdPrice.id }).pipe(Effect.provide(live(key)));
+
+      expect(previous.id).toBe(createdPrice.id);
+      expect(previous.active).toBe(true);
+      expect(previous.lookup_key).toBe(null);
+
+      // A tier that leaves the catalog is retained the same way. The price the
+      // catalog dropped is the one that still carries the key, and the sweep
+      // (`RetiredPrices`) is a separate write; this deploy does not archive it.
+      yield* stack.deploy(StripePrices("Prices", { tiers: {} }));
+
+      const retiredCurrent = yield* GetPrice({ price: replacedPrice.id }).pipe(
         Effect.provide(live(key)),
       );
 
-      expect(previous.id).toBe(createdPrice?.id);
+      expect(retiredCurrent.id).toBe(replacedPrice.id);
+      expect(retiredCurrent.active).toBe(true);
+      expect(retiredCurrent.lookup_key).toBe(lookupKey);
 
-      // A tier that leaves the catalog is retained the same way.
-      yield* stack.deploy(StripePrices("Prices", { tiers: {} }));
-      const retired = yield* GetPrice({ price: createdPrice!.id! }).pipe(Effect.provide(live(key)));
-      expect(retired.id).toBe(createdPrice?.id);
+      const retiredPrevious = yield* GetPrice({ price: createdPrice.id }).pipe(
+        Effect.provide(live(key)),
+      );
+
+      expect(retiredPrevious.active).toBe(true);
     }),
 );
 
@@ -129,11 +156,11 @@ test.provider.skipIf(!hasKey)("creates a one-time price for a one-off pack", (st
       limit: 1,
     }).pipe(Effect.provide(live(key)));
 
-    const price = created.data[0];
-    expect(price?.unit_amount).toBe(9_900);
+    const price = created.data[0]!;
+    expect(price.unit_amount).toBe(9_900);
     // A pack is charged once; a recurring price would make `mode=payment`
     // unusable and would start a subscription instead.
-    expect(price?.recurring).toBe(null);
+    expect(price.recurring).toBe(null);
   }),
 );
 
@@ -163,12 +190,37 @@ test.provider.skipIf(!hasKey)(
         limit: 1,
       }).pipe(Effect.provide(live(key)));
 
-      const price = created.data[0];
-      expect(price?.unit_amount).toBe(2);
-      expect(price?.currency).toBe("usd");
-      expect(price?.recurring?.usage_type).toBe("metered");
-      expect(price?.recurring?.meter).toBeDefined();
-      expect(sold.meters.messages.startsWith("paykit_")).toBe(true);
+      const price = created.data[0]!;
+      expect(price.unit_amount).toBe(2);
+      expect(price.currency).toBe("usd");
+      expect(price.recurring?.usage_type).toBe("metered");
+      expect(price.recurring?.meter).toBeDefined();
+      expect(price.livemode).toBe(false);
+
+      // The meter the price reports is the one the catalog's feature created,
+      // configured the way `Stripe({ meters })` will report usage to it. A
+      // returned event-name string alone would not prove the meter exists.
+      const meter = yield* GetBillingMeter({ id: price.recurring!.meter! }).pipe(
+        Effect.provide(live(key)),
+      );
+
+      expect(meter.livemode).toBe(false);
+      expect(meter.event_name).toBe(sold.meters.messages);
+      expect(meter.display_name).toBe(sold.meters.messages);
+      expect(meter.status).toBe("active");
+      expect(meter.default_aggregation).toEqual({ formula: "sum" });
+      expect(meter.customer_mapping).toEqual({
+        type: "by_id",
+        event_payload_key: "stripe_customer_id",
+      });
+      expect(meter.value_settings).toEqual({ event_payload_key: "value" });
+
+      const product = yield* GetProduct({ id: productIdOf(price.product) }).pipe(
+        Effect.provide(live(key)),
+      );
+
+      expect(product.name).toBe("pro");
+      expect(product.metadata.paykit_tier).toBe("pro");
     }),
 );
 
@@ -253,7 +305,152 @@ test.provider.skipIf(!hasKey)(
 
       const replaced = yield* priceOf(changed.usage.ladder.messages);
       expect(replaced?.id).not.toBe(ladderPrice?.id);
+
+      // A replaced metered price is retained the same way a base price is:
+      // active, still readable, and no longer carrying the key.
       const previous = yield* GetPrice({ price: ladderPrice!.id! }).pipe(Effect.provide(live(key)));
+
       expect(previous.id).toBe(ladderPrice?.id);
+      expect(previous.active).toBe(true);
+      expect(previous.lookup_key).toBe(null);
+    }),
+);
+
+test.provider.skipIf(!hasKey)("creates a per-seat price on the tier's product", (stack) =>
+  Effect.gen(function* () {
+    const key = apiKey!;
+    yield* stack.destroy();
+
+    const seatPrice = { amount: 1_500, currency: "usd" };
+
+    const sold = yield* stack.deploy(
+      StripePrices("PricesSeat", {
+        tiers: { seated: { price: proPrice, seats: { seats: seatPrice } } },
+      }),
+    );
+
+    const seatKey = sold.seats.seated.seats;
+
+    // The seat price is its own price, keyed per tier and feature, so a
+    // subscription can add a line for it with a quantity.
+    expect(seatKey).not.toBe(sold.prices.seated);
+    expect(seatKey.endsWith(":seat:seats")).toBe(true);
+
+    const created = yield* GetPrices({
+      lookup_keys: [seatKey],
+      active: true,
+      limit: 1,
+    }).pipe(Effect.provide(live(key)));
+
+    expect(created.data.length).toBe(1);
+    const price = created.data[0]!;
+    expect(price.unit_amount).toBe(1_500);
+    expect(price.currency).toBe("usd");
+    expect(price.type).toBe("recurring");
+    expect(price.recurring?.interval).toBe("month");
+    // A seat is a licensed quantity, not usage: `usage_type` is what makes
+    // Stripe bill the item's quantity rather than a meter.
+    expect(price.recurring?.usage_type).toBe("licensed");
+    expect(price.recurring?.meter).toBe(null);
+
+    // Both prices sit on the tier's one product, so checkout adds both lines
+    // to one subscription.
+    const base = yield* GetPrices({
+      lookup_keys: [sold.prices.seated],
+      active: true,
+      limit: 1,
+    }).pipe(Effect.provide(live(key)));
+
+    expect(productIdOf(price.product)).toBe(productIdOf(base.data[0]!.product));
+  }),
+);
+
+test.provider.skipIf(!hasKey)(
+  "adopts its price after state is lost instead of creating a second one",
+  (stack) =>
+    Effect.gen(function* () {
+      const key = apiKey!;
+      yield* stack.destroy();
+
+      const first = yield* stack.deploy(
+        StripePrices("PricesAdopt", { tiers: { adopted: proPrice } }),
+      );
+
+      const lookupKey = first.prices.adopted;
+
+      const before = yield* GetPrices({
+        lookup_keys: [lookupKey],
+        active: true,
+        limit: 1,
+      }).pipe(Effect.provide(live(key)));
+
+      expect(before.data.length).toBe(1);
+      const priceId = before.data[0]!.id;
+
+      // `destroy` drops state and retains the vendor object, which is how a
+      // restored deployment starts. The metadata is the identity, so the next
+      // deploy must find the same price instead of creating a duplicate.
+      yield* stack.destroy();
+
+      const again = yield* stack.deploy(
+        StripePrices("PricesAdopt", { tiers: { adopted: proPrice } }),
+      );
+
+      expect(again.prices.adopted).toBe(lookupKey);
+
+      const after = yield* GetPrices({
+        lookup_keys: [lookupKey],
+        active: true,
+        limit: 1,
+      }).pipe(Effect.provide(live(key)));
+
+      expect(after.data.length).toBe(1);
+      expect(after.data[0]?.id).toBe(priceId);
+    }),
+);
+
+test.provider.skipIf(!hasKey)(
+  "joins the prices it creates into the provider in one call",
+  (stack) =>
+    Effect.gen(function* () {
+      const key = apiKey!;
+      yield* stack.destroy();
+
+      const billing = yield* stack.deploy(
+        StripeBilling("BillingJoined", {
+          secretKey: Redacted.make(key),
+          origin: "https://app.example.com",
+          tiers: {
+            joined: {
+              price: proPrice,
+              usage: { messages: { amount: 2, currency: "usd" } },
+            },
+          },
+        }),
+      );
+
+      expect(billing.kind).toBe("processor");
+      expect(billing.capabilities.has("checkout")).toBe(true);
+      // The metered price and the meter event name are what `reportUsage`
+      // needs, so a joined deployment declares the usage capability too.
+      expect(billing.capabilities.has("usage")).toBe(true);
+      expect(billing.prices).toEqual({ joined: proPrice });
+
+      const base = yield* GetPrices({
+        lookup_keys: [billing.sold.prices.joined],
+        active: true,
+        limit: 1,
+      }).pipe(Effect.provide(live(key)));
+
+      expect(base.data[0]?.unit_amount).toBe(1_900);
+
+      const metered = yield* GetPrices({
+        lookup_keys: [billing.sold.usage.joined.messages],
+        active: true,
+        limit: 1,
+      }).pipe(Effect.provide(live(key)));
+
+      expect(metered.data[0]?.unit_amount).toBe(2);
+      expect(metered.data[0]?.recurring?.usage_type).toBe("metered");
     }),
 );
