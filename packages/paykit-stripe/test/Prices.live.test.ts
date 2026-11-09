@@ -201,9 +201,8 @@ test.provider.skipIf(!hasKey)(
 
       const sold = yield* stack.deploy(StripePrices("Prices", { tiers }));
 
-      // The list endpoint answers the lookup key; retrieve that id for the
-      // whole Price. A list response is not the object to assert transforms and
-      // tiers on.
+      // The list endpoint answers the lookup key; retrieve that id with the
+      // tiers expanded. Stripe omits a tiered price's tiers unless asked.
       const priceOf = (lookupKey: string) =>
         GetPrices({ lookup_keys: [lookupKey], active: true, limit: 1 }).pipe(
           Effect.provide(live(key)),
@@ -212,7 +211,7 @@ test.provider.skipIf(!hasKey)(
 
             return found === undefined
               ? Effect.succeed(undefined)
-              : GetPrice({ price: found.id }).pipe(Effect.provide(live(key)));
+              : GetPrice({ price: found.id, expand: ["tiers"] }).pipe(Effect.provide(live(key)));
           }),
         );
 

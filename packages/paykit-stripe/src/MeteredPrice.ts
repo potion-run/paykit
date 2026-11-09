@@ -207,7 +207,7 @@ const matches = (price: StripePrice, props: MeteredPriceProps): boolean => {
 const isMissing = (error: { readonly _tag?: string }) => error._tag === "NotFound";
 
 const getById = (price: string) =>
-  GetPrice({ price }).pipe(Effect.catchIf(isMissing, () => Effect.undefined));
+  GetPrice({ price, expand: ["tiers"] }).pipe(Effect.catchIf(isMissing, () => Effect.undefined));
 
 const LIST_PAGE_SIZE = 100;
 const LIST_MAX_PAGES = 100;
@@ -220,6 +220,10 @@ const listByActive = Effect.fn(function* (active: boolean) {
     const response = yield* GetPrices({
       active,
       limit: LIST_PAGE_SIZE,
+      // Stripe omits a price's tiers unless the list expands them. Without
+      // this, a tiered price never matches its desired tiers and every
+      // reconcile creates another generation.
+      expand: ["data.tiers"],
       ...(startingAfter === undefined ? {} : { starting_after: startingAfter }),
     });
 
