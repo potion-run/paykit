@@ -46,6 +46,12 @@ it("exports the four groups from the package root", () => {
   // runtime — the retiring names, still flat until the migration slice
   // one binding per command, named for the command — no aliases
   expect(Paykit.Check.key).toBe("Paykit.Check");
+  expect(Paykit.Customers.key).toBe("Paykit.Customers");
+  expect(Paykit.SetBillingControls.key).toBe("Paykit.SetBillingControls");
+  expect(Paykit.BillingControls).toBeDefined();
+  expect(Paykit.ControlsFeatureUnknown).toBeDefined();
+  expect(Paykit.SpendLimitExceeded).toBeDefined();
+  expect(Paykit.UsageAlertFired).toBeDefined();
   expect(Paykit.TrackUsage.key).toBe("Paykit.TrackUsage");
   expect(Paykit.SettleHold.key).toBe("Paykit.SettleHold");
   expect(Paykit.ReleaseHold.key).toBe("Paykit.ReleaseHold");

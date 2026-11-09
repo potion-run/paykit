@@ -189,3 +189,29 @@ it.live("both surfaces read the same AccountEvents stream", () =>
     expect(tenantPage.entries.length).toBe(adminPage.entries.length);
   }).pipe(run),
 );
+
+it.live("refuses a forged controls feature map with CatalogMismatch", () =>
+  Effect.gen(function* () {
+    const tenant = yield* BillingApi.clientInProcess;
+    yield* tenant.Subscribe(
+      account.id,
+      { tier: "free", allowances: free, credits: 0, creditsExpire: "period", rates: {} },
+      asAccount,
+    );
+
+    // `messages` has no unit price, so the catalog says `unpriced`; a caller
+    // that claims otherwise is refused before `decide` sees it.
+    const refused = yield* Effect.flip(
+      tenant.SetBillingControls(
+        account.id,
+        {
+          billingControls: { spendLimits: [{ featureId: "messages", amount: 10 }] },
+          features: { messages: { priced: true } },
+        },
+        asAccount,
+      ),
+    );
+
+    expect(refused._tag).toBe("CatalogMismatch");
+  }).pipe(run),
+);

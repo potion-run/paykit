@@ -23,6 +23,14 @@ internal event and helper words are `PlanChanged` / `PlanChangeScheduled` / `Pla
 The command-level notes below remain the advanced surface until that migration lands. The working
 plan is [the API brief](./briefs/plan-customer-balance-api.md).
 
+Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-state.md)):
+`controls.qnt` models a money ceiling and a usage alert, `SetBillingControls` writes the customer's
+`autoTopUp`, `spendLimits` and `usageAlerts`, `Paykit.Customers(account)` reads them, a limit is a
+`capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The plan set and the
+entity scope are modelled ahead of their code: `schedules.qnt` with [ADR
+0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md), and `entities.qnt` with [ADR
+0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md).
+
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
 `format:check`, `lint`, `typecheck`, `test` (every project; the vendor live cases skip without a
@@ -163,8 +171,8 @@ The next work is the API migration, not another command. The order is:
 4. **Balance sources — landed.** `balances.qnt` models plan, rollover, an expiring grant and a
    lifetime grant. The code has a real `Balance.breakdown`, plan/rollover-before-grant deduction,
    `balances.create` (`GrantBalance`), an expiry policy (`BalanceExpiry` -> `ExpireGrant`), and
-   grants that survive a close and a plan change. What remains from the brief is customer-level
-   controls and a resetting standalone grant, which is an add-on plan item in Phase 5.
+   grants that survive a close and a plan change. Customer controls landed in item 5; the remaining
+   source is a resetting standalone grant, which is an add-on plan item in Phase 5.
 5. **Customer controls — landed.** [ADR 0038](./adr/0038-customer-controls-are-state.md) makes
    controls state on the customer: `controls.qnt` models the money ceiling and the usage alert, and
    `SetBillingControls` / `Paykit.Customers(account)` write and read `autoTopUp`, `spendLimits` and
@@ -172,11 +180,14 @@ The next work is the API migration, not another command. The order is:
    and `decide` share it; an alert is `UsageAlertFired`, evidence that never refuses. The write is
    canonical and idempotent (`normalizeBillingControls` / `controlsKey`), and it works before a
    plan exists because the command carries the catalog's `features` facts past `CatalogGuard`.
-6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
-   `multiAttach` / `multiUpdate`.
-7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`. The ADR
-   ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` are in; the
-   implementation is the remaining work.
+6. **Multiple plans and schedules — model landed.** [ADR
+   0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt` decide one plan per
+   group, add-ons stack, a multi-phase schedule, `multiAttach` / `multiUpdate` and the cancellation
+   fallback to the group's default. The implementation is the next TypeScript slice.
+7. **Entities and transfer — model and brief landed.** The ADR
+   ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` decide a child
+   scope, a pooled plan item, `billing.transfer` and the archive; the implementation brief is
+   [`entities-and-transfer`](./briefs/entities-and-transfer.md). It lands after the plan set.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
 the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated
