@@ -58,8 +58,10 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     case "CrossOrigin":
       return 403;
     // The command conflicts with the state it names: an older plan generation
-    // than the standing already holds (ADR 0047 §5).
+    // than the standing already holds (ADR 0047 §5), or a customer identity
+    // that differs from the one already recorded (ADR 0045).
     case "PlanVersionStale":
+    case "CustomerExists":
       return 409;
     // The provider does not implement the capability the deployment asked for.
     case "ProviderCapabilityMissing":

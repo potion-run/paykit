@@ -110,7 +110,7 @@ phases, `controls.qnt` the customer's spend ceiling and usage alerts, and `money
 reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with its
 witnesses on every push; `pnpm spec:test` runs nine scenario modules; `scripts/spec-mutants.ts`
 kills 77 mutants across the nine, so no invariant can survive as a tautology;
-`scripts/spec-coverage.ts` holds all 44 commands against the nine action tables, so a command
+`scripts/spec-coverage.ts` holds all 49 commands against the nine action tables, so a command
 lands modelled or with a written reason. Three spend-path findings are still recorded rather than
 fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and

@@ -11,6 +11,8 @@ it("maps a refusal to the status a caller can act on", () => {
   expect(httpStatus({ _tag: "PaymentDeclined" })).toBe(402);
   expect(httpStatus({ _tag: "Forbidden" })).toBe(403);
   expect(httpStatus({ _tag: "PendingActivationAmbiguous" })).toBe(409);
+  expect(httpStatus({ _tag: "PlanVersionStale" })).toBe(409);
+  expect(httpStatus({ _tag: "CustomerExists" })).toBe(409);
   expect(httpStatus({ _tag: "ProviderCapabilityMissing" })).toBe(501);
 });
 
