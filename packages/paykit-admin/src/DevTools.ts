@@ -341,6 +341,18 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "QuantityCreditApplied",
+    body: body({
+      prorationId: "seats:add-later",
+      feature: "seats",
+      credits: [{ prorationId: "seats:drop", amount: 1_500 }],
+      amount: 1_500,
+      currency: "usd",
+      charge: 3_000,
+      dueAfter: 1_500,
+    }),
+  },
+  {
     tag: "PlanItemReset",
     body: body({
       feature: "messages",

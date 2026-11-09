@@ -163,7 +163,7 @@ const SPEC_COVERAGE = {
 
   // ── money facts ────────────────────────────────────────────────────────────
   RecordProrationInvoice: { money: ["invoiceProration"] },
-  QuantityProration: { money: ["invoiceQuantity"] },
+  QuantityProration: { money: ["invoiceQuantity", "applyQuantityCredit"] },
   Refund: { money: ["refund"] },
   ReverseRefund: { money: ["reverse"] },
 

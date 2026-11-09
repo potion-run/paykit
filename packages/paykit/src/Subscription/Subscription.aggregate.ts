@@ -109,7 +109,9 @@ import { PooledItemOnEntity } from "./PooledItemOnEntity.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts";
 import {
+  ApplyQuantityCredit,
   NoQuantityProrationDue,
+  QuantityCreditApplied,
   QuantityProrationInvoiced,
   QuantityProrationMismatch,
   QuantityProrationNotBillable,
@@ -210,6 +212,8 @@ import {
   includedRemainingOf,
   initialSubscriptionState,
   quantityAfterTierChange,
+  quantityCreditUsesOf,
+  quantityCreditsOf,
   quantityOf,
   occupiedOf,
   isTerminalStatus,
@@ -934,6 +938,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     DunningRetry,
     ResetAllowance,
     SetQuantity,
+    ApplyQuantityCredit,
     SetUsage,
     SetBillingControls,
     RecordQuantityProrationInvoice,
@@ -1749,6 +1754,65 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           occupiedAfter: command.usage,
           remainingAfter: quantityOf(scoped, command.feature, allowance) - command.usage,
           ...(command.entity === undefined ? {} : { entity: command.entity }),
+        }),
+      ];
+    },
+    ApplyQuantityCredit: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "none",
+        });
+      }
+
+      const entry = state.quantityProrations?.[command.prorationId];
+
+      if (entry === undefined) {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "none",
+        });
+      }
+
+      if (entry.invoiceId !== undefined) {
+        return new NoQuantityProrationDue({
+          account: id,
+          prorationId: command.prorationId,
+          reason: "billed",
+        });
+      }
+
+      // A reduction is a credit, not a charge: it has nothing to apply and is
+      // never billed. A charge already settled by a credit is a no-op.
+      if (entry.proration.due < 0) {
+        return new QuantityProrationNotBillable({
+          account: id,
+          prorationId: command.prorationId,
+          due: entry.proration.due,
+        });
+      }
+
+      if (entry.proration.due === 0) return [];
+
+      const credits = quantityCreditsOf(state, entry.proration.currency, command.prorationId);
+      const uses = quantityCreditUsesOf(entry.proration.due, credits);
+
+      // Nothing to spend is an accepted no-op: a collector may have read the
+      // credits before another charge consumed them.
+      if (uses.length === 0) return [];
+      const amount = uses.reduce((sum, use) => sum + use.amount, 0);
+
+      return [
+        new QuantityCreditApplied({
+          prorationId: command.prorationId,
+          feature: entry.feature,
+          credits: uses,
+          amount,
+          currency: entry.proration.currency,
+          charge: entry.proration.due,
+          dueAfter: entry.proration.due - amount,
         }),
       ];
     },
@@ -3262,7 +3326,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ),
       };
     },
-    QuantityChanged: (state, event) => {
+    QuantityChanged: (state, event, envelope) => {
       if (state._tag !== "Subscribed") return state;
 
       if (event.entity !== undefined) {
@@ -3281,7 +3345,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               ...scoped,
               quantityProrations: {
                 ...scoped.quantityProrations,
-                [event.prorationId]: { feature: event.feature, proration: event.proration },
+                [event.prorationId]: {
+                  feature: event.feature,
+                  proration: event.proration,
+                  recordedAt: envelope.at,
+                },
               },
             };
       }
@@ -3298,10 +3366,51 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           : {
               quantityProrations: {
                 ...state.quantityProrations,
-                [event.prorationId]: { feature: event.feature, proration: event.proration },
+                [event.prorationId]: {
+                  feature: event.feature,
+                  proration: event.proration,
+                  recordedAt: envelope.at,
+                },
               },
             }),
       };
+    },
+    QuantityCreditApplied: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const entry = state.quantityProrations?.[event.prorationId];
+
+      if (entry === undefined) return state;
+
+      // The charge now owes the net. Every credit it spent records the part it
+      // gave up, so a replay has nothing left to apply (ADR 0042).
+      const charged = {
+        ...state.quantityProrations,
+        [event.prorationId]: {
+          ...entry,
+          proration: {
+            ...entry.proration,
+            credit: entry.proration.credit + event.amount,
+            due: event.dueAfter,
+          },
+        },
+      };
+
+      const applied = event.credits.flatMap((use) => {
+        const credit = charged[use.prorationId];
+
+        if (credit === undefined) return [];
+
+        return [
+          [
+            use.prorationId,
+            { ...credit, creditApplied: (credit.creditApplied ?? 0) + use.amount },
+          ] as const,
+        ];
+      });
+
+      const quantityProrations = { ...charged, ...Object.fromEntries(applied) };
+
+      return { ...state, quantityProrations };
     },
     UsageSet: (state, event) => {
       if (state._tag !== "Subscribed") return state;

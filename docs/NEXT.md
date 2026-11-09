@@ -98,8 +98,8 @@ shared pool, the transfer and the archive ([ADR
 phases, `controls.qnt` the customer's spend ceiling and usage alerts, and `money.qnt` the refund,
 reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with its
 witnesses on every push; `pnpm spec:test` runs nine scenario modules; `scripts/spec-mutants.ts`
-kills 72 mutants across the nine, so no invariant can survive as a tautology;
-`scripts/spec-coverage.ts` holds all 40 commands against the nine action tables, so a command
+kills 76 mutants across the nine, so no invariant can survive as a tautology;
+`scripts/spec-coverage.ts` holds all 44 commands against the nine action tables, so a command
 lands modelled or with a written reason. Three spend-path findings are still recorded rather than
 fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
@@ -108,8 +108,9 @@ are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md). F4, F5 and F7 
 ADRs; F1, F2, F3, F6, F8, F10, F11 and F12 are implemented in code (proration identity and
 `charged`, a single owner per quantity key, a fresh refill budget on `PlanChanged`, terminal windows
 and pending phases dropped, a forward-only grace deadline, and cancellation winning the boundary).
-F9 is documented: a quantity credit is recorded for audit and a consumer is future work. The file
-records the probes and the tests that now pin them.
+F9 is fixed by [ADR 0042](./adr/0042-a-quantity-credit-settles-the-next-charge.md):
+`ApplyQuantityCredit` spends a reduction's credit against the next quantity charge, capped by that
+charge and never paid out. The file records the probes, the re-run audit and the tests that pin them.
 
 The first seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)

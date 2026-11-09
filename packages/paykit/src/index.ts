@@ -1006,7 +1006,10 @@ export { FeaturePricedInCredits } from "./Subscription/FeaturePricedInCredits.re
 export { PooledItemOnEntity } from "./Subscription/PooledItemOnEntity.rejection.ts";
 
 export {
+  ApplyQuantityCredit,
   NoQuantityProrationDue,
+  QuantityCreditApplied,
+  QuantityCreditUse,
   QuantityProrationInvoiced,
   QuantityProrationMismatch,
   QuantityProrationNotBillable,

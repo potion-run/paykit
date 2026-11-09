@@ -137,4 +137,68 @@ describe("a vendor without the quantity capability", () => {
       });
     }).pipe(Effect.provide(worldOf([manual])));
   });
+
+  it.live("spends a reduction's credit on the next seat bill", () => {
+    const manual = PaymentsManual();
+
+    return Effect.gen(function* () {
+      yield* subscribed("manual");
+      const set = yield* SetQuantity(account);
+
+      yield* set({ feature: "seats", quantity: 10, dedupeKey: "seats:ten" });
+      const drop = yield* set({ feature: "seats", quantity: 1, dedupeKey: "seats:drop" });
+      const credit = Math.abs(drop.proration?.due ?? 0);
+      const raise = yield* set({ feature: "seats", quantity: 15, dedupeKey: "seats:fifteen" });
+      const gross = raise.proration?.due ?? 0;
+
+      expect(credit).toBeGreaterThan(0);
+      expect(gross).toBeGreaterThan(credit);
+
+      const charge = yield* ChargeQuantityProration(account);
+      const result = yield* charge({ prorationId: "seats:fifteen" });
+
+      // The invoice opens for the net; the credit is recorded on the charge.
+      expect(result.outcome).toBe("charged");
+      expect(result.amount).toBe(gross - credit);
+      expect(result.creditApplied).toBe(credit);
+
+      // A retry is the same invoice, not a second application.
+      expect(yield* charge({ prorationId: "seats:fifteen" })).toEqual({ outcome: "nothing" });
+
+      const subscription = yield* Subscription;
+      const state = yield* subscription.state(Subscription.ref(account));
+
+      if (state._tag === "Subscribed") {
+        expect(state.quantityProrations?.["seats:drop"]?.creditApplied).toBe(credit);
+        expect(state.quantityProrations?.["seats:fifteen"]?.proration.due).toBe(gross - credit);
+        expect(state.quantityProrations?.["seats:fifteen"]?.proration.credit).toBe(credit);
+        expect(state.charged).toEqual({ usd: gross - credit });
+      }
+    }).pipe(Effect.provide(worldOf([manual])));
+  });
+
+  it.live("records a credit that covers the charge and opens no invoice", () => {
+    const manual = PaymentsManual();
+
+    return Effect.gen(function* () {
+      yield* subscribed("manual");
+      const set = yield* SetQuantity(account);
+
+      yield* set({ feature: "seats", quantity: 10, dedupeKey: "seats:ten" });
+      yield* set({ feature: "seats", quantity: 1, dedupeKey: "seats:drop" });
+      const raise = yield* set({ feature: "seats", quantity: 6, dedupeKey: "seats:six" });
+      const gross = raise.proration?.due ?? 0;
+
+      const charge = yield* ChargeQuantityProration(account);
+
+      expect(yield* charge({ prorationId: "seats:six" })).toEqual({
+        outcome: "nothing",
+        creditApplied: gross,
+        currency: "usd",
+      });
+
+      // No invoice exists for a fully covered charge, and the credit is spent.
+      expect(yield* charge({ prorationId: "seats:six" })).toEqual({ outcome: "nothing" });
+    }).pipe(Effect.provide(worldOf([manual])));
+  });
 });

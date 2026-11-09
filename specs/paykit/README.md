@@ -64,7 +64,7 @@ the rest became checkable.
 | customer spend ceiling and usage alerts | `controls`, `SetBillingControls`, `UsageAlertFired` | `controls.qnt` | modelled |
 | entity scope, pool and transfer | `Entity` in ADR 0035, no code yet | `entities.qnt` | modelled (ADR 0040) |
 | tier proration state | `proration`, `prorationId`, `ChangeTier`, `RecordProrationInvoice` | `money.qnt` | modelled |
-| quantity proration state | `quantityProrations`, `SetQuantity`, `RecordQuantityProrationInvoice` | `money.qnt` | modelled |
+| quantity proration state | `quantityProrations`, `SetQuantity`, `ApplyQuantityCredit`, `RecordQuantityProrationInvoice` | `money.qnt` | modelled |
 | refund and reversal state | `charged`, `refunded`, `refunds`, `Refund`, `ReverseRefund` | `money.qnt` | modelled |
 | hold lifecycle | `holds`, `HoldPhase.ts` | `paykit.qnt` | modelled (spend path) |
 | webhook edge | `WEBHOOK_TRANSITIONS` in `Webhooks.ts` | — | total table; not modelled (provider edge) |
@@ -334,23 +334,28 @@ What the slice deliberately leaves out:
 | `changeTier` | `ChangeTier` | `PlanChanged.proration` |
 | `invoiceProration` | `RecordProrationInvoice` | `ProrationInvoiced` |
 | `setQuantity` | `SetQuantity` | `QuantityChanged.proration` |
+| `applyQuantityCredit` | `ApplyQuantityCredit` | `QuantityCreditApplied` |
 | `invoiceQuantity` | `RecordQuantityProrationInvoice` | `QuantityProrationInvoiced` |
 
 Invariants: `refundsCoveredByCharges`, `refundedIsOutstanding` (the total is the fold of the
 records), `reversalsBounded`, `refundAmountsArePositive`, `billedProrationIsPositive`,
 `lastInvoiceMatchesBilled`, `billedProrationIsCurrent` (a stale id cannot settle a newer change),
-`quantityCreditsNeverInvoiced`, `quantityInvoicesMatchDue`, `invoicedIsPartOfCharged`.
+`quantityCreditsNeverInvoiced`, `quantityInvoicesMatchDue`, `quantityCreditAppliedIsBounded`,
+`quantityDueNeverNegative`, `quantityCreditsConserved`, `invoicedIsPartOfCharged`.
 
 `canInvoiceProration` is the whole identity rule: an invoice names the current proration's id and
 its due. `canInvoiceQuantity` states the same rule for a quantity change: a credit (`due < 0`) is
 never invoiced, the invoice amount is the due, and a key owns one change, so `SetQuantity` refuses a
-reused key with `QuantityProrationAlreadyBilled`.
+reused key with `QuantityProrationAlreadyBilled`. `canApplyQuantityCredit` spends a credit against a
+later charge, capped by that charge; `quantityCreditsConserved` says every unit a credit records as
+spent is a unit a charge gave up, and `quantityDueNeverNegative` says the application never turns a
+charge into a payout (ADR 0042).
 
 ## The mutants
 
-`pnpm spec:mutants` kills 73 mutants across the nine models: 17 for the spend path, 4 for the
+`pnpm spec:mutants` kills 76 mutants across the nine models: 17 for the spend path, 4 for the
 standing, 6 for the windows, 4 for the plan operations, 13 for the plan set and its schedules, 7 for
-the balance ledger, 9 for the entities, 7 for the money protocol and 6 for customer controls. Each
+the balance ledger, 9 for the entities, 10 for the money protocol and 6 for customer controls. Each
 mutant is a textual replacement and the gate fails when an invariant **survives** it. The new
 models' mutants are the same discipline as the original: an invariant with nothing behind it is a
 claim, not a check.

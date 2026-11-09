@@ -17,6 +17,7 @@
 //   setQuantity         ↔ SetQuantity.command.ts        (QuantityChanged.proration)
 //   invoiceQuantity     ↔ RecordQuantityProrationInvoice.command.ts
 //                                                          (QuantityProrationInvoiced)
+//   applyQuantityCredit ↔ ApplyQuantityCredit.command.ts  (QuantityCreditApplied)
 //
 // Scope and the code divergences this model names are in README.md beside this
 // file. Currency is one unit here: the per-currency ceiling is `Refund.test.ts`'s
@@ -45,10 +46,14 @@ module money {
     | Billed({ id: int, due: int })
 
   // A quantity change's money, keyed by the caller's `dedupeKey`. A positive
-  // `due` is collectable; a negative one is a credit and is never invoiced.
+  // `due` is collectable; a negative one is a credit. `recordedDue` keeps the
+  // sign the change recorded, so a credit stays distinguishable after its
+  // amount was spent; `creditApplied` is how much of it a later charge used.
   type QuantityProration = {
     present: bool,
     due: int,
+    recordedDue: int,
+    creditApplied: int,
     invoiced: bool,
     invoiceAmount: int,
   }
@@ -84,6 +89,8 @@ module money {
   pure val EMPTY_QUANTITY: QuantityProration = {
     present: false,
     due: 0,
+    recordedDue: 0,
+    creditApplied: 0,
     invoiced: false,
     invoiceAmount: 0,
   }
@@ -133,12 +140,32 @@ module money {
     }
 
   // A quantity invoice may settle exactly the pending entry it names, once,
-  // and only when the change moved positive money. A credit is never billed.
+  // and only when the change left positive money to collect. A credit is never
+  // billed.
   pure def canInvoiceQuantity(entry: QuantityProration, amount: int): bool =
     entry.present
       and not(entry.invoiced)
       and entry.due > 0
       and entry.due == amount
+
+  // How much of a credit is still available to settle a later charge.
+  pure def unappliedCreditOf(entry: QuantityProration): int =
+    if (entry.present and entry.recordedDue < 0) -entry.due - entry.creditApplied else 0
+
+  // A credit settles a later, uninvoiced charge in the same currency. The
+  // amount is the smaller of what is left and what the charge owes, so a
+  // credit larger than the charge leaves a remainder and never becomes cash.
+  pure def canApplyQuantityCredit(credit: QuantityProration, target: QuantityProration): bool =
+    credit.present
+      and credit.recordedDue < 0
+      and unappliedCreditOf(credit) > 0
+      and target.present
+      and target.recordedDue > 0
+      and target.due > 0
+      and not(target.invoiced)
+
+  pure def creditAmountOf(credit: QuantityProration, target: QuantityProration): int =
+    if (unappliedCreditOf(credit) < target.due) unappliedCreditOf(credit) else target.due
 
   // ── the state ──────────────────────────────────────────────────────────────
 
@@ -187,7 +214,7 @@ module money {
   val quantityCreditsNeverInvoiced: bool =
     QUANTITY_KEYS.forall(key => {
       val entry = state.quantity.get(key)
-      not(entry.invoiced) or entry.due > 0
+      not(entry.invoiced) or entry.recordedDue > 0
     })
 
   val quantityInvoicesMatchDue: bool =
@@ -195,6 +222,36 @@ module money {
       val entry = state.quantity.get(key)
       not(entry.invoiced) or entry.invoiceAmount == entry.due
     })
+
+  // A credit is spent once, only up to its amount. A charge is only ever
+  // reduced, never turned into a credit by its own settlement.
+  val quantityCreditAppliedIsBounded: bool =
+    QUANTITY_KEYS.forall(key => {
+      val entry = state.quantity.get(key)
+      entry.creditApplied >= 0
+        and (if (entry.recordedDue < 0)
+          entry.creditApplied <= -entry.recordedDue
+        else entry.creditApplied == 0)
+    })
+
+  val quantityDueNeverNegative: bool =
+    QUANTITY_KEYS.forall(key => {
+      val entry = state.quantity.get(key)
+      entry.recordedDue < 0 or entry.due >= 0
+    })
+
+  // Every unit a credit records as spent is a unit a charge gave up: the
+  // application moves the money, it does not create or destroy it.
+  pure def appliedCredits(state: State): int =
+    QUANTITY_KEYS.fold(0, (acc, key) => acc + state.quantity.get(key).creditApplied)
+
+  pure def creditMovedOf(entry: QuantityProration): int =
+    if (entry.present and entry.recordedDue > entry.due) entry.recordedDue - entry.due else 0
+
+  pure def movedCredits(state: State): int =
+    QUANTITY_KEYS.fold(0, (acc, key) => acc + creditMovedOf(state.quantity.get(key)))
+
+  val quantityCreditsConserved: bool = appliedCredits(state) == movedCredits(state)
 
   // Invoices are a part of what was charged, and a charge is never negative.
   val invoicedIsPartOfCharged: bool = state.invoiced <= state.charged
@@ -211,6 +268,9 @@ module money {
     billedProrationIsCurrent,
     quantityCreditsNeverInvoiced,
     quantityInvoicesMatchDue,
+    quantityCreditAppliedIsBounded,
+    quantityDueNeverNegative,
+    quantityCreditsConserved,
     invoicedIsPartOfCharged,
     chargedNeverNegative,
   }
@@ -270,9 +330,29 @@ module money {
     quantity: state.quantity.set(key, {
       present: true,
       due: due,
+      recordedDue: due,
+      creditApplied: 0,
       invoiced: false,
       invoiceAmount: 0,
     }),
+  }
+
+  // Spend a credit against a charge. The credit records what it gave up and the
+  // charge records what it no longer owes; neither changes the invoice history.
+  pure def applyCreditToCharge(
+    state: State,
+    creditKey: QuantityKey,
+    targetKey: QuantityKey,
+  ): State = {
+    val credit = state.quantity.get(creditKey)
+    val target = state.quantity.get(targetKey)
+    val amount = creditAmountOf(credit, target)
+    {
+      ...state,
+      quantity: state.quantity
+        .set(creditKey, { ...credit, creditApplied: credit.creditApplied + amount })
+        .set(targetKey, { ...target, due: target.due - amount }),
+    }
   }
 
   pure def applyInvoiceQuantity(state: State, key: QuantityKey, amount: int): State = {
@@ -325,9 +405,16 @@ module money {
     state' = applyInvoiceQuantity(state, key, amount),
   }
 
+  action applyQuantityCredit(creditKey: QuantityKey, targetKey: QuantityKey): bool = all {
+    creditKey != targetKey,
+    canApplyQuantityCredit(state.quantity.get(creditKey), state.quantity.get(targetKey)),
+    state' = applyCreditToCharge(state, creditKey, targetKey),
+  }
+
   action step: bool = {
     nondet key = REFUND_KEYS.oneOf()
     nondet quantityKey = QUANTITY_KEYS.oneOf()
+    nondet targetKey = QUANTITY_KEYS.oneOf()
     nondet amount = 1.to(200).oneOf()
     nondet rawDue = 0.to(200).oneOf()
     nondet id = 0.to(4).oneOf()
@@ -339,6 +426,7 @@ module money {
       invoiceProration(id, amount),
       setQuantity(quantityKey, rawDue - 100),
       invoiceQuantity(quantityKey, amount),
+      applyQuantityCredit(quantityKey, targetKey),
     }
   }
 
@@ -387,6 +475,24 @@ module money {
   val quantityCreditUninvoiced: bool =
     QUANTITY_KEYS.exists(key => {
       val entry = state.quantity.get(key)
-      entry.present and entry.due < 0 and not(entry.invoiced)
+      entry.present and entry.recordedDue < 0 and not(entry.invoiced)
+    })
+
+  val quantityCreditApplied: bool =
+    QUANTITY_KEYS.exists(key =>
+      state.quantity.get(key).present and state.quantity.get(key).creditApplied > 0)
+
+  val quantityCreditPartiallyApplied: bool =
+    QUANTITY_KEYS.exists(key => {
+      val entry = state.quantity.get(key)
+      entry.present
+        and entry.creditApplied > 0
+        and entry.creditApplied < -entry.recordedDue
+    })
+
+  val quantityCreditFullyApplied: bool =
+    QUANTITY_KEYS.exists(key => {
+      val entry = state.quantity.get(key)
+      entry.present and entry.recordedDue < 0 and entry.creditApplied == -entry.recordedDue
     })
 }

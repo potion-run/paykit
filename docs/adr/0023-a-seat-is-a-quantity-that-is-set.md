@@ -3,6 +3,9 @@
 > **Partially superseded by [0036](./0036-a-seat-is-purchased-and-occupied.md).** The seat is still
 > set, not spent; §§4–7 are replaced by a purchased quantity, an occupied count and a negative
 > remaining when occupancy exceeds the purchase. `cap` is a purchase ceiling, not a remaining count.
+> **§4's "nothing applies the credit" is superseded by
+> [0042](./0042-a-quantity-credit-settles-the-next-charge.md):** a reduction's credit settles the
+> next quantity charge and is never paid out.
 
 - **Status:** Accepted
 - **Date:** 2026-11-06
@@ -52,10 +55,9 @@ command's required `dedupeKey`. The standing keeps `quantities` and
 
 **4. `ChargeQuantityProration` collects a positive `due`.** Like a tier change's
 proration, a positive difference is opened as a provider invoice keyed by the
-change, and `QuantityProrationInvoiced` records it. A reduction's credit is
-recorded on the standing for audit; paying it out is a refund, which is a
-provider action, not a subscription one. Nothing applies the credit
-automatically.
+change, and `QuantityProrationInvoiced` records it. A reduction's credit is spent
+against the next quantity charge by `ApplyQuantityCredit`, capped by that charge
+and never paid out ([0042](./0042-a-quantity-credit-settles-the-next-charge.md)).
 
 **5. `TrackUsage` and `Hold` refuse a quantity.** A seat is not metered, so both
 answer `FeatureNotConsumable`. `check()` answers from the cap: a quantity with no

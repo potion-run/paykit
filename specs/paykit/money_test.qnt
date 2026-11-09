@@ -196,4 +196,60 @@ module money_test {
       .expect(quantityCreditRecorded)
       .expect(quantityCreditUninvoiced)
       .expect(moneyInvariant)
+
+  // A reduction's credit settles the next charge it can. The charge owes the
+  // net; the credit records what it gave up.
+  run quantityCreditAppliesTest =
+    init
+      .then(setQuantity("q1", -80))
+      .then(setQuantity("q2", 50))
+      .then(applyQuantityCredit("q1", "q2"))
+      .expect(state.quantity.get("q1").creditApplied == 50)
+      .expect(state.quantity.get("q2").due == 0)
+      .expect(quantityCreditApplied)
+      .expect(quantityCreditsConserved)
+      .expect(moneyInvariant)
+      // The charge is settled: there is no positive due left to invoice.
+      .then(invoiceQuantity("q2", 50).fail())
+
+  // A credit larger than the charge leaves the remainder for a later one
+  // rather than paying it out or turning the charge negative.
+  run quantityCreditLargerThanTheChargeTest =
+    init
+      .then(setQuantity("q1", -80))
+      .then(setQuantity("q2", 50))
+      .then(applyQuantityCredit("q1", "q2"))
+      .then(setQuantity("q3", 40))
+      .then(applyQuantityCredit("q1", "q3"))
+      .expect(state.quantity.get("q1").creditApplied == 80)
+      .expect(state.quantity.get("q3").due == 10)
+      .then(invoiceQuantity("q3", 10))
+      .expect(state.charged == 10)
+      .expect(quantityCreditFullyApplied)
+      .expect(quantityCreditsConserved)
+      .expect(moneyInvariant)
+
+  // A charge that a credit already settled is not a target a second time.
+  run quantityCreditAppliesOnceTest =
+    init
+      .then(setQuantity("q1", -80))
+      .then(setQuantity("q2", 50))
+      .then(applyQuantityCredit("q1", "q2"))
+      .then(applyQuantityCredit("q1", "q2").fail())
+
+  // A credit is not a charge: it is never its own target.
+  run quantityCreditIsNotAChargeTest =
+    init
+      .then(setQuantity("q1", -80))
+      .then(applyQuantityCredit("q1", "q1").fail())
+
+  // An unrelated charge in the same period does not spend a quantity credit.
+  run quantityCreditSurvivesAChargeTest =
+    init
+      .then(charge(200))
+      .then(setQuantity("q1", -80))
+      .then(charge(200))
+      .expect(state.quantity.get("q1").creditApplied == 0)
+      .expect(quantityCreditUninvoiced)
+      .expect(moneyInvariant)
 }
