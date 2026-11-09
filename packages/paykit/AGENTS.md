@@ -28,6 +28,7 @@ Every "just read it from the provider" is a migration we owe later.
 ## Vocabulary is API
 
 The public words are `Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`,
+`BillingControls`,
 `Period`, `Usage` and `Standing` ([ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md)).
 `Tier` and `Allowance` are internal schema names while the state migrates; the events speak plan,
 and the advanced command bindings keep their `Tier` names for now. They are not a second public
@@ -187,6 +188,16 @@ period, and `EnterGrace` is refused once the standing is terminal.
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
 - Every command has one typed rejection per way it can refuse.
+
+- Customer controls are state, not catalog ([ADR 0038](../../docs/adr/0038-customer-controls-are-state.md)).
+  `BillingControls` is written whole by `SetBillingControls`, lives on both state tags so it
+  works before a plan exists, and survives a plan change and a close. A spend limit is a `Capacity`
+  variant beside `moneyCap`: the binding ceiling names the refusal, and `check`, `allowed` and
+  `decide` share it. An alert records `UsageAlertFired` beside the usage fact and moves no counter.
+  The write is normalized and compared by `controlsKey`, so an equal object records nothing. The
+  catalog facts a write names ride the command as `features` and `CatalogGuard` checks them; a
+  control that names a feature the current plan does not grant is stored and inert, because the
+  whole object is replaced on each write and a downgrade must not poison a later write.
 
 ## The per-command loop
 

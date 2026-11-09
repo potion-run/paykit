@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { pricingOf, type Allowance } from "./Allowance.ts";
-import { planItemsOf, ratesOf, planOf } from "./Catalog.ts";
+import { planItemsOf, ratesOf, planOf, pricedInCatalog } from "./Catalog.ts";
 import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
@@ -18,6 +18,8 @@ interface CatalogCarried {
   readonly creditsExpire?: string;
   readonly topUp?: TopUpTerms;
   readonly rates?: CreditRateCards;
+  /** The catalog facts a customer-controls write names, keyed by feature id. */
+  readonly features?: Readonly<Record<string, { readonly priced: boolean }>>;
 }
 
 /**
@@ -85,6 +87,31 @@ export const catalogMismatchOf = (
   catalog: Parameters<typeof planOf>[0],
   input: CatalogCarried,
 ): CatalogMismatch | null => {
+  // A controls write names features, not a tier, so this check comes before the
+  // tier early return. `priced` is "some plan bills it postpaid", which is the
+  // fact a spend limit needs; an alert needs no price (ADR 0038).
+  if (input.features !== undefined) {
+    for (const [featureId, fact] of Object.entries(input.features)) {
+      const priced = pricedInCatalog(catalog, featureId);
+
+      if (priced === null) {
+        return new CatalogMismatch({
+          feature: featureId,
+          field: "features",
+          expected: "in catalog",
+          actual: "missing",
+        });
+      }
+
+      const expected = priced ? "priced" : "unpriced";
+      const actual = fact.priced ? "priced" : "unpriced";
+
+      if (expected !== actual) {
+        return new CatalogMismatch({ feature: featureId, field: "features", expected, actual });
+      }
+    }
+  }
+
   if (input.tier === undefined) return null;
   const tier = planOf(catalog, input.tier);
 

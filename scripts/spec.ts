@@ -7,6 +7,7 @@
 //   windows.qnt    the clocks the period does not own, and the quantity
 //   balances.qnt   the sources behind one count, and the order they are spent
 //   money.qnt      refunds, reversals and proration invoices
+//   controls.qnt   a customer's spend ceiling and the alerts that never refuse
 //
 // `--tests` runs `quint test` instead of `quint run`; both paths typecheck
 // first, so a scenario that references a dead action fails before it runs.
@@ -138,6 +139,22 @@ const SPECS: ReadonlyArray<Spec> = [
     tests: "specs/paykit/balances_test.qnt",
     testMain: "balances_test",
     maxSteps: 30,
+  },
+  {
+    file: "specs/paykit/controls.qnt",
+    invariants: ["controlsInvariant"],
+    witnesses: [
+      "limitSet",
+      "limitCleared",
+      "billedUsage",
+      "refused",
+      "alertFired",
+      "closed",
+      "limitSurvivedClose",
+    ],
+    tests: "specs/paykit/controls_test.qnt",
+    testMain: "controls_test",
+    maxSteps: 25,
   },
   {
     file: "specs/paykit/money.qnt",

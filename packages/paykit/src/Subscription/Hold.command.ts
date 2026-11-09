@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { Session } from "../Auth/Guards.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
+import { SpendLimitExceeded } from "./SpendLimitExceeded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import {
   FeatureNotMetered,
@@ -102,6 +103,7 @@ export class Hold extends Domain.Command("Hold", {
   },
   events: [UsageReserved],
   rejects: [
+    SpendLimitExceeded,
     HoldExceeded,
     StandingBlocksUsage,
     FeatureNotMetered,

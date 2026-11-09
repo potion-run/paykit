@@ -4,6 +4,7 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { type Balance, balanceOf, emptyBalance } from "../Balance.ts";
 import type { EntitlementsState } from "../Subscription/Entitlements.view.ts";
+import { SpendLimitExceeded } from "../Subscription/SpendLimitExceeded.rejection.ts";
 import {
   AllowanceExceeded,
   CreditExceeded,
@@ -81,6 +82,7 @@ const refusals = [
   CreditExceeded,
   SpendCapExceeded,
   MoneyCapExceeded,
+  SpendLimitExceeded,
   Unauthenticated,
   Forbidden,
 ] as const;

@@ -86,7 +86,17 @@ export {
   emptyBalance,
 } from "./Balance.ts";
 
-export { BillingControls, Customer, CustomerId, CustomerPlan } from "./Customer.ts";
+export {
+  BillingControls,
+  Customer,
+  CustomerAutoTopUp,
+  CustomerId,
+  CustomerPlan,
+  CustomerSpendLimit,
+  CustomerUsageAlert,
+  controlsKey,
+  normalizeBillingControls,
+} from "./Customer.ts";
 
 export {
   Catalog,
@@ -285,6 +295,10 @@ export {
   Balances,
   BalancesLive,
   BalancesRead,
+  Customers,
+  CustomersLive,
+  CustomersRead,
+  SetBillingControls,
   GrantBalance,
   BillingInProcess,
   ChangeTier,
@@ -313,6 +327,15 @@ export {
 export type {
   BalancesError,
   BalancesRefusal,
+  CustomersError,
+  CustomersRefusal,
+  CustomersVerb,
+  CustomerUpdateRequest,
+  SetBillingControlsError,
+  SetBillingControlsRefusal,
+  SetBillingControlsRequest,
+  SetBillingControlsResult,
+  SetBillingControlsVerb,
   BalancesVerb,
   BalanceCreateRequest,
   BalanceFinalizeRequest,
@@ -896,6 +919,19 @@ export {
   UsageInvalid,
   UsageSet,
 } from "./Subscription/SetUsage.command.ts";
+
+export {
+  BillingControlsSet,
+  ControlFeature,
+  ControlsDuplicate,
+  ControlsFeatureNotPriced,
+  ControlsFeatureUnknown,
+  SetBillingControls as SetBillingControlsCommand,
+} from "./Subscription/SetBillingControls.command.ts";
+
+export { SpendLimitExceeded } from "./Subscription/SpendLimitExceeded.rejection.ts";
+
+export { UsageAlertFired } from "./Subscription/UsageAlertFired.event.ts";
 
 export {
   BalanceGranted,

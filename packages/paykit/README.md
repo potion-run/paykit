@@ -84,7 +84,7 @@ lists it, reads it, writes seat occupancy and finalizes a lock.
 
 ## The catalog
 
-`Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`, `Period`, `Usage` and
+`Plan`, `PlanItem`, `Feature`, `Customer`, `BillingControls`, `Balance`, `Subscription`, `Period`, `Usage` and
 `Standing` are the public words. `Tier` and `Allowance` are the internal schema names the state is
 written in; the events speak plan, the advanced command bindings keep their `Tier` names, and new
 code uses `plan()` and `planItem()`.

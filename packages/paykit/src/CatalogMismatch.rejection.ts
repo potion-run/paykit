@@ -11,8 +11,11 @@ import * as Schema from "effect/Schema";
  * repair it because it is pure and has no catalog.
  */
 export class CatalogMismatch extends Domain.Rejection("CatalogMismatch", {
-  tier: Schema.String,
-  /** Which field disagreed: `tier`, `allowances` or `price`. */
+  /** The tier the command named, when the disagreement is about a plan. */
+  tier: Schema.optionalKey(Schema.String),
+  /** The feature the command named, when the disagreement is about a control. */
+  feature: Schema.optionalKey(Schema.String),
+  /** Which field disagreed: `tier`, `allowances`, `price`, `topUp`, `rates` or `features`. */
   field: Schema.String,
   expected: Schema.String,
   actual: Schema.String,

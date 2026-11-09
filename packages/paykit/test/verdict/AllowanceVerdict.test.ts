@@ -287,3 +287,56 @@ describe("allowsOne", () => {
     expect(allowsOne("good", at(1))).toBe(true);
   });
 });
+
+describe("a customer spend limit", () => {
+  // No included count: every unit is billable, so 6 units cost 12 minor units.
+  const priced = judged({ included: 0, remaining: 1_000, pricing: usd, billed: 0 });
+
+  it("refuses with the customer's ceiling when it binds below the plan's cap", () => {
+    expect(
+      capacityOf({
+        standing: "good",
+        feature: { ...priced, moneyCap: 1_000, spendLimit: 10 },
+        ask: ask(6),
+      }),
+    ).toEqual({ _tag: "Limit", limit: 10, billed: 0, promised: 12 });
+  });
+
+  it("names the plan's cap on a tie, so a catalog-only case keeps its tag", () => {
+    expect(
+      capacityOf({
+        standing: "good",
+        feature: { ...priced, moneyCap: 10, spendLimit: 10 },
+        ask: ask(6),
+      }),
+    ).toEqual({ _tag: "Money", cap: 10, billed: 0, promised: 12 });
+  });
+
+  it("leaves the verdict byte-identical when the customer states no limit", () => {
+    const withCap = { ...priced, moneyCap: 10 };
+
+    expect(capacityOf({ standing: "good", feature: withCap, ask: ask(6) })).toEqual(
+      capacityOf({ standing: "good", feature: { ...withCap, spendLimit: undefined }, ask: ask(6) }),
+    );
+  });
+
+  it("binds on its own when the plan states no money cap", () => {
+    expect(
+      capacityOf({
+        standing: "good",
+        feature: { ...priced, spendLimit: 10 },
+        ask: ask(6),
+      }),
+    ).toEqual({ _tag: "Limit", limit: 10, billed: 0, promised: 12 });
+  });
+
+  it("counts open holds as money promised, not only what is billed", () => {
+    expect(
+      capacityOf({
+        standing: "good",
+        feature: { ...priced, billed: 0, reserved: 5, spendLimit: 10 },
+        ask: ask(1),
+      }),
+    ).toEqual({ _tag: "Limit", limit: 10, billed: 0, promised: 12 });
+  });
+});

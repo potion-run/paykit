@@ -62,6 +62,7 @@ describe("the public plan item, customer and balance shapes", () => {
     const customer = {
       id: CustomerId.make("cus_1"),
       plans: [{ planId: "pro", status: "active" as const }],
+      billingControls: {},
     };
 
     expect(Schema.is(Customer)(customer)).toBe(true);

@@ -1,7 +1,7 @@
 # The paykit models
 
 One Quint model per **protocol**, not one per file ([ADR 0034](../../docs/adr/0034-one-quint-model-per-protocol.md)).
-The six models are the machines `src/Subscription` implements, with the money and the clock
+The seven models are the machines `src/Subscription` implements, with the money and the clock
 abstracted:
 
 | File | Protocol | What it grounds |
@@ -12,16 +12,17 @@ abstracted:
 | [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, cancellation, uncancel, reactivation |
 | [`balances.qnt`](./balances.qnt) | the balance ledger | plan, rollover, expiring and lifetime grants; deduction order; what a close and a plan change preserve |
 | [`money.qnt`](./money.qnt) | the money facts | refunds, reversals, tier and quantity proration invoices |
+| [`controls.qnt`](./controls.qnt) | customer controls | the spend ceiling, the usage alerts that never refuse, and what a close preserves |
 
-The first is the original spend model; the next four were added by the lifecycle audit recorded in
-[`FINDINGS.md`](./FINDINGS.md) and by the plan/balance API. The findings are the review before any
-fix; the models are the ground truth for what the fixes should make true.
+The first is the original spend model; the next six were added by the lifecycle audit recorded in
+[`FINDINGS.md`](./FINDINGS.md), by the plan/balance API and by customer controls. The findings are
+the review before any fix; the models are the ground truth for what the fixes should make true.
 
 ```sh
 pnpm spec          # typecheck every module, then simulate every invariant with its witnesses
 pnpm spec:test     # the named scenarios in every *_test.qnt
-pnpm spec:mutants  # break one rule at a time across all six models and prove an invariant notices
-pnpm spec:coverage # hold the six models' actions against every command
+pnpm spec:mutants  # break one rule at a time across all seven models and prove an invariant notices
+pnpm spec:coverage # hold the seven models' actions against every command
 ```
 
 ## Run it
@@ -54,6 +55,7 @@ the rest became checkable.
 | per-feature reset windows | `resetAt`, `ResetAllowance`, `AllowanceRollover.policy.ts` | `windows.qnt` | modelled |
 | quantity (seat) state | `quantities`, `SetQuantity`, seat usage | `windows.qnt` | modelled (purchased vs occupied) |
 | balance grants and expiry | `grants`, `GrantBalance`, `ExpireGrant`, `BalanceExpiry` | `balances.qnt` | modelled |
+| customer spend ceiling and usage alerts | `controls`, `SetBillingControls`, `UsageAlertReached` | `controls.qnt` | modelled |
 | tier proration state | `proration`, `prorationId`, `ChangeTier`, `RecordProrationInvoice` | `money.qnt` | modelled |
 | quantity proration state | `quantityProrations`, `SetQuantity`, `RecordQuantityProrationInvoice` | `money.qnt` | modelled |
 | refund and reversal state | `charged`, `refunded`, `refunds`, `Refund`, `ReverseRefund` | `money.qnt` | modelled |
@@ -222,9 +224,9 @@ its due. `canInvoiceQuantity` adds the one the implementation's command layer is
 
 ## The mutants
 
-`pnpm spec:mutants` kills 44 mutants across the six models: 17 for the spend path, 3 for the
-standing, 6 for the windows, 4 for the plan operations, 7 for the balance ledger and 7 for the
-money protocol. Each mutant is a textual replacement and
+`pnpm spec:mutants` kills 50 mutants across the seven models: 17 for the spend path, 3 for the
+standing, 6 for the windows, 4 for the plan operations, 7 for the balance ledger, 7 for the money
+protocol and 6 for customer controls. Each mutant is a textual replacement and
 the gate fails when an invariant **survives** it. The new models' mutants are the same discipline as
 the original: an invariant with nothing behind it is a claim, not a check.
 
@@ -265,3 +267,34 @@ the command — a red model is cheaper than a red deploy. When a new command tou
 counter, a window, a quantity or a money fact, it is in scope: add the action, its witness, its
 `run`, and either an invariant or a note here saying why it has none. `pnpm spec:coverage` fails a
 command with no row, so the decision is one row per command rather than a silent omission.
+
+
+## Customer controls (`controls.qnt`)
+
+One counted feature's money ceiling for a period, and the alert that records a crossing without
+refusing anything. The model is deliberately small: it says when a charge is refused and when an
+alert may fire, not how a price is computed. The auto top-up override is a pure read — the
+customer's line when present, otherwise the standing plan's — and a pure function is a unit test,
+not a protocol.
+
+| Action | Source | Event |
+| --- | --- | --- |
+| `setControls`, `clearControls` | `SetBillingControls` | `BillingControlsSet` |
+| `track` | `TrackUsage` (the accepted branch), and a hold's admission | `UsageRecorded` |
+| `refuse` | the refused branch of `TrackUsage` and `Hold` | the typed refusal, no event |
+| `fireAlert` | the usage fact that reaches the threshold | `UsageAlertFired` |
+| `closePeriod` | `ClosePeriod`, `PeriodEnded` | `PeriodClosed` |
+| `tick` | the platform clock | — |
+
+Invariants: `limitIsACeiling`, `alertFiresOncePerPeriod`, `alertOnlyAtOrPastItsThreshold`,
+`limitSurvivesAClose`, `noTrackPastPeriod`.
+
+Three decisions are visible here. A ceiling may be lowered under money already billed: it stops new
+spend and never unbills history, so `billed <= limit` is allowed to be false only in that state. A
+refusal is the command's other branch, so `track(100).fail()` proves the accept-set and `refuse(100)`
+records the refusal. An alert is evidence: it latches once per period, resets at a close, and never
+moves a counter.
+
+What the slice leaves out: the auto top-up override (a read, tested in the unit suite), a ceiling
+that spans features or the whole account (it is per feature, because a money ceiling needs a price),
+a limit over a seat purchase, and a retry budget for a failed refill (`standing.qnt` models it).

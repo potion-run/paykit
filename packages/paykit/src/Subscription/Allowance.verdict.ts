@@ -45,6 +45,8 @@ export interface JudgedFeature {
   readonly carried?: number;
   /** The money ceiling for this period, when the allowance is postpaid. */
   readonly moneyCap?: number;
+  /** The customer's own money ceiling for this feature, when it states one. */
+  readonly spendLimit?: number;
   /** How a billed unit is priced, when the allowance is postpaid. */
   readonly pricing?: Pricing;
   /** Money already billed for this feature this period, in minor units. */
@@ -118,6 +120,15 @@ export type Capacity =
       /** What this request puts at risk, with every open hold. */
       readonly promised: number;
     }
+  /** The customer's own ceiling is already spent: `billed + promised > spendLimit`. */
+  | {
+      readonly _tag: "Limit";
+      /** The customer's ceiling for this feature this period, in minor units. */
+      readonly limit: number;
+      readonly billed: number;
+      /** What this request puts at risk, with every open hold. */
+      readonly promised: number;
+    }
   /** The account's credit pool cannot cover what the request costs. */
   | {
       readonly _tag: "Credits";
@@ -161,6 +172,33 @@ export const moneyOverflowOf = (feature: JudgedFeature, amount: number): MoneyOv
 
   return feature.billed + promised > feature.moneyCap
     ? { cap: feature.moneyCap, billed: feature.billed, promised }
+    : null;
+};
+
+/** The customer's ceiling, or `null` when it states none or the request fits. */
+export interface SpendLimitOverflow {
+  /** The customer's ceiling for this feature this period, in minor units. */
+  readonly limit: number;
+  readonly billed: number;
+  /** What this request puts at risk, with every open hold. */
+  readonly promised: number;
+}
+
+export const spendLimitOverflowOf = (
+  feature: JudgedFeature,
+  amount: number,
+): SpendLimitOverflow | null => {
+  if (feature.spendLimit === undefined) return null;
+
+  const promised = chargeOf(
+    feature.pricing,
+    feature.included,
+    feature.used,
+    amount + feature.reserved,
+  );
+
+  return feature.billed + promised > feature.spendLimit
+    ? { limit: feature.spendLimit, billed: feature.billed, promised }
     : null;
 };
 
@@ -240,7 +278,19 @@ export const capacityOf = (input: {
     }
   }
 
+  // A customer's ceiling and the plan's are the same question — `billed +
+  // promised` against money — so the binding ceiling names the refusal. A tie
+  // names the plan's, which keeps a catalog-only case on its old tag (ADR 0038).
   const money = moneyOverflowOf(feature, amount);
+  const limit = spendLimitOverflowOf(feature, amount);
+
+  if (limit !== null && money !== null) {
+    return feature.spendLimit !== undefined && feature.spendLimit < (feature.moneyCap ?? Infinity)
+      ? { _tag: "Limit", ...limit }
+      : { _tag: "Money", ...money };
+  }
+
+  if (limit !== null) return { _tag: "Limit", ...limit };
 
   if (money !== null) return { _tag: "Money", ...money };
 

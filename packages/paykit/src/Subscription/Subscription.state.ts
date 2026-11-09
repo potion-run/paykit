@@ -12,6 +12,7 @@ import {
   type Pricing,
   type Resets,
 } from "../Allowance.ts";
+import { BillingControls } from "../Customer.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -272,6 +273,12 @@ export const UnsubscribedState = Schema.TaggedStruct("Unsubscribed", {
   refunded: Schema.optionalKey(MoneyByCurrency),
   /** Every refund, keyed by the operator command that recorded it. */
   refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
+  /**
+   * The controls the customer states over its plan. They are written before a
+   * plan can exist, so they sit on the unsubscribed state too; a spend limit or
+   * an alert needs a feature, so it is refused until a plan grants one.
+   */
+  billingControls: Schema.optionalKey(BillingControls),
 });
 
 export type UnsubscribedState = typeof UnsubscribedState.Type;
@@ -353,6 +360,18 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   refunded: Schema.optionalKey(MoneyByCurrency),
   /** Every refund, keyed by the operator command that recorded it. */
   refunds: Schema.optionalKey(Schema.Record(Schema.String, RefundRecord)),
+  /**
+   * The controls the customer states over its plan: its auto top-up line, its
+   * spend ceilings and its usage alerts. A plan change and a close leave them
+   * alone, because they belong to the customer and not to the plan (ADR 0038).
+   */
+  billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The thresholds whose alert has already fired this period, keyed by feature.
+   * A period close and an activation start the set over; an allowance's own
+   * reset window does not (ADR 0038).
+   */
+  alertsFired: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.Int))),
   /** Every credit-priced feature's rate card, copied from the event that set it. */
   rates: CreditRateCards,
   currency: Schema.optional(Schema.String),
@@ -526,13 +545,62 @@ export const usedOf = (state: SubscribedState, feature: string): number =>
 export const billedOf = (state: SubscribedState, feature: string): number =>
   state.billed?.[feature] ?? 0;
 
-/** The auto top-up line this standing holds, or `null` when it never refills. */
+/** The controls this customer states, or an empty object when it states none. */
+export const billingControlsOf = (state: SubscriptionState): BillingControls =>
+  state.billingControls ?? {};
+
+/**
+ * The auto top-up line in force for this customer, or `null` when it never
+ * refills. The customer's own line wins over the tier's; `enabled: false` turns
+ * the tier's line off without a deploy. `pack`, `cooldown` and `retry` stay the
+ * tier's, because they are catalog facts and not a customer's to state.
+ */
+export const effectiveTopUpOf = (
+  terms: TopUpTerms | undefined,
+  billingControls: BillingControls | undefined,
+): TopUpTerms | null => {
+  const control = billingControls?.autoTopUp;
+
+  if (control?.enabled === false) return null;
+
+  const threshold = control?.threshold ?? terms?.threshold;
+
+  if (threshold === undefined) return null;
+
+  return terms === undefined ? { threshold } : { ...terms, threshold };
+};
+
+/** The auto top-up line in force for this customer, or `null` when it never refills. */
 export const topUpOf = (state: SubscriptionState): TopUpTerms | null =>
-  state._tag === "Subscribed" ? (state.topUp ?? null) : null;
+  effectiveTopUpOf(state._tag === "Subscribed" ? state.topUp : undefined, state.billingControls);
 
 /** The credits at or below which a spend on this standing is a crossing, or `null`. */
 export const topUpThresholdOf = (state: SubscriptionState): number | null =>
   topUpOf(state)?.threshold ?? null;
+
+/**
+ * The customer's money ceiling for one feature this period, or `null` when it
+ * states none. It is enforced in addition to the tier's own ceilings.
+ */
+export const spendLimitOf = (state: SubscriptionState, feature: string): number | null =>
+  state.billingControls?.spendLimits?.find((limit) => limit.featureId === feature)?.amount ?? null;
+
+/**
+ * The alert thresholds configured for one feature, in ascending order so the
+ * events of one crossing are deterministic.
+ */
+export const alertThresholdsOf = (
+  state: SubscriptionState,
+  feature: string,
+): ReadonlyArray<number> =>
+  (state.billingControls?.usageAlerts ?? [])
+    .filter((alert) => alert.featureId === feature)
+    .map((alert) => alert.at)
+    .sort((left, right) => left - right);
+
+/** The thresholds one feature's alerts have already fired this period. */
+export const alertsFiredOf = (state: SubscriptionState, feature: string): ReadonlyArray<number> =>
+  state._tag === "Subscribed" ? (state.alertsFired?.[feature] ?? []) : [];
 
 /** The tier this standing is on, or `null` when it never subscribed. */
 export const standingTierOf = (state: SubscriptionState): string | null =>

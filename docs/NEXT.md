@@ -74,15 +74,16 @@ when a provider will not collect a refill, and `RefundReversed`, when a provider
 Both are evidence that moves no counter, and both fold into the timeline.
 
 The billing machine is modelled in Quint ([ADR
-0034](./adr/0034-one-quint-model-per-protocol.md)) as six protocols: `specs/paykit/paykit.qnt` is
+0034](./adr/0034-one-quint-model-per-protocol.md)) as seven protocols: `specs/paykit/paykit.qnt` is
 the spend path, `standing.qnt` the phase machine (trial, grace, dunning, cancellation, a scheduled
 tier change and the refill budget), `windows.qnt` the clocks the period does not own (reset windows,
 seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, `balances.qnt` the
-sources behind one count and the order a spend consumes them, and `money.qnt` the refund, reversal
-and proration-invoice identity rules. `pnpm spec` simulates every invariant with its witnesses on
-every push; `pnpm spec:test` runs six scenario modules; `scripts/spec-mutants.ts` kills 44 mutants
-across the six, so no invariant can survive as a tautology; `scripts/spec-coverage.ts` holds all 39
-commands against the six action tables, so a command lands modelled or with a written reason. Three spend-path findings
+sources behind one count and the order a spend consumes them, `money.qnt` the refund, reversal and
+proration-invoice identity rules, and `controls.qnt` the customer's spend ceiling and usage alerts.
+`pnpm spec` simulates every invariant with its witnesses on every push; `pnpm spec:test` runs seven
+scenario modules; `scripts/spec-mutants.ts` kills 50 mutants across the seven, so no invariant can
+survive as a tautology; `scripts/spec-coverage.ts` holds all 40 commands against the seven action
+tables, so a command lands modelled or with a written reason. Three spend-path findings
 are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
@@ -161,8 +162,13 @@ The next work is the API migration, not another command. The order is:
    `balances.create` (`GrantBalance`), an expiry policy (`BalanceExpiry` -> `ExpireGrant`), and
    grants that survive a close and a plan change. What remains from the brief is customer-level
    controls and a resetting standalone grant, which is an add-on plan item in Phase 5.
-5. **Customer controls** — auto top-up, spend limits and usage alerts on the customer/entity. This
-   is the next model (`controls.qnt`).
+5. **Customer controls — landed.** [ADR 0038](./adr/0038-customer-controls-are-state.md) makes
+   controls state on the customer: `controls.qnt` models the money ceiling and the usage alert, and
+   `SetBillingControls` / `Paykit.Customers(account)` write and read `autoTopUp`, `spendLimits` and
+   `usageAlerts`. A limit is a `capacityOf` variant (`SpendLimitExceeded`) and `check`, `allowed`
+   and `decide` share it; an alert is `UsageAlertFired`, evidence that never refuses. The write is
+   canonical and idempotent (`normalizeBillingControls` / `controlsKey`), and it works before a
+   plan exists because the command carries the catalog's `features` facts past `CatalogGuard`.
 6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
    `multiAttach` / `multiUpdate`.
 7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`.
@@ -185,8 +191,13 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated 
 - Landed: Phase 4's balance sources. `balances.qnt` and its scenarios are green; grants are a real
   source in state and on the read model, `balances.create` creates a lifetime or expiring grant,
   the plan and rollover are spent before a grant, and a lifetime grant survives a close and a plan
-  change. `BalanceExpiry` schedules `ExpireGrant` at a grant's deadline. The next slice is customer
-  controls (`controls.qnt`), then multiple plans/schedules and entities.
+  change. `BalanceExpiry` schedules `ExpireGrant` at a grant's deadline.
+- Landed: customer controls. `controls.qnt` and its scenarios are green; `SetBillingControls` writes
+  the customer's auto top-up override, spend ceilings and usage alerts, `Paykit.Customers(account)`
+  reads them, `SpendLimitExceeded` is a `capacityOf` variant so `check`, `allowed` and `decide`
+  agree, and `UsageAlertFired` is evidence that never refuses. The write is canonical and
+  idempotent, works before a plan exists, and survives a plan change and a close. The next slice is
+  multiple plans and schedules, then entities and transfer.
 
 ### 1. The remaining surfaces
 

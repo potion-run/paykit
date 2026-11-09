@@ -33,6 +33,7 @@ const SPEC_FILES = {
   windows: "specs/paykit/windows.qnt",
   plans: "specs/paykit/plans.qnt",
   balances: "specs/paykit/balances.qnt",
+  controls: "specs/paykit/controls.qnt",
   money: "specs/paykit/money.qnt",
 } as const;
 
@@ -50,13 +51,18 @@ type Coverage = Partial<Record<SpecName, ReadonlyArray<string>>>;
  */
 const SPEC_COVERAGE = {
   // ── the spend path ─────────────────────────────────────────────────────────
-  Hold: { paykit: ["hold"], balances: ["spend"] },
+  Hold: { paykit: ["hold"], balances: ["spend"], controls: ["refuse"] },
   GrantBalance: { balances: ["createGrant"] },
   ExpireGrant: { balances: ["expireGrant"] },
   HoldElapsed: { paykit: ["expireHold"] },
   ReleaseHold: { paykit: ["releaseHold"] },
   SettleHold: { paykit: ["settleHold"] },
-  TrackUsage: { paykit: ["trackUsage"], windows: ["track"], balances: ["spend"] },
+  TrackUsage: {
+    paykit: ["trackUsage"],
+    windows: ["track"],
+    balances: ["spend"],
+    controls: ["track", "fireAlert", "refuse"],
+  },
   ConsumeCredits: {
     paykit: ["consumeCredits"],
     standing: ["spendCredits"],
@@ -98,6 +104,7 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
     balances: ["closePeriod"],
+    controls: ["closePeriod"],
   },
   PeriodEnded: {
     paykit: ["closePeriod"],
@@ -105,9 +112,14 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
   },
-  ResetAllowance: { windows: ["resetWindow"], balances: ["closePeriod"] },
+  ResetAllowance: {
+    windows: ["resetWindow"],
+    balances: ["closePeriod"],
+    controls: ["closePeriod"],
+  },
   SetQuantity: { windows: ["setQuantity"], money: ["setQuantity"] },
   SetUsage: { windows: ["setUsage"] },
+  SetBillingControls: { controls: ["setControls", "clearControls"] },
   PurchaseCredits: {
     standing: ["buyTopUp"],
     windows: ["buyTopUp"],
@@ -139,6 +151,7 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   windows: ["init", "step", "tick", "fireAnyRung"],
   plans: ["init", "step", "tick", "cancelImmediately"],
   balances: ["init", "step", "tick"],
+  controls: ["init", "step", "tick", "block", "unblock"],
   money: ["init", "step"],
 };
 

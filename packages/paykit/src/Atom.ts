@@ -35,6 +35,11 @@ import {
   type ConsumeCreditsRequest,
   type ConsumeCreditsResult,
 } from "./Billing/ConsumeCredits.binding.ts";
+import {
+  Customers,
+  type CustomerUpdateRequest,
+  type CustomersError,
+} from "./Billing/Customers.binding.ts";
 import { GrantBalance } from "./Billing/GrantBalance.binding.ts";
 import { Hold, type HoldError, type HoldRequest, type HoldResult } from "./Billing/Hold.binding.ts";
 import {
@@ -52,6 +57,7 @@ import {
   type WithdrawTierChangeError,
   type WithdrawTierChangeRequest,
 } from "./Billing/ScheduleTierChange.binding.ts";
+import type { SetBillingControls } from "./Billing/SetBillingControls.binding.ts";
 import {
   SettleHold,
   type SettleHoldError,
@@ -75,6 +81,7 @@ import { catalog, type CatalogError, type CatalogInput } from "./Catalog.ts";
 import { PaykitCatalogClient, type PaykitCatalogClientError } from "./CatalogRpc.ts";
 import { CatalogService, catalogLayer } from "./CatalogService.ts";
 import type { CheckResult } from "./Check.ts";
+import type { Customer } from "./Customer.ts";
 import { type BillingStateView } from "./Subscription/BillingState.view.ts";
 import { type EntitlementsState } from "./Subscription/Entitlements.view.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
@@ -119,6 +126,7 @@ export type BillingAtomVerb =
   | "resume"
   | "scheduleTierChange"
   | "withdrawTierChange"
+  | "updateBillingControls"
   | "startTrial";
 
 /** The service key of the paykit Api client the layer provides. */
@@ -140,6 +148,8 @@ export type BillingAtomServices =
   | Resume
   | ScheduleTierChange
   | WithdrawTierChange
+  | Customers
+  | SetBillingControls
   | StartTrial;
 
 /** What every `make` form shares: the runtime and the invalidation keys. */
@@ -205,6 +215,8 @@ export interface BillingAtoms<E = never> {
   readonly billing: (account: string) => BillingQuery<BillingStateView, E>;
   /** Every feature the account holds a balance for, with its sources. */
   readonly balances: (account: string) => BillingQuery<ReadonlyArray<Balance>, E>;
+  /** The customer's plans and the controls it states over them. */
+  readonly customer: (account: string) => BillingQuery<Customer, E>;
   /**
    * Ask whether an amount is allowed. A command atom because the amount is
    * part of the question: write the request, read the answer. The `entitlements`
@@ -219,6 +231,10 @@ export interface BillingAtoms<E = never> {
   readonly createBalance: (
     account: string,
   ) => BillingMutation<BalanceCreateRequest, Balance, BalancesError, E>;
+  /** Replace the customer's controls and answer the customer they left. */
+  readonly updateBillingControls: (
+    account: string,
+  ) => BillingMutation<CustomerUpdateRequest, Customer, CustomersError, E>;
   /** Set seat occupancy, and answer the feature's balance. */
   readonly updateBalance: (
     account: string,
@@ -326,6 +342,22 @@ const billingAtom = <E>(
   return atom as Atom.Atom<
     AsyncResult.AsyncResult<BillingStateView | null, BillingAtomRemoteError | E>
   >;
+};
+
+const customerAtom = <E>(
+  runtime: Atom.AtomRuntime<BillingAtomServices, E>,
+  account: string,
+): Atom.Atom<AsyncResult.AsyncResult<Customer | null, BillingAtomRemoteError | E>> => {
+  const atom = runtime.atom(
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+
+      return yield* customers.get();
+    }),
+  );
+
+  // SAFETY: the same runtime atom as `entitlementsAtom`, for the same reason.
+  return atom as Atom.Atom<AsyncResult.AsyncResult<Customer | null, BillingAtomRemoteError | E>>;
 };
 
 /**
@@ -457,6 +489,13 @@ export const make = <E = never>(
     ).pipe(withAccount(account)),
   );
 
+  const customer = Atom.family((account: string): BillingQuery<Customer, E | CatalogError> =>
+    Atom.withServerValueInitial(
+      // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
+      customerAtom(runtime, account) as BillingQuery<Customer, E | CatalogError>,
+    ).pipe(withAccount(account)),
+  );
+
   /**
    * One command over a bound verb. The binding joins the catalog and waits for
    * the view; the atom only adds the request and the invalidation.
@@ -554,13 +593,30 @@ export const make = <E = never>(
       ),
   );
 
+  const updateBillingControls = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<CustomerUpdateRequest, Customer, CustomersError, E | CatalogError> =>
+      runtime.fn(
+        (request: CustomerUpdateRequest) =>
+          Effect.gen(function* () {
+            const customers = yield* Customers(account);
+
+            return yield* customers.update(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.updateBillingControls) },
+      ),
+  );
+
   return {
     runtime,
     entitlements,
     billing,
     balances,
+    customer,
     check,
     createBalance,
+    updateBillingControls,
     updateBalance,
     finalizeBalance,
     trackUsage: motion("trackUsage", TrackUsage),

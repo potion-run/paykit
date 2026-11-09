@@ -75,6 +75,8 @@ export const evaluateCheck = (
           readonly pricing?: Pricing;
           /** The money ceiling for this feature this period, in minor units. */
           readonly moneyCap?: number;
+          /** The customer's own money ceiling for this feature. */
+          readonly spendLimit?: number;
           /** Money already billed for this feature this period. */
           readonly billed?: number;
           /** Units held by open holds, whose charge is promised too. */
@@ -130,6 +132,7 @@ export const evaluateCheck = (
       ...(feature.cap === undefined ? {} : { cap: feature.cap }),
       carried: feature.carried ?? 0,
       ...(feature.moneyCap === undefined ? {} : { moneyCap: feature.moneyCap }),
+      ...(feature.spendLimit === undefined ? {} : { spendLimit: feature.spendLimit }),
       ...(feature.pricing === undefined ? {} : { pricing: feature.pricing }),
       billed: feature.billed ?? 0,
       used: feature.used ?? 0,
@@ -165,6 +168,7 @@ export const rowToState = (row: BillingReadRow): EntitlementsState => ({
   dunningAttempts: row.dunningAttempts,
   ...(row.currency === undefined ? {} : { currency: row.currency }),
   prepaidCredits: row.prepaidCredits,
+  ...(row.billingControls === undefined ? {} : { billingControls: row.billingControls }),
   features: row.features,
 });
 

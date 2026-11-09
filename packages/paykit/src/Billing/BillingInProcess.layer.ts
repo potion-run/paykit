@@ -20,6 +20,7 @@ import { ReleaseHold as ReleaseHoldCommand } from "../Subscription/ReleaseHold.c
 import { Resume as ResumeCommand } from "../Subscription/Resume.command.ts";
 import { ScheduleCancellation as ScheduleCancellationCommand } from "../Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange as ScheduleTierChangeCommand } from "../Subscription/ScheduleTierChange.command.ts";
+import { SetBillingControls as SetBillingControlsCommand } from "../Subscription/SetBillingControls.command.ts";
 import { SetQuantity as SetQuantityCommand } from "../Subscription/SetQuantity.command.ts";
 import { SettleHold as SettleHoldCommand } from "../Subscription/SettleHold.command.ts";
 import { SetUsage as SetUsageCommand } from "../Subscription/SetUsage.command.ts";
@@ -47,6 +48,8 @@ import {
 } from "./ChargeQuantityProration.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import { toCustomersError } from "./Customers.binding.ts";
+import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
 import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { List, toListError } from "./List.binding.ts";
@@ -67,6 +70,11 @@ import {
   toWithdrawTierChangeError,
   WithdrawTierChange,
 } from "./ScheduleTierChange.binding.ts";
+import {
+  SetBillingControls,
+  controlFeaturesOf,
+  toSetBillingControlsError,
+} from "./SetBillingControls.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
 import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
@@ -350,6 +358,60 @@ const BillingCore = Layer.mergeAll(
           };
         });
       });
+    }),
+  ),
+  // The write a `Customers` verb makes. It records the customer's controls and
+  // answers the billing view it waited for, so `Customers.update` cannot report
+  // a write the model has not recorded.
+  Layer.effect(
+    SetBillingControls,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const billing = yield* BillingState;
+      const catalog = yield* CatalogService;
+
+      return Effect.fn("Paykit.SetBillingControls")(function* (account) {
+        const ref = Subscription.ref(account);
+
+        return Effect.fn("Paykit.SetBillingControls.set")(function* (request) {
+          const receipt = yield* bound(toSetBillingControlsError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new SetBillingControlsCommand({
+                  ...(request.billingControls === undefined
+                    ? {}
+                    : { billingControls: request.billingControls }),
+                  features: controlFeaturesOf(catalog, request.billingControls),
+                }),
+              ),
+            ),
+          );
+
+          const view = yield* bound(toSetBillingControlsError)(
+            billing.query(ref, { atLeast: receipt }),
+          );
+
+          const billingControls = Option.getOrNull(view)?.billingControls;
+
+          return billingControls === undefined ? {} : { billingControls };
+        });
+      });
+    }),
+  ),
+  // The read a `Customers` verb answers from: the billing view the page already
+  // renders, so a customer and its spending cannot describe different state.
+  Layer.effect(
+    CustomersRead,
+    Effect.gen(function* () {
+      const billing = yield* BillingState;
+
+      return {
+        view: (account: string) =>
+          bound(toCustomersError)(
+            Effect.map(billing.query(Subscription.ref(account)), Option.getOrNull),
+          ),
+      };
     }),
   ),
   // The read a `Balances` verb answers from: the same entitlement view `Check`
@@ -856,6 +918,7 @@ const BillingCore = Layer.mergeAll(
 export const BillingInProcess = Layer.mergeAll(
   BillingCore,
   BalancesLive.pipe(Layer.provide(BillingCore)),
+  CustomersLive.pipe(Layer.provide(BillingCore)),
   AttachInProcess.pipe(Layer.provide(BillingCore)),
   UpdateInProcess.pipe(Layer.provide(BillingCore)),
   PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),

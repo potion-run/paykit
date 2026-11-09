@@ -15,6 +15,7 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
+import { BillingControls } from "../Customer.ts";
 import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -103,6 +104,8 @@ export const FeatureEntitlement = Schema.Struct({
   moneyCap: Schema.optionalKey(Schema.Int),
   /** Money billed for this feature this period, in the standing's currency. */
   billed: Schema.optionalKey(Schema.Int),
+  /** The customer's money ceiling for this feature this period, in minor units. */
+  spendLimit: Schema.optionalKey(Schema.Int),
   /**
    * The quantity a non-consumable feature holds. A seat is set, not spent, so
    * this is the number the account bought (including the free grant).
@@ -151,6 +154,12 @@ export const EntitlementsState = Schema.Struct({
    * `periodEnd`.
    */
   resetAt: Schema.optionalKey(Schema.Record(Schema.String, Schema.DateTimeUtc)),
+  /**
+   * The controls the customer states over its plan. A `Balance` reads the spend
+   * ceiling from here, so `check` and `track` report the headroom the customer
+   * actually has (ADR 0038).
+   */
+  billingControls: Schema.optionalKey(BillingControls),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
 
@@ -265,6 +274,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             "good",
             false,
             event.resetAt,
+            view.billingControls,
           ),
         },
         context,
@@ -294,6 +304,9 @@ export class Entitlements extends Domain.View("Entitlements", {
             event.remaining,
             event.periodEnd,
             "good",
+            false,
+            undefined,
+            view.billingControls,
           ),
         },
         context,
@@ -327,6 +340,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             view.standing,
             true,
             event.resetAt,
+            view.billingControls,
           ),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
         },
@@ -895,6 +909,29 @@ export class Entitlements extends Domain.View("Entitlements", {
     // the pool and every counter are untouched. The view still emits it so the
     // read-model projection sees the whole log.
     TopUpCooldownCleared: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // A control changes what a spend is judged against, not a count: each row's
+    // `allowed` is rebuilt so a console and `decide` keep agreeing on it.
+    BillingControlsSet: (view, event, context): EntitlementsState => {
+      const { billingControls: _previous, ...rest } = view;
+
+      return withAccount(
+        {
+          ...rest,
+          ...(event.billingControls === undefined
+            ? {}
+            : { billingControls: event.billingControls }),
+          features: Object.fromEntries(
+            Object.entries(view.features).map(([feature, value]) => [
+              feature,
+              withSpendLimit(view.standing, feature, value, event.billingControls),
+            ]),
+          ),
+        },
+        context,
+      );
+    },
+    // An alert is evidence: no feature's count, allowance or pool moves.
+    UsageAlertFired: (view, _event, context): EntitlementsState => withAccount(view, context),
     // A refill that could not be bought moved no credit: the pool and every
     // counter are exactly where the crossing left them. The view still emits it
     // so the read-model projection sees the whole log.
@@ -940,6 +977,7 @@ const judgedOf = (
   ...(value.cap === undefined ? {} : { cap: value.cap }),
   carried: over.carried ?? value.carried,
   ...(value.moneyCap === undefined ? {} : { moneyCap: value.moneyCap }),
+  ...(value.spendLimit === undefined ? {} : { spendLimit: value.spendLimit }),
   ...(value.pricing === undefined ? {} : { pricing: value.pricing }),
   billed: over.billed ?? value.billed ?? 0,
   used: over.used ?? value.used,
@@ -983,6 +1021,7 @@ const judgedAllowanceOf = (
     readonly used: number;
     readonly reserved: number;
     readonly billed: number;
+    readonly spendLimit?: number;
   },
 ): JudgedFeature => ({
   overage: allowance.overage,
@@ -990,6 +1029,7 @@ const judgedAllowanceOf = (
   ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
   carried: 0,
   ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+  ...(over.spendLimit === undefined ? {} : { spendLimit: over.spendLimit }),
   ...(allowance.pricing === undefined ? {} : { pricing: allowance.pricing }),
   billed: over.billed,
   used: over.used,
@@ -1152,6 +1192,25 @@ const withCreditsOf = (
   ),
 });
 
+/**
+ * One feature row under one controls object: the limit it states, and the
+ * `allowed` the limit produces. A row with no limit drops the field, so a
+ * cleared control leaves no stale ceiling behind.
+ */
+const withSpendLimit = (
+  standing: Standing,
+  feature: string,
+  value: FeatureEntitlement,
+  billingControls: BillingControls | undefined,
+): FeatureEntitlement => {
+  const limit = billingControls?.spendLimits?.find((entry) => entry.featureId === feature)?.amount;
+
+  const { spendLimit: _previous, ...rest } = value;
+  const next = limit === undefined ? rest : { ...rest, spendLimit: limit };
+
+  return { ...next, allowed: allowsOne(standing, judgedOf(next, {})) };
+};
+
 const featuresOf = (
   allowances: Readonly<
     Record<
@@ -1177,6 +1236,7 @@ const featuresOf = (
   standing: Standing,
   keepUsage = false,
   resetAt?: Readonly<Record<string, DateTime.Utc>>,
+  billingControls?: BillingControls,
 ) => ({
   ...Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
@@ -1219,6 +1279,10 @@ const featuresOf = (
 
       const spendable = spendableOf(remaining, feature, allowance);
 
+      const spendLimit = billingControls?.spendLimits?.find(
+        (entry) => entry.featureId === feature,
+      )?.amount;
+
       return [
         feature,
         {
@@ -1231,7 +1295,13 @@ const featuresOf = (
           carried: 0,
           allowed: allowsOne(
             standing,
-            judgedAllowanceOf(allowance, { remaining: spendable, used, reserved, billed }),
+            judgedAllowanceOf(allowance, {
+              remaining: spendable,
+              used,
+              reserved,
+              billed,
+              ...(spendLimit === undefined ? {} : { spendLimit }),
+            }),
           ),
           overage: allowance.overage,
           ...(allowance.cap === undefined ? {} : { cap: allowance.cap }),
@@ -1240,6 +1310,7 @@ const featuresOf = (
             ? {}
             : { unitPrice: soleUnitPriceOf(pricingOf(allowance)!)! }),
           ...(allowance.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+          ...(spendLimit === undefined ? {} : { spendLimit }),
           ...(billed === 0 ? {} : { billed }),
           ...(priced === undefined ? {} : { priced }),
           resets: allowance.resets,

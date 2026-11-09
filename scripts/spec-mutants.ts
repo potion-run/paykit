@@ -404,12 +404,58 @@ const BALANCES_MUTANTS: ReadonlyArray<Mutant> = [
   },
 ];
 
+const CONTROLS_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "controls-limit-forgets-the-charge",
+    invariant: "limitIsACeiling",
+    from: "    not(s.hasLimit) or s.billed + chargeOf(units) <= s.limit",
+    to: "    not(s.hasLimit) or s.billed <= s.limit",
+    why: "a ceiling that accepts a charge past itself",
+  },
+  {
+    name: "controls-refusal-bills-the-request",
+    invariant: "limitIsACeiling",
+    from: "    refusals: s.refusals + 1,\n  }\n\n  // A close resets",
+    to: "    refusals: s.refusals + 1,\n    billed: s.billed + chargeOf(units),\n  }\n\n  // A close resets",
+    why: "a refusal that bills the request it refused",
+  },
+  {
+    name: "controls-fire-twice",
+    invariant: "alertFiresOncePerPeriod",
+    from: "    state.used >= ALERT_AT,\n    not(state.fired),",
+    to: "    state.used >= ALERT_AT,",
+    why: "an alert that counts twice for one threshold",
+  },
+  {
+    name: "controls-fire-early",
+    invariant: "alertOnlyAtOrPastItsThreshold",
+    from: "    state.used >= ALERT_AT,\n    not(state.fired),",
+    to: "    not(state.fired),",
+    why: "an alert that fires with no usage to reach it",
+  },
+  {
+    name: "controls-limit-dropped-on-close",
+    invariant: "limitSurvivesAClose",
+    from: "    hadLimitAtClose: s.hasLimit,\n    limitAtClose: s.limit,",
+    to: "    hasLimit: false,\n    hadLimitAtClose: s.hasLimit,\n    limitAtClose: s.limit,",
+    why: "a close that clears the customer's ceiling",
+  },
+  {
+    name: "controls-tick-passes-the-boundary",
+    invariant: "noTrackPastPeriod",
+    from: "    state.now + 1 <= state.periodEnd,\n    state.now < MAX_TIME,",
+    to: "    state.now < MAX_TIME,",
+    why: "a clock that walks past the boundary it owns",
+  },
+];
+
 const SPECS: ReadonlyArray<SpecMutants> = [
   { file: SPEC, maxSteps: 30, mutants: PAYKIT_MUTANTS },
   { file: "specs/paykit/standing.qnt", maxSteps: 30, mutants: STANDING_MUTANTS },
   { file: "specs/paykit/windows.qnt", maxSteps: 20, mutants: WINDOWS_MUTANTS },
   { file: "specs/paykit/plans.qnt", maxSteps: 30, mutants: PLANS_MUTANTS },
   { file: "specs/paykit/balances.qnt", maxSteps: 30, mutants: BALANCES_MUTANTS },
+  { file: "specs/paykit/controls.qnt", maxSteps: 25, mutants: CONTROLS_MUTANTS },
   { file: "specs/paykit/money.qnt", maxSteps: 30, mutants: MONEY_MUTANTS },
 ];
 

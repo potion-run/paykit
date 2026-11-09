@@ -98,6 +98,7 @@ export {
   BillingState,
   BillingStateView,
   RefundView,
+  AlertFiredView,
   initialBillingState,
   outstandingRefundOf,
 } from "./Subscription/BillingState.view.ts";
@@ -173,12 +174,23 @@ export {
   BalancePage,
   BalanceSource,
   BalanceSourceKind,
+  SpendLimitView,
   balanceOf,
+  balanceOfFeature,
   balancesOf,
   emptyBalance,
 } from "./Balance.ts";
 
-export { Customer, CustomerId, CustomerPlan, BillingControls } from "./Customer.ts";
+export {
+  BillingControls,
+  Customer,
+  CustomerAutoTopUp,
+  CustomerId,
+  CustomerPlan,
+  CustomerSpendLimit,
+  CustomerUsageAlert,
+  controlsKey,
+} from "./Customer.ts";
 
 export { plan } from "./Plan.ts";
 

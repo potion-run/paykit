@@ -4,6 +4,7 @@ import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { HoldExceeded } from "../Subscription/Hold.command.ts";
+import { SpendLimitExceeded } from "../Subscription/SpendLimitExceeded.rejection.ts";
 import {
   FeatureNotMetered,
   MoneyCapExceeded,
@@ -50,6 +51,7 @@ const refusals = [
   FeatureNotMetered,
   SpendCapExceeded,
   MoneyCapExceeded,
+  SpendLimitExceeded,
   Unauthenticated,
   Forbidden,
 ] as const;

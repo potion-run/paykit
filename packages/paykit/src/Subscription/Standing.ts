@@ -338,6 +338,9 @@ export const standingFrom = (
     allowances: grant.allowances,
     quantities: startingQuantities(grant.allowances),
     refs: previous.refs,
+    ...(previous.billingControls === undefined
+      ? {}
+      : { billingControls: previous.billingControls }),
     trialUsed: options.trialUsed,
     dedupeKeys: {},
     dunningAttempts: 0,
