@@ -10,7 +10,7 @@ store and the manual provider, so it needs no database and no provider key.
 
 ## Declare the catalog
 
-The catalog is plain data beside the stack. It is validated when the stack is
+The catalog is plain data beside the stack. It is validated when the world is
 built: a priced tier nothing can sell is an error.
 
 ```ts
@@ -33,53 +33,88 @@ const pro = Paykit.plan({
   ],
 });
 
-const catalog = { features: [messages, seats], tiers: [free, pro] };
+export const catalog = { features: [messages, seats], tiers: [free, pro] };
 ```
 
-## Build the stack
+## Build the world
+
+One declaration is read by the deploy, the Worker and the tests:
 
 ```ts
-yield* Paykit.Stack("Billing", {
-  store: Paykit.MemoryStore(),
-  providers: [Paykit.Manual()],
+import { Paykit, type BillingStackProps } from "@potion.run/paykit";
+
+export const billing = {
   catalog,
-});
+  providers: [Paykit.Manual()],
+  store: Paykit.MemoryStore(),
+} satisfies BillingStackProps;
+
+// The deploy: validates the catalog and provisions the provider objects.
+yield* Paykit.BillingStack("Billing", billing);
+
+// The runtime: the model, the catalog, the guards and every tenant binding.
+const World = Paykit.world({ ...billing, guards: Paykit.InsecureDevGuards });
 ```
 
-The stack provisions the store and the provider objects the catalog describes,
-then exposes the billing Api and its typed reads.
+`Paykit.world` is what a Worker serves. `Paykit.handler` mounts the paths every
+deployment has — `/api`, `/admin`, `/checkout` and `/webhooks` — and leaves the
+rest to `routes`.
 
 ## Check an account
 
 `check()` is a read. It answers from the account's standing, not from the
-provider.
+provider. The account is bound once, when the verb is built.
 
 ```ts
-const check = yield* Paykit.Check();
-const answer = yield* check({ account, feature: "messages" });
-// { allowed, remaining, resetsAt, standing }
+const check = yield* Paykit.Check(account);
+const answer = yield* check({ featureId: "messages" });
+// { allowed, balance, standing, lockId? }
+answer.balance.remaining; // 100; `null` for an unlimited item
 ```
 
 ## Record usage
 
 ```ts
-const track = yield* Paykit.Track();
-yield* track({ account, feature: "messages", dedupeKey: requestId });
+const track = yield* Paykit.TrackUsage(account);
+yield* track({ featureId: "messages", value: 1, idempotencyKey: requestId });
 ```
 
-A `dedupeKey` makes a retry the same usage record. A hold is an addressable
-entity, so work in flight is reserved, then settled or released:
+An `idempotencyKey` makes a retry the same usage record. A hold is an
+addressable entity, so work in flight is reserved, then settled or released:
 
 ```ts
-const hold = yield* Paykit.Hold();
-const reservation = yield* hold({ account, feature: "messages", amount: 100 });
+const hold = yield* Paykit.Hold(account);
+const reservation = yield* hold({ feature: "messages", amount: 100, dedupeKey: turnId });
 
-const settle = yield* Paykit.Settle();
-yield* settle({ account, holdId: reservation.id, amount: 80 });
+const settle = yield* Paykit.SettleHold(account);
+yield* settle({ holdId: reservation.holdId, amount: 80, dedupeKey: `${turnId}:settle` });
+// 20 returns to the allowance in the same command
 ```
+
+## Read balances and controls
+
+```ts
+const balances = yield* Paykit.Balances(account);
+const messagesBalance = yield* balances.get({ featureId: "messages" });
+
+const customers = yield* Paykit.Customers(account);
+const customer = yield* customers.get();
+
+yield* customers.update({
+  billingControls: {
+    spendLimits: [{ featureId: "messages", amount: 5_000 }],
+    usageAlerts: [{ featureId: "messages", at: 1_500 }],
+  },
+});
+```
+
+`Balance` carries its `breakdown` and, when the customer states one, the
+`spendLimit` headroom. `track` past that ceiling refuses with
+`SpendLimitExceeded` while the standing stays `good`; an alert records
+`UsageAlertFired` and refuses nothing.
 
 ## Next
 
 - [Auth](/auth/) — gate the Api with Better Auth, yielded/auth or your own session.
 - [Packages](/packages/) — the provider packages and the ops console.
-- [The design of record](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md).
+- [Billing surface](https://github.com/potion-run/paykit/blob/main/docs/BILLING-SURFACE.md) — what the library, the provider and the deployment each own.

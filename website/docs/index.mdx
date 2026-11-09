@@ -47,8 +47,8 @@ calling a payment provider.
   </Step>
   <Step title="Read the standing">
     ```ts
-    const check = yield* Paykit.Check();
-    const answer = yield* check({ account, feature: "messages" });
+    const check = yield* Paykit.Check(account);
+    const answer = yield* check({ featureId: "messages" });
     ```
   </Step>
 </Steps>

@@ -293,7 +293,7 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   on the four scoped commands, the per-scope close, and the scoped read model down to the
   entities SQL column. The `Entities` / `TransferBalance` bindings and layers, `entityId` on
   `Balances` / `Attach` / `Update` / previews, the `Atom` verbs and the Api/SQL tests landed after
-  it; the remaining rows are the property generators.
+  it; the property generators cover the entity and transfer surface.
 
 ### 1. The remaining surfaces
 

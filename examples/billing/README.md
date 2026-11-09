@@ -45,8 +45,8 @@ that changes at runtime has no version and no diff.
 ## Selling
 
 ```ts
-const subscribe = yield* Paykit.Subscribe();
-yield* subscribe(tierCommand("pro"));
+const subscribe = yield* Paykit.Subscribe(account);
+yield* subscribe({ tier: "pro" });
 ```
 
 `tierCommand` turns a tier id into the fields a `Subscribe` command carries. A command has to carry
@@ -58,9 +58,9 @@ reconciled against an invoice.
 ## Checking and tracking
 
 ```ts
-const check = yield* Paykit.Check();
-const answer = yield* check({ account, feature: "messages", amount: 1 });
-// { allowed: true, remaining: 99, resetsAt, standing: "good" }
+const check = yield* Paykit.Check(account);
+const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
+// { allowed: true, balance, standing: "good" }
 ```
 
 `check` answers from one local read of the `Entitlements` view. There is no provider round trip,
@@ -75,14 +75,16 @@ refuses before anything is written, and a `dedupeKey` makes a retry record once.
 Work that has started but not finished should not be billed, and should not be spendable twice:
 
 ```ts
-const reserve = yield* Paykit.Reserve();
-const settle = yield* Paykit.Settle();
-const release = yield* Paykit.Release();
+const hold = yield* Paykit.Hold(account);
+const settle = yield* Paykit.SettleHold(account);
+const release = yield* Paykit.ReleaseHold(account);
 
-yield* reserve({ account, feature: "messages", amount: 10, dedupeKey: turnId });
+const reservation = yield* hold({ feature: "messages", amount: 10, dedupeKey: turnId });
 const used = yield* runTheTurn();
-yield* release({ account, feature: "messages", amount: 10 - used });
-yield* settle({ account, feature: "messages", amount: used });
+// One call bills what ran and returns the rest.
+yield* settle({ holdId: reservation.holdId, amount: used, dedupeKey: `${turnId}:settle` });
+// Or return the whole hold without billing it.
+yield* release({ holdId: reservation.holdId, dedupeKey: `${turnId}:release` });
 ```
 
 A reservation moves `remaining` and `reserved`, never `usage`. `check` therefore refuses the next
@@ -92,8 +94,8 @@ so a leaking reservation is an error rather than a quietly shrinking allowance.
 ## Showing the charge first
 
 ```ts
-const preview = yield* Paykit.Preview();
-const result = yield* preview({ account, command: { kind: "changeTier", tier: "scale" } });
+const preview = yield* Paykit.Preview(account);
+const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
 if (result._tag === "accepted") console.log(result.proration?.due);
 ```
 
