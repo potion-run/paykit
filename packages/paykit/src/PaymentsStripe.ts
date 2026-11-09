@@ -25,7 +25,7 @@ export interface StripeBindings {
     readonly priceIds: ReadonlyArray<string>;
     /** A subscription opens a period; a one-off pack is a single payment. */
     readonly kind: TierKind;
-  }) => Effect.Effect<{ readonly url: string }, PaymentError>;
+  }) => Effect.Effect<{ readonly url: string; readonly reference?: string }, PaymentError>;
   readonly createCustomerSession: (args: {
     readonly account: string;
   }) => Effect.Effect<{ readonly url: string }, PaymentError>;

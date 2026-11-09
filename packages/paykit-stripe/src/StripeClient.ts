@@ -73,7 +73,7 @@ export const distilledStripeClient = (config: StripeClientConfig): StripeClient 
         success_url: request.successUrl,
         cancel_url: request.cancelUrl,
       }).pipe(
-        Effect.map((session) => ({ url: String(session.url) })),
+        Effect.map((session) => ({ url: String(session.url), reference: session.id })),
         Effect.mapError(declined("createCheckoutSession")),
         Effect.provide(live),
       ),

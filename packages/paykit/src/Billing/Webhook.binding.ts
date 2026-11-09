@@ -1,6 +1,7 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import {
+  PendingActivationAmbiguous,
   PendingActivationMissing,
   PendingActivationStale,
 } from "../Subscription/PendingActivation.ts";
@@ -14,6 +15,7 @@ const refusals = [
   PlanNotInCatalog,
   PendingActivationMissing,
   PendingActivationStale,
+  PendingActivationAmbiguous,
 ] as const;
 
 /**
@@ -24,6 +26,8 @@ const refusals = [
  * delivery paykit could not apply is one the provider should retry, and "we do
  * not know" is the honest answer to retry on. A quote that is gone is different:
  * retrying it would find the same nothing, so it is a refusal the edge answers.
+ * A delivery that names no quote while the account holds several is the same
+ * kind of refusal: the edge cannot tell which purchase it completes.
  */
 export type WebhookRefusal = InstanceType<(typeof refusals)[number]>;
 

@@ -263,7 +263,9 @@ export const Tier = Schema.Struct({
    * under it. A custom plan's `grants` are the defaults a caller gets when it
    * states none, and the shape a bespoke set is judged against (ADR 0041).
    * A custom plan may be an add-on: it is the same opt-in, stacked beside the
-   * group's plan (ADR 0042 §2).
+   * group's plan (ADR 0042 §2). A custom plan may also be its group's
+   * `isDefault`: a cancellation then re-grants the catalog's terms, never a
+   * bespoke set (ADR 0043).
    */
   custom: Schema.optionalKey(Schema.Boolean),
   /**
@@ -324,7 +326,9 @@ export interface SubscriptionTierInput {
    * Whether a customer may hold bespoke allowances under this plan (ADR 0041).
    * It is the deployment's opt-in, so it is stated here, once, and not on a
    * request. An add-on may state it: a bespoke add-on stacks beside every
-   * group just like a catalog one (ADR 0042 §2).
+   * group just like a catalog one (ADR 0042 §2). A custom plan may be its
+   * group's default: the catalog's grants are then what a cancellation
+   * re-grants to everyone (ADR 0043).
    */
   readonly custom?: boolean;
   /** The base tier this one is a named alternative of. */

@@ -103,7 +103,7 @@ describe("Subscribe purchase path", () => {
       expect(current._tag).toBe("Unsubscribed");
 
       if (current._tag === "Unsubscribed") {
-        expect(current.refs.memory?.checkout).toContain("checkout");
+        expect(current.refs.memory?.checkout).toMatch(/^co_/);
       }
     }).pipe(withMemory),
   );
@@ -126,7 +126,7 @@ describe("Subscribe purchase path", () => {
 
       if (current._tag === "Subscribed") {
         expect(current.status).toBe("active");
-        expect(current.refs.memory?.checkout).toContain("checkout");
+        expect(current.refs.memory?.checkout).toMatch(/^co_/);
       }
     }).pipe(withMemory),
   );

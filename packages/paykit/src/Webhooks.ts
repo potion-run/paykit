@@ -7,8 +7,10 @@ import { asSystem } from "./Auth/Actor.ts";
 import { planOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import {
+  PendingActivationAmbiguous,
   PendingActivationMissing,
   PendingActivationStale,
+  type PendingActivation,
 } from "./Subscription/PendingActivation.ts";
 import { PlanNotInCatalog } from "./Subscription/PlanNotInCatalog.rejection.ts";
 import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
@@ -46,6 +48,12 @@ export const WebhookEvent = Schema.Struct({
   currency: Schema.optionalKey(Schema.String),
   /** The provider's charge id, when the event reports one. */
   chargeId: Schema.optionalKey(Schema.String),
+  /**
+   * The vendor's id for the purchase this event completes — a checkout session
+   * or invoice id, a Polar checkout or order id. It is what matches the event
+   * to the quote it was quoted for (ADR 0044 §1).
+   */
+  reference: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.String),
   graceUntil: Schema.optionalKey(Schema.DateTimeUtc),
   anchorTz: Schema.optionalKey(Schema.String),
@@ -234,13 +242,31 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
           return yield* new WebhookInvalid({ event: event.id, field: "tier" });
         }
 
+        // A quote is keyed by the vendor reference of the purchase it was
+        // quoted for (ADR 0044 §1). A completion that names one reads exactly
+        // that quote; a completion that names none is attributable only while
+        // the account holds one. Several quotes and no reference is an edge
+        // refusal rather than a guess.
+        const quotes = state.pendingActivations ?? {};
+        const references = Object.keys(quotes).sort();
+        let pending: PendingActivation | undefined;
+
+        if (event.reference !== undefined) {
+          pending = quotes[event.reference];
+        } else if (references.length === 1) {
+          pending = quotes[references[0]!];
+        } else if (references.length > 1) {
+          return yield* new PendingActivationAmbiguous({
+            account: event.account,
+            references,
+          });
+        }
+
         // The quote a checkout stored is the deal, not the catalog's defaults:
         // a hosted purchase names the plan and not the negotiated allowances
         // (ADR 0042 §1). A quote for another plan is stale; a custom plan with
         // no quote cannot be activated from the catalog without recording a
         // deal nobody agreed to.
-        const pending = state.pendingActivation;
-
         if (pending !== undefined && pending.tier !== event.tier) {
           return yield* new PendingActivationStale({
             account: event.account,

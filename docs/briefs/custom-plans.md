@@ -37,11 +37,13 @@ modelled after.
 ## Status
 
 Landed, then extended by
-[ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md). The first slice is
+[ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md), with the two
+follow-ups decided by [ADR 0043](../adr/0043-a-custom-plan-may-be-a-groups-fallback.md) and
+[ADR 0044](../adr/0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md). The first slice is
 [ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md): `Tier.custom` on the plan schema (the
 public spelling is `Plan.custom`), `CatalogFacts` / `allowanceFaultOf` as the one per-item rule
-`defineCatalog` and the guard both run, the pack and fallback catalog refusals
-(`CatalogCustomPack`, `CatalogCustomDefaultPlan`), `sameAllowances` and the guard's structural
+`defineCatalog` and the guard both run, the pack catalog refusal (`CatalogCustomPack`),
+`sameAllowances` and the guard's structural
 branch, `TierCommand.withGrants`, and an optional `grants` on `AttachRequest`,
 `PreviewAttachRequest`, `SubscribeRequest`, `ChangeTierRequest` and
 `ScheduleTierChangeRequest`, joined in both the in-process and the Api bindings.
@@ -61,12 +63,23 @@ ADR 0042 closes the three gaps this brief left open:
   activation at an amount the catalog does not state is invoiced, because the checkout port sells the
   vendor's price object rather than an amount.
 
+- **A custom plan as a group's fallback.** [ADR
+  0043](../adr/0043-a-custom-plan-may-be-a-groups-fallback.md) removes `CatalogCustomDefaultPlan`: a
+  custom plan may be a group's `isDefault`, and a cancellation re-grants the catalog's terms through
+  `defaultPlanFor`/`planTermsOf`, never the bespoke set the customer held. An add-on cannot be a
+  default (`CatalogDefaultOnAddOn`), and a variant does not inherit `isDefault`.
+- **A quote keyed by its purchase.** [ADR
+  0044](../adr/0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md) replaces the single
+  `pendingActivation` with `pendingActivations`, keyed by the provider reference of the purchase.
+  `Payments.createCheckout` returns the vendor reference, `WebhookEvent` names it, and a completion
+  that names no quote while several are held is `PendingActivationAmbiguous` (409).
+
 What remains is the per-plan balance source (so a stacked bespoke item has its own breakdown row and
-one feature's two spend shapes are refused rather than merged), a custom plan as a group's fallback,
-and a quote record keyed by the provider reference if concurrent checkouts must be distinguished.
+one feature's two spend shapes are refused rather than merged).
 
 Tests: `test/billing/CustomPlans.test.ts`, `test/catalog/Guard.test.ts`, `test/Catalog.test.ts`,
-`test/Types.test.ts`.
+`test/Types.test.ts`, `test/subscribe/Subscribe.test.ts`, and the vendor packages'
+`test/Webhooks.test.ts` files.
 
 ## Target surface
 
@@ -179,8 +192,9 @@ behaviour and the quantity rules are the ones the event recorded.
 | --- | --- | --- |
 | `custom` on a `kind: "one_off"` pack | `CatalogCustomPack` | a pack grants nothing, so nothing is bespoke |
 | `custom` with `addOn: true` | accepted | it is a custom plan that stacks; the read model's per-plan source is a follow-up (ADR 0042 §2) |
-| `custom` with `isDefault: true` | `CatalogCustomDefaultPlan` | `isDefault` is the cancellation fallback, and a fallback must be the catalogue's terms |
-| a variant of a custom plan | inherited, not stated | `mergeVariant` keeps the base's `custom`; a variant of a non-custom base cannot add it |
+| `custom` with `isDefault: true` | accepted | a fallback is still the catalogue's terms: `defaultPlanFor` resolves `planTermsOf`, so a cancellation never re-grants a bespoke set (ADR 0043) |
+| `addOn: true` with `isDefault: true` | `CatalogDefaultOnAddOn` | an add-on fills no group, so it can never be a fallback (ADR 0043) |
+| a variant of a custom plan | `custom` inherited, `isDefault` not | `mergeVariant` keeps the base's `custom` and drops the base's `isDefault`; a variant of a non-custom base cannot add `custom` (ADR 0043) |
 
 ## Test matrix
 
@@ -192,16 +206,19 @@ behaviour and the quantity rules are the ones the event recorded.
 | a bespoke set on a fixed plan is refused | `test/catalog/Guard.test.ts` | the non-custom rule survives |
 | price, credits, expiry, top-up and rates are still exact on a custom plan | `test/catalog/Guard.test.ts` | money is not negotiable by the allowance door |
 | `custom` round-trips the public constructor; a variant inherits it | `test/Plan.test.ts` | `Paykit.plan({ custom: true })`, `Plan.custom` |
-| the two catalog refusals, and a custom add-on accepted | `test/Catalog.test.ts` | `CatalogCustomPack`, `CatalogCustomDefaultPlan`, and `custom` + `addOn` |
+| the catalog refusals, a custom add-on and a custom fallback accepted | `test/Catalog.test.ts` | `CatalogCustomPack`, `CatalogDefaultOnAddOn`, `custom` + `addOn`, and `custom` + `isDefault` |
 | a custom plan attaches with a bespoke set | `test/billing/CustomPlans.test.ts` | `SubscriptionActivated.allowances` and `state.plans[id].allowances` are the deal |
 | `check` and `BillingState` report the deal | `test/billing/CustomPlans.test.ts` | the read model folds the event, not the catalog |
 | an undeclared feature is refused end to end | `test/billing/CustomPlans.test.ts` | no event recorded, `CatalogMismatch` |
 | a move to and from a custom plan | `test/billing/CustomPlans.test.ts` | `PlanChanged` carries the bespoke set; a move back records the catalog's |
 | the same plan with a new bespoke set | `test/billing/CustomPlans.test.ts` | it is a move, not a replay: scheduled by default, then immediate on request |
 | a scheduled custom phase freezes the terms | `test/billing/CustomPlans.test.ts` | `PlanChangeScheduled.allowances`, `pendingPlanOf(state)` |
-| a priced custom attach carries the quote through a checkout | `test/billing/CustomPlans.test.ts` | `PendingActivation` on state, then `SubscriptionActivated.allowances` from the quote |
+| a priced custom attach carries the quote through a checkout | `test/billing/CustomPlans.test.ts` | `pendingActivations[reference]` on state, then `SubscriptionActivated.allowances` from the quote |
 | a custom completion with no quote, or a quote for another plan | `test/billing/CustomPlans.test.ts` | `PendingActivationMissing`, `PendingActivationStale`, no standing recorded |
-| a negotiated price on a checkout and on a move | `test/billing/CustomPlans.test.ts` | `PendingActivation.price`, `state.plans[id].price`, `PlanChanged.priceAfter` |
+| two concurrent checkouts, completed oldest first | `test/billing/CustomPlans.test.ts` | the older quote activates; every quote is cleared (ADR 0044) |
+| two quotes and a completion with no reference | `test/billing/CustomPlans.test.ts` | `PendingActivationAmbiguous` (ADR 0044) |
+| a custom fallback re-grants the catalog's terms | `test/billing/CustomPlans.test.ts` | the frozen `fallback` row and the boundary carry the floor's grants, price and credits (ADR 0043) |
+| a negotiated price on a checkout and on a move | `test/billing/CustomPlans.test.ts` | `pendingActivations[reference].price`, `state.plans[id].price`, `PlanChanged.priceAfter` |
 | a bespoke add-on stacks beside the base plan | `test/billing/CustomPlans.test.ts` | `PlanChanged.addOn`, both plan rows, the merged allowances |
 | replay reproduces the deal | `test/billing/CustomPlans.test.ts` | folding `AccountEvents` rebuilds the same plan row |
 | a wire caller gets the same guard | `test/Api.test.ts` | `BillingApi.clientInProcess` `ChangeTier` with bespoke items, and the refusal for an undeclared feature |
@@ -222,11 +239,14 @@ behaviour and the quantity rules are the ones the event recorded.
 | 10 | `packages/paykit/src/Billing/Preview.operation.ts` | `grants?` on the three plan commands, `CatalogMismatch` in the preview's answer |
 | 11 | `packages/paykit/src/Billing/BillingInProcess.layer.ts`, `BillingApi.layer.ts` | apply `withGrants` and pass `CatalogMismatch` through the binding error |
 | 12 | `packages/paykit/src/Billing/index.ts`, `src/index.ts` | re-export the moved refusal and the request types |
-| 13 | `packages/paykit/src/Subscription/PendingActivation.ts` | the quote schema, `PendingActivationMissing`, `PendingActivationStale` (ADR 0042) |
-| 14 | `packages/paykit/src/Subscription/AttachProviderRef.command.ts`, `Subscription.state.ts`, `Subscription.aggregate.ts`, `Webhooks.ts` | the quote rides the reference, the state and the completion |
+| 13 | `packages/paykit/src/Subscription/PendingActivation.ts` | `PendingActivation`, `PendingQuote`, `PendingActivations`, `PendingActivationMissing`, `PendingActivationStale`, `PendingActivationAmbiguous` (ADRs 0042, 0044) |
+| 14 | `packages/paykit/src/Subscription/AttachProviderRef.command.ts`, `Subscription.state.ts`, `Subscription.aggregate.ts`, `Webhooks.ts` | the quote map rides the reference, the state and the completion |
 | 15 | `Attach.binding.ts`, `Preview.operation.ts`, the three verb bindings and layers | `price?`, the quote instead of the checkout refusal, the add-on path |
 | 16 | the tests in the matrix | guard, catalog, plan, billing, webhook, Api |
+| 17 | `packages/paykit/src/Billing/Cancel.binding.ts` | `defaultPlanFor` ignores add-ons and keeps resolving a custom fallback from `planTermsOf` (ADR 0043) |
+| 18 | `packages/paykit-stripe/src/{Stripe,StripeClient,Webhooks}.ts`, `packages/paykit-polar/src/{Polar,PolarClient,Webhooks}.ts` | the checkout reference and the webhook event's `reference` (ADR 0044) |
 
 ADR 0041 changed no command, event, view or spec. ADR 0042 adds `pending` to
-`ProviderRefAttached` and `pendingActivation` to the standing, but no decision changed; the spec
-does not model provider references.
+`ProviderRefAttached` and `pendingActivation` to the standing; ADR 0044 replaces the single quote
+with a map keyed by the provider reference. None changed a decision, and the spec does not model
+provider references or the fallback's terms.

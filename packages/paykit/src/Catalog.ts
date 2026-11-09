@@ -416,12 +416,12 @@ export class CatalogCustomPack extends Schema.TaggedError<CatalogCustomPack>()(
 ) {}
 
 /**
- * A plan claims to be both custom and its group's default. A default is the
- * plan a cancellation falls back to, and a fallback has to be the catalogue's
- * terms, not a bespoke set nobody quoted as one (ADR 0041 §5).
+ * A plan claims to be both an add-on and its group's default. An add-on stacks
+ * beside every group and fills no slot, so it can never be the plan a
+ * cancellation falls back to (ADR 0043).
  */
-export class CatalogCustomDefaultPlan extends Schema.TaggedError<CatalogCustomDefaultPlan>()(
-  "CatalogCustomDefaultPlan",
+export class CatalogDefaultOnAddOn extends Schema.TaggedError<CatalogDefaultOnAddOn>()(
+  "CatalogDefaultOnAddOn",
   { tier: Schema.String },
 ) {}
 
@@ -484,7 +484,7 @@ export const CatalogError = Schema.Union([
   CatalogQuantityCap,
   CatalogProrateOnMetered,
   CatalogCustomPack,
-  CatalogCustomDefaultPlan,
+  CatalogDefaultOnAddOn,
   CatalogInvalid,
 ]);
 
@@ -530,10 +530,14 @@ const duplicateOf = <A>(values: ReadonlyArray<A>, key: (value: A) => string): st
  */
 const mergeVariant = (base: Tier, variant: Tier): Tier => {
   const customize = variant.customize ?? {};
+  // `isDefault` is stated per plan, never inherited: a variant of a group's
+  // fallback is an alternative name for it, not a second fallback (ADR 0043).
+  const { isDefault: _baseDefault, ...inherited } = base;
 
   return {
-    ...base,
+    ...inherited,
     id: variant.id,
+    ...(variant.isDefault === undefined ? {} : { isDefault: variant.isDefault }),
     ...(customize.name !== undefined
       ? { name: customize.name }
       : variant.name !== undefined
@@ -1037,10 +1041,12 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
     // plan set still merges one feature into one count until the per-plan
     // balance source lands (ADR 0042 §2).
 
-    // A fallback is the catalogue's terms by definition, and a bespoke set is
-    // not something anyone quoted as one (ADR 0041 §5).
-    if (custom && tier.isDefault === true) {
-      return Result.fail(new CatalogCustomDefaultPlan({ tier: tier.id }));
+    // An add-on stacks beside every group and fills no slot, so it can never be
+    // the plan a cancellation falls back to (ADR 0043). A custom plan may be a
+    // fallback: `defaultPlanFor` resolves it from `planTermsOf`, so a
+    // cancellation re-grants the catalog's terms rather than a bespoke set.
+    if (tier.addOn === true && tier.isDefault === true) {
+      return Result.fail(new CatalogDefaultOnAddOn({ tier: tier.id }));
     }
 
     if (kind === "one_off") {

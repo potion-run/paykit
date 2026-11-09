@@ -38,7 +38,7 @@ export interface PolarClient {
     readonly returnUrl: string;
     /** A subscription product opens a period; a one-off product does not. */
     readonly kind: PlanKind;
-  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
+  }) => Effect.Effect<{ readonly url: string; readonly reference?: string }, PaymentDeclined>;
   /** A customer session, which is Polar's way into the customer portal. */
   readonly createCustomerSession: (request: {
     readonly customerExternalId: string;
@@ -176,7 +176,10 @@ export const polarBindings = (
         })
         .pipe(
           Effect.mapError((cause) => declined("createCheckoutSession", cause)),
-          Effect.map((session) => ({ url: session.url })),
+          Effect.map((session) => ({
+            url: session.url,
+            ...(session.reference === undefined ? {} : { reference: session.reference }),
+          })),
         ),
     createCustomerSession: ({ account }) =>
       client.createCustomerSession({ customerExternalId: account, returnUrl: billing }).pipe(

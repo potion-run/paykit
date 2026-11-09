@@ -49,16 +49,17 @@ export const httpStatus = (error: { readonly _tag?: string }): number => {
     // The provider refused the money.
     case "PaymentDeclined":
       return 402;
+    // The delivery could describe more than one purchase and names none.
+    case "PendingActivationAmbiguous":
+      return 409;
     // The caller is signed in and may not do this, or the request came from an
     // origin the deployment does not serve.
     case "Forbidden":
     case "CrossOrigin":
       return 403;
     // The command conflicts with the state it names: an older plan generation
-    // than the standing already holds, or a completion that cannot be matched
-    // to one of several quotes (ADR 0044 §1, ADR 0047 §5).
+    // than the standing already holds (ADR 0047 §5).
     case "PlanVersionStale":
-    case "PendingActivationAmbiguous":
       return 409;
     // The provider does not implement the capability the deployment asked for.
     case "ProviderCapabilityMissing":

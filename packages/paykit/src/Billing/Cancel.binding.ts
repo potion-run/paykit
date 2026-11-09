@@ -15,6 +15,12 @@ import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
  * The default plan of a group, with the terms the boundary needs. A group that
  * states none returns `undefined`, which is what makes its cancellation empty
  * the group rather than invent a plan (ADR 0039 §5).
+ *
+ * A custom plan may be a group's default (ADR 0043): the row is built from
+ * `planTermsOf`, so a cancellation re-grants the catalog's grants, price,
+ * credits, expiry and rates — what the catalogue quotes to everyone — never the
+ * bespoke set a customer held. An add-on fills no group, so it is never a
+ * fallback.
  */
 export const defaultPlanFor = (
   catalog: Catalog,
@@ -22,7 +28,10 @@ export const defaultPlanFor = (
   currency?: string,
 ): PlanRow | undefined => {
   const tier = catalog.tiers.find(
-    (candidate) => (candidate.group ?? "default") === group && candidate.isDefault === true,
+    (candidate) =>
+      candidate.addOn !== true &&
+      (candidate.group ?? "default") === group &&
+      candidate.isDefault === true,
   );
 
   if (tier === undefined) return undefined;

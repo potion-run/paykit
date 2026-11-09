@@ -35,7 +35,7 @@ export interface StripeClient {
     readonly customerExternalId: string;
     readonly successUrl: string;
     readonly cancelUrl: string;
-  }) => Effect.Effect<{ readonly url: string }, PaymentDeclined>;
+  }) => Effect.Effect<{ readonly url: string; readonly reference?: string }, PaymentDeclined>;
   /** A billing portal session, which is Stripe's way into the customer portal. */
   readonly createBillingPortalSession: (request: {
     readonly customerExternalId: string;
@@ -204,7 +204,10 @@ export const stripeClientBindings = (client: StripeClient, where: StripeOrigin) 
         })
         .pipe(
           Effect.mapError((cause) => declined("createCheckoutSession", cause)),
-          Effect.map((session) => ({ url: session.url })),
+          Effect.map((session) => ({
+            url: session.url,
+            ...(session.reference === undefined ? {} : { reference: session.reference }),
+          })),
         ),
     createCustomerSession: ({ account }) =>
       client.createBillingPortalSession({ customerExternalId: account, returnUrl: billing }).pipe(

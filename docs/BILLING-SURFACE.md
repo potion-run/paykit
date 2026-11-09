@@ -48,7 +48,7 @@ documented billing surface, not a second implementation.
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
 | Entity plans | `EntityId`, `ScopeState` per entity, `entityId` on `ChangeTier`, `Attach`, `Update` and previews (ADR 0040) | shipped |
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `Entities` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | shipped — the model, reads, bindings, layers, Api commands, `Atom` verbs and the SQL-backed entity list |
-| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout (ADRs 0041, 0042) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote and the webhook activates exactly it |
+| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout keyed by the provider reference (ADRs 0041, 0042, 0043, 0044) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote keyed by the purchase it was quoted for, and the webhook activates exactly the quote it names; a custom plan may be a group's fallback, and a cancellation re-grants the catalog's terms |
 | Versioning plans | `Plan.version`, the generation on every plan row and event, and `Verify`'s outdated / ahead / drift findings (ADR 0047) | shipped — a catalog deploy never reprices history; attaching the plan again is the migration, and there is no automatic migration |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
@@ -98,11 +98,14 @@ documented billing surface, not a second implementation.
    `Paykit.TransferBalance` with their layers, `entityId` on `Balances` / `Attach` / `Update` /
    previews, the four tenant Api commands and the `Atom` verbs and mutations.
 3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md),
-   [ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md)): a plan may
+   [ADR 0042](../adr/0042-quoted-terms-bespoke-add-ons-and-a-negotiated-price.md),
+   [ADR 0043](../adr/0043-a-custom-plan-may-be-a-groups-fallback.md),
+   [ADR 0044](../adr/0044-a-quote-is-keyed-by-the-purchase-it-was-quoted-for.md)): a plan may
    declare `custom: true`, the guard accepts a structurally valid bespoke set, a hosted checkout
-   carries its quote as a pending activation, a custom add-on stacks, and a negotiated price is the
-   operation's explicit override. What remains is a custom plan as a group's fallback and a quote
-   keyed by provider reference if concurrent checkouts must be told apart.
+   carries its quote as a pending activation keyed by the provider reference, a custom add-on stacks,
+   a negotiated price is the operation's explicit override, and a custom plan may be a group's
+   fallback whose cancellation re-grants the catalog's terms. What remains is the per-plan balance
+   source.
 4. **Plan versioning / migration** — landed ([ADR
    0047](../adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)): a plan states its
    generation, every row and event records the one it bought, attaching the plan again is an

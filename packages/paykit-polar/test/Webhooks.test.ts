@@ -101,6 +101,7 @@ describe("Polar webhooks", () => {
         provider: "polar",
         kind: "payment_succeeded",
         account: "acct_1",
+        reference: "ord_1",
         tier: "pro",
         amount: 1900,
         currency: "usd",
@@ -125,6 +126,7 @@ describe("Polar webhooks", () => {
 
       const succeeded = Option.getOrThrow(yield* translate({ body: checkout("succeeded") }));
       expect(succeeded.kind).toBe("checkout_completed");
+      expect(succeeded.reference).toBe("ch_1");
       expect(succeeded.tier).toBe("pro");
       expect(succeeded.amount).toBe(1900);
       expect(Option.isNone(yield* translate({ body: checkout("open") }))).toBe(true);
@@ -150,6 +152,7 @@ describe("Polar webhooks", () => {
       );
 
       expect(event.kind).toBe("payment_failed");
+      expect(event.reference).toBe("sub_1");
       expect(event.reason).toBe("past_due");
       expect(event.account).toBe("acct_1");
     }),
@@ -174,6 +177,7 @@ describe("Polar webhooks", () => {
         );
 
         expect(event.kind).toBe("subscription_canceled");
+        expect(event.reference).toBe("sub_1");
         expect(event.account).toBe("acct_1");
       }
     }),

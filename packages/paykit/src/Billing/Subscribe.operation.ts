@@ -66,7 +66,10 @@ const purchasePath = (
   amount: number,
   currency: string,
   negotiated: boolean,
-): Effect.Effect<{ readonly url: string } | { readonly invoiceId: string }, PaymentError> => {
+): Effect.Effect<
+  { readonly url: string; readonly reference?: string } | { readonly invoiceId: string },
+  PaymentError
+> => {
   if (provider !== null) {
     if (negotiated) {
       return provider.capabilities.has("invoice")
@@ -256,11 +259,13 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
         negotiated,
       );
 
-      // The reference is stored before any standing exists, so a webhook that
-      // activates the account can find the purchase it belongs to. The quoted
-      // terms travel with it: a checkout names the plan, not the deal, and the
-      // activation must record what was sold (ADR 0042 §1).
-      const reference = "url" in purchase ? purchase.url : purchase.invoiceId;
+      // The vendor's own id for the purchase is the reference, not the URL: a
+      // completion names the purchase, so the quote has to be keyed by what the
+      // provider will quote back (ADR 0044 §1). A provider that cannot name one
+      // keeps the URL, which is the best identity it has.
+      const reference =
+        "url" in purchase ? (purchase.reference ?? purchase.url) : purchase.invoiceId;
+
       yield* subscription.send(
         ref,
         new AttachProviderRef({
@@ -275,9 +280,12 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
 
                 return {
                   pending: {
-                    ...quoted,
-                    ...(version === undefined || version === 1 ? {} : { version }),
-                    ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
+                    reference,
+                    terms: {
+                      ...quoted,
+                      ...(version === undefined || version === 1 ? {} : { version }),
+                      ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
+                    },
                   },
                 };
               })()),

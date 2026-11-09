@@ -38,6 +38,8 @@ const EventData = Schema.Struct({
 
 /** The fields of `checkout.session` this translation reads. */
 const CheckoutSession = Schema.Struct({
+  /** The checkout session's own id, which is what a quote is keyed by. */
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   customer: Schema.optionalKey(Schema.NullOr(Schema.String)),
   client_reference_id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   amount_total: Schema.optionalKey(Schema.NullOr(Schema.Int)),
@@ -54,6 +56,8 @@ const PricedLine = Schema.Struct({
 
 /** The fields of `invoice` and `subscription` this translation reads. */
 const Billed = Schema.Struct({
+  /** The invoice's or subscription's own id, which is what a quote is keyed by. */
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   customer: Schema.optionalKey(Schema.NullOr(Schema.String)),
   amount_paid: Schema.optionalKey(Schema.Int),
   /** The charge the invoice paid. */
@@ -173,6 +177,7 @@ export const stripeWebhook = (
           provider: "stripe",
           kind: "checkout_completed",
           account,
+          ...(session.id === null || session.id === undefined ? {} : { reference: session.id }),
           ...(tier === undefined ? {} : { tier }),
           ...(amount === null || amount === undefined ? {} : { amount }),
           ...(currency === null || currency === undefined ? {} : { currency }),
@@ -198,6 +203,7 @@ export const stripeWebhook = (
           provider: "stripe",
           kind: event.type === "invoice.paid" ? "payment_succeeded" : "payment_failed",
           account,
+          ...(invoice.id === null || invoice.id === undefined ? {} : { reference: invoice.id }),
           ...(first === undefined ? {} : tierOfPrice(first)),
           ...(invoice.amount_paid === undefined ? {} : { amount: invoice.amount_paid }),
           ...(invoice.currency === null || invoice.currency === undefined
@@ -225,6 +231,9 @@ export const stripeWebhook = (
           provider: "stripe",
           kind: "subscription_canceled",
           account,
+          ...(subscription.id === null || subscription.id === undefined
+            ? {}
+            : { reference: subscription.id }),
           ...(first === undefined ? {} : tierOfPrice(first)),
         });
       }

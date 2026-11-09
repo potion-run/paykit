@@ -133,8 +133,8 @@ export {
   CatalogRateCardOnQuantity,
   CatalogCarryOverNeverResets,
   CatalogCarryWithoutCarry,
-  CatalogCustomDefaultPlan,
   CatalogCustomPack,
+  CatalogDefaultOnAddOn,
   CatalogCustomizeWithoutVariant,
   CatalogPricingBand,
   CatalogPricingConflict,
@@ -964,8 +964,11 @@ export {
 
 export {
   PendingActivation,
+  PendingActivationAmbiguous,
   PendingActivationMissing,
+  PendingActivations,
   PendingActivationStale,
+  PendingQuote,
 } from "./Subscription/PendingActivation.ts";
 
 export type { PendingActivationRefusal } from "./Subscription/PendingActivation.ts";

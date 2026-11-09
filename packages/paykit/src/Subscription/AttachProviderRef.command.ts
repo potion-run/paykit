@@ -1,6 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Schema from "effect/Schema";
-import { PendingActivation } from "./PendingActivation.ts";
+import { PendingQuote } from "./PendingActivation.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { ProviderRefs } from "./Subscription.state.ts";
 
@@ -8,12 +8,15 @@ import { ProviderRefs } from "./Subscription.state.ts";
  * A vendor id was stored, keyed by provider. Nothing else in the model reads it
  * for money; the pending terms are the exception, because a hosted purchase
  * names the plan and not what was quoted for it (ADR 0042 §1).
+ *
+ * The quote is keyed by the reference of the purchase it was quoted for, so two
+ * concurrent checkouts keep their own terms (ADR 0044 §1).
  */
 export class ProviderRefAttached extends Domain.Event("ProviderRefAttached", {
   provider: Schema.String,
   refs: ProviderRefs,
-  /** The terms the checkout quoted, when it quoted any. */
-  pending: Schema.optionalKey(PendingActivation),
+  /** The terms this purchase quoted, keyed by its own reference. */
+  pending: Schema.optionalKey(PendingQuote),
 }) {}
 
 /**
@@ -28,7 +31,7 @@ export class AttachProviderRef extends Domain.Command("AttachProviderRef", {
     provider: Schema.String,
     refs: ProviderRefs,
     /** The terms this purchase quoted, when the purchase is an activation. */
-    pending: Schema.optionalKey(PendingActivation),
+    pending: Schema.optionalKey(PendingQuote),
   },
   events: [ProviderRefAttached],
   rejects: [],

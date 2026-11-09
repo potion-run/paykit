@@ -41,6 +41,8 @@ export class GroupCancellationScheduled extends Domain.Event("GroupCancellationS
   /**
    * The terms the boundary falls back to, frozen when the cancellation was
    * scheduled so the close needs no catalog. Absent means the group empties.
+   * A custom default plan contributes its catalog grants here, not a bespoke
+   * set a customer held (ADR 0043).
    */
   fallback: Schema.optionalKey(PlanRowSchema),
 }) {}

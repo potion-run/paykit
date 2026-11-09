@@ -52,10 +52,19 @@ const bespokeRider = tier({
   grants: [allowance(messages, { included: 5, overage: "bill" })],
 });
 
+const bespokeFloor = tier({
+  id: "bespoke-floor",
+  group: "floor",
+  isDefault: true,
+  custom: true,
+  credits: 1_000,
+  grants: [allowance(messages, { included: 1_000, overage: "bill" })],
+});
+
 const testCatalog = Effect.runSync(
   catalog({
     features: [messages],
-    tiers: [freeTier, proTier, supportTier, ceilTier, bespokeTier, bespokeRider],
+    tiers: [freeTier, proTier, supportTier, ceilTier, bespokeTier, bespokeRider, bespokeFloor],
   }),
 );
 
@@ -406,6 +415,22 @@ describe("the catalog guard and a custom plan", () => {
       addOn: true,
       allowances: { messages: allowance(messages, { included: 77, overage: "bill" }) },
       ...riderTerms,
+    });
+
+    expect(mismatch).toBe(null);
+  });
+
+  it("accepts a bespoke set on a custom plan that is its group's fallback", () => {
+    // A custom plan may be a group's `isDefault` (ADR 0043). The fallback's
+    // cancellation terms come from the catalog, but a customer may still hold
+    // a bespoke set under it: the guard's structural rule is unchanged.
+    const terms = creditTermsOf(testCatalog, "bespoke-floor")!;
+
+    const mismatch = catalogMismatchOf(testCatalog, {
+      tier: "bespoke-floor",
+      group: "floor",
+      allowances: { messages: allowance(messages, { included: 900, overage: "bill" }) },
+      ...terms,
     });
 
     expect(mismatch).toBe(null);

@@ -55,7 +55,7 @@ const stripeClient = (asked: Array<Record<string, unknown>> = []): StripeClient 
     Effect.sync(() => {
       asked.push(request as never);
 
-      return { url: `https://checkout.stripe.test/${request.tier}` };
+      return { url: `https://checkout.stripe.test/${request.tier}`, reference: "cs_e2e" };
     }),
   createBillingPortalSession: () =>
     Effect.sync(() => ({ url: "https://billing.stripe.test/portal" })),

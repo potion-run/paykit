@@ -149,6 +149,8 @@ const OrderPayload = Schema.Struct({
 
 /** The fields of `Polar.Subscription` this translation reads. */
 const SubscriptionPayload = Schema.Struct({
+  /** The subscription's own id, which is what a quote is keyed by. */
+  id: Schema.optionalKey(Schema.NullOr(Schema.String)),
   product_id: Schema.String,
   amount: Schema.Int,
   currency: Schema.String,
@@ -290,6 +292,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "checkout_completed",
           account,
+          ...(checkout.id === null || checkout.id === undefined ? {} : { reference: checkout.id }),
           ...(yield* planOf(checkout.product_id)),
           amount: checkout.total_amount,
           currency: checkout.currency,
@@ -311,6 +314,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_succeeded",
           account,
+          ...(order.id === null || order.id === undefined ? {} : { reference: order.id }),
           ...(yield* planOf(order.product_id)),
           amount: order.total_amount,
           currency: order.currency,
@@ -332,6 +336,9 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_failed",
           account,
+          ...(subscription.id === null || subscription.id === undefined
+            ? {}
+            : { reference: subscription.id }),
           ...(yield* planOf(subscription.product_id)),
           amount: subscription.amount,
           currency: subscription.currency,
@@ -354,6 +361,9 @@ export const polarWebhook = (
           provider: "polar",
           kind: "subscription_canceled",
           account,
+          ...(subscription.id === null || subscription.id === undefined
+            ? {}
+            : { reference: subscription.id }),
           ...(yield* planOf(subscription.product_id)),
         });
       }
