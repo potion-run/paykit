@@ -207,7 +207,9 @@ test.provider.skipIf(!hasToken)(
         (candidate) => candidate.name === meterNameOf(stack.stage, "requests"),
       );
 
-      expect(meter?.aggregation).toEqual({ func: "sum", property: "metadata.units" });
+      // Polar takes `metadata.units` and reports `units`; the counter sums the
+      // event's units either way, and this is the form a reader sees.
+      expect(meter?.aggregation).toEqual({ func: "sum", property: "units" });
       expect(meter?.filter.clauses[0]).toMatchObject({
         property: "name",
         value: sold.meters.requests,
