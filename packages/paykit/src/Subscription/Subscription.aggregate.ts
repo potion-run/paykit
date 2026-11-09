@@ -1107,6 +1107,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           command.amount *
           creditRateOf(rates, { dimension: command.dimension, properties: command.properties });
 
+        const usedAfter = usedOf(state, command.feature) + cost;
+
         return [
           new UsageRecorded({
             feature: command.feature,
@@ -1115,10 +1117,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             creditsAfter: state.credits - cost,
             // `used` counts credits spent on this feature, and `remaining` is
             // the one pool every credit-priced feature shares.
-            usedAfter: usedOf(state, command.feature) + cost,
+            usedAfter,
             remainingAfter: state.credits - cost,
             ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
           }),
+          ...alertsFor(state, command.feature, usedAfter, now),
         ];
       }
 
