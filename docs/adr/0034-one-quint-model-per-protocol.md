@@ -82,8 +82,9 @@ ships no formatter — and the root `tsconfig.json` excludes it.
   `specs/paykit/README.md` instead of being fixed, because neither changes an observable answer.
 - Adding a command now costs one row in `SPEC_COVERAGE`, and that row is a decision: model it, or say
   why this slice does not.
-- The period close will make the conservation law period-scoped (`carried` is the second base), which
-  is the next slice rather than a hole in this one.
+- The period close landed as its own slice: `carried` is the second base, `countedConserved` reads
+  `remaining + used + reserved == included + carried`, and six more mutants cover the ways a close can
+  get it wrong. A boundary is the first place the law needed a term that a command does not write.
 
 ## Alternatives considered
 

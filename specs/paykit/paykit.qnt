@@ -1,7 +1,8 @@
 // A Quint model of the `Subscription` aggregate's spend path: what a period
-// includes, what a usage fact may record, what a hold reserves, and what the
-// credit pool can cover. It is the machine `src/Subscription/*.command.ts`
-// implements, with the money and the clock abstracted.
+// includes, what a usage fact may record, what a hold reserves, what the credit
+// pool can cover, and what a period boundary carries into the next one. It is
+// the machine `src/Subscription/*.command.ts` implements, with the money and the
+// clock abstracted.
 //
 // Scope, the source-file map, and the known gaps are in README.md beside this
 // file. Read that before changing this one: the spec is the ground truth for
@@ -16,6 +17,10 @@
 //   settleHold     ↔ SettleHold.command.ts         (UsageRecorded + UsageSettled)
 //   releaseHold    ↔ ReleaseHold.command.ts        (UsageReleased, reason released)
 //   expireHold     ↔ HoldElapsed.command.ts        (UsageReleased, reason expired)
+//   closePeriod    ↔ ClosePeriod.command.ts, PeriodEnded.command.ts
+//                                                  (UsageReleased reason reset +
+//                                                   PeriodClosed + UsageReset +
+//                                                   CreditsExpired)
 //   enterGrace     ↔ EnterGrace.command.ts         (GraceEntered)
 //   recover        ↔ Recover.command.ts            (Recovered)
 //   cancelStanding ↔ ScheduleCancellation.command.ts + Expire.command.ts
@@ -33,10 +38,15 @@ module paykit {
   // (ADR 0009); `Bill` records past it.
   type Overage = Block | Bill
 
+  // Whether a boundary resets a counted allowance, or leaves it alone. `Never`
+  // is `resets: "never"` — a lifetime count for the tier it was recorded on.
+  type Reset = PerPeriod | Never
+
   // `Available` is the model's stand-in for "this standing never took a hold
   // with this id" — the aggregate keys `holds` by id and the absence of a key is
-  // not a status. A closed hold stays as an audit record, so its id is never
-  // available again.
+  // not a status. A boundary that resets a feature removes its holds outright,
+  // so the id is available again in the next period; a release or a settle keeps
+  // the record and the id is spent for good.
   type HoldStatus = Available | Open | Settled | Released | ExpiredHold
 
   type FeatureId = str
@@ -44,10 +54,14 @@ module paykit {
 
   // One tier's grant for one feature. `creditRate` is `-1` when the feature is
   // counted in its own units and the shared pool does not price it.
+  // `carriedCap` is `-1` when the allowance does not carry, and the most a
+  // boundary may roll over when it does.
   type Allowance = {
     overage: Overage,
     included: int,
     creditRate: int,
+    carriedCap: int,
+    resets: Reset,
   }
 
   // One hold. `rate` is captured when the hold is taken, so a catalogue change
@@ -64,30 +78,43 @@ module paykit {
   type State = {
     status: Status,
     now: int,
+    // The boundary of the open period. A close moves it by `PERIOD_LENGTH`.
+    periodEnd: int,
     allowances: FeatureId -> Allowance,
     // The counted features' spendable units. A credit-priced feature's count is
     // the pool (see `spendableOf`), so its entry here stays `0`.
     remaining: FeatureId -> int,
     // Units for a counted feature, credits for a credit-priced one — the same
-    // split `UsageRecorded.usedAfter` records.
+    // split `UsageRecorded.usedAfter` records. A close zeroes every feature it
+    // resets, so this is a per-period counter.
     used: FeatureId -> int,
+    // What the open period started with beyond `included`: the units a
+    // boundary rolled over. The period's base is `included + carried`, which is
+    // what the conservation law below subtracts from.
+    carried: FeatureId -> int,
     credits: int,
-    // Credits spent through `ConsumeCredits`, which names no feature. The
-    // aggregate has no field for this — the log does (`CreditsConsumed`) — and
-    // the pool's conservation law needs it, so the model keeps it as a history
-    // variable.
+    // Lifetime credits spent by a credit-priced feature, consumed through
+    // `ConsumeCredits`, and expired at a boundary. The pool is the fold of those
+    // against the grant; `used` cannot serve, because a close zeroes it.
+    spent: int,
     consumed: int,
+    expired: int,
     holds: HoldId -> Hold,
   }
 
   // ── the catalogue and the clock ────────────────────────────────────────────
 
-  pure val FEATURES: Set[FeatureId] = Set("messages", "requests", "compute")
+  pure val FEATURES: Set[FeatureId] = Set("messages", "requests", "storage", "compute")
   pure val HOLDS: Set[HoldId] = Set("hold-a", "hold-b")
   pure val AMOUNTS: Set[int] = Set(1, 2, 3, 4)
 
+  // The four shapes a counted allowance can have (or three, plus the pool):
+  // blocking with a rollover, billing with none, and one that outlives every
+  // boundary.
   pure val MESSAGES_INCLUDED: int = 10
+  pure val MESSAGES_CARRIED_CAP: int = 6
   pure val REQUESTS_INCLUDED: int = 2
+  pure val STORAGE_INCLUDED: int = 4
   pure val COMPUTE_RATE: int = 3
   pure val CREDITS_GRANTED: int = 20
 
@@ -95,7 +122,11 @@ module paykit {
   // (ADR 0021); the model only needs it to be finite.
   pure val HOLD_TTL: int = 4
 
-  // The deadline a `tick` may not pass. A standing with nothing open has no
+  // How long a period is. Shorter than two hold deadlines, so a boundary lands
+  // while a hold is open — the case a close has to answer for.
+  pure val PERIOD_LENGTH: int = 5
+
+  // The deadline a `tick` may not pass. A standing with nothing pending has no
   // deadline, so the clock is free.
   pure val NO_DEADLINE: int = 1000000
 
@@ -105,15 +136,60 @@ module paykit {
     })
 
   pure def allowanceOf(feature: FeatureId): Allowance =
-    if (feature == "messages") { overage: Block, included: MESSAGES_INCLUDED, creditRate: -1 }
-    else if (feature == "requests") { overage: Bill, included: REQUESTS_INCLUDED, creditRate: -1 }
-    else { overage: Bill, included: 0, creditRate: COMPUTE_RATE }
+    if (feature == "messages")
+      {
+        overage: Block,
+        included: MESSAGES_INCLUDED,
+        creditRate: -1,
+        carriedCap: MESSAGES_CARRIED_CAP,
+        resets: PerPeriod,
+      }
+    else if (feature == "requests")
+      {
+        overage: Bill,
+        included: REQUESTS_INCLUDED,
+        creditRate: -1,
+        carriedCap: -1,
+        resets: PerPeriod,
+      }
+    else if (feature == "storage")
+      {
+        overage: Block,
+        included: STORAGE_INCLUDED,
+        creditRate: -1,
+        carriedCap: -1,
+        resets: Never,
+      }
+    else
+      {
+        overage: Bill, included: 0, creditRate: COMPUTE_RATE, carriedCap: -1,
+        resets: PerPeriod,
+      }
 
   pure def isCreditPriced(allowance: Allowance): bool = allowance.creditRate >= 0
+
+  // `resets: "never"`: a boundary leaves the counter, its holds and its
+  // remainder exactly where they were.
+  pure def isKeptOnClose(allowance: Allowance): bool = allowance.resets == Never
+
+  pure def carriesOver(allowance: Allowance): bool = allowance.carriedCap >= 0
+
+  // How much of a closing period's remainder the next one may keep. A feature
+  // that does not carry, a kept one, and the pool carry nothing.
+  pure def carriedCapOf(allowance: Allowance): int =
+    if (carriesOver(allowance) and not(isKeptOnClose(allowance)) and not(isCreditPriced(allowance)))
+      allowance.carriedCap
+    else 0
 
   // `allowsUsage` in Subscription.state.ts: a trial, an active standing and a
   // grace window all record usage; a terminal one does not.
   pure def allowsUsage(status: Status): bool = status == Active or status == Grace
+
+  // `rollsPeriod`: a terminal standing opens no further periods.
+  pure def rollsPeriod(status: Status): bool = allowsUsage(status)
+
+  pure def clamp(value: int, low: int, high: int): int =
+    if (value < low) low else if (value > high) high else value
 
   // ── folds over the holds ───────────────────────────────────────────────────
 
@@ -132,9 +208,18 @@ module paykit {
       .fold(0, (acc, id) => acc + holds.get(id).amount)
 
   // The earliest deadline an open hold is waiting on, or `NO_DEADLINE`.
-  pure def nextDeadline(holds: HoldId -> Hold): int =
+  pure def nextHoldDeadline(holds: HoldId -> Hold): int =
     openHolds(holds).fold(NO_DEADLINE, (acc, id) =>
       if (holds.get(id).expiresAt < acc) holds.get(id).expiresAt else acc)
+
+  // The next thing the clock has to stop for: a hold's deadline or the period
+  // boundary, whichever comes first. A standing that no longer rolls has no
+  // boundary to wait for.
+  pure def nextDeadline(s: State): int = {
+    val boundary = if (rollsPeriod(s.status)) s.periodEnd else NO_DEADLINE
+    val hold = nextHoldDeadline(s.holds)
+    if (hold < boundary) hold else boundary
+  }
 
   // ── what a caller may spend ────────────────────────────────────────────────
 
@@ -176,6 +261,7 @@ module paykit {
         {
           ...s,
           credits: s.credits - cost,
+          spent: s.spent + cost,
           used: s.used.set(feature, s.used.get(feature) + cost),
         }
       }
@@ -238,6 +324,7 @@ module paykit {
     {
       ...s,
       credits: if (creditPriced) s.credits - spent else s.credits,
+      spent: if (creditPriced) s.spent + spent else s.spent,
       remaining: s.remaining.set(hold.feature, s.remaining.get(hold.feature) + returned),
       used: s.used.set(hold.feature, s.used.get(hold.feature) + spent),
       holds: s.holds.set(id, { ...hold, status: Settled }),
@@ -288,11 +375,62 @@ module paykit {
   pure def activate(s: State): State = {
     ...s,
     status: Active,
+    periodEnd: s.now + PERIOD_LENGTH,
     remaining: FEATURES.mapBy(feature =>
       if (isCreditPriced(allowanceOf(feature))) 0 else allowanceOf(feature).included),
     used: FEATURES.mapBy(feature => 0),
+    carried: FEATURES.mapBy(feature => 0),
     credits: CREDITS_GRANTED,
+    spent: 0,
     consumed: 0,
+    expired: 0,
+  }
+
+  // ── the period boundary ────────────────────────────────────────────────────
+
+  // A close is the boundary and nothing more: it needs the period to be over,
+  // and a terminal standing has no period to close.
+  pure def canClosePeriod(s: State): bool =
+    rollsPeriod(s.status) and s.now >= s.periodEnd
+
+  // What one allowance's next period starts with. `resetOf` in
+  // Subscription.state.ts: a kept feature is left alone, a feature that carries
+  // rolls over what it did not spend — clamped to `[0, cap]`, so a period never
+  // holds two periods' worth and an overdrawn allowance never charges the next
+  // one — and everything else starts at what the tier includes.
+  pure def closeCarry(allowance: Allowance, remaining: int): int =
+    clamp(remaining, 0, carriedCapOf(allowance))
+
+  pure def closeRemaining(allowance: Allowance, remaining: int): int =
+    if (isKeptOnClose(allowance) or isCreditPriced(allowance))
+      remaining
+    else allowance.included + closeCarry(allowance, remaining)
+
+  // `ClosePeriod`: a scheduled tier change would land first (out of scope), then
+  // every open hold of a feature the boundary resets is released, then the
+  // counters reset and the contract's own credits expire. A hold the boundary
+  // drops is removed rather than closed: the id is available again, because a
+  // replay of the closing period reproduces the same removal.
+  pure def applyClosePeriod(s: State): State = {
+    val dropped = HOLDS.filter(id =>
+      s.holds.get(id).status == Open
+        and not(isKeptOnClose(s.allowances.get(s.holds.get(id).feature))))
+    {
+      ...s,
+      periodEnd: s.periodEnd + PERIOD_LENGTH,
+      remaining: FEATURES.fold(s.remaining, (acc, feature) =>
+        acc.set(feature, closeRemaining(s.allowances.get(feature), s.remaining.get(feature)))),
+      carried: FEATURES.fold(s.carried, (acc, feature) =>
+        acc.set(feature, closeCarry(s.allowances.get(feature), s.remaining.get(feature)))),
+      used: FEATURES.fold(s.used, (acc, feature) =>
+        if (isKeptOnClose(s.allowances.get(feature))) acc else acc.set(feature, 0)),
+      holds: HOLDS.fold(s.holds, (acc, id) =>
+        if (dropped.contains(id)) acc.set(id, { ...s.holds.get(id), status: Available }) else acc),
+      // `creditsExpire: "period"` for every standing in the model; the plan's
+      // grant ends with the period it was sold for.
+      credits: 0,
+      expired: s.expired + s.credits,
+    }
   }
 
   // ── the state ──────────────────────────────────────────────────────────────
@@ -301,14 +439,16 @@ module paykit {
 
   // ── invariants ─────────────────────────────────────────────────────────────
 
-  // What a period conserves: every unit a feature included is accounted for as
+  // What a period conserves: every unit the period started with — what the tier
+  // includes, plus what the boundary carried in — is accounted for as
   // remaining, used, or held. This is the one that catches a release that
-  // forgets to return, a settle that returns twice, and a hold that writes
-  // `remaining` without taking anything.
+  // forgets to return, a settle that returns twice, a hold that writes
+  // `remaining` without taking anything, and a close that keeps a counter or a
+  // debt it should have dropped.
   val countedConserved: bool =
     FEATURES.filter(f => not(isCreditPriced(state.allowances.get(f)))).forall(f =>
       state.remaining.get(f) + state.used.get(f) + reservedUnits(state.holds, f)
-        == state.allowances.get(f).included)
+        == state.allowances.get(f).included + state.carried.get(f))
 
   // Usage only ever moves forward: a settle cannot bill a negative amount, and a
   // release cannot un-use anything.
@@ -323,18 +463,28 @@ module paykit {
       not(isCreditPriced(allowance)) and allowance.overage == Block
     }).forall(f => state.remaining.get(f) >= 0)
 
+  // A boundary carries at most what it is allowed to, and nothing at all for a
+  // feature that does not roll over: an overdrawn allowance never charges the
+  // next period, and a period never starts with two periods' worth.
+  val carriedIsBounded: bool =
+    FEATURES.forall(f =>
+      state.carried.get(f) >= 0
+        and state.carried.get(f) <= carriedCapOf(state.allowances.get(f)))
+
   // The pool covers every open hold: settle has credits to bill, so the pool
-  // never needs a negative balance to explain a reservation.
+  // never needs a negative balance to explain a reservation. A boundary
+  // releases a credit hold before it expires the grant, which is why this holds
+  // across a close.
   val creditsCoverEveryHold: bool =
     state.credits >= reservedCredits(state.holds)
 
   // The pool is a fold of the log, one balance for every credit-priced feature:
-  // what a feature spent, plus what a command consumed outright, plus what is
-  // left is exactly what activation granted. Gated on activation because an
-  // unsubscribed standing holds no pool.
+  // what a feature spent, what a command consumed outright, what a boundary
+  // expired, and what is left is exactly what activation granted. Gated on
+  // activation because an unsubscribed standing holds no pool.
   val creditPoolConserved: bool =
     state.status == Unsubscribed or (
-      state.credits + state.used.get("compute") + state.consumed == CREDITS_GRANTED)
+      state.credits + state.spent + state.consumed + state.expired == CREDITS_GRANTED)
 
   // A hold is one amount: the credits it reserved are the units it holds times
   // the rate it was priced at, and nothing can change one without the other.
@@ -348,14 +498,21 @@ module paykit {
   val noHoldPastDeadline: bool =
     openHolds(state.holds).forall(id => state.now <= state.holds.get(id).expiresAt)
 
+  // The same for the period: the clock stops at the boundary, so a period that
+  // is still open is never past its end. A close is the only way forward.
+  val noPeriodPastEnd: bool =
+    not(rollsPeriod(state.status)) or state.now <= state.periodEnd
+
   val paykitInvariant: bool = and {
     countedConserved,
     noNegativeUsage,
     blockingNeverOversubscribed,
+    carriedIsBounded,
     creditsCoverEveryHold,
     creditPoolConserved,
     holdCostIsAmountTimesRate,
     noHoldPastDeadline,
+    noPeriodPastEnd,
   }
 
   // ── actions ────────────────────────────────────────────────────────────────
@@ -403,6 +560,13 @@ module paykit {
     state' = closeHold(state, id, ExpiredHold),
   }
 
+  // `PeriodEnded` is the schedulable form of `ClosePeriod`: before the boundary
+  // it records nothing, which is the same state as being disabled here.
+  action closePeriod: bool = all {
+    canClosePeriod(state),
+    state' = applyClosePeriod(state),
+  }
+
   // The operator moves ADR 0020 allows, so the standing guard is exercised
   // rather than assumed: grace still spends, a terminal standing does not.
   action enterGrace: bool = all {
@@ -420,12 +584,12 @@ module paykit {
     state' = { ...state, status: Canceled },
   }
 
-  // Time. The clock stops at the next open deadline instead of passing it: the
-  // sweep is dispatched at that deadline, so a hold is never overdue. This is
-  // the model's one scheduling assumption and `noHoldPastDeadline` is its
-  // statement.
+  // Time. The clock stops at the next deadline — a hold's, or the period's —
+  // instead of passing it, so nothing is ever overdue. This is the model's one
+  // scheduling assumption, and `noHoldPastDeadline` and `noPeriodPastEnd` are
+  // its statement.
   action tick: bool = all {
-    state.now + 1 <= nextDeadline(state.holds),
+    state.now + 1 <= nextDeadline(state),
     state' = { ...state, now: state.now + 1 },
   }
 
@@ -442,6 +606,7 @@ module paykit {
       settleHold(id, billed),
       releaseHold(id),
       expireHold(id),
+      closePeriod,
       enterGrace,
       recover,
       cancelStanding,
@@ -453,12 +618,16 @@ module paykit {
     state' = {
       status: Unsubscribed,
       now: 0,
+      periodEnd: PERIOD_LENGTH,
       allowances: FEATURES.mapBy(feature => allowanceOf(feature)),
       remaining: FEATURES.mapBy(feature =>
         if (isCreditPriced(allowanceOf(feature))) 0 else allowanceOf(feature).included),
       used: FEATURES.mapBy(feature => 0),
+      carried: FEATURES.mapBy(feature => 0),
       credits: 0,
+      spent: 0,
       consumed: 0,
+      expired: 0,
       holds: EMPTY_HOLDS,
     },
   }
@@ -472,7 +641,7 @@ module paykit {
 
   val requestsBilledPastIncluded: bool = state.used.get("requests") > REQUESTS_INCLUDED
 
-  val creditsSpentByUsage: bool = state.used.get("compute") > 0
+  val creditsSpentByUsage: bool = state.spent > 0
 
   val creditsConsumedDirectly: bool = state.consumed > 0
 
@@ -496,4 +665,15 @@ module paykit {
       state.holds.get(id).status == Released)
 
   val standingInGrace: bool = state.status == Grace
+
+  // The boundary itself: a period rolled, a remainder carried, the plan's
+  // credits gone, and a `resets: "never"` counter that outlived all of it.
+  val periodRolled: bool = state.periodEnd > PERIOD_LENGTH
+
+  val carriedForward: bool = state.carried.get("messages") > 0
+
+  val creditsExpiredAtBoundary: bool = state.expired > 0
+
+  val keptCounterSurvivesClose: bool =
+    state.used.get("storage") > 0 and state.periodEnd > PERIOD_LENGTH
 }

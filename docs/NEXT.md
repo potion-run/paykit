@@ -57,13 +57,16 @@ Both are evidence that moves no counter, and both fold into the timeline.
 
 The spend path is modelled in Quint ([ADR
 0034](./adr/0034-one-quint-model-per-protocol.md)): `specs/paykit/paykit.qnt` is one machine —
-activation, counted and credit usage, holds, the pool, the standing, the clock — with seven
-invariants, and `pnpm spec` simulates ten thousand traces on every push. It is the gate the property
-suite cannot be: `walk()` folds one sequential script, so it never interleaves a sweep with a settle
-or races two holds against one spend. `scripts/spec-coverage.ts` holds the model's table against all
-35 commands, so a command lands either modelled or with a written reason. Two things it surfaced are
-recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
-`ConsumeCredits` (nothing observable reads it), and the pool has no counter for a direct consume.
+activation, counted and credit usage, holds, the pool, the standing, the clock, and the period
+boundary — with nine invariants, and `pnpm spec` simulates ten thousand traces on every push. It is
+the gate the property suite cannot be: `walk()` folds one sequential script, so it never interleaves
+a sweep with a settle or races two holds against one spend. `scripts/spec-mutants.ts` kills seventeen
+mutants, one per way to get a rule wrong, so no invariant can survive as a tautology.
+`scripts/spec-coverage.ts` holds the model's table against all 35 commands, so a command lands either
+modelled or with a written reason. Three things it surfaced are recorded rather than fixed: a
+credit-priced feature's stored `remaining` is stale after `ConsumeCredits` (nothing observable reads
+it), the pool has no counter for a direct consume, and `used` is per-period so the pool's law needs
+its own `spent`.
 
 The seven records behind that: [0001](./adr/0001-catalog-states-the-pricing-model.md) (pricing is
 catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-the-unit-of-account.md)
@@ -109,12 +112,21 @@ standing no command could leave until the period reset.
 
 ### 0. The model's next slice
 
-`specs/paykit` stops short of the period boundary on purpose: with no reset, `remaining + used +
-reserved == included` holds for the life of a standing, which is the cleanest form of the conservation
-law. `ClosePeriod`/`PeriodEnded` and `ResetAllowance` are the next slice, and they add `carried` — a
-second base the close grants onto, with open holds still subtracted. After that, `SetQuantity` (a
-count that is bought, not spent) is the third shape the model does not have. Both rows are already in
-`SPEC_COVERAGE` with a reason; turning one into an action is the whole change.
+`specs/paykit` now rolls a period: `closePeriod` carries the remainder up to a cap, drops the holds
+of the features it resets, keeps a `resets: "never"` counter, and expires the plan's credits, with
+`countedConserved` reading `included + carried`. What it still leaves out, each with a row in
+`SPEC_COVERAGE`:
+
+- **`SetQuantity`** — a count that is bought, not spent, so its remaining is `cap - quantity` rather
+  than a grant. It is the third shape a counted allowance can have, after carry and carry-never.
+- **A scheduled tier change at the boundary** — `ClosePeriod` applies `TierChanged` first, and a
+  change re-grants the pool instead of expiring it. That needs `pendingTier` and `ScheduleTierChange`
+  in the model, and it is the one branch of `closePeriodEvents` the model does not take.
+- **`ResetAllowance`** — the same carry arithmetic on a per-feature clock (`resetAt`) instead of the
+  period's, with its own chain of scheduled commands.
+
+Turning one of those into an action is the whole change: a row, an invariant or a note saying why it
+has none, and its mutant.
 
 ### 1. The remaining surfaces
 

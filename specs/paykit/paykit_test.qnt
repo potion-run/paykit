@@ -210,4 +210,113 @@ module paykit_test {
       .expect(state.holds.get("hold-a").status == Released)
       .expect(state.credits == CREDITS_GRANTED)
       .expect(paykitInvariant)
+
+  // ── the period boundary ────────────────────────────────────────────────────
+
+  // A close rolls the period: the next boundary is one period out, and a period
+  // that spent nothing carries as much as the cap allows.
+  run closeRollsThePeriodTest =
+    init
+      .then(subscribe)
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.periodEnd == 2 * PERIOD_LENGTH)
+      .expect(state.carried.get("messages") == MESSAGES_CARRIED_CAP)
+      .expect(state.remaining.get("messages") == MESSAGES_INCLUDED + MESSAGES_CARRIED_CAP)
+      .expect(state.used.get("messages") == 0)
+      .expect(paykitInvariant)
+
+  // What the period did not spend rolls over — the remainder, not the cap: 5
+  // units used leaves 5, so the next period starts at 15.
+  run closeCarriesTheRemainderTest =
+    init
+      .then(subscribe)
+      .then(trackUsage("messages", 5))
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.carried.get("messages") == 5)
+      .expect(state.remaining.get("messages") == MESSAGES_INCLUDED + 5)
+      .expect(state.used.get("messages") == 0)
+      .expect(paykitInvariant)
+
+  // An overdrawn `bill` allowance carries nothing, and the debt does not follow
+  // it into the next period.
+  run closeDropsAnOverdrawnBillTest =
+    init
+      .then(subscribe)
+      .then(trackUsage("requests", REQUESTS_INCLUDED + 10))
+      .expect(state.remaining.get("requests") == -10)
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.remaining.get("requests") == REQUESTS_INCLUDED)
+      .expect(state.carried.get("requests") == 0)
+      .expect(state.used.get("requests") == 0)
+      .expect(paykitInvariant)
+
+  // `resets: "never"` is a lifetime count for the tier it was recorded on: the
+  // boundary leaves the counter and its remainder exactly where they were.
+  run closeKeepsANeverCounterTest =
+    init
+      .then(subscribe)
+      .then(trackUsage("storage", 3))
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.remaining.get("storage") == STORAGE_INCLUDED - 3)
+      .expect(state.used.get("storage") == 3)
+      .expect(state.carried.get("storage") == 0)
+      .expect(paykitInvariant)
+
+  // The plan's own credits end with the period they were sold for.
+  run closeExpiresThePlanCreditsTest =
+    init
+      .then(subscribe)
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.credits == 0)
+      .expect(state.expired == CREDITS_GRANTED)
+      .expect(paykitInvariant)
+
+  // A hold whose deadline is past the boundary is dropped by the boundary, and
+  // its units are not carried: the period promised them.
+  run closeDropsAHoldPastTheBoundaryTest =
+    init
+      .then(subscribe)
+      .then(3.reps(_ => tick))
+      .then(hold("hold-a", "messages", 4))
+      .expect(state.remaining.get("messages") == MESSAGES_INCLUDED - 4)
+      .then(2.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.holds.get("hold-a").status == Available)
+      .expect(state.remaining.get("messages") == MESSAGES_INCLUDED + MESSAGES_CARRIED_CAP)
+      .expect(paykitInvariant)
+
+  // A hold on a feature the boundary does not reset survives it, still
+  // reserving what it took.
+  run closeKeepsAHoldItDoesNotResetTest =
+    init
+      .then(subscribe)
+      .then(3.reps(_ => tick))
+      .then(hold("hold-a", "storage", 2))
+      .then(2.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.holds.get("hold-a").status == Open)
+      .expect(state.remaining.get("storage") == STORAGE_INCLUDED - 2)
+      .expect(paykitInvariant)
+
+  // A close before the boundary records nothing (`PeriodNotClosed`).
+  run closeBeforeTheBoundaryTest =
+    init
+      .then(subscribe)
+      .then(3.reps(_ => tick))
+      .expect(state.now == 3)
+      .then(closePeriod.fail())
+
+  // A terminal standing opens no further periods (`PeriodNotClosed`).
+  run closeAfterCancellationTest =
+    init
+      .then(subscribe)
+      .then(cancelStanding)
+      .then(5.reps(_ => tick))
+      .expect(state.now == PERIOD_LENGTH)
+      .then(closePeriod.fail())
 }
