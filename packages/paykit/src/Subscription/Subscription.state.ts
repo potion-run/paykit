@@ -161,6 +161,18 @@ export const QuantityProration = Schema.Struct({
   proration: Proration,
   /** The provider invoice that collected a positive `due`. */
   invoiceId: Schema.optionalKey(Schema.String),
+  /**
+   * How much of a credit (`proration.due < 0`) a later charge has consumed.
+   * Absent means none; `-due - creditApplied` is what is left to apply
+   * (ADR 0042).
+   */
+  creditApplied: Schema.optionalKey(Schema.Int),
+  /**
+   * When the change was recorded. Credits are consumed oldest first, so two
+   * credits resolve in the order they were logged, not in whatever order a
+   * snapshot kept its keys.
+   */
+  recordedAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 
 export type QuantityProration = typeof QuantityProration.Type;
@@ -401,8 +413,9 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   topUpAttempts: Schema.Int,
   /**
    * Money this account was charged, per currency: a fold of `PaymentRecorded`,
-   * `CreditsPurchased.price` and `ProrationInvoiced`. It is the ceiling a
-   * refund is measured against (ADR 0019).
+   * `CreditsPurchased.price`, `ProrationInvoiced` and
+   * `QuantityProrationInvoiced`. It is the ceiling a refund is measured
+   * against (ADR 0019).
    */
   charged: Schema.optionalKey(MoneyByCurrency),
   /** Money that went back, per currency: a fold of `RefundRecorded`. */
@@ -461,7 +474,8 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   /**
    * The unbilled money a quantity change moved, keyed by the command that
    * recorded it. A positive `due` is collected by `ChargeQuantityProration`;
-   * a credit is recorded for audit only and is not applied automatically.
+   * a negative one is a credit, spent by `ApplyQuantityCredit` against the
+   * next charge in the same currency and never paid out (ADR 0042).
    */
   quantityProrations: Schema.optionalKey(Schema.Record(Schema.String, QuantityProration)),
   refs: Refs,
@@ -911,6 +925,90 @@ export const refundedWith = (
   currency: string,
   total: number,
 ): MoneyByCurrency => ({ ...state.refunded, [currency]: total });
+
+/**
+ * How much of a quantity credit a later charge may still consume. A positive or
+ * zero `due` is a charge, not a credit, so it has nothing to apply.
+ */
+export const unappliedQuantityCreditOf = (entry: QuantityProration): number =>
+  entry.proration.due < 0 ? Math.max(0, -entry.proration.due - (entry.creditApplied ?? 0)) : 0;
+
+/** One credit a quantity charge in a currency may consume. */
+export interface QuantityCreditAvailable {
+  readonly prorationId: string;
+  readonly available: number;
+  readonly recordedAt: DateTime.Utc | undefined;
+}
+
+/** One credit a charge consumes, and how much of it. */
+export interface QuantityCreditAllocation {
+  readonly prorationId: string;
+  readonly amount: number;
+}
+
+/**
+ * The credits a quantity charge in `currency` may consume, oldest first. A
+ * credit belongs to the customer's money, not to the scope that changed the
+ * quantity, so a change under one entity can spend a credit another scope
+ * recorded (ADR 0040 §3). A currency only spends its own credits.
+ */
+export const quantityCreditsOf = (
+  state: SubscriptionState,
+  currency: string,
+  exceptProrationId?: string,
+): ReadonlyArray<QuantityCreditAvailable> => {
+  const entries = state._tag === "Subscribed" ? (state.quantityProrations ?? {}) : {};
+
+  return Object.entries(entries)
+    .filter(
+      ([prorationId, entry]) =>
+        prorationId !== exceptProrationId &&
+        entry.proration.currency === currency &&
+        unappliedQuantityCreditOf(entry) > 0,
+    )
+    .map(([prorationId, entry]) => ({
+      prorationId,
+      available: unappliedQuantityCreditOf(entry),
+      recordedAt: entry.recordedAt,
+    }))
+    .sort((left, right) => {
+      const leftAt = left.recordedAt === undefined ? 0 : DateTime.toEpochMillis(left.recordedAt);
+      const rightAt = right.recordedAt === undefined ? 0 : DateTime.toEpochMillis(right.recordedAt);
+
+      if (leftAt !== rightAt) return leftAt - rightAt;
+
+      return left.prorationId < right.prorationId
+        ? -1
+        : left.prorationId > right.prorationId
+          ? 1
+          : 0;
+    });
+};
+
+/**
+ * The credits a charge consumes, capped by its `due`. A credit larger than the
+ * charge leaves the remainder on its own entry for a later charge; the charge
+ * never goes below zero, so no credit is paid out as cash (ADR 0042).
+ */
+export const quantityCreditUsesOf = (
+  due: number,
+  credits: ReadonlyArray<QuantityCreditAvailable>,
+): ReadonlyArray<QuantityCreditAllocation> => {
+  let remaining = Math.max(0, due);
+  const uses: Array<QuantityCreditAllocation> = [];
+
+  for (const credit of credits) {
+    if (remaining === 0) break;
+    const amount = Math.min(remaining, credit.available);
+
+    if (amount > 0) {
+      uses.push({ prorationId: credit.prorationId, amount });
+      remaining -= amount;
+    }
+  }
+
+  return uses;
+};
 
 /**
  * The part of one usage event that is past `included`, and so billable. An
@@ -1366,4 +1464,5 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "BalanceGranted",
   "BalanceExpired",
   "QuantityProrationInvoiced",
+  "QuantityCreditApplied",
 ] as const;

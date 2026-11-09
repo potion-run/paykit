@@ -1,13 +1,13 @@
 # Findings — implicit state machines and the divergences the models expose
 
-**Status:** all twelve findings are addressed. F1, F2, F3, F6, F8, F10, F11 and F12 are
+**Status:** all twelve findings are addressed. F1, F2, F3 and F6 are
 implemented in code with tests in the finding's shape; F4, F5 and F7 were fixed by
 [0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md),
 [0031](../../docs/adr/0031-a-failed-top-up-retries-on-a-budget.md) and
-[0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md). F9 is closed as a
-documentation fix: a quantity credit is recorded for audit, and nothing applies it
-automatically. A consumer for that credit (a later invoice, a refund, or an explicit
-apply command) is future work, not an open divergence. The nine models are green
+[0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md); F9 is fixed by
+[0042](../../docs/adr/0042-a-quantity-credit-settles-the-next-charge.md); and F8, F10, F11
+and F12 are fixed by the terminal reset guard, the cleared schedule, the forward-only
+grace deadline and cancellation winning the boundary. The nine models are green
 (`pnpm spec`, `pnpm spec:test`, `pnpm spec:mutants`, `pnpm spec:coverage`).
 
 The method was:
@@ -47,9 +47,21 @@ fixed by the `prorationId` on `RecordProrationInvoice`/`ProrationInvoiced`, the 
 `SetQuantity`, and the `topUpAttempts: 0` reset in the `PlanChanged` fold. F8, F10, F11 and F12 are
 fixed by a terminal guard on `ResetAllowance`, clearing the schedule on terminal expiry and a
 canceling close, a forward-only grace deadline (`GraceDeadlineNotLater`), and cancellation winning the
-boundary. F9 is documented: the credit is recorded for audit only. Tests: `test/billing/InvoiceIdentity.test.ts`,
-`test/standing/Findings.test.ts`, `test/properties/Quantities.test.ts`, and the named `standing_test.qnt`
+boundary. F9 is fixed by [ADR 0042](../../docs/adr/0042-a-quantity-credit-settles-the-next-charge.md):
+`ApplyQuantityCredit` spends a negative `due` against the next quantity charge, capped by that
+charge and never paid out. Tests: `test/billing/InvoiceIdentity.test.ts`,
+`test/billing/QuantityCredit.test.ts`, `test/standing/Findings.test.ts`,
+`test/properties/Quantities.test.ts`, and the named `standing_test.qnt` and `money_test.qnt`
 scenarios.
+
+**Audit (2026-11).** The F1, F2, F3, F6, F8, F10, F11 and F12 probes were re-run against the merged
+code. All eight are still fixed: F1's stale id and arbitrary amount are `ProrationInvoiceMismatch`;
+F2's credit is `QuantityProrationNotBillable`, its wrong amount is `QuantityProrationMismatch`, and a
+valid invoice folds into `charged`; F3's reused key is `QuantityProrationAlreadyBilled` while a
+same-quantity retry is a no-op; F6 resets `topUpAttempts` and keeps the failure; F8's terminal reset
+is a no-op; F10 leaves an expired standing with no schedule and no `pendingTier`; F11 refuses a
+lapsed `EnterGrace` and records no stale failure; F12 closes canceled on the plan the account was
+on, with no `PlanChanged`. No status line needed correcting.
 
 ---
 
@@ -343,28 +355,35 @@ pins the daily-boundary-after-expiry probe.
 ## F9 — a seat reduction's credit is recorded and never applied
 
 **Where:** `quantityProrations` is written by `QuantityChanged`, read by
-`RecordQuantityProrationInvoice`, and never consumed. `closePeriodEvents` has no quantity-proration
-branch.
+`RecordQuantityProrationInvoice`, and was never consumed. `closePeriodEvents` had no
+quantity-proration branch.
 
-**Model:** `money.qnt` records a negative `due` and refuses to invoice it; `windows.qnt` keeps the
-quantity. Neither claims the credit is later applied.
+**Model:** `money.qnt` records a negative `due` and refuses to invoice it; the fix adds
+`applyQuantityCredit`, which spends it against a later charge, capped by that charge.
 
-**What happens.** A reduction records `{ due: -50 }` on the standing. No command applies it against
-the next period, the next tier change, or a refund. The comment on `quantityProrations` says "a
-credit stays here for the next period to apply", but nothing in the close or the charge path reads
-it. The ADR uses the same sentence.
+**What happened.** A reduction recorded `{ due: -50 }` on the standing. No command applied it
+against the next period, the next tier change, or a refund. The comment on `quantityProrations`
+said "a credit stays here for the next period to apply", but nothing in the close or the charge
+path read it. The ADR used the same sentence.
 
-**Why it matters:** the customer is promised a credit that the implementation never spends. It is a
+**Why it matters:** the customer was promised a credit that the implementation never spent. It is a
 gap rather than a wrong transition, but it is money.
 
-**Proposed fix:** decide the consumer (next period's invoice, a credit against a later seat change,
-or a refund), then implement and model it. Until then, say the credit is only recorded for audit and
-remove "next period applies it" from the docs.
-
-**Closed as documentation.** The code comments, [ADR 0023](../../docs/adr/0023-a-seat-is-a-quantity-that-is-set.md)
-and the binding now say the credit is recorded for audit only. A consumer is future work: paying a
-credit out is a refund, and applying it to a later period is a deployment's invoice decision, not a
-standing rule the model can state without inventing a new money action.
+**Fixed.** [ADR 0042](../../docs/adr/0042-a-quantity-credit-settles-the-next-charge.md) makes the
+credit a fact with a consumer: `ApplyQuantityCredit` spends the unapplied part of a negative `due`
+against the next positive, uninvoiced quantity charge in the same currency, oldest credit first. The
+amount is the smaller of the credit and the charge, so a credit larger than the charge leaves a
+remainder for a later one and is never paid out as cash. `QuantityCreditApplied` records the target,
+the credits consumed and the net `due`; the target's `Proration` becomes `charge - credit` and the
+source entries record `creditApplied`. `ChargeQuantityProration` applies the credit before it opens
+the invoice and bills the net; a fully covered charge records the application and opens no invoice.
+A replay applies once: the source's `creditApplied` is monotonic and the target's due is already
+reduced. A period close neither spends nor drops the credit — it has no quantity charge to settle,
+so the credit survives and the next period's first change spends it. The F9 probe, a credit larger
+than the next charge, and a close with an unapplied credit are pinned in
+`test/billing/QuantityCredit.test.ts`; the collector path is in `test/billing/QuantityCharge.test.ts`;
+and `money.qnt`'s `quantityCreditAppliesTest`, `quantityCreditLargerThanTheChargeTest` and
+`quantityCreditAppliesOnceTest` are the named scenarios.
 
 ---
 
@@ -479,11 +498,12 @@ one the account was on, and the pending schedule is dropped. `standing.qnt`'s
 ```sh
 pnpm spec          # 9 models, every invariant, every witness
 pnpm spec:test     # 9 scenario modules (paykit, standing, windows, money, …)
-pnpm spec:mutants  # 73 mutants, all killed
-pnpm spec:coverage # 40 commands, 38 modelled, 2 out with a reason
+pnpm spec:mutants  # 76 mutants, all killed
+pnpm spec:coverage # 44 commands, 41 modelled, 3 out with a reason
 ```
 
 The probe scripts used for the evidence are not committed: they construct states with
 `decideAt`/`evolveAt` from `packages/paykit/test/properties/Arbitraries.ts`. Each fixed finding now
-has a test in that shape: `test/billing/InvoiceIdentity.test.ts`, `test/standing/Findings.test.ts`,
-`test/properties/Quantities.test.ts`, and the named `standing_test.qnt` scenarios.
+has a test in that shape: `test/billing/InvoiceIdentity.test.ts`, `test/billing/QuantityCredit.test.ts`,
+`test/standing/Findings.test.ts`, `test/properties/Quantities.test.ts`, and the named
+`standing_test.qnt` and `money_test.qnt` scenarios.

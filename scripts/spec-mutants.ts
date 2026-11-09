@@ -303,6 +303,27 @@ const MONEY_MUTANTS: ReadonlyArray<Mutant> = [
     to: "      | Owed(entry) => entry.due == amount and entry.due > 0",
     why: "an invoice for an old tier change settling the current proration",
   },
+  {
+    name: "credit-applies-past-the-charge",
+    invariant: "quantityDueNeverNegative",
+    from: "    if (unappliedCreditOf(credit) < target.due) unappliedCreditOf(credit) else target.due",
+    to: "    unappliedCreditOf(credit)",
+    why: "a credit application larger than the charge it settles, turning the charge into a payout",
+  },
+  {
+    name: "credit-does-not-mark-applied",
+    invariant: "quantityCreditsConserved",
+    from: "        .set(creditKey, { ...credit, creditApplied: credit.creditApplied + amount })",
+    to: "        .set(creditKey, { ...credit, creditApplied: credit.creditApplied })",
+    why: "an application that reduces a charge without spending the credit it names, so the credit applies twice",
+  },
+  {
+    name: "credit-does-not-reduce-the-charge",
+    invariant: "quantityCreditsConserved",
+    from: "        .set(targetKey, { ...target, due: target.due - amount }),",
+    to: "        .set(targetKey, { ...target, due: target.due }),",
+    why: "an application that marks a credit spent but leaves the charge owing the money",
+  },
 ];
 
 /** One model, its file, the depth a mutation run needs, and its mutants. */

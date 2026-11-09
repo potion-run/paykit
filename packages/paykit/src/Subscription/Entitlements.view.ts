@@ -1005,6 +1005,9 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     QuantityProrationInvoiced: (view, _event, context): EntitlementsState =>
       withAccount(view, context),
+    // A credit settling a charge moves money, not an entitlement; the view
+    // still emits it so the read-model projection sees the whole log.
+    QuantityCreditApplied: (view, _event, context): EntitlementsState => withAccount(view, context),
     BalanceGranted: (view, event, context): EntitlementsState => {
       if (event.entity !== undefined) {
         const entity = entityMap(view)[event.entity];

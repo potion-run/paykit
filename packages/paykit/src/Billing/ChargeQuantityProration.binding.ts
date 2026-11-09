@@ -12,8 +12,12 @@ import {
   ProviderCapabilityMissing,
   providerFor,
 } from "../Payments.ts";
-import { RecordQuantityProrationInvoice } from "../Subscription/QuantityProration.command.ts";
+import {
+  RecordQuantityProrationInvoice,
+  ApplyQuantityCredit,
+} from "../Subscription/QuantityProration.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
+import { quantityCreditUsesOf, quantityCreditsOf } from "../Subscription/Subscription.state.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
 /** Which pending quantity change to collect. */
@@ -30,6 +34,8 @@ export interface ChargeQuantityProrationResult {
   /** Minor units. Present when something was charged. */
   readonly amount?: number;
   readonly currency?: string;
+  /** Minor units of the charge the account's credits covered (ADR 0042). */
+  readonly creditApplied?: number;
 }
 
 const refusals = [ProviderCapabilityMissing, PaymentDeclined, Unauthenticated, Forbidden] as const;
@@ -59,10 +65,12 @@ export type ChargeQuantityProrationVerb = (
  * Collect the money a quantity change moved.
  *
  * `SetQuantity` records the proration and the key that owns it; this is the
- * step that opens the provider invoice and records it. Only a positive `due` is
- * charged: a reduction's credit is recorded on the standing for audit, and
- * paying it out is a refund, not a subscription action. Nothing applies that
- * credit automatically.
+ * step that opens the provider invoice and records it. A positive `due` is
+ * collected, and the account's quantity credits are spent against it first: the
+ * invoice opens for the net, so a reduction from an earlier period settles here
+ * instead of being paid out as cash (ADR 0042). A credit larger than the charge
+ * leaves a remainder for a later one; a credit that covers the charge fully
+ * records the application and opens no invoice.
  *
  * ### Collecting a seat increase
  * **Example:** Charge the difference after adding seats
@@ -96,8 +104,9 @@ export const ChargeQuantityProration = Binding.Service<ChargeQuantityProration>(
 
 /**
  * The operation behind the binding. It reads the pending proration from the
- * standing, asks the account's provider for one invoice keyed by the change,
- * and records the invoice on the log.
+ * standing, spends the account's credits against it, asks the account's
+ * provider for one invoice for the net keyed by the change, and records the
+ * invoice on the log.
  */
 export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantityProration")(
   function* () {
@@ -122,12 +131,50 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
 
       if (proration.due <= 0) return { outcome: "nothing" } as const;
 
+      // Spend the credits the account holds before opening the bill. The
+      // application is capped by the charge, so the remainder stays on its own
+      // entry for a later one (ADR 0042).
+      const uses = quantityCreditUsesOf(
+        proration.due,
+        quantityCreditsOf(state, proration.currency, request.prorationId),
+      );
+
+      const creditApplied = uses.reduce((sum, use) => sum + use.amount, 0);
+      const owed = proration.due - creditApplied;
+
       const chosen = Option.match(router, {
         onNone: () => null,
         onSome: (set) => providerFor(set, state.refs),
       });
 
+      const commandId = `${account}:${request.prorationId}`;
+
+      const applyCredit =
+        creditApplied === 0
+          ? Effect.void
+          : asSystem(
+              subscription.send(
+                ref,
+                new ApplyQuantityCredit({ prorationId: request.prorationId }),
+                { commandId: `quantity-credit:${commandId}` },
+              ),
+            );
+
+      // The credit is spent against the charge even when it covers it fully:
+      // the charge is settled, and no invoice is opened for zero.
+      if (owed === 0) {
+        yield* applyCredit;
+
+        return {
+          outcome: "nothing",
+          creditApplied,
+          currency: proration.currency,
+        } as const;
+      }
+
       const attempt = Effect.gen(function* () {
+        yield* applyCredit;
+
         const payments = yield* Effect.serviceOption(Payments);
 
         if (Option.isNone(payments)) {
@@ -137,11 +184,9 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
           });
         }
 
-        const commandId = `${account}:${request.prorationId}`;
-
         const { invoiceId } = yield* Option.getOrThrow(payments).createInvoice({
           account,
-          amount: proration.due,
+          amount: owed,
           currency: proration.currency,
           commandId,
         });
@@ -152,7 +197,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
             new RecordQuantityProrationInvoice({
               prorationId: request.prorationId,
               invoiceId,
-              amount: proration.due,
+              amount: owed,
               currency: proration.currency,
             }),
             { commandId: `quantity-proration:${commandId}` },
@@ -162,8 +207,9 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
         return {
           outcome: "charged",
           invoiceId,
-          amount: proration.due,
+          amount: owed,
           currency: proration.currency,
+          ...(creditApplied === 0 ? {} : { creditApplied }),
         } as const;
       });
 
