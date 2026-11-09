@@ -5,11 +5,12 @@
 //
 // `specs/paykit` is one model per protocol, not one per file: `paykit.qnt` is
 // the spend path, `standing.qnt` the phase machine, `windows.qnt` the clocks the
-// period does not own, and `money.qnt` the money facts. A command can be
-// modelled in more than one protocol (a purchase is a phase reset and a pool
-// grant), and a command can be deliberately out of every slice. The table below
-// is that decision written down; this gate fails when the code and the table
-// disagree in either direction:
+// period does not own, `schedules.qnt` the plan set and its phase schedule, and
+// `money.qnt` the money facts. A command can be modelled in more than one
+// protocol (a purchase is a phase reset and a pool grant), and a command can be
+// deliberately out of every slice. The table below is that decision written
+// down; this gate fails when the code and the table disagree in either
+// direction:
 //
 //   - a new `*.command.ts` with no row, so a command cannot land unsorted;
 //   - a row naming a spec or action the model does not define, so a rename is
@@ -33,6 +34,7 @@ const SPEC_FILES = {
   windows: "specs/paykit/windows.qnt",
   plans: "specs/paykit/plans.qnt",
   balances: "specs/paykit/balances.qnt",
+  schedules: "specs/paykit/schedules.qnt",
   money: "specs/paykit/money.qnt",
 } as const;
 
@@ -65,7 +67,12 @@ const SPEC_COVERAGE = {
 
   // ── the phase machine ──────────────────────────────────────────────────────
   StartTrial: { standing: ["startTrial"] },
-  Subscribe: { paykit: ["subscribe"], standing: ["subscribe"], plans: ["attach"] },
+  Subscribe: {
+    paykit: ["subscribe"],
+    standing: ["subscribe"],
+    plans: ["attach"],
+    schedules: ["attach", "addAddOn"],
+  },
   ExtendTrial: { standing: ["extendTrial"] },
   EnterGrace: { paykit: ["enterGrace"], standing: ["enterGrace"] },
   RecordPayment: { standing: ["recordPayment"], money: ["charge"] },
@@ -73,21 +80,32 @@ const SPEC_COVERAGE = {
   Recover: { paykit: ["recover"], standing: ["recover"] },
   GraceElapsed: { standing: ["graceElapsed"], windows: ["endStanding"] },
   Expire: { paykit: ["cancelStanding"], standing: ["expire"], windows: ["endStanding"] },
-  CancelImmediately: { plans: ["cancelImmediately"] },
+  CancelImmediately: { plans: ["cancelImmediately"], schedules: ["cancelNow"] },
   ScheduleCancellation: {
     paykit: ["cancelStanding"],
     standing: ["scheduleCancellation"],
     plans: ["cancelAtBoundary"],
+    schedules: ["cancelGroup"],
   },
-  Resume: { standing: ["resume"], plans: ["uncancel"] },
-  ScheduleTierChange: { standing: ["scheduleTier"], plans: ["attach"], balances: ["changePlan"] },
-  WithdrawTierChange: { standing: ["withdrawTier"], plans: ["uncancel"] },
+  Resume: { standing: ["resume"], plans: ["uncancel"], schedules: ["uncancelGroup"] },
+  ScheduleTierChange: {
+    standing: ["scheduleTier"],
+    plans: ["attach"],
+    balances: ["changePlan"],
+    schedules: ["schedulePlan"],
+  },
+  WithdrawTierChange: {
+    standing: ["withdrawTier"],
+    plans: ["uncancel"],
+    schedules: ["withdrawPhase"],
+  },
   ChangeTier: {
     standing: ["changeTier"],
     plans: ["attach"],
     money: ["changeTier"],
     windows: ["changeTierCap"],
     balances: ["changePlan"],
+    schedules: ["attach", "addAddOn"],
   },
   DunningRetry: { standing: ["dunningRung"] },
 
@@ -98,12 +116,14 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
     balances: ["closePeriod"],
+    schedules: ["close"],
   },
   PeriodEnded: {
     paykit: ["closePeriod"],
     standing: ["closePeriod"],
     windows: ["closePeriod"],
     plans: ["close"],
+    schedules: ["close"],
   },
   ResetAllowance: { windows: ["resetWindow"], balances: ["closePeriod"] },
   SetQuantity: { windows: ["setQuantity"], money: ["setQuantity"] },
@@ -139,6 +159,10 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   windows: ["init", "step", "tick", "fireAnyRung"],
   plans: ["init", "step", "tick", "cancelImmediately"],
   balances: ["init", "step", "tick"],
+  // A phase is applied by the scheduler that runs at its `startsAt`, the way a
+  // rung is fired by the retry policy; the command that owns it lands with the
+  // implementation, and until then it is the clock's own transition.
+  schedules: ["init", "step", "tick", "applyPhase"],
   money: ["init", "step"],
 };
 

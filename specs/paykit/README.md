@@ -1,7 +1,7 @@
 # The paykit models
 
 One Quint model per **protocol**, not one per file ([ADR 0034](../../docs/adr/0034-one-quint-model-per-protocol.md)).
-The six models are the machines `src/Subscription` implements, with the money and the clock
+The seven models are the machines `src/Subscription` implements, with the money and the clock
 abstracted:
 
 | File | Protocol | What it grounds |
@@ -10,6 +10,7 @@ abstracted:
 | [`standing.qnt`](./standing.qnt) | the phase machine | trial, grace, dunning, cancellation, a scheduled tier change, the refill budget |
 | [`windows.qnt`](./windows.qnt) | the clocks the period does not own | reset windows, a quantity that is set, a cooldown, retry rungs |
 | [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, cancellation, uncancel, reactivation |
+| [`schedules.qnt`](./schedules.qnt) | the plan set and its phases | plan groups, the one-plan rule, the add-on, a multi-phase schedule, cancellation, the terminal close |
 | [`balances.qnt`](./balances.qnt) | the balance ledger | plan, rollover, expiring and lifetime grants; deduction order; what a close and a plan change preserve |
 | [`money.qnt`](./money.qnt) | the money facts | refunds, reversals, tier and quantity proration invoices |
 
@@ -20,8 +21,8 @@ fix; the models are the ground truth for what the fixes should make true.
 ```sh
 pnpm spec          # typecheck every module, then simulate every invariant with its witnesses
 pnpm spec:test     # the named scenarios in every *_test.qnt
-pnpm spec:mutants  # break one rule at a time across all six models and prove an invariant notices
-pnpm spec:coverage # hold the six models' actions against every command
+pnpm spec:mutants  # break one rule at a time across all seven models and prove an invariant notices
+pnpm spec:coverage # hold the seven models' actions against every command
 ```
 
 ## Run it
@@ -47,8 +48,10 @@ the rest became checkable.
 | standing phase (`trialing`/`active`/`grace`/`expired`/`canceled`) | `Subscription.state.ts`, `StandingPhase.ts` | `standing.qnt` | modelled |
 | trial latch and deadline | `StartTrial`, `ExtendTrial` | `standing.qnt` | modelled |
 | dunning run, attempts and grace deadline | `RecordPaymentFailure`, `DunningRetry`, `Dunning.policy.ts` | `standing.qnt` | modelled |
-| scheduled cancellation | `cancelAtPeriodEnd`, `ScheduleCancellation`, `Resume` | `standing.qnt` | modelled |
-| scheduled tier change | `pendingTier`, `ScheduleTierChange`, `WithdrawTierChange` | `standing.qnt`, `plans.qnt` | modelled (plan operations) |
+| scheduled cancellation | `cancelAtPeriodEnd`, `ScheduleCancellation`, `Resume` | `standing.qnt`, `schedules.qnt` | modelled |
+| scheduled tier change | `pendingTier`, `ScheduleTierChange`, `WithdrawTierChange` | `standing.qnt`, `plans.qnt`, `schedules.qnt` | modelled (plan operations) |
+| plan set and groups | `group`, `addOn`, `isDefault`, `attach`, `addAddOn` | `schedules.qnt` | modelled |
+| multi-phase schedule | `PlanSchedule`, the phase instant, the scheduler | `schedules.qnt` | modelled |
 | auto top-up failure budget and retry rungs | `TopUpFailed`, `RetryTopUp`, `AutoTopUp.policy.ts` | `standing.qnt`, `windows.qnt` | modelled |
 | auto top-up cooldown | `topUpCooldownUntil`, `TopUpCooldownElapsed` | `windows.qnt` | modelled |
 | per-feature reset windows | `resetAt`, `ResetAllowance`, `AllowanceRollover.policy.ts` | `windows.qnt` | modelled |
@@ -128,8 +131,9 @@ the field the implementation does not have (finding F5).
 
 `attach` turns one request into an activation, an immediate upgrade, a scheduled downgrade or a
 no-op. A downgrade waits for the boundary unless the caller asks for it now. `update` carries the
-cancellation, the uncancel and the immediate cancellation. The model keeps one active plan; plan
-groups, add-ons and multi-phase schedules are the next slice.
+cancellation, the uncancel and the immediate cancellation. The model keeps one active plan; the plan
+set, its groups and the multi-phase schedule are [`schedules.qnt`](./schedules.qnt), and this model
+is the classification an operation performs before either writes.
 
 | Action | Source |
 | --- | --- |
@@ -146,6 +150,63 @@ Invariants: `activePlanIsKnown`, `scheduledChangeIsADowngrade`, `pendingIsNotCur
 A cancellation wins the boundary and drops a pending change. An uncancel clears whichever intent is
 pending. An immediate cancellation clears both. A canceled plan can be bought again; that is a new
 activation, not a reopen.
+
+## The plan set and schedules (`schedules.qnt`)
+
+[ADR 0039](../../docs/adr/0039-one-plan-per-group-and-add-ons-stack.md) is the record. Two groups,
+two plan choices in each, one add-on, a schedule that holds at most two phases, and a step counter
+where the implementation has a clock. Group A states a default plan; group B states none, so both
+halves of the cancellation rule are reachable. The state is the plan set — `plans.qnt` is the
+classification of one move, `standing.qnt` is the phase machine, `balances.qnt` is what a move does
+to the sources behind a count, and this model is which plan occupies which slot and when.
+
+| Action | Source | Move it makes |
+| --- | --- | --- |
+| `attach` | `Subscribe`, `ChangeTier` | a new plan or a replacement in the plan's group |
+| `addAddOn` | the add-on branch of an attach operation | sets the add-on beside every group |
+| `schedulePlan` | `ScheduleTierChange` | appends a future, ordered phase |
+| `withdrawPhase` | `WithdrawTierChange` | drops a phase that has not fired |
+| `applyPhase` | the scheduler at a phase's `startsAt` | moves one group, at that instant |
+| `cancelGroup` | `ScheduleCancellation` | a cancellation waiting for the boundary |
+| `uncancelGroup` | `Resume` | withdraws the cancellation, not the dropped phases |
+| `cancelNow` | `CancelImmediately` | the same resolution, performed now |
+| `close` | `ClosePeriod`, `PeriodEnded` | resolves pending cancellations, rolls the period, ends an empty account |
+| `tick` | the platform clock | stops at a due phase and at the boundary |
+
+| Invariant | What it says | ADR |
+| --- | --- | --- |
+| `oneActivePerGroup` | a group holds at most one plan, so a move replaces rather than adds | 0035 §3, 0039 §1 |
+| `addOnsStack` | a group slot holds a plan of that group; the add-on fills no slot | 0039 §2 |
+| `addOnsSurviveGroupChange` | an add-on attached to an open account stays attached | 0039 §2 |
+| `phasesAreFuture` | no pending phase is behind the clock; the clock stops at a due phase | 0039 §3 |
+| `phasesAreOrdered` | phases start in strictly increasing order, so at most one per instant | 0039 §3 |
+| `phaseNeverSkipsAGroup` | a phase names a group's plan, never the add-on, and changes that group alone | 0039 §4 |
+| `cancelNeverNamesTheDefault` | the floor of a group is not cancellable | 0039 §5 |
+| `cancelFallsBackToTheDefault` | a resolved cancellation lands the group on its default plan | 0039 §5 |
+| `noPlanAfterCancel` | a group with no default is left empty, and the add-ons stay | 0020, 0039 §5 |
+| `noPeriodPastEnd` | the clock stops at the boundary; the close is the only way past it | 0012, 0039 §7 |
+| `terminalHasNoIntent` | a terminal account has no plan, add-on, cancellation or phase | 0020, 0039 §7 |
+
+Three decisions are visible in the model and worth reading beside the ADR. A **move drops the
+phases its own group had waiting** and leaves the other group's alone, because a phase is an intent
+relative to the plan it replaces (ADR 0012 §3). A **cancellation wins its group's boundary** and
+drops that group's phases; an uncancel does not bring them back. And a **phase is applied at its
+exact instant**, so the model's clock refuses to tick past a due phase — a phase that would have
+been applied late is a violation, not a later repair.
+
+What the slice deliberately leaves out:
+
+- **The allowance a phase grants.** A phase names a plan; replacing the plan source is
+  `balances.qnt`'s rule (ADR 0035 §5, ADR 0037 §2). This model only asserts the plan changed.
+- **`multiAttach` and `multiUpdate`.** They are one transaction, one command id and one set of
+  events (ADR 0039 §8), which the command layer and `Idempotence.test.ts` own. A model of "two
+  requests, one commit" is a transaction shape, not a plan-set rule.
+- **Pricing and proration.** A phase's frozen terms are the event's, and the amounts are
+  `Pricing.test.ts` and `Proration.test.ts`.
+- **Two add-ons.** The model has one, because the invariant is "an add-on fills no slot", not the
+  cardinality. Several add-ons collapse into the same rule.
+- **The `isDefault` validation.** That two plans in one group cannot both claim the default
+  (`CatalogMultipleDefaults`) is a catalogue rule, so it is `Catalog.test.ts`'s.
 
 ## The windows (`windows.qnt`)
 
@@ -222,9 +283,9 @@ its due. `canInvoiceQuantity` adds the one the implementation's command layer is
 
 ## The mutants
 
-`pnpm spec:mutants` kills 44 mutants across the six models: 17 for the spend path, 3 for the
-standing, 6 for the windows, 4 for the plan operations, 7 for the balance ledger and 7 for the
-money protocol. Each mutant is a textual replacement and
+`pnpm spec:mutants` kills 57 mutants across the seven models: 17 for the spend path, 3 for the
+standing, 6 for the windows, 4 for the plan operations, 13 for the plan set and its schedules, 7 for
+the balance ledger and 7 for the money protocol. Each mutant is a textual replacement and
 the gate fails when an invariant **survives** it. The new models' mutants are the same discipline as
 the original: an invariant with nothing behind it is a claim, not a check.
 

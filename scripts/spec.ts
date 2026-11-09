@@ -5,8 +5,10 @@
 //   paykit.qnt     the spend path
 //   standing.qnt   the phase machine
 //   windows.qnt    the clocks the period does not own, and the quantity
+//   plans.qnt      the plan operations against one plan
 //   balances.qnt   the sources behind one count, and the order they are spent
 //   money.qnt      refunds, reversals and proration invoices
+//   schedules.qnt  the plan set, its groups, add-ons and multi-phase schedules
 //
 // `--tests` runs `quint test` instead of `quint run`; both paths typecheck
 // first, so a scenario that references a dead action fails before it runs.
@@ -118,6 +120,30 @@ const SPECS: ReadonlyArray<Spec> = [
     ],
     tests: "specs/paykit/plans_test.qnt",
     testMain: "plans_test",
+    maxSteps: 30,
+  },
+  {
+    file: "specs/paykit/schedules.qnt",
+    invariants: ["schedulesInvariant"],
+    witnesses: [
+      "attached",
+      "secondGroupAttached",
+      "addOnStacked",
+      "addOnSurvivedMove",
+      "phasesScheduled",
+      "twoPhasesScheduled",
+      "phaseApplied",
+      "twoPhasesApplied",
+      "phaseWithdrawn",
+      "cancellationScheduled",
+      "cancellationResolvedToDefault",
+      "groupEnded",
+      "canceledNow",
+      "uncanceled",
+      "closed",
+    ],
+    tests: "specs/paykit/schedules_test.qnt",
+    testMain: "schedules_test",
     maxSteps: 30,
   },
   {
