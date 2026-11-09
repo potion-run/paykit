@@ -4,8 +4,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
+import type { Allowance } from "../Allowance.ts";
 import { Actor, system } from "../Auth/Actor.ts";
 import type { Catalog } from "../Catalog.ts";
+import type { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import type { Proration } from "../Proration.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
@@ -19,13 +21,30 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
 import { currencyOf } from "../Subscription/Subscription.state.ts";
 import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
-import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
+import {
+  planChangeTier,
+  scheduleTierChangeInputOf,
+  subscribeInputOf,
+  withGrants,
+} from "../TierCommand.ts";
 
 /** What a caller wants decided before anything is recorded. */
 export type PreviewCommand =
-  | { readonly kind: "subscribe"; readonly tier: string }
-  | { readonly kind: "changeTier"; readonly tier: string }
-  | { readonly kind: "scheduleTierChange"; readonly tier: string }
+  | {
+      readonly kind: "subscribe";
+      readonly tier: string;
+      readonly grants?: ReadonlyArray<Allowance>;
+    }
+  | {
+      readonly kind: "changeTier";
+      readonly tier: string;
+      readonly grants?: ReadonlyArray<Allowance>;
+    }
+  | {
+      readonly kind: "scheduleTierChange";
+      readonly tier: string;
+      readonly grants?: ReadonlyArray<Allowance>;
+    }
   | { readonly kind: "withdrawTierChange" }
   | { readonly kind: "cancel" }
   | { readonly kind: "resume" }
@@ -67,36 +86,50 @@ type Previewable =
   | Resume
   | SetQuantity;
 
+/** What building a preview command produced: a command, a mismatch, or a name the catalog lacks. */
+type BuiltCommand =
+  | { readonly command: Previewable }
+  | { readonly mismatch: CatalogMismatch }
+  | null;
+
 /**
  * The command a preview describes, built from the catalog the Stack deployed.
  * A tier change also carries the proration the same prices and period would
  * charge, because a preview is the only place that number can be shown before
- * it is committed.
+ * it is committed. A bespoke set is judged here by the same guard the write
+ * meets, so a preview never shows a deal the command would refuse (ADR 0041).
  */
 const commandOf = (
   catalog: Catalog,
   input: PreviewCommand,
   state: SubscriptionState,
   now: DateTime.Utc,
-): Previewable | null => {
-  if (input.kind === "cancel") return new ScheduleCancellation();
+): BuiltCommand => {
+  if (input.kind === "cancel") return { command: new ScheduleCancellation() };
 
-  if (input.kind === "resume") return new Resume();
+  if (input.kind === "resume") return { command: new Resume() };
 
   if (input.kind === "setQuantity") {
-    return new SetQuantity({
-      feature: input.feature,
-      quantity: input.quantity,
-      dedupeKey: "preview",
-    });
+    return {
+      command: new SetQuantity({
+        feature: input.feature,
+        quantity: input.quantity,
+        dedupeKey: "preview",
+      }),
+    };
   }
 
-  if (input.kind === "withdrawTierChange") return new WithdrawTierChange();
+  if (input.kind === "withdrawTierChange") return { command: new WithdrawTierChange() };
 
   if (input.kind === "subscribe") {
     const subscribed = subscribeInputOf(catalog, input.tier);
 
-    return subscribed === null ? null : new Subscribe(subscribed);
+    if (subscribed === null) return null;
+    const granted = withGrants(catalog, subscribed, input.grants);
+
+    return granted.mismatch === null
+      ? { command: new Subscribe(granted.input) }
+      : { mismatch: granted.mismatch };
   }
 
   if (input.kind === "scheduleTierChange") {
@@ -106,12 +139,22 @@ const commandOf = (
       state._tag === "Subscribed" ? currencyOf(state) : undefined,
     );
 
-    return scheduled === null ? null : new ScheduleTierChange(scheduled);
+    if (scheduled === null) return null;
+    const granted = withGrants(catalog, scheduled, input.grants);
+
+    return granted.mismatch === null
+      ? { command: new ScheduleTierChange(granted.input) }
+      : { mismatch: granted.mismatch };
   }
 
   const plan = planChangeTier(catalog, input.tier, state, now);
 
-  return plan === null ? null : new ChangeTier(plan.input);
+  if (plan === null) return null;
+  const granted = withGrants(catalog, plan.input, input.grants);
+
+  return granted.mismatch === null
+    ? { command: new ChangeTier(granted.input) }
+    : { mismatch: granted.mismatch };
 };
 
 const prorationOf = (events: ReadonlyArray<PreviewEvent>): Proration | undefined =>
@@ -148,13 +191,16 @@ export const previewOperation = Effect.fn("Paykit.Preview")(function* () {
   return Effect.fn("Paykit.Preview.decide")(function* (input: PreviewInput) {
     const now = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
     const state = yield* subscription.state(Subscription.ref(input.account));
-    const command = commandOf(catalog, input.command, state, now);
+    const built = commandOf(catalog, input.command, state, now);
 
-    if (command === null) {
+    if (built === null) {
       return yield* new PlanNotInCatalog({
         tier: "tier" in input.command ? input.command.tier : "*",
       });
     }
+
+    if ("mismatch" in built) return yield* built.mismatch;
+    const command = built.command;
 
     // A preview runs the guarded command's own `decide`, which needs the
     // caller its middleware would have provided. `decide` never reads it, but

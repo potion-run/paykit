@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import type { Allowance } from "../Allowance.ts";
 import { asSystem } from "../Auth/Actor.ts";
-import { planOf } from "../Catalog.ts";
+import { planItemsOf, planOf } from "../Catalog.ts";
+import { sameAllowances } from "../CatalogGuard.ts";
 import { CatalogService } from "../CatalogService.ts";
 import {
   type PaymentError,
@@ -20,7 +22,8 @@ import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
 import { priceFor } from "../Tier.ts";
-import { subscribeInputOf } from "../TierCommand.ts";
+import { subscribeInputOf, withGrants } from "../TierCommand.ts";
+import { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 
 /** What `Subscribe` asks for. */
 export interface SubscribeInput {
@@ -30,6 +33,8 @@ export interface SubscribeInput {
   readonly anchorTz?: string;
   /** The currency to sell in. Omitted means the tier's base currency. */
   readonly currency?: string;
+  /** The bespoke items a custom plan is activated at, when it states any (ADR 0041). */
+  readonly grants?: ReadonlyArray<Allowance>;
 }
 
 /** What `Subscribe` gives back: a purchase path, or a free-tier activation. */
@@ -147,6 +152,25 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       });
     }
 
+    // A bespoke set travels on the command, and the activation a checkout
+    // produces is rebuilt from the catalog when the provider's webhook lands.
+    // Recording the plan's defaults instead would sell a different deal at the
+    // same price, so the combination is refused before the provider is asked
+    // (ADR 0041 §7).
+    if (input.grants !== undefined && resolvedPrice !== undefined) {
+      const defaults = planItemsOf(catalog, input.tier) ?? {};
+      const stated: Record<string, Allowance> = {};
+
+      for (const grant of input.grants) stated[grant.feature] = grant;
+
+      if (!sameAllowances(defaults, stated)) {
+        return yield* new PlanOperationUnsupported({
+          planId: input.tier,
+          reason: "custom_plan_checkout",
+        });
+      }
+    }
+
     if (resolvedPrice === undefined) {
       // A one-off tier is a pack of credits; without a price there is nothing
       // to buy. The catalog refuses this shape, so a runtime that sees it has
@@ -161,7 +185,14 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
         return yield* new PlanNotInCatalog({ tier: input.tier });
       }
 
-      const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(activation)));
+      // A bespoke set is judged by the same guard a wire caller meets, so an
+      // in-process attach and an HTTP one cannot disagree about what the plan
+      // may grant (ADR 0041 §6).
+      const granted = withGrants(catalog, activation, input.grants);
+
+      if (granted.mismatch !== null) return yield* granted.mismatch;
+
+      const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(granted.input)));
       yield* entitlements.query(ref, { atLeast: receipt });
 
       return { activated: true } as const satisfies SubscribeResult;

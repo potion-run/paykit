@@ -6,7 +6,7 @@ import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
+import { scheduleTierChangeInputOf, subscribeInputOf, withGrants } from "../TierCommand.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
@@ -540,8 +540,17 @@ const BillingApiCore = Layer.mergeAll(
             );
           }
 
+          // The catalog joins the payload here as it does in process, and a
+          // bespoke set is judged by the same guard the Api runs (ADR 0041).
+          const granted = withGrants(catalog, scheduled, request.grants);
+          const mismatch = granted.mismatch;
+
+          if (mismatch !== null) {
+            return yield* bound(toScheduleTierChangeError)(Effect.fail(mismatch));
+          }
+
           const receipt = yield* bound(toScheduleTierChangeError)(
-            client.ScheduleTierChange(id, scheduled, options(request.dedupeKey)),
+            client.ScheduleTierChange(id, granted.input, options(request.dedupeKey)),
           );
 
           const view = yield* bound(toScheduleTierChangeError)(

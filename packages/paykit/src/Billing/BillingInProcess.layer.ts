@@ -29,7 +29,12 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { allowancesOf, planIdOf, currencyOf } from "../Subscription/Subscription.state.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
-import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
+import {
+  planChangeTier,
+  scheduleTierChangeInputOf,
+  subscribeInputOf,
+  withGrants,
+} from "../TierCommand.ts";
 import { webhookOperation } from "../Webhooks.ts";
 import {
   AttachInProcess,
@@ -704,9 +709,19 @@ const BillingCore = Layer.mergeAll(
             );
           }
 
+          // A bespoke set is judged by the same guard a wire caller meets, so
+          // the in-process move and the Api move refuse the same things
+          // (ADR 0041 §6).
+          const granted = withGrants(catalog, plan.input, request.grants);
+          const mismatch = granted.mismatch;
+
+          if (mismatch !== null) {
+            return yield* bound(toChangeTierError)(Effect.fail(mismatch));
+          }
+
           yield* bound(toChangeTierError)(
             asSystem(
-              subscription.send(ref, new ChangeTierCommand(plan.input), {
+              subscription.send(ref, new ChangeTierCommand(granted.input), {
                 commandId: request.dedupeKey,
               }),
             ),
@@ -742,9 +757,16 @@ const BillingCore = Layer.mergeAll(
             );
           }
 
+          const granted = withGrants(catalog, scheduled, request.grants);
+          const mismatch = granted.mismatch;
+
+          if (mismatch !== null) {
+            return yield* bound(toScheduleTierChangeError)(Effect.fail(mismatch));
+          }
+
           const receipt = yield* bound(toScheduleTierChangeError)(
             asSystem(
-              subscription.send(ref, new ScheduleTierChangeCommand(scheduled), {
+              subscription.send(ref, new ScheduleTierChangeCommand(granted.input), {
                 commandId: request.dedupeKey,
               }),
             ),
@@ -846,6 +868,7 @@ const BillingCore = Layer.mergeAll(
               tier: request.tier,
               ...(request.anchorTz === undefined ? {} : { anchorTz: request.anchorTz }),
               ...(request.currency === undefined ? {} : { currency: request.currency }),
+              ...(request.grants === undefined ? {} : { grants: request.grants }),
             }),
           );
         });

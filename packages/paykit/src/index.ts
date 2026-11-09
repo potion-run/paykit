@@ -116,6 +116,9 @@ export {
   CatalogRateCardOnQuantity,
   CatalogCarryOverNeverResets,
   CatalogCarryWithoutCarry,
+  CatalogCustomAddOn,
+  CatalogCustomDefaultPlan,
+  CatalogCustomPack,
   CatalogCustomizeWithoutVariant,
   CatalogPricingBand,
   CatalogPricingConflict,
@@ -511,9 +514,10 @@ export {
   schedulePlanChangeInputOf,
   subscribeInputOf,
   subscribePlanInputOf,
+  withGrants,
 } from "./TierCommand.ts";
 
-export type { ChangeTierPlan, TierGrantInput } from "./TierCommand.ts";
+export type { ChangeTierPlan, GrantedPlanInput, TierGrantInput } from "./TierCommand.ts";
 
 export { CatalogService, catalogLayer } from "./CatalogService.ts";
 

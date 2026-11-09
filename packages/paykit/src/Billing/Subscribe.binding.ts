@@ -1,11 +1,14 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
+import type { Allowance } from "../Allowance.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { type PaymentError, PaymentDeclined, ProviderCapabilityMissing } from "../Payments.ts";
 import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
+import { PlanOperationUnsupported } from "./PlanOperationUnsupported.ts";
 import type { SubscribeResult } from "./Subscribe.operation.ts";
 
 /**
@@ -21,11 +24,19 @@ export interface SubscribeRequest {
   readonly anchorTz?: string;
   /** The currency to sell in. Omitted means the tier's base currency. */
   readonly currency?: string;
+  /**
+   * The plan items a custom plan is sold with, when they differ from the
+   * catalog's defaults (ADR 0041). A priced plan refuses a bespoke set: its
+   * activation is the provider's, and the webhook rebuilds it from the catalog.
+   */
+  readonly grants?: ReadonlyArray<Allowance>;
 }
 
 const refusals = [
   AlreadySubscribed,
   PlanNotInCatalog,
+  CatalogMismatch,
+  PlanOperationUnsupported,
   PaymentDeclined,
   ProviderCapabilityMissing,
   Unauthenticated,

@@ -48,7 +48,7 @@ documented billing surface, not a second implementation.
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
 | Entity plans | entity scope + its own plan set (ADR 0040) | modelled |
 | Entities and transfer | `EntityId`, scoped balances, pooled items, `billing.transfer` (ADR 0040) | modelled |
-| Custom plans | — | missing — `CatalogGuard` refuses allowances not in the catalog; this is the one model item a host cannot build on top |
+| Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants })` (ADR 0041) | shipped — the quote rides the command; a priced first activation through a checkout is refused until a pending activation can carry it |
 | Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
 | Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
@@ -92,8 +92,10 @@ documented billing surface, not a second implementation.
    standing (ADR 0039). `multiAttach` / `multiUpdate`, one balance source per plan, the
    `isDefault`-aware cancellation and a phase applied at its own instant remain.
 2. **Entities and transfer** — modelled (ADR 0040); the implementation follows the plan set.
-3. **Custom plans** — the one product capability a host cannot build on top: `CatalogGuard` must
-   learn an explicit custom/allowlisted path.
+3. **Custom plans** — landed ([ADR 0041](../adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a
+   plan may declare `custom: true`, and the guard accepts a bespoke allowance set that is
+   structurally valid. What remains is carrying quoted terms across a checkout, a bespoke add-on
+   (which needs the per-plan balance source) and a negotiated price.
 4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
    is new data, not a migration of existing subscribers.
 5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a

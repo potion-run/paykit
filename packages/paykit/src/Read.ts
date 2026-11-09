@@ -204,4 +204,4 @@ export { planItem } from "./PlanItem.ts";
 
 export { planTermsOf } from "./Catalog.ts";
 
-export { schedulePlanChangeInputOf, subscribePlanInputOf } from "./TierCommand.ts";
+export { schedulePlanChangeInputOf, subscribePlanInputOf, withGrants } from "./TierCommand.ts";

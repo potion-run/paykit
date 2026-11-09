@@ -1,6 +1,8 @@
 import type * as DateTime from "effect/DateTime";
-import type { Allowances } from "./Allowance.ts";
+import type { Allowance, Allowances } from "./Allowance.ts";
 import { type Catalog, planTermsOf, type PlanTerms } from "./Catalog.ts";
+import { catalogMismatchOf } from "./CatalogGuard.ts";
+import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
@@ -39,6 +41,70 @@ export interface TierGrantInput {
   readonly rates: CreditRateCards;
   readonly price?: Price;
 }
+
+/** What a plan's terms become once a caller has stated, or not stated, the items it holds. */
+export interface GrantedPlanInput<A> {
+  /** The command input, with the bespoke allowances when the caller stated any. */
+  readonly input: A;
+  /** The guard's answer, or `null` when the input may be sent. */
+  readonly mismatch: CatalogMismatch | null;
+}
+
+/**
+ * A plan's catalog terms with the plan items a caller states for a custom plan.
+ *
+ * The array is folded into the record a command carries, and the result is
+ * judged by the same pure guard a wire caller meets — so an in-process sender
+ * and an HTTP caller cannot disagree about what a plan may grant. Omitting
+ * `grants` keeps the catalog's defaults, which is the ordinary case; stating
+ * them for a fixed plan is refused by the guard's exact-match rule, not by a
+ * second check here (ADR 0041 §6).
+ *
+ * ### Attaching a bespoke deal
+ * **Example:** A plan with negotiated items
+ * ```typescript
+ * const plan = planChangeTier(catalog, "enterprise", state, now);
+ * if (plan !== null) {
+ *   const granted = withGrants(catalog, plan.input, request.grants);
+ *   if (granted.mismatch !== null) return yield* granted.mismatch;
+ *   yield* subscription.send(ref, new ChangeTier(granted.input), { commandId });
+ * }
+ * ```
+ *
+ * @primitive
+ */
+export const withGrants = <A extends TierGrantInput>(
+  catalog: Catalog,
+  terms: A,
+  grants: ReadonlyArray<Allowance> | undefined,
+): GrantedPlanInput<A> => {
+  if (grants === undefined) return { input: terms, mismatch: null };
+
+  const allowances: Record<string, Allowance> = {};
+
+  for (const grant of grants) {
+    // A repeated feature would silently collapse to whichever item came last,
+    // and the two items may disagree about the ceiling or the price.
+    if (allowances[grant.feature] !== undefined) {
+      return {
+        input: terms,
+        mismatch: new CatalogMismatch({
+          tier: terms.tier,
+          feature: grant.feature,
+          field: "allowances",
+          expected: "one plan item per feature",
+          actual: "duplicate",
+        }),
+      };
+    }
+
+    allowances[grant.feature] = grant;
+  }
+
+  const input = { ...terms, allowances };
+
+  return { input, mismatch: catalogMismatchOf(catalog, input) };
+};
 
 /** The catalog fields every tier command shares, in one shape. */
 const grantOf = (tierId: string, terms: PlanTerms): TierGrantInput => ({

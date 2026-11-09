@@ -65,3 +65,15 @@ it("accepts a FeatureInput value through the wide overload", () => {
   const custom = feature(input);
   expect(custom.kind).toBe("metered");
 });
+
+it("a one-off pack cannot be custom", () => {
+  // @ts-expect-error a pack grants nothing, so there is nothing to make bespoke
+  const pack = tier({ id: "pack", kind: "one_off", custom: true, grants: [] });
+  expect(pack.kind).toBe("one_off");
+});
+
+it("a variant inherits `custom` from its base and cannot state it", () => {
+  // @ts-expect-error a variant is the base's sentence at another price
+  const variant = tier({ id: "variant", variantOf: "base", custom: true, grants: [] });
+  expect(variant.variantOf).toBe("base");
+});

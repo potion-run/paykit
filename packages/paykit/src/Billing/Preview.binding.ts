@@ -2,6 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 import type { PreviewCommand, PreviewResult } from "./Preview.operation.ts";
@@ -15,7 +16,7 @@ export interface PreviewRequest {
   readonly command: PreviewCommand;
 }
 
-const refusals = [PlanNotInCatalog, Unauthenticated, Forbidden] as const;
+const refusals = [PlanNotInCatalog, CatalogMismatch, Unauthenticated, Forbidden] as const;
 
 /**
  * Every refusal a preview can answer. A *model* refusal — an allowance too

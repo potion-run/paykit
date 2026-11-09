@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { allowance } from "../../src/Allowance.ts";
+import { allowance, type Allowance } from "../../src/Allowance.ts";
 import { planItemsOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { messages } from "../../src/Feature.ts";
@@ -30,8 +30,16 @@ const ceilTier = tier({
   ],
 });
 
+const bespokeTier = tier({
+  id: "bespoke",
+  custom: true,
+  price: { amount: 49_900, currency: "usd", interval: "month" },
+  credits: 50_000,
+  grants: [allowance(messages, { included: 10_000, overage: "bill" })],
+});
+
 const testCatalog = Effect.runSync(
-  catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier] }),
+  catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier, bespokeTier] }),
 );
 
 const free = planItemsOf(testCatalog, "free")!;
@@ -209,4 +217,121 @@ it("the guard is a Layer that needs the catalog", () => {
   // catalog must not be built, let alone run.
   expect(typeof Layer.build).toBe("function");
   expect(Effect.isEffect(Effect.void)).toBe(true);
+});
+
+describe("the catalog guard and a custom plan", () => {
+  const price = { amount: 49_900, currency: "usd", interval: "month" as const };
+  const terms = creditTermsOf(testCatalog, "bespoke")!;
+
+  const stated = (allowances: Readonly<Record<string, Allowance>>) =>
+    catalogMismatchOf(testCatalog, { tier: "bespoke", allowances, price, ...terms });
+
+  it("accepts allowances that differ from the plan's defaults", () => {
+    // The plan's `grants` are what a caller gets when it states none, not the
+    // only set it may hold (ADR 0041 §2).
+    expect(stated({ messages: allowance(messages, { included: 40_000 }) })).toBe(null);
+    expect(stated({ messages: allowance(messages, { included: 1 }) })).toBe(null);
+    // And the catalog's own defaults still pass, so an attach that states
+    // nothing is not a special case.
+    expect(stated(planItemsOf(testCatalog, "bespoke")!)).toBe(null);
+  });
+
+  it("refuses an allowance for a feature the catalog never declared", () => {
+    const mismatch = stated({
+      missing: { ...allowance(messages, { included: 1 }), feature: "missing" as never },
+    });
+
+    expect(mismatch?._tag).toBe("CatalogMismatch");
+    expect(mismatch?.tier).toBe("bespoke");
+    expect(mismatch?.feature).toBe("missing");
+    expect(mismatch?.field).toBe("allowances");
+    expect(mismatch?.actual).toBe("CatalogUnknownFeature");
+  });
+
+  it("refuses an allowance the catalog itself would refuse", () => {
+    // A cap prices the billable part, so it needs a bill. A bespoke set has to
+    // be a set the deploy could have declared, which is the whole point of
+    // sharing the per-item rule with `defineCatalog` (ADR 0041 §3).
+    const mismatch = stated({
+      messages: { ...allowance(messages, { included: 100 }), cap: 10 },
+    });
+
+    expect(mismatch?.field).toBe("allowances");
+    expect(mismatch?.expected).toBe("a valid catalog plan item");
+    expect(mismatch?.actual).toBe("CatalogCapWithoutBilling");
+  });
+
+  it("refuses a record key that disagrees with the item it holds", () => {
+    const mismatch = stated({ other: allowance(messages, { included: 1 }) });
+
+    expect(mismatch?.feature).toBe("other");
+    expect(mismatch?.expected).toBe("other");
+    expect(mismatch?.actual).toBe("messages");
+  });
+
+  it("refuses an empty set", () => {
+    const mismatch = stated({});
+
+    expect(mismatch?.field).toBe("allowances");
+    expect(mismatch?.actual).toBe("none");
+  });
+
+  it("keeps the exact-match rule for a plan that is not custom", () => {
+    // The same bespoke set the custom plan accepts is refused on a fixed one:
+    // one rule per kind of plan, and the opt-in is the catalogue's.
+    const mismatch = catalogMismatchOf(testCatalog, {
+      tier: "pro",
+      allowances: { messages: allowance(messages, { included: 1 }) },
+      price: proPrice,
+      ...proTerms,
+    });
+
+    expect(mismatch?.field).toBe("allowances");
+    expect(mismatch?.actual.startsWith("[")).toBe(true);
+  });
+
+  it("still checks the price and the credit terms on a custom plan", () => {
+    const allowances = { messages: allowance(messages, { included: 40_000 }) };
+
+    expect(
+      catalogMismatchOf(testCatalog, {
+        tier: "bespoke",
+        allowances,
+        price: { amount: 1, currency: "usd", interval: "month" },
+        ...terms,
+      })?.field,
+    ).toBe("price");
+
+    expect(stated({ ...allowances })).toBe(null);
+
+    const pool = catalogMismatchOf(testCatalog, {
+      tier: "bespoke",
+      allowances,
+      price,
+      ...terms,
+      credits: terms.credits + 1,
+    });
+
+    expect(pool?.field).toBe("credits");
+
+    const topUp = catalogMismatchOf(testCatalog, {
+      tier: "bespoke",
+      allowances,
+      price,
+      ...terms,
+      topUp: { threshold: 1_000 },
+    });
+
+    expect(topUp?.field).toBe("topUp");
+
+    const rates = catalogMismatchOf(testCatalog, {
+      tier: "bespoke",
+      allowances,
+      price,
+      ...terms,
+      rates: { messages: { default: 1 } },
+    });
+
+    expect(rates?.field).toBe("rates");
+  });
 });
