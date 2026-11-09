@@ -535,6 +535,17 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     TrialStarted: (view, event, context): EntitlementsState => {
       const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
+      // A lifetime grant carried from the previous standing is a source of its
+      // own: the state adds its units to the new plan's count, so the rows have
+      // to add the same units rather than report the plan alone.
+      const remaining = { ...event.remaining };
+
+      for (const [feature, value] of Object.entries(view.features)) {
+        const grants = (value.grants ?? []).reduce((sum, grant) => sum + grant.remaining, 0);
+
+        if (grants === 0) continue;
+        remaining[feature] = (remaining[feature] ?? 0) + grants;
+      }
 
       return withAccount(
         {
@@ -558,7 +569,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             // standing is not usage, and `featuresOf` keeps it.
             0,
             view.features,
-            event.remaining,
+            remaining,
             event.periodEnd,
             "good",
             false,
@@ -572,6 +583,14 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     SubscriptionActivated: (view, event, context): EntitlementsState => {
       const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
+      const remaining = { ...event.remaining };
+
+      for (const [feature, value] of Object.entries(view.features)) {
+        const grants = (value.grants ?? []).reduce((sum, grant) => sum + grant.remaining, 0);
+
+        if (grants === 0) continue;
+        remaining[feature] = (remaining[feature] ?? 0) + grants;
+      }
 
       return withAccount(
         {
@@ -595,7 +614,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             // standing is not usage, and `featuresOf` keeps it.
             0,
             view.features,
-            event.remaining,
+            remaining,
             event.periodEnd,
             "good",
             false,

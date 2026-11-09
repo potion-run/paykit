@@ -4,13 +4,17 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance, grant } from "../../src/Allowance.ts";
-import { catalog } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { evaluateCheck } from "../../src/Check.ts";
+import { EntityId } from "../../src/Customer.ts";
 import { feature, messages } from "../../src/Feature.ts";
+import { AttachEntity } from "../../src/Subscription/AttachEntity.command.ts";
+import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
 import {
   remainingOf,
   reservedOf,
+  scopeStateOf,
   usedOf,
   type SubscribedState,
 } from "../../src/Subscription/Subscription.state.ts";
@@ -117,6 +121,76 @@ describe("spend cap", () => {
         return usedOf(state, "messages") + reservedOf(state, "messages") <= CEILING;
       },
       { runs: 100, size: 40 },
+    ),
+  );
+});
+
+describe("a scope's own cap", () => {
+  it.effect("an entity's cap is its own, and check agrees scope by scope", () =>
+    assertProperty(
+      Arbitrary.schema(Schema.Array(Amount).pipe(Schema.check(Schema.isMaxLength(40)))),
+      (amounts) => {
+        const entity = EntityId.make("ent_shapes");
+        let state = opened("capped");
+
+        const attach = decideAt(
+          state,
+          new AttachEntity({ entityId: entity }),
+          start,
+          "entity-attach",
+        );
+
+        if (!isAccepted(attach)) return false;
+        state = evolveAt(state, attach, start, "entity-attach") as SubscribedState;
+
+        const terms = planTermsOf(shapes, "capped");
+
+        if (terms === null) return false;
+
+        const plan = decideAt(
+          state,
+          new ChangeTier({ tier: "capped", ...terms, entity }),
+          start,
+          "entity-plan",
+        );
+
+        if (!isAccepted(plan)) return false;
+        state = evolveAt(state, plan, start, "entity-plan") as SubscribedState;
+
+        for (const [index, amount] of amounts.entries()) {
+          const before = scopeStateOf(state, entity);
+
+          const decision = decideAt(
+            state,
+            new TrackUsage({ feature: "messages", amount, entity }),
+            start,
+            `entity-cap-${index}`,
+          );
+
+          const asked = evaluateCheck(capView(before), {
+            account: "acct_entity_cap",
+            featureId: "messages",
+            requiredBalance: amount,
+          });
+
+          if (asked.allowed !== isAccepted(decision)) return false;
+
+          if (!isAccepted(decision)) {
+            // Only the ceiling may refuse a positive request on a scope that
+            // owns this allowance.
+            if (decision._tag !== "SpendCapExceeded") return false;
+            continue;
+          }
+
+          state = evolveAt(state, decision, start, `entity-cap-${index}`) as SubscribedState;
+          const after = scopeStateOf(state, entity);
+
+          if (usedOf(after, "messages") + reservedOf(after, "messages") > CEILING) return false;
+        }
+
+        return true;
+      },
+      { runs: 80, size: 40 },
     ),
   );
 });

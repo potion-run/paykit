@@ -11,18 +11,29 @@ import { sqliteExecutor } from "../support/Sqlite.ts";
 
 const at = "2030-01-01T00:00:00.000Z";
 
-const deliveryOf = (seq: number) =>
-  ({
+/**
+ * One delivery. Half of them are scoped events, so entity facts take the same
+ * `(source, seq)` dedupe path as the customer's own usage: an entity is a
+ * partition of the account's stream, not a second stream.
+ */
+const deliveryOf = (seq: number) => {
+  const entity = seq % 2 === 0 ? `ent-${seq}` : undefined;
+
+  return {
     target: { kind: "view", name: "Entitlements", generation: 1 },
     key: "acct_delivery",
     source: "Subscription/acct_delivery",
     seq,
     origin: "Subscription",
-    tag: "UsageRecorded",
+    tag: entity === undefined ? "UsageRecorded" : "EntityAttached",
     at,
-    event: { _tag: "UsageRecorded", feature: "messages", amount: 1 },
+    event:
+      entity === undefined
+        ? { _tag: "UsageRecorded", feature: "messages", amount: 1 }
+        : { _tag: "EntityAttached", entity, at },
     envelope: { seq, at, commandId: `cmd-${seq}` },
-  }) as never;
+  } as never;
+};
 
 const Batch = Schema.Array(
   Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 6 }))),

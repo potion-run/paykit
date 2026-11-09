@@ -476,6 +476,11 @@ export class BillingState extends Domain.View("BillingState", {
       );
     },
     PlanChanged: (view, event, context): BillingStateView => {
+      // A scope's plan set is its own. The page is the customer's standing; a
+      // scoped move is read through the scope's own entitlements, so it must
+      // not rewrite the tier, the plan set or the pool the page reports.
+      if (event.entity !== undefined) return withAccount(view, context);
+
       const {
         price: _previousPrice,
         proration: _previous,

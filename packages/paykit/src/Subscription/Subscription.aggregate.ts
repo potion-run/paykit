@@ -636,13 +636,16 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
           ...reset,
           // A grant is not reset by the plan's boundary. A scheduled change's
           // `pendingRemaining` already carries the surviving grants; a close
-          // without one adds them here.
+          // without one adds them here. A kept counter already includes them,
+          // because `resetOf` read it from the standing.
           remaining:
             reset.remaining === null
               ? null
-              : landing === undefined
-                ? reset.remaining + grantTotalOf(state, feature)
-                : reset.remaining,
+              : reset.kept === true
+                ? reset.remaining
+                : landing === undefined
+                  ? reset.remaining + grantTotalOf(state, feature)
+                  : reset.remaining,
         },
       ] as const;
     }),
@@ -4258,10 +4261,29 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     // what the scope owned lands on the customer, the scope holds nothing, and
     // the record stays for the bills that name it.
     EntityArchived: (state, event) => {
-      if (state._tag !== "Subscribed") return state;
       const record = state.entities?.[event.entity];
 
       if (record === undefined) return state;
+
+      // The archive is terminal and holds nothing: plans, counts, grants,
+      // purchases and occupancy all left the scope in this event. The record
+      // stays for the bills that name it (ADR 0003, ADR 0040 §7).
+      const archived: EntityRecord = {
+        ...record,
+        status: "archived",
+        archivedAt: event.at,
+        plans: {},
+        remaining: {},
+        grants: {},
+        quantities: {},
+        occupied: {},
+      };
+
+      // An entity may be archived before the customer buys anything. It holds
+      // no source then, so there is nothing to sweep and no standing to write.
+      if (state._tag !== "Subscribed") {
+        return { ...state, entities: { ...state.entities, [event.entity]: archived } };
+      }
 
       const remaining = { ...state.remaining };
       const grants = { ...state.grants };
@@ -4292,16 +4314,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         remaining,
         ...(Object.keys(grants).length === 0 ? {} : { grants }),
         ...(Object.keys(quantities).length === 0 ? {} : { quantities }),
-        entities: {
-          ...state.entities,
-          [event.entity]: {
-            ...record,
-            status: "archived" as const,
-            archivedAt: event.at,
-            plans: {},
-            remaining: {},
-          },
-        },
+        entities: { ...state.entities, [event.entity]: archived },
       };
     },
     // One event, both sides: the source loses what the target gains, in the
