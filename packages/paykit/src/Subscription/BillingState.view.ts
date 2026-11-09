@@ -14,6 +14,8 @@ import {
   PlanSchedule,
   Plans,
   primaryPlan,
+  withoutGroup,
+  withoutGroupPhases,
   withoutPhase,
   withPhase,
   withPlan,
@@ -196,6 +198,12 @@ export const BillingStateView = Schema.Struct({
   /** The phases the account will move through, in start order. */
   schedule: PlanSchedule,
   /**
+   * The groups waiting to resolve at their boundary, keyed by group. A group
+   * cancellation does not end the account, so a page shows which group is
+   * leaving rather than a single standing-level flag (ADR 0039 §5).
+   */
+  cancellations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  /**
    * The phase this standing moves to at the boundary. Absent when nothing is
    * scheduled, so a console renders the button that schedules one or the one
    * that withdraws it, never both.
@@ -265,7 +273,10 @@ const withAccount = (view: BillingStateView, context: ViewContext): BillingState
     ...rest,
     account: context.key.id,
     ...(sold === undefined
-      ? { interval: view.interval }
+      ? {
+          tier: view.status === "canceled" || view.status === "expired" ? "" : view.tier,
+          interval: view.interval,
+        }
       : {
           tier: sold.planId,
           interval: sold.interval ?? view.interval,
@@ -485,6 +496,12 @@ export class BillingState extends Domain.View("BillingState", {
 
       const plans = withPlan(view.plans, row);
 
+      const cancellations = Object.fromEntries(
+        Object.entries(view.cancellations ?? {}).filter(
+          ([group]) => group !== (event.group ?? "default"),
+        ),
+      );
+
       const schedule =
         event.supersedesSchedule === true
           ? view.schedule.filter((phase: PlanPhase) => phase.group !== (event.group ?? "default"))
@@ -498,6 +515,7 @@ export class BillingState extends Domain.View("BillingState", {
           ...rest,
           tier: sold?.planId ?? event.tier,
           plans,
+          cancellations,
           schedule,
           ...(pendingTier === undefined ? {} : { pendingTier }),
           // A change at the boundary grants the new period's pool, so the page
@@ -646,6 +664,37 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, cancelAtPeriodEnd: true }, context),
     CancellationWithdrawn: (view, _event, context): BillingStateView =>
       withAccount({ ...view, cancelAtPeriodEnd: false }, context),
+    GroupCancellationScheduled: (view, event, context): BillingStateView =>
+      withAccount(
+        {
+          ...view,
+          schedule: withoutGroupPhases(view.schedule, event.group),
+          cancellations: { ...view.cancellations, [event.group]: event.planId },
+        },
+        context,
+      ),
+    GroupCancellationWithdrawn: (view, event, context): BillingStateView => {
+      const { [event.group]: _withdrawn, ...rest } = view.cancellations ?? {};
+
+      return withAccount({ ...view, cancellations: rest }, context);
+    },
+    PlanGroupCanceled: (view, event, context): BillingStateView => {
+      const { [event.group]: _resolved, ...rest } = view.cancellations ?? {};
+      const plans = withoutGroup(view.plans, event.group);
+      const sold = primaryPlan(plans);
+      const pendingTier = pendingViewOf(view.schedule);
+
+      return withAccount(
+        {
+          ...view,
+          plans,
+          cancellations: rest,
+          ...(sold === undefined ? {} : { tier: sold.planId }),
+          ...(pendingTier === undefined ? {} : { pendingTier }),
+        },
+        context,
+      );
+    },
     // The scheduled tier is part of the page: "on pro, moving to small at the
     // period end" is one sentence an operator, and the button beside it, needs.
     PlanChangeScheduled: (view, event, context): BillingStateView =>
@@ -703,10 +752,19 @@ export class BillingState extends Domain.View("BillingState", {
           ...(terminal ? rest : view),
           status: event.statusAfter,
           // A terminal close drops the phases that were waiting for a period
-          // the standing will not have (ADR 0020, ADR 0039 §7).
-          ...(terminal ? { schedule: [] } : {}),
+          // the standing will not have, and the plans and cancellations with
+          // them (ADR 0020, ADR 0039 §7).
+          ...(terminal
+            ? {
+                schedule: [],
+                cancellations: {},
+                ...(event.cancelAtPeriodEndAfter ? {} : { plans: {} }),
+              }
+            : { cancellations: {} }),
           periodStart: event.nextPeriodStart,
           periodEnd: event.nextPeriodEnd,
+          ...(event.credits === undefined ? {} : { credits: event.credits }),
+          ...(event.prepaidCredits === undefined ? {} : { prepaidCredits: event.prepaidCredits }),
           cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
           // An alert is once per standing period, so a close re-arms every
           // threshold; an allowance's own reset window does not (ADR 0038).

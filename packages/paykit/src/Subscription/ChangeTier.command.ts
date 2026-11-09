@@ -109,6 +109,12 @@ export class PlanChanged extends Domain.Event("PlanChanged", {
   proration: Schema.optionalKey(ProrationValue),
   /** The entity scope the plan set belongs to; absent means the customer. */
   entity: Schema.optionalKey(EntityId),
+  /**
+   * The instant of the scheduled phase this change applied. It is absent on an
+   * explicit move, and the close reads it to tell a plan already landed at the
+   * boundary from one that still has to land (ADR 0039 §3).
+   */
+  appliedPhaseAt: Schema.optionalKey(Schema.DateTimeUtc),
 }) {}
 
 /** Move an existing standing to another tier. */

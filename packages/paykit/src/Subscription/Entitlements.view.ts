@@ -20,6 +20,15 @@ import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { capacityOf, type JudgedFeature } from "./Allowance.verdict.ts";
+import {
+  Plans,
+  mergeAllowances,
+  mergeRates,
+  planOrder,
+  withoutGroup,
+  withPlan,
+  type PlanRow,
+} from "./PlanSet.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
 import {
   SubscriptionStatus,
@@ -50,6 +59,25 @@ export const BalanceGrantView = Schema.Struct({
 });
 
 export type BalanceGrantView = typeof BalanceGrantView.Type;
+
+/**
+ * One plan's part of a feature's grant. A balance reports one row per plan that
+ * grants the feature, so two plans that include the same units cannot be
+ * reported as one merged count (ADR 0035 §4, ADR 0039 §2).
+ */
+export const PlanSourceView = Schema.Struct({
+  planId: Schema.String,
+  /** The group the plan fills; absent means the default group. */
+  group: Schema.optionalKey(Schema.String),
+  /** Whether the plan stacks beside every group instead of filling one. */
+  addOn: Schema.optionalKey(Schema.Boolean),
+  /** What this plan includes of the feature. */
+  included: Included,
+  /** The interval this plan's part resets on. */
+  resets: Resets,
+});
+
+export type PlanSourceView = typeof PlanSourceView.Type;
 
 /** What a tier grants, what has been used, and when it resets. */
 export const FeatureEntitlement = Schema.Struct({
@@ -128,6 +156,11 @@ export const FeatureEntitlement = Schema.Struct({
    * (ADR 0040 §3–4).
    */
   pooled: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The plans that grant this feature, one entry each, in the plan set's order.
+   * A `Balance` reads one source per entry instead of one merged plan count.
+   */
+  planSources: Schema.optionalKey(Schema.Array(PlanSourceView)),
 });
 
 export type FeatureEntitlement = typeof FeatureEntitlement.Type;
@@ -143,6 +176,8 @@ export const EntityEntitlement = Schema.Struct({
   status: EntityStatus,
   createdAt: Schema.DateTimeUtc,
   archivedAt: Schema.optionalKey(Schema.DateTimeUtc),
+  /** The scope's own plan set, so its feature rows can name their plans. */
+  plans: Schema.optionalKey(Plans),
   features: Schema.Record(Schema.String, FeatureEntitlement),
 });
 
@@ -187,6 +222,8 @@ export const EntitlementsState = Schema.Struct({
    * actually has (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /** The account's plan set, one row per active plan (ADR 0039). */
+  plans: Schema.optionalKey(Plans),
   /** The customer's own scope rows. */
   features: Schema.Record(Schema.String, FeatureEntitlement),
   /**
@@ -496,11 +533,14 @@ export class Entitlements extends Domain.View("Entitlements", {
 
       return withAccount(writeScope(debited, event.to, event.toAfter, targetRow), context);
     },
-    TrialStarted: (view, event, context): EntitlementsState =>
-      withAccount(
+    TrialStarted: (view, event, context): EntitlementsState => {
+      const plans = { [event.tier]: planRowOf(event) };
+
+      return withAccount(
         {
           ...view,
           tier: event.tier,
+          plans,
           status: "trialing",
           standing: "good",
           periodStart: event.periodStart,
@@ -524,15 +564,20 @@ export class Entitlements extends Domain.View("Entitlements", {
             false,
             event.resetAt,
             view.billingControls,
+            plans,
           ),
         },
         context,
-      ),
-    SubscriptionActivated: (view, event, context): EntitlementsState =>
-      withAccount(
+      );
+    },
+    SubscriptionActivated: (view, event, context): EntitlementsState => {
+      const plans = { [event.tier]: planRowOf(event) };
+
+      return withAccount(
         {
           ...view,
           tier: event.tier,
+          plans,
           status: "active",
           standing: "good",
           periodStart: event.periodStart,
@@ -556,10 +601,12 @@ export class Entitlements extends Domain.View("Entitlements", {
             false,
             undefined,
             view.billingControls,
+            plans,
           ),
         },
         context,
-      ),
+      );
+    },
     PlanChanged: (view, event, context): EntitlementsState => {
       // A scope's plan set is its own: the entity's rows are rebuilt from the
       // event and the customer's are untouched (ADR 0040 §3).
@@ -568,24 +615,37 @@ export class Entitlements extends Domain.View("Entitlements", {
 
         if (entity === undefined) return withAccount(view, context);
 
-        return withAccount(
-          withEntityFeatures(
-            view,
-            event.entity,
-            featuresOf(
-              event.allowances,
-              event.rates,
-              view.credits,
-              heldOf(entity.features),
-              entity.features,
-              event.remaining,
-              view.periodEnd,
-              view.standing,
-              true,
-              event.resetAt,
-              view.billingControls,
-            ),
+        const plans = withPlan(entity.plans, planRowOf(event));
+
+        const updated = withEntityFeatures(
+          view,
+          event.entity,
+          featuresOf(
+            mergeAllowances(plans),
+            mergeRates(plans),
+            view.credits,
+            heldOf(entity.features),
+            entity.features,
+            event.remaining,
+            view.periodEnd,
+            view.standing,
+            true,
+            event.resetAt,
+            view.billingControls,
+            plans,
           ),
+        );
+
+        const row = updated.entities?.[event.entity];
+
+        return withAccount(
+          {
+            ...updated,
+            entities: {
+              ...updated.entities,
+              [event.entity]: { ...(row ?? entity), plans },
+            },
+          },
           context,
         );
       }
@@ -593,18 +653,20 @@ export class Entitlements extends Domain.View("Entitlements", {
       // A new tier change replaces what the old one owed and the invoice that
       // settled it; carrying either forward would report stale money.
       const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
+      const plans = withPlan(view.plans, planRowOf(event));
 
       return withAccount(
         {
           ...rest,
           tier: event.tier,
+          plans,
           credits: event.credits,
           prepaidCredits: event.prepaidCredits ?? 0,
           ...(event.currency === undefined ? {} : { currency: event.currency }),
           resetAt: event.resetAt ?? {},
           features: featuresOf(
-            event.allowances,
-            event.rates,
+            mergeAllowances(plans),
+            mergeRates(plans),
             // The pool the event records. A mid-period change carries the
             // balance over, so this is the same number it already held; a change
             // applied at the boundary grants the new period's pool, and reading
@@ -619,6 +681,7 @@ export class Entitlements extends Domain.View("Entitlements", {
             true,
             event.resetAt,
             view.billingControls,
+            plans,
           ),
           ...(event.proration === undefined ? {} : { proration: event.proration }),
         },
@@ -878,8 +941,15 @@ export class Entitlements extends Domain.View("Entitlements", {
         withStanding(
           {
             ...view,
+            ...(event.statusAfter === "canceled" || event.statusAfter === "expired"
+              ? event.cancelAtPeriodEndAfter
+                ? {}
+                : { plans: {}, tier: "" }
+              : {}),
             periodStart: event.nextPeriodStart,
             periodEnd: event.nextPeriodEnd,
+            ...(event.credits === undefined ? {} : { credits: event.credits }),
+            ...(event.prepaidCredits === undefined ? {} : { prepaidCredits: event.prepaidCredits }),
             cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
             features: Object.fromEntries(
               Object.entries(view.features).map(([feature, value]) => [
@@ -1314,6 +1384,42 @@ export class Entitlements extends Domain.View("Entitlements", {
     // now: the counters and `remaining` stay the current tier's until the close
     // applies the change and resets them onto the new allowances.
     PlanChangeScheduled: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // A group's cancellation moves nothing until its boundary; the plan set is
+    // still the account's to use. The close that resolves it emits the
+    // `PlanChanged` or `PlanGroupCanceled` this view reads.
+    GroupCancellationScheduled: (view, _event, context): EntitlementsState =>
+      withAccount(view, context),
+    GroupCancellationWithdrawn: (view, _event, context): EntitlementsState =>
+      withAccount(view, context),
+    PlanGroupCanceled: (view, event, context): EntitlementsState => {
+      const plans = withoutGroup(view.plans ?? {}, event.group);
+
+      const remaining = Object.fromEntries(
+        Object.entries(view.features).map(([feature, value]) => [feature, value.remaining]),
+      );
+
+      return withAccount(
+        {
+          ...view,
+          plans,
+          features: featuresOf(
+            mergeAllowances(plans),
+            mergeRates(plans),
+            view.credits,
+            heldOf(view.features),
+            view.features,
+            remaining,
+            view.periodEnd,
+            view.standing,
+            true,
+            view.resetAt,
+            view.billingControls,
+            plans,
+          ),
+        },
+        context,
+      );
+    },
     // A withdrawal moves nothing the account may use: the tier it is on, its
     // counters and its pool are the ones the schedule was going to leave behind.
     TierChangeWithdrawn: (view, _event, context): EntitlementsState => withAccount(view, context),
@@ -1350,7 +1456,11 @@ export class Entitlements extends Domain.View("Entitlements", {
       // tier to describe it. The event carries the catalog's rate cards, so the
       // features exist and `check()` can price them; a credits-only account is
       // spendable (`standing: good`) while it has credits.
-      const standing = pooled.tier === "" && event.balanceAfter > 0 ? "good" : pooled.standing;
+      const standing =
+        pooled.tier === "" && pooled.plans === undefined && event.balanceAfter > 0
+          ? "good"
+          : pooled.standing;
+
       const held = heldOf(pooled.features);
       const features = { ...pooled.features };
 
@@ -1692,6 +1802,53 @@ const withSpendLimit = (
   return { ...next, allowed: allowsOne(standing, judgedOf(next, {})) };
 };
 
+/** The plans that grant one feature, in the plan set's read order. */
+const planSourcesOf = (plans: Plans | undefined, feature: string): ReadonlyArray<PlanSourceView> =>
+  planOrder(plans).flatMap((row) => {
+    const allowance = row.allowances[feature];
+
+    return allowance === undefined
+      ? []
+      : [
+          {
+            planId: row.planId,
+            ...(row.group === "default" ? {} : { group: row.group }),
+            ...(row.addOn ? { addOn: true } : {}),
+            included: allowance.included,
+            resets: allowance.resets,
+          },
+        ];
+  });
+
+/** The plan row an activation event leaves behind. */
+const planRowOf = (event: {
+  readonly tier: string;
+  readonly group?: string;
+  readonly addOn?: boolean;
+  readonly allowances: PlanRow["allowances"];
+  readonly credits: number;
+  readonly planCredits?: number;
+  readonly prepaidCredits?: number;
+  readonly creditsExpire: PlanRow["creditsExpire"];
+  readonly topUp?: PlanRow["topUp"];
+  readonly rates: PlanRow["rates"];
+  readonly interval?: NonNullable<PlanRow["interval"]>;
+  readonly currency?: string;
+  readonly price?: NonNullable<PlanRow["price"]>;
+}): PlanRow => ({
+  planId: event.tier,
+  group: event.group ?? "default",
+  addOn: event.addOn ?? false,
+  allowances: event.allowances,
+  credits: event.planCredits ?? event.credits - (event.prepaidCredits ?? 0),
+  creditsExpire: event.creditsExpire,
+  ...(event.topUp === undefined ? {} : { topUp: event.topUp }),
+  rates: event.rates,
+  ...(event.interval === undefined ? {} : { interval: event.interval }),
+  ...(event.currency === undefined ? {} : { currency: event.currency }),
+  ...(event.price === undefined ? {} : { price: event.price }),
+});
+
 const featuresOf = (
   allowances: Readonly<
     Record<
@@ -1719,6 +1876,7 @@ const featuresOf = (
   keepUsage = false,
   resetAt?: Readonly<Record<string, DateTime.Utc>>,
   billingControls?: BillingControls,
+  plans?: Plans,
 ) => ({
   ...Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
@@ -1726,6 +1884,8 @@ const featuresOf = (
       const reserved = keepUsage ? (previous[feature]?.reserved ?? 0) : 0;
       const billed = keepUsage ? (previous[feature]?.billed ?? 0) : 0;
       const priced = keepUsage ? previous[feature]?.priced : undefined;
+
+      const planSources = planSourcesOf(plans, feature);
 
       if (isQuantityGrant(allowance)) {
         const free = typeof allowance.included === "number" ? allowance.included : 0;
@@ -1756,6 +1916,7 @@ const featuresOf = (
             resets: "never",
             resetsAt: null,
             ...(allowance.pooled === true ? { pooled: true } : {}),
+            ...(planSources.length === 0 ? {} : { planSources }),
           },
         ];
       }
@@ -1799,6 +1960,7 @@ const featuresOf = (
           resets: allowance.resets,
           resetsAt: allowance.resets === "never" ? null : (resetAt?.[feature] ?? periodEnd),
           ...(allowance.pooled === true ? { pooled: true } : {}),
+          ...(planSources.length === 0 ? {} : { planSources }),
           // A plan change keeps a grant: it belongs to the customer, not to the
           // plan that was active when it was made (ADR 0037).
           ...((previous[feature]?.grants?.length ?? 0) > 0

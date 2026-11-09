@@ -10,6 +10,7 @@ import type { Catalog } from "../Catalog.ts";
 import type { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import type { Proration } from "../Proration.ts";
+import { CancelGroup, UncancelGroup } from "../Subscription/CancelGroup.command.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
 import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Resume } from "../Subscription/Resume.command.ts";
@@ -27,6 +28,7 @@ import {
   subscribeInputOf,
   withGrants,
 } from "../TierCommand.ts";
+import { defaultPlanFor } from "./Cancel.binding.ts";
 
 /** What a caller wants decided before anything is recorded. */
 export type PreviewCommand =
@@ -48,6 +50,8 @@ export type PreviewCommand =
   | { readonly kind: "withdrawTierChange" }
   | { readonly kind: "cancel" }
   | { readonly kind: "resume" }
+  | { readonly kind: "cancelGroup"; readonly group: string }
+  | { readonly kind: "uncancelGroup"; readonly group: string }
   | { readonly kind: "setQuantity"; readonly feature: string; readonly quantity: number };
 
 /** The account and the action to decide without recording. */
@@ -84,7 +88,9 @@ type Previewable =
   | WithdrawTierChange
   | ScheduleCancellation
   | Resume
-  | SetQuantity;
+  | SetQuantity
+  | CancelGroup
+  | UncancelGroup;
 
 /** What building a preview command produced: a command, a mismatch, or a name the catalog lacks. */
 type BuiltCommand =
@@ -108,6 +114,25 @@ const commandOf = (
   if (input.kind === "cancel") return { command: new ScheduleCancellation() };
 
   if (input.kind === "resume") return { command: new Resume() };
+
+  if (input.kind === "cancelGroup") {
+    const fallback = defaultPlanFor(
+      catalog,
+      input.group,
+      state._tag === "Subscribed" ? currencyOf(state) : undefined,
+    );
+
+    return {
+      command: new CancelGroup({
+        group: input.group,
+        ...(fallback === undefined ? {} : { fallback }),
+      }),
+    };
+  }
+
+  if (input.kind === "uncancelGroup") {
+    return { command: new UncancelGroup({ group: input.group }) };
+  }
 
   if (input.kind === "setQuantity") {
     return {

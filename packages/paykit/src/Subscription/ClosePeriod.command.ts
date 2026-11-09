@@ -1,6 +1,7 @@
 import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import { PlanGroupCanceled } from "./CancelGroup.command.ts";
 import { PlanChanged } from "./ChangeTier.command.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { UsageReleased } from "./ReleaseHold.command.ts";
@@ -28,6 +29,14 @@ export class PeriodClosed extends Domain.Event("PeriodClosed", {
   statusAfter: SubscriptionStatus,
   standingAfter: Standing,
   cancelAtPeriodEndAfter: Schema.Boolean,
+  /**
+   * The pool the next period starts with, when a landing plan grants one. A
+   * phase applied by its own deadline has already moved the plan, so this is
+   * the only event that carries the new grant into the close.
+   */
+  credits: Schema.optionalKey(Schema.Int),
+  /** The part of that pool a one-off pack bought. */
+  prepaidCredits: Schema.optionalKey(Schema.Int),
 }) {}
 
 /**
@@ -72,6 +81,14 @@ export class ClosePeriod extends Domain.Command("ClosePeriod", {
   input: { periodEnd: Schema.DateTimeUtc },
   // A scheduled tier change lands before the reset, so the new tier's
   // allowances are the ones the next period starts on.
-  events: [PlanChanged, PlanItemReset, UsageReleased, PeriodClosed, UsageReset, CreditsExpired],
+  events: [
+    PlanChanged,
+    PlanGroupCanceled,
+    PlanItemReset,
+    UsageReleased,
+    PeriodClosed,
+    UsageReset,
+    CreditsExpired,
+  ],
   rejects: [NotSubscribed, PeriodNotClosed],
 }) {}

@@ -181,6 +181,18 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({ cancelAtPeriodEndAfter: false }),
   },
   {
+    tag: "GroupCancellationScheduled",
+    body: body({ group: "support", planId: "support" }),
+  },
+  {
+    tag: "GroupCancellationWithdrawn",
+    body: body({ group: "support" }),
+  },
+  {
+    tag: "PlanGroupCanceled",
+    body: body({ group: "support", planId: "support" }),
+  },
+  {
     tag: "UsageReserved",
     body: body({
       holdId: "hold_dev_1",

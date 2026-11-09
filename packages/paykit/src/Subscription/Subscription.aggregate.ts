@@ -33,10 +33,21 @@ import {
 } from "./Allowance.verdict.ts";
 import { AlreadyCanceled } from "./AlreadyCanceled.rejection.ts";
 import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
+import { ApplyPlanPhase } from "./ApplyPlanPhase.command.ts";
 import { ArchiveEntity, EntityArchivedEvent } from "./ArchiveEntity.command.ts";
 import { AttachEntity, EntityAttached } from "./AttachEntity.command.ts";
 import { AttachProviderRef, ProviderRefAttached } from "./AttachProviderRef.command.ts";
+import {
+  CancelGroup,
+  DefaultPlanNotCancelable,
+  GroupCancellationScheduled,
+  GroupCancellationWithdrawn,
+  PlanGroupCanceled,
+  PlanGroupEmpty,
+  UncancelGroup,
+} from "./CancelGroup.command.ts";
 import { CancelImmediately, SubscriptionCanceled } from "./CancelImmediately.command.ts";
+import { ChangePlans, type PlanMove } from "./ChangePlans.command.ts";
 import {
   ChangeTier,
   DowngradeBelowCeiling,
@@ -93,13 +104,21 @@ import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { NotScheduled } from "./NotScheduled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PeriodEnded } from "./PeriodEnded.command.ts";
+import { PlanGroupOccupied } from "./PlanGroupOccupied.rejection.ts";
 import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
+import { PlanPhaseAtSameInstant } from "./PlanPhaseAtSameInstant.rejection.ts";
 import { PlanPhaseNamesAddOn } from "./PlanPhaseNamesAddOn.rejection.ts";
 import { PlanPhaseNotFuture } from "./PlanPhaseNotFuture.rejection.ts";
 import {
   DEFAULT_PLAN_GROUP,
+  mergeAllowances,
+  phasesOfGroup,
+  primaryPlan,
   type PlanPhase,
   type PlanRow,
+  type Plans,
+  planInGroup,
+  withoutGroup,
   withoutGroupPhases,
   withoutPhase,
   withPhase,
@@ -233,6 +252,7 @@ import {
   reversedWith,
   refundableOf,
   closingHold,
+  recordedCount,
   reservedCreditsOf,
   reservedOf,
   resetOf,
@@ -323,6 +343,66 @@ const remainingAfterChange = (
 const emptyAllowances = (allowances: Readonly<Record<string, unknown>>): boolean =>
   Object.keys(allowances).length === 0;
 
+/**
+ * What every feature has left after one plan in a set moves. A feature the
+ * moved plans grant is re-derived from the merged set; every other group's
+ * counter is preserved, so a move in one group cannot reset another group's
+ * balance (ADR 0039 §1–2).
+ */
+const remainingAfterPlanMove = (
+  state: SubscribedState,
+  plans: Plans,
+  moved: ReadonlyArray<PlanRow>,
+): Record<string, number | null> => {
+  const movedFeatures = new Set(moved.flatMap((row) => Object.keys(row.allowances)));
+
+  return Object.fromEntries(
+    Object.entries(mergeAllowances(plans)).map(([feature, allowance]) => {
+      if (!movedFeatures.has(feature)) {
+        const kept = recordedCount(state.remaining, feature);
+
+        return [feature, kept === undefined ? includedRemainingOf(allowance) : kept];
+      }
+
+      if (isQuantityGrant(allowance)) {
+        const included = typeof allowance.included === "number" ? allowance.included : 0;
+        const quantity = quantityAfterTierChange(state.quantities?.[feature] ?? included, included);
+
+        return [feature, quantity - occupiedOf(state, feature)];
+      }
+
+      const spendable = includedRemainingOf(allowance);
+
+      return [
+        feature,
+        spendable === null
+          ? null
+          : spendable -
+            usedOf(state, feature) -
+            reservedOf(state, feature) +
+            grantTotalOf(state, feature),
+      ];
+    }),
+  );
+};
+
+/** The plan row a move writes, before its event exists. */
+const rowOfMove = (move: PlanMove, state: SubscribedState): PlanRow => ({
+  planId: move.tier,
+  group: move.group ?? DEFAULT_PLAN_GROUP,
+  addOn: move.addOn === true,
+  allowances: move.allowances,
+  credits: move.credits,
+  creditsExpire: move.creditsExpire,
+  ...(move.topUp === undefined ? {} : { topUp: move.topUp }),
+  rates: move.rates,
+  ...(move.price?.interval === undefined ? {} : { interval: move.price.interval }),
+  ...((move.price?.currency ?? currencyOf(state)) === undefined
+    ? {}
+    : { currency: (move.price?.currency ?? currencyOf(state))! }),
+  ...(move.price === undefined ? {} : { price: move.price }),
+});
+
 const subscribed = (state: SubscriptionState, account: string): SubscribedState | NotSubscribed =>
   state._tag === "Subscribed" ? state : new NotSubscribed({ account });
 
@@ -372,26 +452,95 @@ const releaseEvent = (
 };
 
 const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
+  const prepaid = prepaidCreditsOf(state);
+
   // Every phase due at the boundary lands first, in start order: `UsageReset`
   // reads the allowances in state, so the plans have to be in the log before
-  // the counters reset onto them (ADR 0039 §3). A cancellation wins the
-  // boundary, so no phase lands and the close into a terminal standing drops
-  // the ones that were waiting (ADR 0039 §5 and §7).
-  const due = state.cancelAtPeriodEnd ? [] : duePhasesOf(state, periodEnd);
+  // the counters reset onto them (ADR 0039 §3). A cancellation wins its own
+  // group's boundary; a whole-account cancellation wins every group and ends
+  // the standing (ADR 0039 §5 and §7).
+  const due = state.cancelAtPeriodEnd
+    ? []
+    : duePhasesOf(state, periodEnd).filter(
+        (phase) => state.cancellations?.[phase.group] === undefined,
+      );
+
+  const cancellations = state.cancelAtPeriodEnd ? [] : Object.entries(state.cancellations ?? {});
+
+  // A group's cancellation resolves to its default plan at the boundary. The
+  // fallback terms were frozen on the cancellation, so the close needs no
+  // catalog; a group with no default is emptied (ADR 0039 §5).
+  let workingPlans = state.plans;
+  const cancellationEvents: Array<PlanChanged | PlanGroupCanceled> = [];
+
+  for (const [group, cancellation] of cancellations) {
+    const current = planInGroup(workingPlans, group);
+
+    if (current === undefined) continue;
+
+    if (cancellation.fallback === undefined) {
+      workingPlans = withoutGroup(workingPlans, group);
+      cancellationEvents.push(new PlanGroupCanceled({ group, planId: current.planId }));
+      continue;
+    }
+
+    const row: PlanRow = { ...cancellation.fallback, group, addOn: false };
+    workingPlans = withPlan(workingPlans, row);
+    const remaining = remainingAfterPlanMove(state, workingPlans, [row]);
+
+    cancellationEvents.push(
+      new PlanChanged({
+        tier: row.planId,
+        ...(group === DEFAULT_PLAN_GROUP ? {} : { group }),
+        allowances: row.allowances,
+        remaining,
+        // A fallback in the default group is the plan the next period runs on,
+        // so it grants its pool the way a landing phase does. A fallback in
+        // another group leaves the pool alone.
+        credits: group === DEFAULT_PLAN_GROUP ? row.credits + prepaid : state.credits,
+        ...(group === DEFAULT_PLAN_GROUP && prepaid > 0 ? { prepaidCredits: prepaid } : {}),
+        planCredits: row.credits,
+        creditsExpire: row.creditsExpire,
+        ...(row.topUp === undefined ? {} : { topUp: row.topUp }),
+        rates: row.rates,
+        ...(row.currency === undefined ? {} : { currency: row.currency }),
+        ...(row.interval === undefined ? {} : { interval: row.interval }),
+        ...(row.price === undefined ? {} : { priceAfter: row.price }),
+        ...(() => {
+          const resetAt = { ...state.resetAt, ...resetWindowsOf(row.allowances, periodEnd) };
+
+          return Object.keys(resetAt).length === 0 ? {} : { resetAt };
+        })(),
+      }),
+    );
+  }
+
   // The plan the next period runs on. A phase scheduled beyond this boundary is
-  // not due and stays in the schedule.
-  const landing = due[due.length - 1];
+  // not due and stays in the schedule. A default-group fallback is a landing
+  // too: its cancellation event already moved the plan, but the pool and the
+  // reset still have to start from it.
+  const fallbackLanding = cancellations.find(
+    ([group, cancellation]) => group === DEFAULT_PLAN_GROUP && cancellation.fallback !== undefined,
+  )?.[1].fallback;
+
+  const appliedLanding =
+    state.lastPhaseAppliedAt !== undefined &&
+    DateTime.toEpochMillis(state.lastPhaseAppliedAt) === DateTime.toEpochMillis(periodEnd)
+      ? primaryPlan(workingPlans)
+      : undefined;
+
+  const landing = due[due.length - 1] ?? fallbackLanding ?? appliedLanding;
+  const nextPeriodStart = periodEnd;
+
   // The boundary is a new period, so it grants the pool the way an activation
   // does: the landing plan's credits plus whatever one-off pack the account
   // still holds. Replacing the pool with the grant alone would spend a pack the
   // customer paid for, and dropping `prepaidCredits` would stop protecting it.
-  const prepaid = prepaidCreditsOf(state);
   const credits = landing === undefined ? state.credits : landing.credits + prepaid;
-  const nextPeriodStart = periodEnd;
 
   // A phase keeps the quantity a non-consumable feature holds, so its new
   // remaining is the new cap less that quantity — not the new grant.
-  const remainingOfPhase = (phase: PlanPhase) =>
+  const remainingOfPhase = (phase: PlanPhase | PlanRow) =>
     Object.fromEntries(
       Object.entries(startingRemaining(phase.allowances, state.quantities, state.occupied)).map(
         ([feature, remaining]) => [
@@ -419,21 +568,31 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
         ...(phase.interval === undefined ? {} : { interval: phase.interval }),
         ...(phase.price === undefined ? {} : { priceAfter: phase.price }),
         ...(() => {
-          const resetAt = resetWindowsOf(phase.allowances, nextPeriodStart);
+          const resetAt = {
+            ...state.resetAt,
+            ...resetWindowsOf(phase.allowances, nextPeriodStart),
+          };
 
           return Object.keys(resetAt).length === 0 ? {} : { resetAt };
         })(),
       }),
   );
 
-  const allowances = landing?.allowances ?? allowancesOf(state);
-  const nextPeriodEnd = addInterval(nextPeriodStart, intervalOf(state));
+  const allowances = landing?.allowances ?? mergeAllowances(workingPlans);
 
-  const statusAfter: SubscriptionStatus = state.cancelAtPeriodEnd
-    ? "canceled"
-    : state.status === "trialing"
-      ? "active"
-      : state.status;
+  const nextPeriodEnd = addInterval(
+    nextPeriodStart,
+    primaryPlan(workingPlans)?.interval ?? "month",
+  );
+
+  const stillOpen = Object.values(workingPlans).some((row) => !row.addOn);
+
+  const statusAfter: SubscriptionStatus =
+    state.cancelAtPeriodEnd || !stillOpen
+      ? "canceled"
+      : state.status === "trialing"
+        ? "active"
+        : state.status;
 
   // One reset per allowance, so `remaining` and `carried` cannot disagree about
   // what the closing period left behind.
@@ -494,7 +653,8 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // nothing to return. With a scheduled change the old grant is replaced by the
   // new tier's grant at the boundary, so this close expires nothing of its own:
   // the new grant's `creditsExpire` rule applies at the *next* close.
-  const expiring = landing === undefined ? expiringCreditsOf(state) : 0;
+  const effective = { ...state, plans: workingPlans };
+  const expiring = landing === undefined ? expiringCreditsOf(effective) : 0;
   // A boundary clears the holds of every feature that does not keep its
   // counters. Record the return per hold, so the timeline says what left the
   // allowance instead of only `UsageReset` dropping the entities.
@@ -555,6 +715,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   });
 
   return [
+    ...cancellationEvents,
     ...moved,
     ...entityResets,
     ...resetReleases,
@@ -566,6 +727,8 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
       statusAfter,
       standingAfter: standingOf(statusAfter),
       cancelAtPeriodEndAfter: state.cancelAtPeriodEnd,
+      ...(landing === undefined ? {} : { credits }),
+      ...(landing === undefined || prepaid === 0 ? {} : { prepaidCredits: prepaid }),
     }),
     new UsageReset({
       remaining: Object.fromEntries(resets.map(([feature, reset]) => [feature, reset.remaining])),
@@ -575,7 +738,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
     // Expiry is a property of the grant: a "never" pool survives the boundary,
     // a one-off pack bought from a period pool is never expired, and a scheduled
     // change's new grant is for the period that starts here.
-    ...(landing === undefined && creditsExpireOf(state) === "period"
+    ...(landing === undefined && creditsExpireOf(effective) === "period"
       ? [
           new CreditsExpired({
             amount: expiring,
@@ -904,6 +1067,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     StartTrial,
     Subscribe,
     ChangeTier,
+    ChangePlans,
+    ApplyPlanPhase,
     TrackUsage,
     RecordPayment,
     RecordPaymentFailure,
@@ -925,6 +1090,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     TopUpCooldownElapsed,
     ConsumeCredits,
     CancelImmediately,
+    CancelGroup,
+    UncancelGroup,
     ScheduleCancellation,
     ScheduleTierChange,
     WithdrawTierChange,
@@ -1203,6 +1370,277 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ...(command.proration === undefined ? {} : { proration: command.proration }),
           ...(() => {
             const resetAt = resetWindowsOf(command.allowances, now);
+
+            return Object.keys(resetAt).length === 0 ? {} : { resetAt };
+          })(),
+        }),
+      ];
+    },
+    ChangePlans: (state, command, { id, now }) => {
+      if (
+        command.moves.length === 0 &&
+        (command.cancels ?? []).length === 0 &&
+        (command.uncancels ?? []).length === 0
+      ) {
+        return [];
+      }
+
+      const current = subscribed(state, id);
+
+      if (Schema.is(NotSubscribed)(current)) return current;
+
+      if (isTerminalStatus(current.status)) {
+        return new StandingEnded({ account: id, status: current.status });
+      }
+
+      const currentCurrency = currencyOf(current);
+      const seenGroups = new Map<string, string>();
+
+      const seenInstants = new Map<number, string>();
+
+      const staged: Array<{
+        readonly move: PlanMove;
+        readonly row: PlanRow;
+        readonly at: DateTime.Utc | undefined;
+      }> = [];
+
+      // The whole list is judged against the standing before the operation:
+      // one refusal refuses every move (ADR 0039 §8).
+      for (const move of command.moves) {
+        if (emptyAllowances(move.allowances)) {
+          return new PlanNotInCatalog({ tier: move.tier });
+        }
+
+        const priceCurrency = move.price?.currency ?? unitPriceCurrencyOf(move.allowances);
+
+        if (
+          currentCurrency !== undefined &&
+          priceCurrency !== undefined &&
+          currentCurrency !== priceCurrency
+        ) {
+          return new CurrencyMismatch({ expected: currentCurrency, actual: priceCurrency });
+        }
+
+        if (move.at !== undefined) {
+          if (move.addOn === true) return new PlanPhaseNamesAddOn({ tier: move.tier });
+
+          const atMs = DateTime.toEpochMillis(move.at);
+
+          if (
+            atMs <= DateTime.toEpochMillis(now) &&
+            atMs < DateTime.toEpochMillis(current.period.end)
+          ) {
+            return new PlanPhaseNotFuture({ tier: move.tier, at: move.at, now });
+          }
+
+          const occupying = seenInstants.get(atMs);
+
+          if (occupying !== undefined) {
+            return new PlanPhaseAtSameInstant({ tier: move.tier, occupying, at: move.at });
+          }
+
+          seenInstants.set(atMs, move.tier);
+        } else if (move.addOn !== true) {
+          const group = move.group ?? DEFAULT_PLAN_GROUP;
+          const occupying = seenGroups.get(group);
+
+          if (occupying !== undefined) {
+            return new PlanGroupOccupied({ group, tier: move.tier, occupying });
+          }
+
+          seenGroups.set(group, move.tier);
+
+          for (const [feature, allowance] of Object.entries(move.allowances)) {
+            const refusal = downgradeOf(allowance, {
+              used: usedOf(current, feature),
+              reserved: reservedOf(current, feature),
+              billed: billedOf(current, feature),
+            });
+
+            switch (refusal._tag) {
+              case "Allowed":
+                break;
+              case "Usage":
+                return new DowngradeBelowUsage({
+                  feature,
+                  included: refusal.included,
+                  used: refusal.used,
+                  ...(refusal.reserved === undefined ? {} : { reserved: refusal.reserved }),
+                });
+              case "Spend":
+                return new DowngradeBelowSpend({
+                  feature,
+                  moneyCap: refusal.moneyCap,
+                  billed: refusal.billed,
+                });
+              case "Ceiling":
+                return new DowngradeBelowCeiling({
+                  feature,
+                  ceiling: refusal.ceiling,
+                  used: refusal.used,
+                  ...(refusal.reserved === undefined ? {} : { reserved: refusal.reserved }),
+                });
+            }
+          }
+        }
+
+        staged.push({ move, row: rowOfMove(move, current), at: move.at });
+      }
+
+      const cancellations = command.cancels ?? [];
+      const uncancels = command.uncancels ?? [];
+      const seenCancels = new Set<string>();
+
+      for (const cancellation of cancellations) {
+        const group = cancellation.group;
+        const currentPlan = planInGroup(current.plans, group);
+
+        if (currentPlan === undefined) return new PlanGroupEmpty({ group });
+
+        if (current.cancellations?.[group] !== undefined || seenCancels.has(group)) {
+          return new AlreadyCanceled();
+        }
+
+        if (cancellation.fallback?.planId === currentPlan.planId) {
+          return new DefaultPlanNotCancelable({ group, planId: currentPlan.planId });
+        }
+
+        seenCancels.add(group);
+      }
+
+      // An uncancel in the same operation as a new cancellation is a request
+      // that contradicts itself: the list is judged against the standing
+      // before the operation, so there is nothing to take back yet.
+      for (const group of uncancels) {
+        if (seenCancels.has(group) || current.cancellations?.[group] === undefined) {
+          return new NotScheduled();
+        }
+      }
+
+      let working = current;
+      let workingPlans = current.plans;
+      const prepaid = prepaidCreditsOf(current);
+
+      // Every move is recorded in the operation's order, and an immediate move
+      // folds its row into the working set so the next move sees the group it
+      // changed. No move re-grants the pool: a multi move is a plan-set move,
+      // not a new purchase.
+      const moveEvents = staged.map(({ move, row, at }) => {
+        if (at !== undefined) {
+          return new PlanChangeScheduled({
+            tier: move.tier,
+            ...(row.group === DEFAULT_PLAN_GROUP ? {} : { group: row.group }),
+            allowances: move.allowances,
+            ...(move.price === undefined ? {} : { price: move.price }),
+            credits: move.credits,
+            creditsExpire: move.creditsExpire,
+            ...(move.topUp === undefined ? {} : { topUp: move.topUp }),
+            rates: move.rates,
+            ...(row.currency === undefined ? {} : { currency: row.currency }),
+            ...(row.interval === undefined ? {} : { interval: row.interval }),
+            at,
+          });
+        }
+
+        const plans = withPlan(workingPlans, row);
+        const remaining = remainingAfterPlanMove(working, plans, [row]);
+        workingPlans = plans;
+        working = { ...working, plans, remaining };
+
+        return new PlanChanged({
+          tier: move.tier,
+          ...(row.group === DEFAULT_PLAN_GROUP ? {} : { group: row.group }),
+          ...(row.addOn ? { addOn: true } : {}),
+          allowances: move.allowances,
+          remaining,
+          credits: current.credits,
+          ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
+          ...(move.credits === current.credits - prepaid ? {} : { planCredits: move.credits }),
+          // A move in a group supersedes the phases that group had waiting;
+          // an add-on fills no group, so it supersedes nothing (ADR 0039 §6).
+          ...(row.addOn || phasesOfGroup(current.schedule, row.group).length === 0
+            ? {}
+            : { supersedesSchedule: true }),
+          creditsExpire: move.creditsExpire,
+          ...(move.topUp === undefined ? {} : { topUp: move.topUp }),
+          rates: move.rates,
+          ...(row.currency === undefined ? {} : { currency: row.currency }),
+          ...(row.interval === undefined ? {} : { interval: row.interval }),
+          ...(priceOf(current) === undefined ? {} : { priceBefore: priceOf(current) }),
+          ...(move.price === undefined ? {} : { priceAfter: move.price }),
+          ...(() => {
+            const resetAt = { ...current.resetAt, ...resetWindowsOf(move.allowances, now) };
+
+            return Object.keys(resetAt).length === 0 ? {} : { resetAt };
+          })(),
+        });
+      });
+
+      return [
+        ...moveEvents,
+        ...cancellations.map(
+          (cancellation) =>
+            new GroupCancellationScheduled({
+              group: cancellation.group,
+              planId: planInGroup(current.plans, cancellation.group)!.planId,
+              ...(cancellation.fallback === undefined
+                ? {}
+                : {
+                    fallback: {
+                      ...cancellation.fallback,
+                      group: cancellation.group,
+                      addOn: false,
+                    },
+                  }),
+            }),
+        ),
+        ...uncancels.map((group) => new GroupCancellationWithdrawn({ group })),
+      ];
+    },
+    ApplyPlanPhase: (state, command, { now }) => {
+      if (state._tag !== "Subscribed") return [];
+
+      // A terminal standing has no plan to move, so a leftover deadline is a
+      // no-op rather than a move (ADR 0020, ADR 0039 §7).
+      if (isTerminalStatus(state.status)) return [];
+
+      // The deadline applies exactly the phase it names. A withdrawal, a later
+      // move in the group or a cancellation leaves the deadline to fire as a
+      // no-op, the same guard `RetryTopUp` uses for a stale rung (ADR 0031).
+      const phase = duePhasesOf(state, now)[0];
+
+      if (phase === undefined) return [];
+
+      if (phase.planId !== command.planId) return [];
+
+      if (DateTime.toEpochMillis(phase.at) !== DateTime.toEpochMillis(command.at)) return [];
+
+      const plans = withPlan(state.plans, phase);
+      const remaining = remainingAfterPlanMove(state, plans, [phase]);
+      const prepaid = prepaidCreditsOf(state);
+
+      return [
+        new PlanChanged({
+          tier: phase.planId,
+          ...(phase.group === DEFAULT_PLAN_GROUP ? {} : { group: phase.group }),
+          ...(phase.addOn ? { addOn: true } : {}),
+          allowances: phase.allowances,
+          remaining,
+          // The phase moves the plan, it does not re-grant the pool; the close
+          // that follows at the boundary grants the new plan's pool and resets
+          // the counters onto it (ADR 0039 §9).
+          credits: state.credits,
+          ...(prepaid === 0 ? {} : { prepaidCredits: prepaid }),
+          planCredits: phase.credits,
+          creditsExpire: phase.creditsExpire,
+          ...(phase.topUp === undefined ? {} : { topUp: phase.topUp }),
+          rates: phase.rates,
+          ...(phase.currency === undefined ? {} : { currency: phase.currency }),
+          ...(phase.interval === undefined ? {} : { interval: phase.interval }),
+          ...(phase.price === undefined ? {} : { priceAfter: phase.price }),
+          appliedPhaseAt: phase.at,
+          ...(() => {
+            const resetAt = { ...state.resetAt, ...resetWindowsOf(phase.allowances, now) };
 
             return Object.keys(resetAt).length === 0 ? {} : { resetAt };
           })(),
@@ -2662,6 +3100,52 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       return [new TierChangeWithdrawn({ tier: next.planId })];
     },
+    CancelGroup: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
+      if (isTerminalStatus(state.status)) {
+        return new StandingEnded({ account: id, status: state.status });
+      }
+
+      const group = command.group ?? DEFAULT_PLAN_GROUP;
+      const current = planInGroup(state.plans, group);
+
+      // A group with no plan has no cancellation to wait for. The add-ons and
+      // the other groups are not a cancellation's operand (ADR 0039 §5).
+      if (current === undefined) return new PlanGroupEmpty({ group });
+
+      if (state.cancellations?.[group] !== undefined) return new AlreadyCanceled();
+
+      // The fallback is the group's default plan. A cancellation that resolves
+      // to the plan it cancels records an intent with no effect, so it is a
+      // refusal rather than a no-op (ADR 0039 §5).
+      if (command.fallback?.planId === current.planId) {
+        return new DefaultPlanNotCancelable({ group, planId: current.planId });
+      }
+
+      return [
+        new GroupCancellationScheduled({
+          group,
+          planId: current.planId,
+          ...(command.fallback === undefined
+            ? {}
+            : { fallback: { ...command.fallback, group, addOn: false } }),
+        }),
+      ];
+    },
+    UncancelGroup: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
+      if (isTerminalStatus(state.status)) {
+        return new StandingEnded({ account: id, status: state.status });
+      }
+
+      const group = command.group ?? DEFAULT_PLAN_GROUP;
+
+      if (state.cancellations?.[group] === undefined) return new NotScheduled();
+
+      return [new GroupCancellationWithdrawn({ group })];
+    },
     ScheduleCancellation: (state, command, { id }) => {
       if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
 
@@ -2795,8 +3279,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       return {
         ...state,
         // A terminal standing carries no future: the schedule it was holding is
-        // dropped with the cancellation (ADR 0020, ADR 0039 §7).
+        // dropped with the cancellation, and the plan rows remain as history
+        // for the read model (ADR 0020, ADR 0039 §7).
         schedule: [],
+        cancellations: {},
         status: event.statusAfter,
         cancelAtPeriodEnd: false,
         period: { ...state.period, end: event.canceledAt },
@@ -2804,6 +3290,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     PlanChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
+
+      // A move in a group supersedes a cancellation waiting in it. Every other
+      // group's cancellation is untouched (ADR 0039 §5–6).
+      const cancellations = Object.fromEntries(
+        Object.entries(state.cancellations ?? {}).filter(
+          ([group]) => group !== (event.group ?? DEFAULT_PLAN_GROUP),
+        ),
+      );
 
       const {
         proration: _previousProration,
@@ -2845,37 +3339,41 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           : withoutPhase(state.schedule, event.tier);
 
       if (event.entity !== undefined) {
-        return withScope(state, event.entity, (record) => ({
-          ...record,
-          plans: withPlan(record.plans, row),
-          // A feature the new plan drops stays only while the scope still holds
-          // a grant for it: a lifetime grant is not the plan's to remove.
-          remaining: {
-            ...Object.fromEntries(
-              Object.entries(record.remaining).filter(
-                ([feature]) =>
-                  event.remaining[feature] === undefined &&
-                  Object.values(record.grants ?? {}).some((grant) => grant.feature === feature),
+        return {
+          ...withScope(state, event.entity, (record) => ({
+            ...record,
+            plans: withPlan(record.plans, row),
+            // A feature the new plan drops stays only while the scope still holds
+            // a grant for it: a lifetime grant is not the plan's to remove.
+            remaining: {
+              ...Object.fromEntries(
+                Object.entries(record.remaining).filter(
+                  ([feature]) =>
+                    event.remaining[feature] === undefined &&
+                    Object.values(record.grants ?? {}).some((grant) => grant.feature === feature),
+                ),
               ),
-            ),
-            ...event.remaining,
-          },
-          resetAt: event.resetAt ?? {},
-          quantities: Object.fromEntries(
-            Object.entries(event.allowances).flatMap(([feature, allowance]) => {
-              if (!isQuantityGrant(allowance)) return [];
-              const included = typeof allowance.included === "number" ? allowance.included : 0;
-              const held = record.quantities?.[feature] ?? included;
+              ...event.remaining,
+            },
+            resetAt: event.resetAt ?? {},
+            quantities: Object.fromEntries(
+              Object.entries(event.allowances).flatMap(([feature, allowance]) => {
+                if (!isQuantityGrant(allowance)) return [];
+                const included = typeof allowance.included === "number" ? allowance.included : 0;
+                const held = record.quantities?.[feature] ?? included;
 
-              return [[feature, quantityAfterTierChange(held, included)]];
-            }),
-          ),
-        }));
+                return [[feature, quantityAfterTierChange(held, included)]];
+              }),
+            ),
+          })),
+          cancellations,
+        };
       }
 
       return {
         ...rest,
         plans: withPlan(state.plans, row),
+        cancellations,
         schedule,
         // A change re-establishes the line and the pool — a fresh line with a
         // new pool deserves a fresh refill budget (ADR 0031). The failure is
@@ -2895,17 +3393,24 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         },
         credits: event.credits,
         prepaidCredits: event.prepaidCredits ?? 0,
+        ...(event.appliedPhaseAt === undefined ? {} : { lastPhaseAppliedAt: event.appliedPhaseAt }),
         resetAt: event.resetAt ?? {},
-        quantities: Object.fromEntries(
-          Object.entries(event.allowances).flatMap(([feature, allowance]) => {
-            if (!isQuantityGrant(allowance)) return [];
-            const included = typeof allowance.included === "number" ? allowance.included : 0;
+        quantities: {
+          ...state.quantities,
+          ...Object.fromEntries(
+            Object.entries(event.allowances).flatMap(([feature, allowance]) => {
+              if (!isQuantityGrant(allowance)) return [];
+              const included = typeof allowance.included === "number" ? allowance.included : 0;
 
-            return [
-              [feature, quantityAfterTierChange(state.quantities?.[feature] ?? included, included)],
-            ];
-          }),
-        ),
+              return [
+                [
+                  feature,
+                  quantityAfterTierChange(state.quantities?.[feature] ?? included, included),
+                ],
+              ];
+            }),
+          ),
+        },
         // A new tier change replaces what the old one owed; it does not add to
         // it, and an invoice for the old amount no longer applies.
         ...(event.proration === undefined ? {} : { proration: event.proration }),
@@ -3260,21 +3765,62 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       state._tag === "Subscribed"
         ? { ...state, cancelAtPeriodEnd: event.cancelAtPeriodEndAfter }
         : state,
+    GroupCancellationScheduled: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            // A cancellation wins its group's boundary, so the phases that
+            // group still had waiting are dropped with it (ADR 0039 §5).
+            schedule: withoutGroupPhases(state.schedule, event.group),
+            cancellations: {
+              ...state.cancellations,
+              [event.group]: {
+                planId: event.planId,
+                ...(event.fallback === undefined ? {} : { fallback: event.fallback }),
+              },
+            },
+          }
+        : state,
+    GroupCancellationWithdrawn: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { [event.group]: _withdrawn, ...rest } = state.cancellations ?? {};
+
+      return { ...state, cancellations: rest };
+    },
+    PlanGroupCanceled: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+      const { [event.group]: _resolved, ...rest } = state.cancellations ?? {};
+
+      return {
+        ...state,
+        plans: withoutGroup(state.plans, event.group),
+        cancellations: rest,
+      };
+    },
     PeriodClosed: (state, event) =>
       state._tag === "Subscribed"
         ? {
             ...state,
             status: event.statusAfter,
             // A terminal standing carries no future, so a close into one drops
-            // the phases that were waiting for a period it will not have.
+            // the phases and cancellations that were waiting for a period it
+            // will not have. A close with nothing left in any group drops the
+            // plan set too; a whole-account cancellation keeps it as history
+            // (ADR 0039 §7).
             ...(event.statusAfter === "canceled" || event.statusAfter === "expired"
-              ? { schedule: [] }
-              : {}),
+              ? {
+                  schedule: [],
+                  cancellations: {},
+                  ...(event.cancelAtPeriodEndAfter ? {} : { plans: {} }),
+                }
+              : { cancellations: {} }),
             period: {
               start: event.nextPeriodStart,
               end: event.nextPeriodEnd,
               anchorTz: state.period.anchorTz,
             },
+            ...(event.credits === undefined ? {} : { credits: event.credits }),
+            ...(event.prepaidCredits === undefined ? {} : { prepaidCredits: event.prepaidCredits }),
             cancelAtPeriodEnd: event.cancelAtPeriodEndAfter,
             lastClosedPeriodStart: event.periodStart,
             // The period reset the pool, so a failure from the last one is not
@@ -3491,6 +4037,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             // A terminal standing has no next boundary and no change to apply,
             // so a scheduled phase does not survive it (ADR 0020).
             schedule: [],
+            cancellations: {},
           }
         : state,
     TrialExtended: (state, event) =>

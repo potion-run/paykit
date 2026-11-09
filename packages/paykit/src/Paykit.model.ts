@@ -19,6 +19,10 @@ import { Entitlements } from "./Subscription/Entitlements.view.ts";
 import { HoldSweep, HoldSweepLive } from "./Subscription/HoldSweep.policy.ts";
 import { PeriodCloseUsage, PeriodCloseUsageLive } from "./Subscription/PeriodCloseUsage.policy.ts";
 import { PeriodRollover, PeriodRolloverLive } from "./Subscription/PeriodRollover.policy.ts";
+import {
+  PlanPhaseSchedule,
+  PlanPhaseScheduleLive,
+} from "./Subscription/PlanPhaseSchedule.policy.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 
 /**
@@ -40,6 +44,7 @@ export class PaykitModel extends Domain.Model("Paykit", {
     PeriodCloseUsage,
     AutoTopUp,
     BalanceExpiry,
+    PlanPhaseSchedule,
     OutboundEvents,
   ],
 }) {}
@@ -60,6 +65,7 @@ export const PaykitHandlers = Layer.mergeAll(
   HoldSweepLive,
   AutoTopUpLive,
   BalanceExpiryLive,
+  PlanPhaseScheduleLive,
   OutboundEventsLive,
   PeriodCloseUsageLive,
 );

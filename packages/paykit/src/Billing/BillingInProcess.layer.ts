@@ -10,6 +10,10 @@ import { evaluateCheck } from "../Check.ts";
 import { EntityId } from "../Customer.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
+import {
+  CancelGroup as CancelGroupCommand,
+  UncancelGroup as UncancelGroupCommand,
+} from "../Subscription/CancelGroup.command.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
@@ -38,6 +42,7 @@ import {
   withGrants,
 } from "../TierCommand.ts";
 import { webhookOperation } from "../Webhooks.ts";
+import { AddAddOnInProcess } from "./AddAddOn.binding.ts";
 import {
   AttachInProcess,
   PreviewAttachInProcess,
@@ -46,7 +51,13 @@ import {
 } from "./Attach.binding.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { mapBindingFailure } from "./Bindings.ts";
-import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
+import {
+  Resume,
+  ScheduleCancellation,
+  defaultPlanFor,
+  toCancelError,
+  toResumeError,
+} from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
 import { chargeProrationOperation } from "./ChargeProration.operation.ts";
 import {
@@ -62,6 +73,7 @@ import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { List, toListError } from "./List.binding.ts";
 import { listOperation } from "./List.operation.ts";
+import { MultiAttachInProcess, MultiUpdateInProcess } from "./MultiPlan.binding.ts";
 import {
   ChargeProration,
   Portal,
@@ -657,22 +669,54 @@ const BillingCore = Layer.mergeAll(
     Effect.gen(function* () {
       const subscription = yield* Subscription;
       const billing = yield* BillingState;
+      const catalog = yield* CatalogService;
 
       return Effect.fn("Paykit.ScheduleCancellation")(function* (account) {
         const ref = Subscription.ref(account);
 
         return Effect.fn("Paykit.ScheduleCancellation.schedule")(function* (request) {
-          const receipt = yield* bound(toCancelError)(
-            asSystem(
-              subscription.send(ref, new ScheduleCancellationCommand(), {
-                commandId: request.dedupeKey,
-              }),
-            ),
-          );
+          const state = yield* subscription.state(ref);
+
+          const fallback =
+            request.group === undefined
+              ? undefined
+              : defaultPlanFor(
+                  catalog,
+                  request.group,
+                  state._tag === "Subscribed" ? currencyOf(state) : undefined,
+                );
+
+          // A group-level cancellation replaces that group's plan at the
+          // boundary; without a group it is the whole-account cancellation the
+          // standing has always had (ADR 0039 §5).
+          const receipt =
+            request.group === undefined
+              ? yield* bound(toCancelError)(
+                  asSystem(
+                    subscription.send(ref, new ScheduleCancellationCommand(), {
+                      commandId: request.dedupeKey,
+                    }),
+                  ),
+                )
+              : yield* bound(toCancelError)(
+                  asSystem(
+                    subscription.send(
+                      ref,
+                      new CancelGroupCommand({
+                        group: request.group,
+                        ...(fallback === undefined ? {} : { fallback }),
+                      }),
+                      { commandId: request.dedupeKey },
+                    ),
+                  ),
+                );
 
           const view = yield* bound(toCancelError)(billing.query(ref, { atLeast: receipt }));
 
-          return { cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false };
+          return {
+            cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false,
+            ...(request.group === undefined ? {} : { group: request.group }),
+          };
         });
       });
     }),
@@ -688,12 +732,23 @@ const BillingCore = Layer.mergeAll(
 
         return Effect.fn("Paykit.Resume.undo")(function* (request) {
           const receipt = yield* bound(toResumeError)(
-            asSystem(subscription.send(ref, new ResumeCommand(), { commandId: request.dedupeKey })),
+            asSystem(
+              request.group === undefined
+                ? subscription.send(ref, new ResumeCommand(), {
+                    commandId: request.dedupeKey,
+                  })
+                : subscription.send(ref, new UncancelGroupCommand({ group: request.group }), {
+                    commandId: request.dedupeKey,
+                  }),
+            ),
           );
 
           const view = yield* bound(toResumeError)(billing.query(ref, { atLeast: receipt }));
 
-          return { cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false };
+          return {
+            cancelAtPeriodEnd: Option.getOrNull(view)?.cancelAtPeriodEnd ?? false,
+            ...(request.group === undefined ? {} : { group: request.group }),
+          };
         });
       });
     }),
@@ -964,6 +1019,9 @@ export const BillingInProcess = Layer.mergeAll(
   CustomersLive.pipe(Layer.provide(BillingCore)),
   AttachInProcess.pipe(Layer.provide(BillingCore)),
   UpdateInProcess.pipe(Layer.provide(BillingCore)),
+  AddAddOnInProcess.pipe(Layer.provide(BillingCore)),
+  MultiAttachInProcess.pipe(Layer.provide(BillingCore)),
+  MultiUpdateInProcess.pipe(Layer.provide(BillingCore)),
   PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),
   PreviewUpdateInProcess.pipe(Layer.provide(BillingCore)),
 );

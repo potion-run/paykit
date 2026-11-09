@@ -17,6 +17,7 @@ import { CreditRateCards } from "../Feature.ts";
 import { chargeOfPricing, pricedLines, type PricedLine } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { CreditsExpire, Interval, Price, TopUpTerms } from "../Tier.ts";
+import { PlanCancellations } from "./PlanCancellation.ts";
 import {
   DEFAULT_PLAN_GROUP,
   mergeAllowances,
@@ -357,6 +358,20 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * before it resets the counters (ADR 0039 §3).
    */
   schedule: PlanSchedule,
+  /**
+   * The groups waiting to resolve at their boundary, keyed by group. A
+   * cancellation names a group and carries the fallback terms the close needs,
+   * so an account may cancel one group without ending the standing (ADR 0039
+   * §5).
+   */
+  cancellations: Schema.optionalKey(PlanCancellations),
+  /**
+   * The instant of the last scheduled phase this standing applied. A phase that
+   * fires at the period boundary grants the new plan's pool and leaves the
+   * close to reset the counters onto it; the close reads this to know the plan
+   * already landed (ADR 0039 §3).
+   */
+  lastPhaseAppliedAt: Schema.optionalKey(Schema.DateTimeUtc),
   status: SubscriptionStatus,
   period: Period,
   /** The provider's latest plan charge, kept so a cancellation can refund it. */

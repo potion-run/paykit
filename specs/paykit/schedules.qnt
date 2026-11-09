@@ -11,13 +11,13 @@
 // Source correspondence:
 //   attach          ↔ Subscribe.command.ts / ChangeTier.command.ts
 //                     (the classification is `plans.qnt`'s; this is the slot)
-//   addAddOn        ↔ the add-on branch of an attach operation (ADR 0035 §3)
+//   addAddOn        ↔ AddAddOn.binding.ts (and the add-on branch of Attach)
 //   schedulePlan    ↔ ScheduleTierChange.command.ts
 //   withdrawPhase   ↔ WithdrawTierChange.command.ts
-//   applyPhase      ↔ the scheduler that runs a plan phase at `startsAt`
-//   cancelGroup     ↔ ScheduleCancellation.command.ts (at the boundary)
+//   applyPhase      ↔ ApplyPlanPhase.command.ts (scheduled by PlanPhaseSchedule)
+//   cancelGroup     ↔ CancelGroup.command.ts (at the boundary)
 //   cancelNow       ↔ CancelImmediately.command.ts
-//   uncancelGroup   ↔ Resume.command.ts
+//   uncancelGroup   ↔ UncancelGroup.command.ts
 //   close           ↔ ClosePeriod.command.ts / PeriodEnded.command.ts
 //   tick            ↔ the platform clock
 //

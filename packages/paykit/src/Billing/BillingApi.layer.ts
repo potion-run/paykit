@@ -11,7 +11,13 @@ import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { scheduleTierChangeInputOf, subscribeInputOf, withGrants } from "../TierCommand.ts";
 import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
-import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
+import {
+  Resume,
+  ScheduleCancellation,
+  defaultPlanFor,
+  toCancelError,
+  toResumeError,
+} from "./Cancel.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
 import { toCustomersError } from "./Customers.binding.ts";
@@ -483,6 +489,7 @@ const BillingApiCore = Layer.mergeAll(
     ScheduleCancellation,
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
+      const catalog = yield* CatalogService;
       const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
 
       return Effect.fn("Paykit.ScheduleCancellation")(function* (account) {
@@ -491,16 +498,31 @@ const BillingApiCore = Layer.mergeAll(
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.ScheduleCancellation.schedule")(function* (request) {
+          const fallback =
+            request.group === undefined ? undefined : defaultPlanFor(catalog, request.group);
+
           const receipt = yield* bound(toCancelError)(
-            // An inputless command takes its options third: input, then options.
-            client.ScheduleCancellation(id, {}, options(request.dedupeKey)),
+            request.group === undefined
+              ? // An inputless command takes its options third: input, then options.
+                client.ScheduleCancellation(id, {}, options(request.dedupeKey))
+              : client.CancelGroup(
+                  id,
+                  {
+                    group: request.group,
+                    ...(fallback === undefined ? {} : { fallback }),
+                  },
+                  options(request.dedupeKey),
+                ),
           );
 
           const view = yield* bound(toCancelError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
 
-          return { cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false };
+          return {
+            cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false,
+            ...(request.group === undefined ? {} : { group: request.group }),
+          };
         });
       });
     }),
@@ -518,14 +540,19 @@ const BillingApiCore = Layer.mergeAll(
 
         return Effect.fn("Paykit.Resume.undo")(function* (request) {
           const receipt = yield* bound(toResumeError)(
-            client.Resume(id, {}, options(request.dedupeKey)),
+            request.group === undefined
+              ? client.Resume(id, {}, options(request.dedupeKey))
+              : client.UncancelGroup(id, { group: request.group }, options(request.dedupeKey)),
           );
 
           const view = yield* bound(toResumeError)(
             client.BillingState.get(id, { atLeast: receipt, ...options() }),
           );
 
-          return { cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false };
+          return {
+            cancelAtPeriodEnd: view?.cancelAtPeriodEnd ?? false,
+            ...(request.group === undefined ? {} : { group: request.group }),
+          };
         });
       });
     }),
