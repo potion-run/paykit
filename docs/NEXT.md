@@ -4,8 +4,8 @@ A handoff for whoever (or whatever) picks this up cold. The state, the queue, th
 last few slices were done. Nothing here overrides the ADRs in [`docs/adr/`](./adr/); where they
 disagree, the ADR wins and this file is wrong.
 
-The [feature map](./FEATURE-MAP.md) checks a parity claim against one place: shipped, modelled,
-partial and missing.
+The [billing surface](./BILLING-SURFACE.md) separates what the library owns from what the provider
+and the deployment own, and names the gaps that are still ours.
 
 ## Where it stands
 

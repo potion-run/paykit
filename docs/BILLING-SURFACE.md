@@ -1,0 +1,103 @@
+# Billing surface
+
+paykit is a library on Alchemy, not a hosted billing service. It owns the billing model, the event
+log, the read models and the Alchemy resources that provision a vendor. The provider owns the money
+plane; the deployment owns the HTTP surface, the console and everything operational. This page maps
+the reference billing surface onto that split, so a gap is either ours, the provider's or the
+deployment's — and a claim in `NEXT.md`, an ADR or a README can be checked here.
+
+The reference product is not named in code, comments, docs or tests. "Reference" means its
+documented billing surface, not a second implementation.
+
+**Legend**
+
+| Status | Means |
+| --- | --- |
+| **shipped** | the library has it, with tests and a gate on `main` |
+| **modelled** | ADR + Quint model (+ brief); the TypeScript is the next slice |
+| **partial** | a narrower version exists; the difference is named |
+| **provider** | the `Payments` port or the vendor owns it; the library only records the fact |
+| **deployment** | not a library concern; the app or the console owns it |
+| **missing** | ours, with no design yet |
+
+## The model — paykit owns
+
+| Reference | paykit | Status |
+| --- | --- | --- |
+| Plans | `Plan` / `Tier`, the catalog, `Attach` / `Update` | shipped |
+| Features | `Feature`, `FeatureId`, rate cards | shipped |
+| Plan items | `PlanItem` / `Allowance`, `planItem()` | shipped |
+| Subscriptions | the standing, `StandingPhase`, plan operations | shipped |
+| Balances | `Balance` + `BalanceSource`, `balances.qnt` | shipped |
+| Recurring plans | `included`, `resets`, every interval | shipped |
+| Plan variants | `variantOf` / `customize` | shipped |
+| One-off purchases | `kind: "one_off"` packs, `PurchaseCredits`, `balances.create` grants | shipped |
+| Free plans | a plan with no price | shipped |
+| Credit systems | `Feature.creditRates` / `rateCard`, one pool per account | shipped |
+| Dimensions & rate cards | `RateRule`, `RateMultiplier`, `dimension` on a track | shipped |
+| Prepaid pricing | one-off packs, lifetime grants, `BalanceSource` | shipped |
+| Usage-based pricing | `overage: "bill"`, `unitPrice` / `pricing`, `PeriodCloseUsage` | shipped |
+| Per-unit pricing | `kind: "non_consumable"` seats, `SetQuantity` / `SetUsage` | shipped |
+| Rollovers | `carryOver` / `carryCap`, `balances.qnt` | shipped |
+| Proration | `Proration`, `ChargeProration`, `ChargeQuantityProration` | shipped |
+| Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
+| Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
+| Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
+| Add-ons | one plan per group, add-ons stack (ADR 0039) | modelled |
+| Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
+| Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
+| Entity plans | entity scope + its own plan set (ADR 0040) | modelled |
+| Entities and transfer | `EntityId`, scoped balances, pooled items, `billing.transfer` (ADR 0040) | modelled |
+| Custom plans | — | missing — `CatalogGuard` refuses allowances not in the catalog; this is the one model item a host cannot build on top |
+| Versioning plans | the catalog is deploy-time data; a price change never reprices history | partial — no versioned plan migration for existing subscribers |
+| Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
+| Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
+| Checking access | `Check` | shipped |
+| Tracking usage | `TrackUsage` | shipped |
+| Balance locking | `Hold` / `SettleHold` / `ReleaseHold`, `check({ lock })` | shipped |
+| Managing balances | `Balances` list/get/create/update/finalize | shipped |
+| Billing controls | `SetBillingControls`, `Customers.update` | shipped — customer-level; entity-level is deferred |
+| Rewards and referrals | — | missing — a new balance source and its own protocol, not a flag on a plan |
+
+## The money plane — the provider owns
+
+| Reference | paykit | Status |
+| --- | --- | --- |
+| Payment flow | checkout, `Portal`, the `Payments` port | shipped — the library hands back the provider's URL |
+| Refunds and reversals | `Refund` / `ReverseRefund` commands, `Payments.refund`, the operator console | shipped — the provider moves the money, the log records the fact |
+| Dunning and billing reliability | `PaymentFailed`, `GraceEntered`, the dunning ladder | shipped — 3DS and the card UI are the provider's |
+| Vendor sync | `StripePrices` / `PolarPrices` provision prices, products and meters; webhooks apply provider facts | partial — one-way provisioning, not a two-way sync |
+| Tax | — | provider — the vendor calculates and collects it |
+| Setup payment | — | missing — the `Payments` port has no setup-intent operation |
+| Migration from a vendor account | — | missing — a deployment migration, not a model rule |
+
+## The deployment plane — not the library
+
+| Reference | Owner | Why |
+| --- | --- | --- |
+| A hosted dashboard | deployment | paykit serves the read models (`BillingState`, `Entitlements`, `List`, `Balance`); `paykit-admin` is an optional console package |
+| A billing page | deployment | `Atom` and the read models are the client surface; the screens are the example's job |
+| Webhooks | paykit + deployment | the decoders and the outbound policy are the library's; the endpoint is the deployment's |
+| Chat or email notifications | deployment | `Outbound` signs and delivers the stream; a receiver formats the message |
+| Approval rules | deployment | the actor model and `Guards` answer "who may act"; a per-action approval flow is an app decision |
+| Fail-open / edge cache | deployment | `check` reads local state and never calls a provider; a last-known cache is a deployment choice |
+| Rate limits | deployment | the Api and the handler are served by the deployment's edge |
+| SQL over customer data | deployment | `BillingReadStore`/`List` are the read model; ad-hoc SQL is a deployment analytics concern |
+| AI SDK, router, mobile-store and marketplace integrations | deployment | each is a vendor adapter over `track` and `check`, not a model rule |
+| A config-sync CLI | deployment | `BillingCli` derives one subcommand per Api command; a config-file sync is a deployment tool |
+
+## What is actually ours to build
+
+1. **The plan set / multi-attach / schedules** — modelled (ADR 0039); the implementation is in
+   progress. This is the largest open model item.
+2. **Entities and transfer** — modelled (ADR 0040); the implementation follows the plan set.
+3. **Custom plans** — the one product capability a host cannot build on top: `CatalogGuard` must
+   learn an explicit custom/allowlisted path.
+4. **Plan versioning / migration** — the catalog is versionless today; a price or allowance change
+   is new data, not a migration of existing subscribers.
+5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a
+   controls write; the verb and its read belong in the library.
+6. **`setupPayment`** — a provider-port operation for adding a method without a purchase.
+
+Nothing on the deployment plane is "missing": a library that grew an edge cache, a chat formatter or
+a marketplace adapter would be a second product.
