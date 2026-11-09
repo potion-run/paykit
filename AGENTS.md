@@ -392,6 +392,8 @@ add it; if a gate fails, fix the code rather than the gate.
 
 - [What to build next](./docs/NEXT.md) — the state of the work, the queue, the traps, and the
   invariants a next slice must not break.
+- [Feature map](./docs/FEATURE-MAP.md) — the reference product's documented surface mapped to what
+  this library has: shipped, modelled, partial or missing.
 - [ADRs](./docs/adr/) — decisions that shaped the model, oldest first. Read
   [0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
   express: it is the record that says pricing is catalog data and the deploy provisions the vendor.

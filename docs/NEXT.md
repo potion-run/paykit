@@ -4,6 +4,9 @@ A handoff for whoever (or whatever) picks this up cold. The state, the queue, th
 last few slices were done. Nothing here overrides the ADRs in [`docs/adr/`](./adr/); where they
 disagree, the ADR wins and this file is wrong.
 
+The [feature map](./FEATURE-MAP.md) checks a parity claim against one place: shipped, modelled,
+partial and missing.
+
 ## Where it stands
 
 The current slice is the plan/customer/balance API, recorded in
