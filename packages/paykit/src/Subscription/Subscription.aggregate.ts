@@ -19,6 +19,7 @@ import {
   normalizeBillingControls,
   scopeEntityId,
   type BillingControls,
+  type CustomerDetails,
   type EntityId,
   type ScopeRef,
 } from "../Customer.ts";
@@ -65,7 +66,9 @@ import {
   canClosePeriod,
 } from "./ClosePeriod.command.ts";
 import { ConsumeCredits, CreditExceedsBalance, CreditsConsumed } from "./ConsumeCredits.command.ts";
+import { CreateCustomer, CustomerCreated } from "./CreateCustomer.command.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
+import { CustomerExists } from "./CustomerExists.rejection.ts";
 import { DunningRetry, DunningRetryDue } from "./DunningRetry.command.ts";
 import {
   AlreadyInGrace,
@@ -1079,6 +1082,18 @@ const withScope = (
   return { ...state, entities: { ...state.entities, [entityId]: update(record) } };
 };
 
+/**
+ * Whether a create would record exactly the identity the account already holds.
+ * Compared field by field on purpose: an absent name and the empty string are
+ * different payloads, so the comparison is exact rather than normalized.
+ */
+const sameCustomerDetails = (
+  existing: Pick<CustomerDetails, "name" | "email">,
+  command: { readonly name?: string; readonly email?: string },
+): boolean =>
+  (existing.name ?? null) === (command.name ?? null) &&
+  (existing.email ?? null) === (command.email ?? null);
+
 export class Subscription extends Domain.Aggregate("Subscription", {
   id: AccountId,
   state: SubscriptionState,
@@ -1128,6 +1143,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ApplyQuantityCredit,
     SetUsage,
     SetBillingControls,
+    CreateCustomer,
     RecordQuantityProrationInvoice,
     AttachEntity,
     UpdateEntity,
@@ -2127,6 +2143,30 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       if (controlsKey(billingControls) === controlsKey(state.billingControls)) return [];
 
       return [new BillingControlsSet(billingControls === undefined ? {} : { billingControls })];
+    },
+    // The identity is stated once. Equal details are a replay even when the
+    // command id differs, so a retry that missed the first receipt records
+    // nothing; a different identity is a refusal, not a rename (ADR 0045).
+    CreateCustomer: (state, command, { id, now }) => {
+      const existing = state.customer;
+
+      if (existing !== undefined) {
+        return sameCustomerDetails(existing, command)
+          ? []
+          : new CustomerExists({
+              account: id,
+              ...(existing.name === undefined ? {} : { name: existing.name }),
+              ...(existing.email === undefined ? {} : { email: existing.email }),
+            });
+      }
+
+      return [
+        new CustomerCreated({
+          ...(command.name === undefined ? {} : { name: command.name }),
+          ...(command.email === undefined ? {} : { email: command.email }),
+          at: now,
+        }),
+      ];
     },
     SetQuantity: (state, command, { id, now }) => {
       const scopeRefusal = entityRefusalOf(state, command.entity, id);
@@ -4154,6 +4194,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       return { ...state, billingControls: event.billingControls };
     },
+    // The identity is a latch: the create that recorded it is the only event
+    // that writes it, and every later event spreads the state, so a plan
+    // change, a close and a cancellation leave it alone (ADR 0045).
+    CustomerCreated: (state, event) => ({
+      ...state,
+      customer: {
+        ...(event.name === undefined ? {} : { name: event.name }),
+        ...(event.email === undefined ? {} : { email: event.email }),
+        createdAt: event.at,
+      },
+    }),
     // An alert moves no counter. It latches its threshold under the feature so
     // a redelivery and a second fact past the same threshold record once.
     UsageAlertFired: (state, event) =>

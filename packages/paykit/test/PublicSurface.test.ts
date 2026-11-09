@@ -65,6 +65,13 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.ControlsFeatureUnknown).toBeDefined();
   expect(Paykit.SpendLimitExceeded).toBeDefined();
   expect(Paykit.UsageAlertFired).toBeDefined();
+  // a customer records its own identity, before it buys anything (ADR 0045)
+  expect(Paykit.CreateCustomer.key).toBe("Paykit.CreateCustomer");
+  expect(Paykit.CustomerDetails).toBeDefined();
+  expect(Paykit.CustomerRequest).toBeDefined();
+  expect(Paykit.CustomerExists).toBeDefined();
+  expect(Paykit.CustomerCreated).toBeDefined();
+  expect(Paykit.CreateCustomerCommand).toBeDefined();
   expect(Paykit.TrackUsage.key).toBe("Paykit.TrackUsage");
   expect(Paykit.SettleHold.key).toBe("Paykit.SettleHold");
   expect(Paykit.ReleaseHold.key).toBe("Paykit.ReleaseHold");
@@ -85,6 +92,7 @@ it("exports the four groups from the package root", () => {
   // the four groups as one namespace
   expect(Paykit.Paykit.feature).toBe(Paykit.feature);
   expect(Paykit.Paykit.Model).toBe(Paykit.Model);
+  expect(Paykit.Paykit.CreateCustomer).toBe(Paykit.CreateCustomer);
   expect(typeof Paykit.Paykit.providers).toBe("function");
   expect(typeof Paykit.autoTopUp).toBe("function");
   expect(typeof Paykit.dunning).toBe("function");

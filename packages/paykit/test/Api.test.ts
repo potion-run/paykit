@@ -190,6 +190,36 @@ it.live("both surfaces read the same AccountEvents stream", () =>
   }).pipe(run),
 );
 
+it.live("a session for another account cannot create a customer on this account", () =>
+  Effect.gen(function* () {
+    const tenant = yield* BillingApi.clientInProcess;
+
+    const exit = yield* Effect.exit(
+      tenant.CreateCustomer(
+        account.id,
+        { name: "Ada", email: "ada@example.com" },
+        { headers: { "x-paykit-actor": "acct_someone_else" } },
+      ),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(String(exit)).toContain("Forbidden");
+  }).pipe(run),
+);
+
+it.live("an anonymous request cannot create a customer", () =>
+  Effect.gen(function* () {
+    const tenant = yield* BillingApi.clientInProcess;
+
+    const exit = yield* Effect.exit(
+      tenant.CreateCustomer(account.id, { name: "Ada", email: "ada@example.com" }),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(String(exit)).toContain("Unauthenticated");
+  }).pipe(run),
+);
+
 it.live("refuses a forged controls feature map with CatalogMismatch", () =>
   Effect.gen(function* () {
     const tenant = yield* BillingApi.clientInProcess;

@@ -177,6 +177,9 @@ const SPEC_COVERAGE = {
   // ── out of every slice, with the reason ────────────────────────────────────
   AttachProviderRef: null, // provider ids, never read by `decide`
   GrantCredits: null, // goodwill, not a price or a fact about a sale
+  // A create records a name and an address: a latch no spend, plan or clock
+  // rule reads, so the models have no number to check it against (ADR 0045).
+  CreateCustomer: null,
   // A rename moves no balance and no plan: the log records a label, and the
   // model has no label rule to check it against (ADR 0040 §7).
   UpdateEntity: null,

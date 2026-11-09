@@ -111,6 +111,7 @@ export const Paykit = {
   TrackUsage: Billing.TrackUsage,
   Balances: Billing.Balances,
   Customers: Billing.Customers,
+  CreateCustomer: Billing.CreateCustomer,
   Entities: Billing.Entities,
   TransferBalance: Billing.TransferBalance,
   SetBillingControls: Billing.SetBillingControls,

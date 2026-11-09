@@ -50,7 +50,7 @@ documented billing surface, not a second implementation.
 | Entities and transfer | `AttachEntity` / `UpdateEntity` / `ArchiveEntity` / `TransferBalance`, `Entities` / `TransferBalance`, `ScopeRef`, pooled items, `Balance.scope` (ADR 0040) | shipped — the model, reads, bindings, layers, Api commands, `Atom` verbs and the SQL-backed entity list |
 | Custom plans | `Plan.custom`, `CatalogGuard`'s structural rule, `Attach({ planId, grants, price })`, the pending quote on a checkout keyed by the provider reference (ADRs 0041, 0042, 0043, 0044) | shipped — a bespoke set and a negotiated price ride the command and the event; a priced first activation stores its quote keyed by the purchase it was quoted for, and the webhook activates exactly the quote it names; a custom plan may be a group's fallback, and a cancellation re-grants the catalog's terms |
 | Versioning plans | `Plan.version`, the generation on every plan row and event, and `Verify`'s outdated / ahead / drift findings (ADR 0047) | shipped — a catalog deploy never reprices history; attaching the plan again is the migration, and there is no automatic migration |
-| Creating customers | activation or a controls write creates the customer; `Customers.get` reads it | partial — no `customers.create` / `getOrCreate` |
+| Creating customers | `CreateCustomer` records a name and an email before a plan exists; `Customers.create` / `getOrCreate` write and read it (ADR 0045) | shipped |
 | Managing customers | `Paykit.Customers(account)`, `BillingState` | shipped |
 | Checking access | `Check` | shipped |
 | Tracking usage | `TrackUsage` | shipped |
@@ -112,8 +112,10 @@ documented billing surface, not a second implementation.
    ordinary move to the current generation, and `Verify` reports an outdated row, a deploy behind
    the state, and a change that forgot its version bump. There is no automatic rewrite of a
    standing.
-5. **`customers.create` / `getOrCreate`** — a pre-created customer today needs an activation or a
-   controls write; the verb and its read belong in the library.
+5. **`customers.create` / `getOrCreate`** — landed (ADR 0045): `CreateCustomer` records the name and
+   email a billing page needs before the customer buys anything, `customers.create` is idempotent on
+   equal details and refuses a different identity, `customers.getOrCreate` is the sign-up path, and
+   `Customer` / `BillingState` read the record back.
 6. **`setupPayment`** — landed ([ADR 0046](./adr/0046-adding-a-payment-method-is-a-port-operation.md)):
    `Payments.setupPayment` and the `"setup"` capability are on the port, `Paykit.SetupPayment(account)`
    is the in-process operation binding, Stripe opens a setup-mode Checkout Session and Polar a

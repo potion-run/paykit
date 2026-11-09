@@ -267,6 +267,35 @@ it.live("entity mutations refresh the account's entity list", () =>
   }),
 );
 
+it.live("creating a customer refreshes the customer query", () =>
+  Effect.gen(function* () {
+    const billing = PaykitAtom.make({ layer: ClientLayer });
+    const registry = AtomRegistry.make();
+    const customer = billing.customer(account);
+
+    yield* seedStanding(registry, billing);
+    const unmountCustomer = registry.mount(customer);
+    yield* Effect.addFinalizer(() => Effect.sync(unmountCustomer));
+
+    expect((yield* valueOf(yield* settled(registry, customer)))?.name).toBeUndefined();
+
+    const createCustomer = billing.createCustomer(account);
+    const unmountCreate = registry.mount(createCustomer);
+    yield* Effect.addFinalizer(() => Effect.sync(unmountCreate));
+    registry.set(createCustomer, { name: "Ada", email: "ada@example.com" });
+    const created = yield* valueOf(yield* settled(registry, createCustomer));
+
+    expect(created.name).toBe("Ada");
+    expect(created.email).toBe("ada@example.com");
+
+    // The mutation refreshed the query; no manual subscription anywhere.
+    const refreshed = yield* valueOf(yield* settled(registry, customer));
+
+    expect(refreshed?.name).toBe("Ada");
+    expect(refreshed?.email).toBe("ada@example.com");
+  }),
+);
+
 it.live("a foreign account is a typed failure, not a second account's read", () =>
   Effect.gen(function* () {
     const billing = PaykitAtom.make({ layer: ClientLayer });

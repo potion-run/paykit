@@ -188,11 +188,33 @@ export const entityScope = (entityId: EntityId): ScopeRef => ({ kind: "entity", 
 export const scopeEntityId = (scope: ScopeRef | undefined): EntityId | undefined =>
   scope?.kind === "entity" ? scope.entityId : undefined;
 
+/**
+ * The identity a customer records about itself: the name and address a billing
+ * page and a receipt need, and when the record was made. It is a latch, not a
+ * plan term: no billing decision reads it, and a plan change and a close leave
+ * it alone (ADR 0045).
+ */
+export const CustomerDetails = Schema.Struct({
+  /** The name the account is billed as. */
+  name: Schema.optionalKey(Schema.String),
+  /** The address a receipt or a dunning notice goes to. */
+  email: Schema.optionalKey(Schema.String),
+  /** When the identity was recorded. A later plan change never moves it. */
+  createdAt: Schema.DateTimeUtc,
+});
+
+export type CustomerDetails = typeof CustomerDetails.Type;
+
 /** What a customer is, before its balances are folded in. */
 export const Customer = Schema.Struct({
   id: CustomerId,
   name: Schema.optionalKey(Schema.String),
   email: Schema.optionalKey(Schema.String),
+  /**
+   * When `create` recorded the identity. Absent on a customer that exists only
+   * because it bought something; `name` and `email` come from the same record.
+   */
+  createdAt: Schema.optionalKey(Schema.DateTimeUtc),
   plans: Schema.Array(CustomerPlan),
   billingControls: Schema.optionalKey(BillingControls),
   /** Every entity this customer ever attached, archived ones included. */

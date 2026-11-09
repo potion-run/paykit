@@ -1,11 +1,13 @@
 import * as Domain from "@alchemy.run/domain";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import { allowance } from "../../src/Allowance.ts";
-import { asSystem } from "../../src/Auth/Actor.ts";
+import { Actor, asSystem, system } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { Attach } from "../../src/Billing/Attach.binding.ts";
 import { Balances } from "../../src/Billing/Balances.binding.ts";
@@ -19,17 +21,25 @@ import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { catalog } from "../../src/Catalog.ts";
+import { catalog, planItemsOf } from "../../src/Catalog.ts";
 import { CatalogGuardLive } from "../../src/CatalogGuard.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
+import { AccountEvents } from "../../src/Subscription/AccountEvents.stream.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
+import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
+import { CreateCustomer as CreateCustomerCommand } from "../../src/Subscription/CreateCustomer.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { SetBillingControls as SetBillingControlsCommand } from "../../src/Subscription/SetBillingControls.command.ts";
+import { Subscribe as SubscribeCommand } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
-import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
+import {
+  initialSubscriptionState,
+  type AccountId,
+  type SubscriptionState,
+} from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
 
 const requests = feature({ id: "requests", name: "Requests" });
@@ -118,6 +128,115 @@ describe("customers", () => {
       expect(customer.id).toBe(account);
       expect(customer.plans).toEqual([]);
       expect(customer.billingControls).toBeUndefined();
+    }),
+  );
+
+  both("records the identity a create names, and reads it back", () =>
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+
+      const created = yield* customers.create({ name: "Ada", email: "ada@example.com" });
+
+      expect(created.name).toBe("Ada");
+      expect(created.email).toBe("ada@example.com");
+      expect(created.createdAt).toBeDefined();
+
+      const read = yield* customers.get();
+
+      expect(read.name).toBe("Ada");
+      expect(read.email).toBe("ada@example.com");
+      expect(read.createdAt).toEqual(created.createdAt);
+    }),
+  );
+
+  both("records one identity for two creates with equal details", () =>
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+
+      // Different command ids on purpose: the second write reaches `decide`, so
+      // this proves the identity is idempotent on its own and not only deduped
+      // by the store.
+      const first = yield* customers.create({
+        name: "Ada",
+        email: "ada@example.com",
+        dedupeKey: "create-ada-1",
+      });
+
+      const second = yield* customers.create({
+        name: "Ada",
+        email: "ada@example.com",
+        dedupeKey: "create-ada-2",
+      });
+
+      expect(second.createdAt).toEqual(first.createdAt);
+      expect((yield* customers.get()).createdAt).toEqual(first.createdAt);
+    }),
+  );
+
+  both("refuses a different identity and leaves the record alone", () =>
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+
+      yield* customers.create({
+        name: "Ada",
+        email: "ada@example.com",
+        dedupeKey: "create-ada",
+      });
+
+      const refused = yield* Effect.flip(
+        customers.create({ name: "Grace", email: "grace@example.com", dedupeKey: "create-grace" }),
+      );
+
+      expect(refused._tag).toBe("CustomerExists");
+
+      if (refused._tag !== "CustomerExists") return;
+
+      // The refusal names the identity in force, so an operator can reconcile
+      // the two records.
+      expect(refused.name).toBe("Ada");
+      expect(refused.email).toBe("ada@example.com");
+
+      const read = yield* customers.get();
+
+      expect(read.name).toBe("Ada");
+      expect(read.email).toBe("ada@example.com");
+    }),
+  );
+
+  both("getOrCreate creates once and never refuses an existing customer", () =>
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+
+      const created = yield* customers.getOrCreate({ email: "ada@example.com" });
+      const again = yield* customers.getOrCreate({ email: "ada@example.com" });
+
+      expect(created.name).toBeUndefined();
+      expect(created.email).toBe("ada@example.com");
+      expect(again.createdAt).toEqual(created.createdAt);
+
+      // A sign-up retry with different details is the existing customer, left
+      // untouched: `getOrCreate` never answers `CustomerExists` (ADR 0045).
+      const different = yield* customers.getOrCreate({ name: "Grace", email: "grace@example.com" });
+
+      expect(different.name).toBeUndefined();
+      expect(different.email).toBe("ada@example.com");
+    }),
+  );
+
+  both("creates a customer before any plan, and check answers the pre-plan state", () =>
+    Effect.gen(function* () {
+      const customers = yield* Customers(account);
+      const check = yield* Check(account);
+
+      const created = yield* customers.create({ email: "ada@example.com" });
+
+      expect(created.plans).toEqual([]);
+
+      const answer = yield* check({ featureId: "requests", requiredBalance: 1 });
+
+      expect(answer.allowed).toBe(false);
+      expect(answer.standing).toBe("blocked");
+      expect((yield* customers.get()).email).toBe("ada@example.com");
     }),
   );
 
@@ -308,6 +427,49 @@ it.live("records a controls write once when the same object is sent twice", () =
   }).pipe(Effect.provide(inProcessWorld)),
 );
 
+it.live("records one CustomerCreated, and refuses a different identity without one", () =>
+  Effect.gen(function* () {
+    const subscription = yield* Subscription;
+    const events = yield* AccountEvents;
+    const ref = Subscription.ref(account);
+
+    const first = yield* asSystem(
+      subscription.send(ref, new CreateCustomerCommand({ name: "Ada", email: "ada@example.com" }), {
+        commandId: "create-ada-1",
+      }),
+    );
+
+    // A different command id, so the second write reaches `decide` instead of
+    // being deduped by the store.
+    const second = yield* asSystem(
+      subscription.send(ref, new CreateCustomerCommand({ name: "Ada", email: "ada@example.com" }), {
+        commandId: "create-ada-2",
+      }),
+    );
+
+    expect(second.events).toEqual([]);
+
+    const refused = yield* Effect.flip(
+      asSystem(
+        subscription.send(
+          ref,
+          new CreateCustomerCommand({ name: "Grace", email: "grace@example.com" }),
+          { commandId: "create-grace" },
+        ),
+      ),
+    );
+
+    expect(refused._tag).toBe("CustomerExists");
+
+    // The projection appends in order, so waiting for the first receipt's write
+    // to land means the log holds everything these three commands recorded.
+    yield* events.peek(ref, { atLeast: first });
+    const page = yield* events.list(ref);
+
+    expect(page.entries.filter((entry) => entry.event._tag === "CustomerCreated")).toHaveLength(1);
+  }).pipe(Effect.provide(inProcessWorld)),
+);
+
 both("refuses a hold past the customer's ceiling", () =>
   Effect.gen(function* () {
     yield* subscribe(account);
@@ -382,3 +544,70 @@ it.live("lists every active plan, not only the base one", () =>
     ).toBeUndefined();
   }).pipe(Effect.provide(inProcessWorld)),
 );
+
+const identityNow = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
+
+/** The aggregate's own `decide` and `evolve`, without a platform. */
+const predict = (state: SubscriptionState, command: object, now = identityNow) =>
+  Subscription.predict(state, command as never, {
+    id: Subscription.ref(account).id,
+    now,
+    context: Context.make(Actor, system()),
+  }) as
+    | {
+        readonly _tag: "Accepted";
+        readonly events: ReadonlyArray<{ readonly _tag: string }>;
+        readonly state: SubscriptionState;
+      }
+    | { readonly _tag: "Rejected"; readonly rejection: { readonly _tag: string } }
+    | { readonly _tag: "Unpredictable" };
+
+const accepted = (state: SubscriptionState, command: object, now = identityNow) => {
+  const result = predict(state, command, now);
+
+  if (result._tag !== "Accepted") throw new Error(`refused: ${result._tag}`);
+
+  return result;
+};
+
+it("keeps the identity a plan activation and a close leave behind", () => {
+  const created = accepted(
+    initialSubscriptionState,
+    new CreateCustomerCommand({ name: "Ada", email: "ada@example.com" }),
+  );
+
+  expect(created.state.customer).toEqual({
+    name: "Ada",
+    email: "ada@example.com",
+    createdAt: identityNow,
+  });
+
+  const terms = planItemsOf(testCatalog, "team");
+
+  if (terms === null) throw new Error("the test catalog has no team tier");
+
+  // Activation builds a fresh standing, so the identity has to be carried into
+  // it explicitly: it belongs to the customer, not to the plan.
+  const activated = accepted(
+    created.state,
+    new SubscribeCommand({
+      tier: "team",
+      allowances: terms,
+      credits: 0,
+      creditsExpire: "period",
+      rates: {},
+    }),
+  );
+
+  expect(activated.state.customer).toEqual(created.state.customer);
+
+  if (activated.state._tag !== "Subscribed") throw new Error("the activation did not subscribe");
+
+  const closed = accepted(
+    activated.state,
+    new ClosePeriod({ periodEnd: activated.state.period.end }),
+    activated.state.period.end,
+  );
+
+  expect(closed.state.customer).toEqual(created.state.customer);
+});

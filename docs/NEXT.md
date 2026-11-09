@@ -29,7 +29,9 @@ plan is [the API brief](./briefs/plan-customer-balance-api.md).
 Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-state.md)):
 `controls.qnt` models a money ceiling and a usage alert, `SetBillingControls` writes the customer's
 `autoTopUp`, `spendLimits` and `usageAlerts`, `Paykit.Customers(account)` reads them, a limit is a
-`capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The plan set is in
+`capacityOf` variant (`SpendLimitExceeded`) and an alert is `UsageAlertFired`. The customer's own
+identity landed beside them ([ADR 0045](./adr/0045-a-customer-is-created-before-it-buys.md)):
+`customers.create` / `getOrCreate` record a name and an email before a plan exists. The plan set is in
 the standing: [ADR 0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) and `schedules.qnt`
 became `plans` plus `schedule`, one row per active plan and ordered phases, with the close applying
 the phases due at the boundary. The entity scope landed with `entities.qnt` and
@@ -255,6 +257,12 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   reads them, `SpendLimitExceeded` is a `capacityOf` variant so `check`, `allowed` and `decide`
   agree, and `UsageAlertFired` is evidence that never refuses. The write is canonical and
   idempotent, works before a plan exists, and survives a plan change and a close.
+- Landed: the customer's own identity. [ADR 0045](./adr/0045-a-customer-is-created-before-it-buys.md)
+  adds `CreateCustomer` / `CustomerCreated`, so a deployment records a name and an email before the
+  customer buys anything; `customers.create` is idempotent on equal details and refuses a different
+  identity (`CustomerExists`), `customers.getOrCreate` is the sign-up path, and `Customer` /
+  `BillingState` read the record back. It is a latch no billing decision reads, so its
+  `spec-coverage` row is a written reason rather than a model action.
 - Landed: the plan set in state. `SubscribedState.plans` is one row per active plan keyed by plan
   id (`planId`, `group`, `addOn`, allowances, pool grant, expiry rule, top-up line, rate cards,
   cadence, currency, price) and `SubscribedState.schedule` is the ordered phase list `pendingTier`

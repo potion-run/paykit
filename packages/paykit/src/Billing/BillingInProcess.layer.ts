@@ -18,6 +18,7 @@ import {
 } from "../Subscription/CancelGroup.command.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
+import { CreateCustomer as CreateCustomerCommand } from "../Subscription/CreateCustomer.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
 import { EntityUnknown } from "../Subscription/EntityUnknown.rejection.ts";
 import { GrantBalance as GrantBalanceCommand } from "../Subscription/GrantBalance.command.ts";
@@ -72,6 +73,11 @@ import {
 } from "./ChargeQuantityProration.binding.ts";
 import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import {
+  CreateCustomer,
+  createCustomerCommandId,
+  toCreateCustomerError,
+} from "./CreateCustomer.binding.ts";
 import { toCustomersError } from "./Customers.binding.ts";
 import { CustomersLive, CustomersRead } from "./Customers.layer.ts";
 import { toEntitiesError } from "./Entities.binding.ts";
@@ -449,6 +455,49 @@ const BillingCore = Layer.mergeAll(
 
           return {
             ...(billingControls === undefined ? {} : { billingControls }),
+            view: state,
+          };
+        });
+      });
+    }),
+  ),
+  // The record a `Customers.create` writes. It answers the billing view it
+  // waited for, so a caller cannot report a customer the model has not
+  // recorded (ADR 0045).
+  Layer.effect(
+    CreateCustomer,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const billing = yield* BillingState;
+
+      return Effect.fn("Paykit.CreateCustomer")(function* (account) {
+        const ref = Subscription.ref(account);
+
+        return Effect.fn("Paykit.CreateCustomer.record")(function* (request) {
+          const commandId = request.dedupeKey ?? createCustomerCommandId(account, request);
+
+          const receipt = yield* bound(toCreateCustomerError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new CreateCustomerCommand({
+                  ...(request.name === undefined ? {} : { name: request.name }),
+                  ...(request.email === undefined ? {} : { email: request.email }),
+                }),
+                { commandId },
+              ),
+            ),
+          );
+
+          const view = yield* bound(toCreateCustomerError)(
+            billing.query(ref, { atLeast: receipt }),
+          );
+
+          const state = Option.getOrNull(view);
+          const customer = state?.customer;
+
+          return {
+            ...(customer === undefined ? {} : { customer }),
             view: state,
           };
         });
