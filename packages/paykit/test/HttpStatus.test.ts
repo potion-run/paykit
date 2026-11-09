@@ -2,7 +2,7 @@ import { expect, it } from "@alchemy.run/test";
 import { httpStatus } from "../src/HttpStatus.ts";
 
 it("maps a refusal to the status a caller can act on", () => {
-  expect(httpStatus({ _tag: "TierNotInCatalog" })).toBe(400);
+  expect(httpStatus({ _tag: "PlanNotInCatalog" })).toBe(400);
   expect(httpStatus({ _tag: "WebhookInvalid" })).toBe(400);
   expect(httpStatus({ _tag: "NotSubscribed" })).toBe(400);
   expect(httpStatus({ _tag: "PlanOperationUnsupported" })).toBe(400);

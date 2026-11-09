@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
+import { balanceOf, emptyBalance } from "../Balance.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
@@ -11,7 +12,9 @@ import { BillingState } from "../Subscription/BillingState.view.ts";
 import { ChangeTier as ChangeTierCommand } from "../Subscription/ChangeTier.command.ts";
 import { ConsumeCredits as ConsumeCreditsCommand } from "../Subscription/ConsumeCredits.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
+import { GrantBalance as GrantBalanceCommand } from "../Subscription/GrantBalance.command.ts";
 import { Hold as HoldCommand } from "../Subscription/Hold.command.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { RecordQuantityProrationInvoice } from "../Subscription/QuantityProration.command.ts";
 import { ReleaseHold as ReleaseHoldCommand } from "../Subscription/ReleaseHold.command.ts";
 import { Resume as ResumeCommand } from "../Subscription/Resume.command.ts";
@@ -19,9 +22,9 @@ import { ScheduleCancellation as ScheduleCancellationCommand } from "../Subscrip
 import { ScheduleTierChange as ScheduleTierChangeCommand } from "../Subscription/ScheduleTierChange.command.ts";
 import { SetQuantity as SetQuantityCommand } from "../Subscription/SetQuantity.command.ts";
 import { SettleHold as SettleHoldCommand } from "../Subscription/SettleHold.command.ts";
+import { SetUsage as SetUsageCommand } from "../Subscription/SetUsage.command.ts";
 import { StartTrial as StartTrialCommand } from "../Subscription/StartTrial.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { TrackUsage as TrackUsageCommand } from "../Subscription/TrackUsage.command.ts";
 import { WithdrawTierChange as WithdrawTierChangeCommand } from "../Subscription/WithdrawTierChange.command.ts";
 import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
@@ -32,6 +35,7 @@ import {
   PreviewUpdateInProcess,
   UpdateInProcess,
 } from "./Attach.binding.ts";
+import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
 import { ChangeTier, toChangeTierError } from "./ChangeTier.binding.ts";
@@ -41,8 +45,9 @@ import {
   chargeQuantityProrationOperation,
   toChargeQuantityProrationError,
 } from "./ChargeQuantityProration.binding.ts";
-import { Check, toCheckError } from "./Check.binding.ts";
+import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { List, toListError } from "./List.binding.ts";
 import { listOperation } from "./List.operation.ts";
@@ -64,6 +69,7 @@ import {
 } from "./ScheduleTierChange.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
+import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { Subscribe, toSubscribeError } from "./Subscribe.binding.ts";
 import { subscribeOperation } from "./Subscribe.operation.ts";
@@ -96,7 +102,7 @@ const viewTier = (
  *
  * fetch: Effect.gen(function* () {
  *   const trackUsage = yield* Paykit.TrackUsage(account);
- *   yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: requestId });
+ *   yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId });
  * });
  * ```
  *
@@ -120,14 +126,13 @@ const BillingCore = Layer.mergeAll(
               subscription.send(
                 ref,
                 new TrackUsageCommand({
-                  feature: request.feature,
-                  amount: request.amount,
+                  feature: request.featureId,
+                  amount: request.value,
                   ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
                   ...(request.properties === undefined ? {} : { properties: request.properties }),
-                  ...(request.properties === undefined ? {} : { properties: request.properties }),
-                  dedupeKey: request.dedupeKey,
+                  dedupeKey: request.idempotencyKey,
                 }),
-                { commandId: request.dedupeKey },
+                { commandId: request.idempotencyKey },
               ),
             ),
           );
@@ -136,7 +141,7 @@ const BillingCore = Layer.mergeAll(
             entitlements.query(ref, { atLeast: receipt }),
           );
 
-          return usageOutcome(Option.getOrNull(view), request);
+          return usageOutcome(Option.getOrNull(view), account, request);
         });
       });
     }),
@@ -260,17 +265,159 @@ const BillingCore = Layer.mergeAll(
     }),
   ),
   Layer.effect(
+    GrantBalance,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const entitlements = yield* Entitlements;
+
+      return Effect.fn("Paykit.GrantBalance")(function* (account) {
+        const ref = Subscription.ref(account);
+
+        return Effect.fn("Paykit.GrantBalance.grant")(function* (request) {
+          const commandId =
+            request.idempotencyKey ??
+            `grant:${request.featureId}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+          const receipt = yield* bound(toGrantBalanceError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new GrantBalanceCommand({
+                  feature: request.featureId,
+                  granted: request.granted,
+                  ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
+                }),
+                { commandId },
+              ),
+            ),
+          );
+
+          const view = yield* bound(toGrantBalanceError)(
+            entitlements.query(ref, { atLeast: receipt }),
+          );
+
+          const state = Option.getOrNull(view);
+
+          return {
+            featureId: request.featureId,
+            granted: receipt.reply.granted,
+            balance:
+              (state === null ? null : balanceOf(state, request.featureId)) ??
+              emptyBalance(account, request.featureId),
+          };
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    SetUsage,
+    Effect.gen(function* () {
+      const subscription = yield* Subscription;
+      const entitlements = yield* Entitlements;
+
+      return Effect.fn("Paykit.SetUsage")(function* (account) {
+        const ref = Subscription.ref(account);
+
+        return Effect.fn("Paykit.SetUsage.set")(function* (request) {
+          const commandId =
+            request.idempotencyKey ??
+            `usage:${request.featureId}:${request.usage}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+          const receipt = yield* bound(toSetUsageError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new SetUsageCommand({
+                  feature: request.featureId,
+                  usage: request.usage,
+                }),
+                { commandId },
+              ),
+            ),
+          );
+
+          const view = yield* bound(toSetUsageError)(entitlements.query(ref, { atLeast: receipt }));
+
+          const state = Option.getOrNull(view);
+
+          return {
+            featureId: request.featureId,
+            usage: receipt.reply.usage,
+            remaining: receipt.reply.remaining,
+            balance:
+              (state === null ? null : balanceOf(state, request.featureId)) ??
+              emptyBalance(account, request.featureId),
+          };
+        });
+      });
+    }),
+  ),
+  // The read a `Balances` verb answers from: the same entitlement view `Check`
+  // uses, so a balance and a verdict cannot describe different state.
+  Layer.effect(
+    BalancesRead,
+    Effect.gen(function* () {
+      const entitlements = yield* Entitlements;
+
+      return {
+        view: (account: string) =>
+          bound(toBalancesReadError)(
+            Effect.map(entitlements.query(Subscription.ref(account)), Option.getOrNull),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
     Check,
     Effect.gen(function* () {
+      const subscription = yield* Subscription;
       const entitlements = yield* Entitlements;
 
       return Effect.fn("Paykit.Check")(function* (account) {
         const ref = Subscription.ref(account);
 
         return Effect.fn("Paykit.Check.ask")(function* (request) {
-          const view = yield* bound(toCheckError)(entitlements.query(ref));
+          const requiredBalance = request.requiredBalance ?? 1;
+          const input = { account, ...request, requiredBalance };
 
-          return evaluateCheck(Option.getOrNull(view), { account, ...request });
+          const before = yield* bound(toCheckError)(entitlements.query(ref));
+          const answer = evaluateCheck(Option.getOrNull(before), input);
+
+          // A refused check places nothing: the lock exists to protect capacity
+          // the account has, not to reserve what it does not.
+          if (request.lock !== true || !answer.allowed) return answer;
+
+          if (request.idempotencyKey === undefined) {
+            return yield* bound(toCheckError)(
+              Effect.fail(new CheckLockKeyMissing({ featureId: request.featureId })),
+            );
+          }
+
+          // The lock is a hold: the same command `Hold` sends, in the same
+          // transaction, so there is one reservation path and one id space.
+          const receipt = yield* bound(toCheckError)(
+            asSystem(
+              subscription.send(
+                ref,
+                new HoldCommand({
+                  holdId: request.idempotencyKey,
+                  feature: request.featureId,
+                  amount: requiredBalance,
+                  ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                  ...(request.properties === undefined ? {} : { properties: request.properties }),
+                  dedupeKey: request.idempotencyKey,
+                }),
+                { commandId: request.idempotencyKey },
+              ),
+            ),
+          );
+
+          const after = yield* bound(toCheckError)(entitlements.query(ref, { atLeast: receipt }));
+
+          return {
+            ...evaluateCheck(Option.getOrNull(after), input),
+            lockId: request.idempotencyKey,
+          };
         });
       });
     }),
@@ -341,9 +488,19 @@ const BillingCore = Layer.mergeAll(
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
-          yield* bound(toSettleHoldError)(entitlements.query(ref, { atLeast: receipt }));
+          const view = yield* bound(toSettleHoldError)(
+            entitlements.query(ref, { atLeast: receipt }),
+          );
 
-          return receipt.reply;
+          const state = Option.getOrNull(view);
+
+          return {
+            ...receipt.reply,
+            featureId: receipt.reply.feature,
+            balance:
+              (state === null ? null : balanceOf(state, receipt.reply.feature)) ??
+              emptyBalance(account, receipt.reply.feature),
+          };
         });
       });
     }),
@@ -366,9 +523,19 @@ const BillingCore = Layer.mergeAll(
             ),
           );
 
-          yield* bound(toReleaseHoldError)(entitlements.query(ref, { atLeast: receipt }));
+          const view = yield* bound(toReleaseHoldError)(
+            entitlements.query(ref, { atLeast: receipt }),
+          );
 
-          return receipt.reply;
+          const state = Option.getOrNull(view);
+
+          return {
+            ...receipt.reply,
+            featureId: receipt.reply.feature,
+            balance:
+              (state === null ? null : balanceOf(state, receipt.reply.feature)) ??
+              emptyBalance(account, receipt.reply.feature),
+          };
         });
       });
     }),
@@ -466,7 +633,7 @@ const BillingCore = Layer.mergeAll(
 
           if (plan === null) {
             return yield* bound(toChangeTierError)(
-              Effect.fail(new TierNotInCatalog({ tier: request.tier })),
+              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
             );
           }
 
@@ -504,7 +671,7 @@ const BillingCore = Layer.mergeAll(
 
           if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
-              Effect.fail(new TierNotInCatalog({ tier: request.tier })),
+              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
             );
           }
 
@@ -570,7 +737,7 @@ const BillingCore = Layer.mergeAll(
 
           if (grant === null) {
             return yield* bound(toStartTrialError)(
-              Effect.fail(new TierNotInCatalog({ tier: request.tier })),
+              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
             );
           }
 
@@ -688,6 +855,7 @@ const BillingCore = Layer.mergeAll(
 
 export const BillingInProcess = Layer.mergeAll(
   BillingCore,
+  BalancesLive.pipe(Layer.provide(BillingCore)),
   AttachInProcess.pipe(Layer.provide(BillingCore)),
   UpdateInProcess.pipe(Layer.provide(BillingCore)),
   PreviewAttachInProcess.pipe(Layer.provide(BillingCore)),

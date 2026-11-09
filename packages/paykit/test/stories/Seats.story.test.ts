@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
@@ -40,7 +40,7 @@ const teamTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [seats], tiers: [teamTier] }));
-const terms = tierTermsOf(testCatalog, "team")!;
+const terms = planTermsOf(testCatalog, "team")!;
 const account = Subscription.ref("acct_seats");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -73,7 +73,7 @@ const subscribed = [
       creditsExpire: "period",
       rates: terms.rates,
       allowances: terms.allowances,
-      remaining: { seats: 15 },
+      remaining: { seats: 5 },
       periodStart: start,
       periodEnd: monthLater,
       anchorTz: "UTC",
@@ -122,9 +122,10 @@ it.effect("a seat change prorates the billable difference for the rest of the pe
         seats: {
           kind: "non_consumable",
           included: 5,
-          used: 6,
+          // Nothing is occupied: a purchase is not a use.
+          used: 0,
           reserved: 0,
-          remaining: 14,
+          remaining: 6,
           carried: 0,
           allowed: true,
           overage: "bill",

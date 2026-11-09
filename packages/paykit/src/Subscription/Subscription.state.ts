@@ -99,13 +99,47 @@ export const UsageCounts = Schema.Record(Schema.String, Schema.Int);
 export type UsageCounts = typeof UsageCounts.Type;
 
 /**
- * The current quantity of every non-consumable feature. A seat is set, not
- * spent, so this is the quantity the account holds — not a counter a period
- * close resets.
+ * The quantity of every non-consumable feature the account bought, including
+ * the free grant. A seat is set, not spent, so this is not a counter a period
+ * close resets; `occupied` is the second half of the pair.
  */
 export const QuantityCounts = Schema.Record(Schema.String, Schema.Int);
 
 export type QuantityCounts = typeof QuantityCounts.Type;
+
+/**
+ * The quantity of every non-consumable feature in use. Occupancy is written by
+ * `SetUsage`, never by a plan change or a period close, and it may exceed what
+ * was purchased: `remaining` is then negative and new occupancy is blocked
+ * while the people already using a seat keep working (ADR 0036).
+ */
+export const OccupancyCounts = Schema.Record(Schema.String, Schema.Int);
+
+export type OccupancyCounts = typeof OccupancyCounts.Type;
+
+/**
+ * One standalone balance grant. A grant belongs to the customer, not to a plan:
+ * a lifetime grant has no `expiresAt` and survives every close and plan change
+ * (ADR 0037). `granted` is what it started with; `remaining` is what is left
+ * after the plan and rollover sources were spent.
+ */
+export const BalanceGrantRecord = Schema.Struct({
+  id: Schema.String,
+  feature: Schema.String,
+  granted: Schema.Int,
+  remaining: Schema.Int,
+  /** The deadline an expiring grant ends at. Absent means it never expires. */
+  expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+  /** The plan that was active when it was granted, for a console to attribute it. */
+  planId: Schema.optionalKey(Schema.String),
+});
+
+export type BalanceGrantRecord = typeof BalanceGrantRecord.Type;
+
+/** Every standalone grant this account holds, keyed by the grant's id. */
+export const BalanceGrants = Schema.Record(Schema.String, BalanceGrantRecord);
+
+export type BalanceGrants = typeof BalanceGrants.Type;
 
 /** A quantity change's money, keyed by the command that recorded it. */
 export const QuantityProration = Schema.Struct({
@@ -161,6 +195,8 @@ export const HoldRecord = Schema.Struct({
   at: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,
   status: HoldStatus,
+  /** The grant units this hold took, keyed by grant id, so a release returns them. */
+  grantsUsed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
 });
 
 export type HoldRecord = typeof HoldRecord.Type;
@@ -339,6 +375,18 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
    * not reset one: a seat is held until the account sets a different quantity.
    */
   quantities: Schema.optionalKey(QuantityCounts),
+  /**
+   * The quantity of every non-consumable feature in use, written by
+   * `SetUsage`. A plan change and a period close never move it: occupancy is
+   * not spent usage.
+   */
+  occupied: Schema.optionalKey(OccupancyCounts),
+  /**
+   * Standalone grants, keyed by id. They are a balance source of their own:
+   * the plan is spent before a grant, and a lifetime grant survives a close
+   * and a plan change (ADR 0037).
+   */
+  grants: Schema.optionalKey(BalanceGrants),
   /**
    * The unbilled money a quantity change moved, keyed by the command that
    * recorded it. A positive `due` is collected by `ChargeQuantityProration`;
@@ -708,9 +756,157 @@ export const resetOfFeature = (
   return { remaining: start + carried, carried };
 };
 
-/** The quantity an account holds of a non-consumable feature. */
+/** The quantity an account bought of a non-consumable feature. */
 export const quantityOf = (state: SubscribedState, feature: string, allowance: Allowance): number =>
   state.quantities?.[feature] ?? (typeof allowance.included === "number" ? allowance.included : 0);
+
+/** The quantity in use of a non-consumable feature. */
+export const occupiedOf = (state: SubscribedState, feature: string): number =>
+  state.occupied?.[feature] ?? 0;
+
+/**
+ * What a non-consumable feature has left to occupy: purchased minus occupied.
+ * It may be negative, because a purchase change never removes an occupied seat.
+ */
+export const seatBalanceOf = (state: SubscribedState, feature: string, allowance: Allowance) =>
+  quantityOf(state, feature, allowance) - occupiedOf(state, feature);
+
+/** Every standalone grant this account holds for one feature, expiry first. */
+export const grantsOf = (
+  state: SubscribedState,
+  feature: string,
+): ReadonlyArray<BalanceGrantRecord> =>
+  Object.values(state.grants ?? {})
+    .filter((grant) => grant.feature === feature)
+    .toSorted((left, right) => {
+      const leftAt =
+        left.expiresAt === undefined ? Number.MAX_SAFE_INTEGER : left.expiresAt.epochMilliseconds;
+
+      const rightAt =
+        right.expiresAt === undefined ? Number.MAX_SAFE_INTEGER : right.expiresAt.epochMilliseconds;
+
+      return leftAt - rightAt || left.id.localeCompare(right.id);
+    });
+
+/** How much of a feature's balance is a standalone grant. */
+export const grantTotalOf = (state: SubscribedState, feature: string): number =>
+  grantsOf(state, feature).reduce((sum, grant) => sum + grant.remaining, 0);
+
+/**
+ * The plan-and-rollover part of a safeguard: the total spendable count less
+ * the grants. It is what a spend must exhaust before it takes a grant unit, so
+ * a lifetime grant is the last money a customer can spend.
+ */
+export const planPartOf = (state: SubscribedState, feature: string): number =>
+  Math.max(0, (remainingOf(state, feature) ?? 0) - grantTotalOf(state, feature));
+
+/** The grant units a spend of `amount` takes, in deduction order. */
+export const grantsForSpend = (state: SubscribedState, feature: string, amount: number) => {
+  let left = Math.max(0, amount - planPartOf(state, feature));
+  const used: Record<string, number> = {};
+
+  for (const grant of grantsOf(state, feature)) {
+    if (left <= 0) break;
+
+    const take = Math.min(left, grant.remaining);
+
+    if (take > 0) {
+      used[grant.id] = take;
+      left -= take;
+    }
+  }
+
+  return used;
+};
+
+/** Deduct a grant allocation from the map, leaving every other grant alone. */
+export const grantsAfterSpend = (
+  grants: BalanceGrants | undefined,
+  used: Readonly<Record<string, number>>,
+): BalanceGrants => {
+  const next = { ...grants };
+
+  for (const [id, amount] of Object.entries(used)) {
+    const grant = next[id];
+
+    if (grant === undefined) continue;
+    next[id] = { ...grant, remaining: Math.max(0, grant.remaining - amount) };
+  }
+
+  return next;
+};
+
+/**
+ * Return a hold's grant allocation. A hold that took an expiring grant before
+ * a lifetime one gives the lifetime units back first, so the source that would
+ * expire soonest is the one left spent.
+ */
+export const grantsAfterReturn = (
+  grants: BalanceGrants | undefined,
+  allocation: Readonly<Record<string, number>> | undefined,
+  returned: number,
+): BalanceGrants => {
+  const next = { ...grants };
+
+  if (allocation === undefined || returned <= 0) return next;
+
+  let left = returned;
+  const entries = Object.entries(allocation).toReversed();
+
+  for (const [id, allocated] of entries) {
+    if (left <= 0) break;
+
+    const amount = Math.min(left, allocated);
+    const grant = next[id];
+
+    if (grant === undefined) continue;
+    next[id] = {
+      ...grant,
+      remaining: Math.min(grant.granted, grant.remaining + amount),
+    };
+    left -= amount;
+  }
+
+  return next;
+};
+
+/** The grant units a release of `returned` should give back, against an allocation. */
+export const grantsReturnedFor = (
+  allocation: Readonly<Record<string, number>> | undefined,
+  returned: number,
+) => {
+  const result: Record<string, number> = {};
+  let left = returned;
+
+  for (const [id, allocated] of Object.entries(allocation ?? {}).toReversed()) {
+    if (left <= 0) break;
+
+    const take = Math.min(left, allocated);
+
+    if (take > 0) {
+      result[id] = take;
+      left -= take;
+    }
+  }
+
+  return result;
+};
+
+/** Add one grant, keeping the map empty when there is nothing to add. */
+export const grantedWith = (
+  grants: BalanceGrants | undefined,
+  grant: BalanceGrantRecord,
+): BalanceGrants => ({ ...grants, [grant.id]: grant });
+
+/** Remove one grant, leaving every other grant alone. */
+export const grantsWithout = (
+  grants: BalanceGrants | undefined,
+  grantId: string,
+): BalanceGrants => {
+  const { [grantId]: _expired, ...rest } = grants ?? {};
+
+  return rest;
+};
 
 /** The billable part of a quantity: what is held past the free grant. */
 export const billableQuantityOf = (quantity: number, included: number): number =>
@@ -861,7 +1057,7 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "TrialStarted",
   "TrialExtended",
   "SubscriptionActivated",
-  "TierChanged",
+  "PlanChanged",
   "UsageRecorded",
   "UsageReserved",
   "UsageSettled",
@@ -875,7 +1071,7 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "CreditsConsumed",
   "CancellationScheduled",
   "CancellationWithdrawn",
-  "TierChangeScheduled",
+  "PlanChangeScheduled",
   "TierChangeWithdrawn",
   "PeriodClosed",
   "UsageReset",
@@ -883,7 +1079,10 @@ export const SUBSCRIPTION_EVENT_TAGS = [
   "SubscriptionCanceled",
   "SubscriptionExpired",
   "ProviderRefAttached",
-  "AllowanceReset",
+  "PlanItemReset",
   "QuantityChanged",
+  "UsageSet",
+  "BalanceGranted",
+  "BalanceExpired",
   "QuantityProrationInvoiced",
 ] as const;

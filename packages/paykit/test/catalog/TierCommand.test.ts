@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { allowance } from "../../src/Allowance.ts";
-import { allowancesOf, catalog, type Catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, type Catalog } from "../../src/Catalog.ts";
 import { feature } from "../../src/Feature.ts";
 import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
@@ -50,7 +50,7 @@ describe("subscribeInputOf", () => {
   it("carries the tier's terms and the anchor the caller states", () => {
     expect(subscribeInputOf(testCatalog, "pro", { anchorTz: "Europe/Berlin" })).toEqual({
       tier: "pro",
-      allowances: allowancesOf(testCatalog, "pro"),
+      allowances: planItemsOf(testCatalog, "pro"),
       credits: 5_000,
       creditsExpire: "period",
       topUp: { threshold: 100 },
@@ -81,7 +81,7 @@ describe("scheduleTierChangeInputOf", () => {
   it("carries the same grant with no anchor", () => {
     expect(scheduleTierChangeInputOf(testCatalog, "pro")).toEqual({
       tier: "pro",
-      allowances: allowancesOf(testCatalog, "pro"),
+      allowances: planItemsOf(testCatalog, "pro"),
       credits: 5_000,
       creditsExpire: "period",
       topUp: { threshold: 100 },

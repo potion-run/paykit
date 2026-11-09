@@ -352,11 +352,64 @@ const PLANS_MUTANTS: ReadonlyArray<Mutant> = [
   },
 ];
 
+const BALANCES_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "grant-spent-before-plan",
+    invariant: "grantSpentOnlyAfterPlan",
+    from: "    val fromPlan = if (amount <= s.plan) amount else s.plan",
+    to: "    val fromPlan = 0",
+    why: "a spend that reaches a grant while the plan still has room",
+  },
+  {
+    name: "lifetime-dies-on-plan-change",
+    invariant: "lifetimeConserved",
+    from: "    ...s,\n    plan: INCLUDED,\n    rollover: 0,\n    changes: s.changes + 1,",
+    to: "    ...s,\n    plan: INCLUDED,\n    rollover: 0,\n    lifetime: 0,\n    changes: s.changes + 1,",
+    why: "a plan change that destroys a lifetime grant",
+  },
+  {
+    name: "lifetime-dies-on-close",
+    invariant: "lifetimeConserved",
+    from: "      plan: s.included,\n      rollover: if (nextRollover > CARRY_CAP) CARRY_CAP else nextRollover,",
+    to: "      plan: s.included,\n      lifetime: 0,\n      rollover: if (nextRollover > CARRY_CAP) CARRY_CAP else nextRollover,",
+    why: "a period close that destroys a lifetime grant",
+  },
+  {
+    name: "rollover-ignores-the-cap",
+    invariant: "rolloverBounded",
+    from: "      rollover: if (nextRollover > CARRY_CAP) CARRY_CAP else nextRollover,",
+    to: "      rollover: nextRollover,",
+    why: "a close that carries every unused unit, not at most the cap",
+  },
+  {
+    name: "expiry-drops-the-grant",
+    invariant: "expiringConserved",
+    from: "    expiring: 0,\n    expiringExpired: s.expiringExpired + s.expiring,",
+    to: "    expiring: 0,\n    expiringExpired: s.expiringExpired,",
+    why: "an expiry that removes the units instead of recording them as expired",
+  },
+  {
+    name: "spend-overspends-the-sources",
+    invariant: "sourcesNonNegative",
+    from: "  pure def canSpend(s: State, amount: int): bool = amount > 0 and amount <= total(s)",
+    to: "  pure def canSpend(s: State, amount: int): bool = amount > 0",
+    why: "a spend that accepts more than the sources hold",
+  },
+  {
+    name: "expiry-leaves-the-grant-live",
+    invariant: "expiryIsFinal",
+    from: "    expiring: 0,\n    expiringExpired: s.expiringExpired + s.expiring,",
+    to: "    expiring: s.expiring,\n    expiringExpired: s.expiringExpired + s.expiring,",
+    why: "an expiry that records the deadline but leaves the grant spendable",
+  },
+];
+
 const SPECS: ReadonlyArray<SpecMutants> = [
   { file: SPEC, maxSteps: 30, mutants: PAYKIT_MUTANTS },
   { file: "specs/paykit/standing.qnt", maxSteps: 30, mutants: STANDING_MUTANTS },
   { file: "specs/paykit/windows.qnt", maxSteps: 20, mutants: WINDOWS_MUTANTS },
   { file: "specs/paykit/plans.qnt", maxSteps: 30, mutants: PLANS_MUTANTS },
+  { file: "specs/paykit/balances.qnt", maxSteps: 30, mutants: BALANCES_MUTANTS },
   { file: "specs/paykit/money.qnt", maxSteps: 30, mutants: MONEY_MUTANTS },
 ];
 

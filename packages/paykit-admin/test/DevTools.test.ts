@@ -41,6 +41,7 @@ const row = {
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   currency: "usd",
   features: {},

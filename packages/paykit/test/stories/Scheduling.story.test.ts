@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
@@ -51,7 +51,7 @@ const testCatalog = Effect.runSync(
   catalog({ features: [ai, messages], tiers: [proTier, creditsTier] }),
 );
 
-const pro = allowancesOf(testCatalog, "pro")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const creditsTerms = creditTermsOf(testCatalog, "credits")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const annualPrice = { amount: 19_000, currency: "usd", interval: "annual" as const };
@@ -83,7 +83,7 @@ const activated = new SubscriptionActivated({
   statusAfter: "active",
 });
 
-const creditsAllowances = allowancesOf(testCatalog, "credits")!;
+const creditsAllowances = planItemsOf(testCatalog, "credits")!;
 
 const creditsActivated = new SubscriptionActivated({
   tier: "credits",

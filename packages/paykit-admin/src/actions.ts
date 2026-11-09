@@ -358,7 +358,7 @@ export const OperatorActions = operatorActionTable({
       Result.map(selectTier(values.tier ?? ""), (tier) => ({ kind: "ScheduleTierChange", tier })),
     send: ({ target, intent, commandId, catalog, currency }) => {
       // No catalog, or no such tier: send an empty grant so the model answers
-      // `TierNotInCatalog` instead of the console guessing.
+      // `PlanNotInCatalog` instead of the console guessing.
       const input =
         catalog === null ? null : schedulePlanChangeInputOf(catalog, intent.tier, currency);
 

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { BillingReadStore } from "../BillingReadStore.ts";
-import { evaluateCheck, rowToState } from "../Check.ts";
+import { CheckFailed, evaluateCheck, rowToState } from "../Check.ts";
 import { mapBindingFailure } from "./Bindings.ts";
 import { Check, toCheckError } from "./Check.binding.ts";
 
@@ -26,6 +26,16 @@ export const CheckReadModel = Layer.effect(
 
     return Effect.fn("Paykit.Check")(function* (account) {
       return Effect.fn("Paykit.Check.readModel")(function* (request) {
+        // The edge reads a row; it does not own the aggregate, so it cannot
+        // place a lock. A deployment that needs one uses `BillingInProcess`.
+        if (request.lock === true) {
+          return yield* mapBindingFailure(toCheckError)(
+            Effect.fail(
+              new CheckFailed({ message: "a lock needs the model, which this read does not own" }),
+            ),
+          );
+        }
+
         const row = yield* mapBindingFailure(toCheckError)(store.get(account));
 
         return evaluateCheck(row === null ? null : rowToState(row), { account, ...request });

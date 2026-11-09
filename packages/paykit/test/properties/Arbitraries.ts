@@ -2,7 +2,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { catalog, creditRatesOf, tierTermsOf, type Catalog } from "../../src/Catalog.ts";
+import { catalog, creditRatesOf, planTermsOf, type Catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { prorate } from "../../src/Proration.ts";
 import { AttachProviderRef } from "../../src/Subscription/AttachProviderRef.command.ts";
@@ -269,7 +269,7 @@ export const isAccepted = (
 ): decision is ReadonlyArray<{ readonly _tag: string }> => Array.isArray(decision);
 
 const termsOf = (tierId: TierName) => {
-  const found = tierTermsOf(testCatalog, tierId);
+  const found = planTermsOf(testCatalog, tierId);
 
   if (found === null) throw new Error(`the generated catalog is missing tier ${tierId}`);
 
@@ -510,7 +510,7 @@ export const subscribedIn = (
   tier: string,
   now: DateTime.Utc = start,
 ): SubscribedState => {
-  const terms = tierTermsOf(source, tier);
+  const terms = planTermsOf(source, tier);
 
   if (terms === null) throw new Error(`the catalog is missing ${tier}`);
 

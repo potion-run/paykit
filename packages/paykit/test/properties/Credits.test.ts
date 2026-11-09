@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { catalog, creditRatesOf, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, creditRatesOf, planTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { ConsumeCredits } from "../../src/Subscription/ConsumeCredits.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
@@ -223,7 +223,7 @@ describe("credits", () => {
             }
 
             case "ChangeTier": {
-              const event = decision.find((entry) => entry._tag === "TierChanged") as
+              const event = decision.find((entry) => entry._tag === "PlanChanged") as
                 | {
                     readonly credits: number;
                     readonly creditsExpire: string;
@@ -236,7 +236,7 @@ describe("credits", () => {
               if (event.credits !== before.credits) return false;
 
               if (after.credits !== before.credits) return false;
-              const terms = tierTermsOf(testCatalog, step.tier);
+              const terms = planTermsOf(testCatalog, step.tier);
 
               if (terms === null) return false;
 
@@ -557,7 +557,7 @@ describe("what a close may expire", () => {
         }),
       ),
       ({ purchased, spent }) => {
-        const terms = tierTermsOf(creditsCatalog, "small")!;
+        const terms = planTermsOf(creditsCatalog, "small")!;
 
         const bought = decideAt(
           initialSubscriptionState,

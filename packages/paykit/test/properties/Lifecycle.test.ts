@@ -2,7 +2,7 @@ import { describe, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { tierTermsOf } from "../../src/Catalog.ts";
+import { planTermsOf } from "../../src/Catalog.ts";
 import { DunningRetry } from "../../src/Subscription/DunningRetry.command.ts";
 import { Expire } from "../../src/Subscription/Expire.command.ts";
 import { ExtendTrial } from "../../src/Subscription/ExtendTrial.command.ts";
@@ -307,7 +307,7 @@ describe("trial deadlines", () => {
         }),
       ),
       ({ tier, openDays, extendDays }) => {
-        const terms = tierTermsOf(testCatalog, tier);
+        const terms = planTermsOf(testCatalog, tier);
 
         if (terms === null) return false;
         const now = start;

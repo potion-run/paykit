@@ -2,6 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import type { Balance } from "../Balance.ts";
 import {
   HoldExceeded,
   HoldExpired,
@@ -24,7 +25,11 @@ export interface SettleHoldRequest {
 /** What the command billed and what it returned, as its reply. */
 export interface SettleHoldResult {
   readonly billed: number;
+  /** The feature the hold was taken on, so `Balances.finalize` can answer it. */
+  readonly featureId: string;
   readonly released: number;
+  /** The feature's balance after the settle. */
+  readonly balance: Balance;
 }
 
 /** Refusals a settle can answer: an unknown, closed, or over-settled hold. */

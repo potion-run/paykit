@@ -8,7 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Preview } from "../../src/Billing/Preview.binding.ts";
 import type { PreviewCommand } from "../../src/Billing/Preview.operation.ts";
-import { tierTermsOf } from "../../src/Catalog.ts";
+import { planTermsOf } from "../../src/Catalog.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -48,7 +48,7 @@ describe("preview", () => {
           yield* TestClock.setTime(DateTime.toEpochMillis(start));
           const subscription = yield* Subscription;
           const ref = Subscription.ref("acct_preview_property");
-          const terms = tierTermsOf(testCatalog, startTier);
+          const terms = planTermsOf(testCatalog, startTier);
 
           if (terms === null) return false;
           yield* subscription.send(ref, new Subscribe({ tier: startTier, ...terms }));
@@ -66,7 +66,7 @@ describe("preview", () => {
               ? new ScheduleCancellation()
               : kind === "subscribe"
                 ? (() => {
-                    const next = tierTermsOf(testCatalog, nextTier);
+                    const next = planTermsOf(testCatalog, nextTier);
 
                     return next === null ? null : new Subscribe({ tier: nextTier, ...next });
                   })()

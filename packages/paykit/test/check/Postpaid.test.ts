@@ -32,13 +32,17 @@ describe("a postpaid read", () => {
   it("allows what fits under the money cap, priced from the billable part", () => {
     // The 350 used are past the included 100, so every extra unit is billable:
     // 50 × 2 = 100, and 400 + 100 is exactly the ceiling.
-    expect(evaluateCheck(state, { account, feature: "messages", amount: 50 }).allowed).toBe(true);
+    expect(
+      evaluateCheck(state, { account, featureId: "messages", requiredBalance: 50 }).allowed,
+    ).toBe(true);
   });
 
   it("refuses the request that would pass the ceiling", () => {
     // 51 × 2 = 102, so 400 + 102 > 500 while `remaining` would still allow the
     // units. The money ceiling is the stricter rule.
-    expect(evaluateCheck(state, { account, feature: "messages", amount: 51 }).allowed).toBe(false);
+    expect(
+      evaluateCheck(state, { account, featureId: "messages", requiredBalance: 51 }).allowed,
+    ).toBe(false);
   });
 
   it("bills only the part of the request that crosses `included`", () => {
@@ -55,8 +59,12 @@ describe("a postpaid read", () => {
     };
 
     // 100 more units cross the 100 included by 50: 50 × 2 = 100, under the cap.
-    expect(evaluateCheck(below, { account, feature: "messages", amount: 100 }).allowed).toBe(true);
+    expect(
+      evaluateCheck(below, { account, featureId: "messages", requiredBalance: 100 }).allowed,
+    ).toBe(true);
     // 200 more cross by 150: 300, still under. 250 more cross by 200: 400.
-    expect(evaluateCheck(below, { account, feature: "messages", amount: 250 }).allowed).toBe(true);
+    expect(
+      evaluateCheck(below, { account, featureId: "messages", requiredBalance: 250 }).allowed,
+    ).toBe(true);
   });
 });

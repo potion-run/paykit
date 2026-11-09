@@ -70,6 +70,11 @@ export class UsageReserved extends Domain.Event("UsageReserved", {
   /** What the feature has left once these units are held. */
   remainingAfter: Schema.NullOr(Schema.Int),
   dedupeKey: Schema.optionalKey(Schema.String),
+  /**
+   * The grants this hold took, keyed by grant id. A settle returns the part it
+   * did not bill to the same sources.
+   */
+  grantsUsed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
 }) {}
 
 /**

@@ -60,7 +60,7 @@ test `TopUpCooldownCleared` already uses, because a retry is a crossing that alr
 
 **5. The counter resets on what ends an episode, and the record does not.** A successful
 `CreditsPurchased` clears `topUpAttempts` (the refill that was owed landed), and so do
-`SubscriptionActivated`, `TierChanged` and `PeriodClosed`, because each re-establishes the line or
+`SubscriptionActivated`, `PlanChanged` and `PeriodClosed`, because each re-establishes the line or
 the pool — a fresh line with a new pool deserves a fresh budget, or a failure from last period would
 suppress the retries this one is owed. `topUpFailure` is *not* cleared by those: it is the record of
 what happened, and ADR 0027's "a failure survives a tier change" is a statement about history. Only

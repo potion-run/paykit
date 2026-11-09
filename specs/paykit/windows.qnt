@@ -10,7 +10,7 @@
 //
 // Source correspondence:
 //   track              ↔ TrackUsage.command.ts         (the count effect only)
-//   resetWindow        ↔ ResetAllowance.command.ts     (AllowanceReset)
+//   resetWindow        ↔ ResetAllowance.command.ts     (PlanItemReset)
 //   closePeriod        ↔ ClosePeriod.command.ts        (UsageReset, kept features)
 //   setQuantity        ↔ SetQuantity.command.ts        (QuantityChanged)
 //   changeTierCap      ↔ ChangeTier.command.ts         (the quantity branch)

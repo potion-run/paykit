@@ -530,7 +530,7 @@ describe("a change at the period end", () => {
   it("never offers a one-off pack as a tier", () => {
     // A pack has no allowances, so both the mid-period change and the boundary
     // change would be refused. The console must not render a button that can
-    // only return `TierNotInCatalog`.
+    // only return `PlanNotInCatalog`.
     const pack = tier({
       id: "pack",
       kind: "one_off",

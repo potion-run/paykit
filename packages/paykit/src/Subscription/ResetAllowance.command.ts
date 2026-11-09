@@ -8,7 +8,7 @@ import { AccountId } from "./Subscription.id.ts";
  * outcome — what the feature has left, how much of it rolled over, and the next
  * boundary — so a replay reproduces the window without reading the catalog.
  */
-export class AllowanceReset extends Domain.Event("AllowanceReset", {
+export class PlanItemReset extends Domain.Event("PlanItemReset", {
   feature: Schema.String,
   /** Spendable after the reset; `null` for an allowance with no count. */
   remaining: Schema.NullOr(Schema.Int),
@@ -33,6 +33,6 @@ export class ResetAllowance extends Domain.Command("ResetAllowance", {
     /** The boundary the caller believes it is resetting. */
     at: Schema.DateTimeUtc,
   },
-  events: [UsageReleased, AllowanceReset],
+  events: [UsageReleased, PlanItemReset],
   rejects: [],
 }) {}

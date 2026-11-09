@@ -32,7 +32,7 @@ import {
   DowngradeBelowCeiling,
   DowngradeBelowSpend,
   DowngradeBelowUsage,
-  TierChanged,
+  PlanChanged,
 } from "./ChangeTier.command.ts";
 import {
   ClosePeriod,
@@ -47,9 +47,17 @@ import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { DunningRetry, DunningRetryDue } from "./DunningRetry.command.ts";
 import { AlreadyInGrace, EnterGrace, GraceEntered } from "./EnterGrace.command.ts";
 import { Expire, SubscriptionExpired } from "./Expire.command.ts";
+import { BalanceExpired, ExpireGrant } from "./ExpireGrant.command.ts";
 import { ExtendTrial, TrialExtended, TrialNotActive } from "./ExtendTrial.command.ts";
 import { FeatureNotConsumable } from "./FeatureNotConsumable.rejection.ts";
 import { GraceElapsed } from "./GraceElapsed.command.ts";
+import {
+  BalanceGranted,
+  FeatureNotCounted,
+  FeaturePricedInCredits,
+  GrantBalance,
+  GrantExpiryNotLater,
+} from "./GrantBalance.command.ts";
 import { CreditsGranted, GrantCredits } from "./GrantCredits.command.ts";
 import {
   Hold,
@@ -66,6 +74,7 @@ import { NotInGrace } from "./NotInGrace.rejection.ts";
 import { NotScheduled } from "./NotScheduled.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
 import { PeriodEnded } from "./PeriodEnded.command.ts";
+import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { CreditsPurchased, PurchaseCredits } from "./PurchaseCredits.command.ts";
 import {
@@ -84,7 +93,7 @@ import { RecordTopUpFailure, TopUpFailed } from "./RecordTopUpFailure.command.ts
 import { Recover, Recovered } from "./Recover.command.ts";
 import { Refund, RefundExceedsCharged, RefundRecorded } from "./Refund.command.ts";
 import { ReleaseHold, UsageReleased } from "./ReleaseHold.command.ts";
-import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
+import { PlanItemReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { Resume, CancellationWithdrawn } from "./Resume.command.ts";
 import { RetryTopUp, TopUpRetryDue } from "./RetryTopUp.command.ts";
 import {
@@ -94,7 +103,7 @@ import {
   ReverseRefund,
 } from "./ReverseRefund.command.ts";
 import { CancellationScheduled, ScheduleCancellation } from "./ScheduleCancellation.command.ts";
-import { ScheduleTierChange, TierChangeScheduled } from "./ScheduleTierChange.command.ts";
+import { ScheduleTierChange, PlanChangeScheduled } from "./ScheduleTierChange.command.ts";
 import {
   QuantityCapExceeded,
   QuantityChanged,
@@ -103,6 +112,8 @@ import {
   SetQuantity,
 } from "./SetQuantity.command.ts";
 import { SettleHold, UsageSettled } from "./SettleHold.command.ts";
+import { UsageInvalid } from "./SetUsage.command.ts";
+import { SetUsage, UsageSet } from "./SetUsage.command.ts";
 import {
   activationOf,
   carriedPrepaidOf,
@@ -127,11 +138,20 @@ import {
   creditRateOf,
   creditsOf,
   expiringCreditsOf,
+  grantedWith,
+  grantTotalOf,
+  grantsAfterReturn,
+  grantsAfterSpend,
+  grantsForSpend,
+  grantsOf,
+  grantsReturnedFor,
+  grantsWithout,
   holdOf,
   includedRemainingOf,
   initialSubscriptionState,
   quantityAfterTierChange,
   quantityOf,
+  occupiedOf,
   isTerminalStatus,
   periodFrom,
   prepaidCreditsOf,
@@ -163,7 +183,6 @@ import {
   type PendingTier,
   type SubscriptionStatus,
 } from "./Subscription.state.ts";
-import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 import { TopUpCooldownCleared, TopUpCooldownElapsed } from "./TopUpCooldownElapsed.command.ts";
 import {
   AllowanceExceeded,
@@ -202,10 +221,7 @@ const remainingAfterChange = (
         const included = typeof allowance.included === "number" ? allowance.included : 0;
         const quantity = quantityAfterTierChange(state.quantities?.[feature] ?? included, included);
 
-        return [
-          feature,
-          allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
-        ];
+        return [feature, quantity - occupiedOf(state, feature)];
       }
 
       // Usage and open reservations both still owe the old period's units. An
@@ -215,7 +231,15 @@ const remainingAfterChange = (
 
       return [
         feature,
-        spendable === null ? null : spendable - usedOf(state, feature) - reservedOf(state, feature),
+        spendable === null
+          ? null
+          : spendable -
+            usedOf(state, feature) -
+            reservedOf(state, feature) +
+            // A grant survives a plan change. The total the event records is
+            // the new plan's count plus every standalone grant the customer
+            // still holds (ADR 0037).
+            grantTotalOf(state, feature),
       ];
     }),
   );
@@ -247,6 +271,7 @@ const releaseEvent = (
     cost: hold.cost,
     remainingAfter: remainingAfterRelease(availableOf(state, hold.feature), returns),
     reason,
+    ...(hold.grantsUsed === undefined ? {} : { grantsReturned: hold.grantsUsed }),
   });
 };
 
@@ -266,13 +291,22 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
   // A scheduled change keeps the quantity a non-consumable feature holds, so
   // its new remaining is the new cap less that quantity — not the new grant.
   const pendingRemaining =
-    pending === undefined ? undefined : startingRemaining(pending.allowances, state.quantities);
+    pending === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(
+            startingRemaining(pending.allowances, state.quantities, state.occupied),
+          ).map(([feature, remaining]) => [
+            feature,
+            remaining === null ? null : remaining + grantTotalOf(state, feature),
+          ]),
+        );
 
   const moved =
     pending === undefined
       ? []
       : [
-          new TierChanged({
+          new PlanChanged({
             tier: pending.tier,
             allowances: pending.allowances,
             remaining: pendingRemaining!,
@@ -303,30 +337,55 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
 
   // One reset per allowance, so `remaining` and `carried` cannot disagree about
   // what the closing period left behind.
-  const resets = Object.entries(allowances).map(
-    ([feature, allowance]) =>
-      [
-        feature,
-        // A scheduled change starts every counter over. The allowance the period
-        // recorded against is not the one the next period runs on, so a
-        // `resets: "never"` count belongs to the tier being left. A close with no
-        // change keeps those counters, which is what makes them lifetime counts
-        // for the tier they were recorded on. A quantity is never a counter, so
-        // it survives either way.
+  const resets = [
+    ...Object.entries(allowances).map(([feature, allowance]) => {
+      const reset =
         pending === undefined
           ? resetOf(state, feature, allowance)
           : {
               remaining: pendingRemaining![feature] ?? null,
               carried: 0,
               kept: isQuantityGrant(allowance),
-            },
-      ] as const,
-  );
+            };
+
+      return [
+        feature,
+        {
+          ...reset,
+          // A grant is not reset by the plan's boundary. A scheduled change's
+          // `pendingRemaining` already carries the surviving grants; a close
+          // without one adds them here.
+          remaining:
+            reset.remaining === null
+              ? null
+              : pending === undefined
+                ? reset.remaining + grantTotalOf(state, feature)
+                : reset.remaining,
+        },
+      ] as const;
+    }),
+    // A grant-only feature is not in the plan's allowances, but its usage still
+    // restarts with the period. The grant source itself is untouched.
+    ...(() => {
+      const seen = new Set<string>();
+
+      return Object.values(state.grants ?? {}).flatMap((grant) => {
+        const feature = grant.feature;
+
+        if (seen.has(feature) || allowances[feature] !== undefined) return [];
+        seen.add(feature);
+
+        return [
+          [feature, { remaining: grantTotalOf(state, feature), carried: 0, kept: false }] as const,
+        ];
+      });
+    })(),
+  ];
 
   // A `resets: "never"` feature keeps its usage, holds and remainder, so the
   // reset does not touch it.
   const kept = Object.fromEntries(
-    resets.filter(([, reset]) => reset.kept).map(([feature]) => [feature, true]),
+    resets.flatMap(([feature, reset]) => (reset.kept ? [[feature, true]] : [])),
   );
 
   // Expiry is a property of the grant that is ending. With no scheduled change,
@@ -360,6 +419,7 @@ const closePeriodEvents = (state: SubscribedState, periodEnd: DateTime.Utc) => {
         cost: hold.cost,
         remainingAfter,
         reason: "reset",
+        ...(hold.grantsUsed === undefined ? {} : { grantsReturned: hold.grantsUsed }),
       }),
     );
   }
@@ -585,6 +645,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     ReleaseHold,
     HoldElapsed,
     RecordProrationInvoice,
+    GrantBalance,
+    ExpireGrant,
     GrantCredits,
     PurchaseCredits,
     Refund,
@@ -607,6 +669,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     DunningRetry,
     ResetAllowance,
     SetQuantity,
+    SetUsage,
     RecordQuantityProrationInvoice,
   ],
   decide: {
@@ -616,7 +679,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
 
       if (emptyAllowances(command.allowances)) {
-        return new TierNotInCatalog({ tier: command.tier });
+        return new PlanNotInCatalog({ tier: command.tier });
       }
 
       const currentCurrency = state._tag === "Subscribed" ? state.currency : undefined;
@@ -663,7 +726,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     Subscribe: (state, command, { id, now }) => {
       if (emptyAllowances(command.allowances)) {
-        return new TierNotInCatalog({ tier: command.tier });
+        return new PlanNotInCatalog({ tier: command.tier });
       }
 
       // A second activation on an open standing would reset the period, the
@@ -715,7 +778,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     ChangeTier: (state, command, { id, now }) => {
       if (emptyAllowances(command.allowances)) {
-        return new TierNotInCatalog({ tier: command.tier });
+        return new PlanNotInCatalog({ tier: command.tier });
       }
 
       const current = subscribed(state, id);
@@ -803,7 +866,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
 
       return [
-        new TierChanged({
+        new PlanChanged({
           tier: command.tier,
           allowances: command.allowances,
           remaining: remainingAfterChange(current, command.allowances),
@@ -872,6 +935,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       const allowance = state.allowances[command.feature];
 
+      // A flag is granted, not metered, and a quantity is occupied, not spent.
+      // Both are refused before the capacity rule so a seat out of balance says
+      // what it is instead of looking like a spent allowance.
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
+
+      if (allowance !== undefined && isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
+      }
+
       const verdict = capacityOf({
         standing: standingOf(state.status),
         feature: judgedOf(state, command.feature),
@@ -884,16 +958,6 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       if (verdict._tag === "Standing") {
         return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
-      }
-
-      // A flag is granted, not metered: there is no counter to record usage
-      // against, so a Track on one is refused however small the amount is.
-      if (allowance !== undefined && isFlagGrant(allowance)) {
-        return new FeatureNotMetered({ feature: command.feature });
-      }
-
-      if (allowance !== undefined && isQuantityGrant(allowance)) {
-        return new FeatureNotConsumable({ feature: command.feature });
       }
 
       if (command.amount <= 0) return [];
@@ -960,6 +1024,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                   : { unitPrice: soleUnitPriceOf(pricing)! }),
                 billable: billableUnitsOf(allowance?.included ?? null, used, command.amount),
               }),
+          ...(Object.keys(grantsForSpend(state, command.feature, command.amount)).length === 0
+            ? {}
+            : { grantsUsed: grantsForSpend(state, command.feature, command.amount) }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -1027,6 +1094,39 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           quantityBefore: before,
           quantityAfter: command.quantity,
           ...(proration === null ? {} : { proration, prorationId: command.dedupeKey }),
+        }),
+      ];
+    },
+    SetUsage: (state, command, { id }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+      const allowance = state.allowances[command.feature];
+
+      if (allowance === undefined || !isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
+      }
+
+      if (command.usage < 0) {
+        return new UsageInvalid({ feature: command.feature, usage: command.usage });
+      }
+
+      const before = occupiedOf(state, command.feature);
+
+      if (before === command.usage) return [];
+
+      // A blocked standing may free a seat; it may not occupy a new one.
+      if (!allowsUsage(state.status) && command.usage > before) {
+        return new StandingBlocksUsage({
+          standing: standingOf(state.status),
+          status: state.status,
+        });
+      }
+
+      return [
+        new UsageSet({
+          feature: command.feature,
+          occupiedBefore: before,
+          occupiedAfter: command.usage,
+          remainingAfter: quantityOf(state, command.feature, allowance) - command.usage,
         }),
       ];
     },
@@ -1166,9 +1266,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         });
       }
 
-      // A flag has no counter and no pool: it is granted or it is not.
+      // A flag has no counter and no pool: it is granted or it is not. A
+      // quantity is occupied, not held. Both are refused before the capacity
+      // rule, so a seat is never mistaken for a spent allowance.
       const allowance = state.allowances[command.feature];
       const rates = state.rates[command.feature];
+
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
+
+      if (allowance !== undefined && isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
+      }
 
       const verdict = capacityOf({
         standing: standingOf(state.status),
@@ -1182,14 +1292,6 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       if (verdict._tag === "Standing") {
         return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
-      }
-
-      if (allowance !== undefined && isFlagGrant(allowance)) {
-        return new FeatureNotMetered({ feature: command.feature });
-      }
-
-      if (allowance !== undefined && isQuantityGrant(allowance)) {
-        return new FeatureNotConsumable({ feature: command.feature });
       }
 
       // A hold with the id this standing already has is a replay: the retry
@@ -1233,6 +1335,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           at: now,
           expiresAt: command.expiresAt ?? defaultHoldExpiry(now),
           remainingAfter: remainingAfterSpending(remaining, held),
+          ...(Object.keys(grantsForSpend(state, command.feature, command.amount)).length === 0
+            ? {}
+            : { grantsUsed: grantsForSpend(state, command.feature, command.amount) }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
       ];
@@ -1352,6 +1457,10 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 billable: billableUnitsOf(allowance?.included ?? null, used, billed),
               }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
+          // A feature with grants needs the marker: the hold already took its
+          // grant units when it was placed, so the settle must not take them
+          // again. A feature without grants keeps the event unchanged.
+          ...(grantsOf(state, hold.feature).length === 0 ? {} : { holdId: hold.id }),
         }),
         new UsageSettled({
           holdId: hold.id,
@@ -1360,6 +1469,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           released,
           cost: hold.cost,
           remainingAfter: remaining,
+          ...(hold.grantsUsed === undefined
+            ? {}
+            : { grantsReturned: grantsReturnedFor(hold.grantsUsed, released) }),
         }),
       ];
     },
@@ -1426,6 +1538,74 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         new CreditsGranted({
           amount: command.amount,
           balanceAfter: state.credits + command.amount,
+        }),
+      ];
+    },
+    GrantBalance: (state, command, { id, now, commandId }) => {
+      if (state._tag !== "Subscribed") return new NotSubscribed({ account: id });
+
+      const allowance = state.allowances[command.feature];
+
+      if (state.rates[command.feature] !== undefined) {
+        return new FeaturePricedInCredits({ feature: command.feature });
+      }
+
+      if (allowance !== undefined && isQuantityGrant(allowance)) {
+        return new FeatureNotConsumable({ feature: command.feature });
+      }
+
+      if (allowance !== undefined && isFlagGrant(allowance)) {
+        return new FeatureNotMetered({ feature: command.feature });
+      }
+
+      // A grant needs a count to add to; an unlimited allowance has none.
+      if (allowance?.included === "unlimited") {
+        return new FeatureNotCounted({ feature: command.feature });
+      }
+
+      if (command.granted <= 0) return [];
+
+      if (
+        command.expiresAt !== undefined &&
+        DateTime.toEpochMillis(command.expiresAt) <= DateTime.toEpochMillis(now)
+      ) {
+        return new GrantExpiryNotLater({ expiresAt: command.expiresAt, now });
+      }
+
+      return [
+        new BalanceGranted({
+          feature: command.feature,
+          grantId: commandId,
+          granted: command.granted,
+          ...(command.expiresAt === undefined ? {} : { expiresAt: command.expiresAt }),
+          planId: state.tier,
+          remainingAfter: (remainingOf(state, command.feature) ?? 0) + command.granted,
+        }),
+      ];
+    },
+    ExpireGrant: (state, command, { now }) => {
+      if (state._tag !== "Subscribed") return [];
+
+      const grant = state.grants?.[command.grantId];
+
+      if (grant === undefined || grant.feature !== command.feature) return [];
+
+      // A scheduled deadline is not an operator's mistake: a grant with no
+      // deadline, a deadline not yet reached, and a grant already gone all
+      // record nothing.
+      if (
+        grant.expiresAt === undefined ||
+        DateTime.toEpochMillis(now) < DateTime.toEpochMillis(grant.expiresAt)
+      ) {
+        return [];
+      }
+
+      return [
+        new BalanceExpired({
+          feature: grant.feature,
+          grantId: grant.id,
+          amount: grant.remaining,
+          balanceAfter: (remainingOf(state, grant.feature) ?? 0) - grant.remaining,
         }),
       ];
     },
@@ -1668,7 +1848,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // move the standing onto a pack at the boundary and overwrite its pool
       // with the pack's credits.
       if (emptyAllowances(command.allowances)) {
-        return new TierNotInCatalog({ tier: command.tier });
+        return new PlanNotInCatalog({ tier: command.tier });
       }
 
       const priceCurrency = command.price?.currency ?? unitPriceCurrencyOf(command.allowances);
@@ -1682,7 +1862,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       }
 
       return [
-        new TierChangeScheduled({
+        new PlanChangeScheduled({
           tier: command.tier,
           allowances: command.allowances,
           ...(command.price === undefined ? {} : { price: command.price }),
@@ -1759,9 +1939,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       return [
         ...releases,
-        new AllowanceReset({
+        new PlanItemReset({
           feature: command.feature,
-          remaining: reset.remaining,
+          remaining:
+            reset.remaining === null
+              ? null
+              : reset.remaining + grantTotalOf(state, command.feature),
           carried: reset.carried,
           resetAt: nextResetAt(now, allowance),
         }),
@@ -1829,7 +2012,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         period: { ...state.period, end: event.canceledAt },
       };
     },
-    TierChanged: (state, event) => {
+    PlanChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
 
       const {
@@ -1852,7 +2035,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ...rest,
         tier: event.tier,
         allowances: event.allowances,
-        remaining: event.remaining,
+        // New plan features come from the event. A feature the new plan drops
+        // stays only if it still holds a grant — a lifetime grant is not the
+        // plan's to remove (ADR 0037).
+        remaining: {
+          ...Object.fromEntries(
+            Object.entries(state.remaining).filter(
+              ([feature]) =>
+                event.remaining[feature] === undefined && grantsOf(state, feature).length > 0,
+            ),
+          ),
+          ...event.remaining,
+        },
         credits: event.credits,
         prepaidCredits: event.prepaidCredits ?? 0,
         creditsExpire: event.creditsExpire,
@@ -1892,6 +2086,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               ? {}
               : { billed: { ...state.billed, [event.feature]: event.billedAfter } }),
             remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            ...(event.grantsUsed === undefined
+              ? {}
+              : { grants: grantsAfterSpend(state.grants, event.grantsUsed) }),
             dedupeKeys:
               event.dedupeKey === undefined
                 ? state.dedupeKeys
@@ -1925,9 +2122,13 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 at: event.at,
                 expiresAt: event.expiresAt,
                 status: "open" as const,
+                ...(event.grantsUsed === undefined ? {} : { grantsUsed: event.grantsUsed }),
               },
             },
             remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            ...(event.grantsUsed === undefined
+              ? {}
+              : { grants: grantsAfterSpend(state.grants, event.grantsUsed) }),
             dedupeKeys:
               event.dedupeKey === undefined
                 ? state.dedupeKeys
@@ -1948,6 +2149,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 [hold.id]: closingHold(hold, nextHoldStatus(hold.status, "settle")),
               },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+        grants: grantsAfterReturn(
+          state.grants,
+          hold?.grantsUsed,
+          Object.values(event.grantsReturned ?? {}).reduce((sum, amount) => sum + amount, 0),
+        ),
       };
     },
     UsageReleased: (state, event) => {
@@ -1967,6 +2173,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 ),
               },
         remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+        grants: grantsAfterReturn(
+          state.grants,
+          hold?.grantsUsed,
+          Object.values(event.grantsReturned ?? {}).reduce((sum, amount) => sum + amount, 0),
+        ),
       };
     },
     PaymentRecorded: (state, event) => {
@@ -2014,6 +2225,29 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ...state,
             credits: event.balanceAfter,
             prepaidCredits: protectedAfterSpending(state, event.balanceAfter),
+          }
+        : state,
+    BalanceGranted: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            grants: grantedWith(state.grants, {
+              id: event.grantId,
+              feature: event.feature,
+              granted: event.granted,
+              remaining: event.granted,
+              ...(event.expiresAt === undefined ? {} : { expiresAt: event.expiresAt }),
+              ...(event.planId === undefined ? {} : { planId: event.planId }),
+            }),
+            remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+          }
+        : state,
+    BalanceExpired: (state, event) =>
+      state._tag === "Subscribed"
+        ? {
+            ...state,
+            grants: grantsWithout(state.grants, event.grantId),
+            remaining: { ...state.remaining, [event.feature]: event.balanceAfter },
           }
         : state,
     CreditsPurchased: (state, event) => {
@@ -2100,7 +2334,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             prepaidCredits: protectedAfterSpending(state, event.balanceAfter),
           }
         : state,
-    TierChangeScheduled: (state, event) =>
+    PlanChangeScheduled: (state, event) =>
       state._tag === "Subscribed"
         ? {
             ...state,
@@ -2151,7 +2385,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             topUpAttempts: 0,
           }
         : state,
-    AllowanceReset: (state, event) => {
+    PlanItemReset: (state, event) => {
       if (state._tag !== "Subscribed") return state;
 
       const resetAt = Object.fromEntries(
@@ -2175,17 +2409,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
     },
     QuantityChanged: (state, event) => {
       if (state._tag !== "Subscribed") return state;
-      const allowance = state.allowances[event.feature];
-
-      const remaining =
-        allowance?.cap === undefined
-          ? null
-          : Math.max(0, (allowance.cap ?? 0) - event.quantityAfter);
 
       return {
         ...state,
         quantities: { ...state.quantities, [event.feature]: event.quantityAfter },
-        remaining: { ...state.remaining, [event.feature]: remaining },
+        remaining: {
+          ...state.remaining,
+          [event.feature]: event.quantityAfter - occupiedOf(state, event.feature),
+        },
         ...(event.proration === undefined || event.prorationId === undefined
           ? {}
           : {
@@ -2194,6 +2425,15 @@ export class Subscription extends Domain.Aggregate("Subscription", {
                 [event.prorationId]: { feature: event.feature, proration: event.proration },
               },
             }),
+      };
+    },
+    UsageSet: (state, event) => {
+      if (state._tag !== "Subscribed") return state;
+
+      return {
+        ...state,
+        occupied: { ...state.occupied, [event.feature]: event.occupiedAfter },
+        remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
       };
     },
     QuantityProrationInvoiced: (state, event) => {
@@ -2277,15 +2517,31 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       const settled = events.find((event) => event._tag === "UsageSettled");
 
       return settled?._tag === "UsageSettled"
-        ? { billed: settled.amount, released: settled.released }
-        : { billed: 0, released: 0 };
+        ? { billed: settled.amount, released: settled.released, feature: settled.feature }
+        : { billed: 0, released: 0, feature: "" };
     },
     ReleaseHold: (_state, events) => {
       const released = events.find((event) => event._tag === "UsageReleased");
 
-      return released?._tag === "UsageReleased" ? { released: released.amount } : { released: 0 };
+      return released?._tag === "UsageReleased"
+        ? { released: released.amount, feature: released.feature }
+        : { released: 0, feature: "" };
+    },
+    SetUsage: (_state, events) => {
+      const set = events.find((event) => event._tag === "UsageSet");
+
+      return set?._tag === "UsageSet"
+        ? { usage: set.occupiedAfter, remaining: set.remainingAfter }
+        : { usage: 0, remaining: 0 };
     },
     GrantCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
+    GrantBalance: (_state, events) => {
+      const granted = events.find((event) => event._tag === "BalanceGranted");
+
+      return granted?._tag === "BalanceGranted"
+        ? { granted: granted.granted, balance: granted.remainingAfter }
+        : { granted: 0, balance: 0 };
+    },
     ConsumeCredits: (state) => ({ balance: state._tag === "Subscribed" ? state.credits : 0 }),
   },
   // The admin surface reads the aggregate whole. There is no tenant read here:

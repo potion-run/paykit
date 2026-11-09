@@ -9,6 +9,7 @@ import type { Catalog } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import type { Proration } from "../Proration.ts";
 import { ChangeTier } from "../Subscription/ChangeTier.command.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Resume } from "../Subscription/Resume.command.ts";
 import { ScheduleCancellation } from "../Subscription/ScheduleCancellation.command.ts";
 import { ScheduleTierChange } from "../Subscription/ScheduleTierChange.command.ts";
@@ -16,7 +17,6 @@ import { SetQuantity } from "../Subscription/SetQuantity.command.ts";
 import { Subscribe } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { WithdrawTierChange } from "../Subscription/WithdrawTierChange.command.ts";
 import { planChangeTier, scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
 
@@ -150,7 +150,7 @@ export const previewOperation = Effect.fn("Paykit.Preview")(function* () {
     const command = commandOf(catalog, input.command, state, now);
 
     if (command === null) {
-      return yield* new TierNotInCatalog({
+      return yield* new PlanNotInCatalog({
         tier: "tier" in input.command ? input.command.tier : "*",
       });
     }

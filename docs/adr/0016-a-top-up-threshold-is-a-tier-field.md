@@ -41,7 +41,7 @@ there is no spend in it for a threshold to observe. The catalog refuses that sha
 
 **2. The threshold travels on the standing, from the catalog through the command.** `Subscribe`,
 `StartTrial`, `ChangeTier` and `ScheduleTierChange` carry it; `SubscriptionActivated`,
-`TrialStarted`, `TierChanged` and `TierChangeScheduled` record it; `evolve` copies it. This is the
+`TrialStarted`, `PlanChanged` and `PlanChangeScheduled` record it; `evolve` copies it. This is the
 same route `credits`, `creditsExpire` and `rates` already take, and for the same reason: `decide`
 is pure and the policy runs without the catalog. A change to a tier without `topUp` clears the
 field rather than keeping the previous tier's line.

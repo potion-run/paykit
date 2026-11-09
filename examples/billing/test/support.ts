@@ -1,4 +1,4 @@
-import { catalog, subscribeInputOf, TierNotInCatalog } from "@potion.run/paykit";
+import { catalog, subscribeInputOf, PlanNotInCatalog } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import { billing } from "../src/billing.config.ts";
 
@@ -14,7 +14,7 @@ export const tierCommand = (tierId: string) =>
   Effect.gen(function* () {
     const input = subscribeInputOf(Catalog, tierId);
 
-    if (input === null) return yield* new TierNotInCatalog({ tier: tierId });
+    if (input === null) return yield* new PlanNotInCatalog({ tier: tierId });
 
     return input;
   });

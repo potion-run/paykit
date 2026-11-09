@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, type Catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, type Catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
@@ -29,8 +29,8 @@ const testCatalog: Catalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier] }),
 );
 
-const free = allowancesOf(testCatalog, "free")!;
-const pro = allowancesOf(testCatalog, "pro")!;
+const free = planItemsOf(testCatalog, "free")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_verify";
 

@@ -1,11 +1,11 @@
 import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { WebhookInvalid } from "../Webhooks.ts";
 import type { WebhookAction, WebhookEvent } from "../Webhooks.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
-const refusals = [WebhookInvalid, TierNotInCatalog] as const;
+const refusals = [WebhookInvalid, PlanNotInCatalog] as const;
 
 /**
  * Every refusal applying a delivery can answer. Both are the *edge's* own

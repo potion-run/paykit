@@ -7,7 +7,7 @@ import { asSystem } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { ChargeQuantityProration } from "../../src/Billing/ChargeQuantityProration.binding.ts";
 import { SetQuantity } from "../../src/Billing/SetQuantity.binding.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature } from "../../src/Feature.ts";
 import type { MoneyProvider } from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
@@ -58,7 +58,7 @@ const Stock = Schema.Literals(["team", "deferred"]);
 type Stock = typeof Stock.Type;
 
 const termsOf = (tierId: Stock) => {
-  const terms = tierTermsOf(providerCatalog, tierId);
+  const terms = planTermsOf(providerCatalog, tierId);
 
   if (terms === null) throw new Error(`the seat catalog is missing ${tierId}`);
 

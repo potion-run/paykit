@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
@@ -41,7 +41,7 @@ const ladderTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [ladderTier] }));
-const terms = tierTermsOf(testCatalog, "ladder")!;
+const terms = planTermsOf(testCatalog, "ladder")!;
 const account = Subscription.ref("acct_ladder");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");

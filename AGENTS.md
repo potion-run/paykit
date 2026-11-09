@@ -326,11 +326,13 @@ from typecheck, lint and format. Do not import from them and do not commit them.
 
 ## Formal model
 
-The spend path is modelled in Quint, the way [ADR 0034](./docs/adr/0034-one-quint-model-per-protocol.md)
-records: **one model per protocol, not one per module**. `specs/paykit/paykit.qnt` is the machine
-(activation, counted and credit usage, holds, the pool, the standing, the clock) and
-`specs/paykit/paykit_test.qnt` is the named scenarios. `specs/paykit/README.md` maps every action to
-its command, every invariant to its ADR, and lists what the slice deliberately leaves out.
+The billing protocols are modelled in Quint, the way [ADR
+0034](./docs/adr/0034-one-quint-model-per-protocol.md) records: **one model per protocol, not one
+per module**. `specs/paykit/paykit.qnt` is the spend path (activation, counted and credit usage,
+holds, the pool, the standing, the clock), and `standing.qnt`, `windows.qnt`, `plans.qnt`,
+`balances.qnt` and `money.qnt` are the phase machine, the other clocks, the plan operations, the
+balance sources and the money facts. `specs/paykit/README.md` maps every action to its command,
+every invariant to its ADR, and lists what each slice deliberately leaves out.
 
 - **A refusing command is a disabled action.** `quint` never reports a rejection tag, so the model
   checks the accept-set and a `run` checks the refusal. A rule that conserves nothing — "a terminal

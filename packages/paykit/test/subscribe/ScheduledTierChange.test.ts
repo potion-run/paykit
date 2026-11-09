@@ -8,13 +8,13 @@ import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { CurrencyMismatch } from "../../src/Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../../src/Subscription/NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "../../src/Subscription/PlanNotInCatalog.rejection.ts";
 import {
   ScheduleTierChange,
-  TierChangeScheduled,
+  PlanChangeScheduled,
 } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { SubscribedState } from "../../src/Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../../src/Subscription/TierNotInCatalog.rejection.ts";
 import {
   NoTierChangeScheduled,
   TierChangeWithdrawn,
@@ -72,7 +72,7 @@ describe("a tier change scheduled for the boundary", () => {
 
     if (verdict._tag !== "Accepted") return;
     expect(verdict.events).toHaveLength(1);
-    expect(verdict.events[0]).toBeInstanceOf(TierChangeScheduled);
+    expect(verdict.events[0]).toBeInstanceOf(PlanChangeScheduled);
     expect(verdict.events[0]).toMatchObject({
       tier: "small",
       allowances: { messages: small },
@@ -110,7 +110,7 @@ describe("a tier change scheduled for the boundary", () => {
     const tags = verdict.events.map((event) => event._tag);
     // The change first: `UsageReset` reads the allowances in state, so a reset
     // emitted ahead of it would start the period on the tier being left.
-    expect(tags.indexOf("TierChanged")).toBe(0);
+    expect(tags.indexOf("PlanChanged")).toBe(0);
     expect(tags).toContain("PeriodClosed");
 
     const [changed] = verdict.events as ReadonlyArray<{
@@ -191,7 +191,7 @@ describe("a top-up line on the standing", () => {
     expect(verdict._tag).toBe("Accepted");
 
     if (verdict._tag !== "Accepted") return;
-    const changed = verdict.events.find((event) => event._tag === "TierChanged");
+    const changed = verdict.events.find((event) => event._tag === "PlanChanged");
     expect(changed).toMatchObject({ topUp: { threshold: 20 } });
     expect((verdict.state as SubscribedState).topUp).toEqual({ threshold: 20 });
   });
@@ -263,8 +263,8 @@ describe("withdrawing a scheduled tier change", () => {
     expect(closed._tag).toBe("Accepted");
 
     if (closed._tag !== "Accepted") return;
-    // No `TierChanged`: the withdrawn schedule does not land at the boundary.
-    expect(closed.events.map((event) => event._tag)).not.toContain("TierChanged");
+    // No `PlanChanged`: the withdrawn schedule does not land at the boundary.
+    expect(closed.events.map((event) => event._tag)).not.toContain("PlanChanged");
   });
 
   it("refuses when nothing is scheduled, rather than recording an empty intent", () => {
@@ -321,7 +321,7 @@ describe("what a schedule refuses", () => {
     expect(verdict._tag).toBe("Rejected");
 
     if (verdict._tag !== "Rejected") return;
-    expect(verdict.rejection).toBeInstanceOf(TierNotInCatalog);
+    expect(verdict.rejection).toBeInstanceOf(PlanNotInCatalog);
   });
 
   it("a price in another currency than the standing's", () => {
@@ -378,7 +378,7 @@ describe("the pool at the boundary", () => {
 
     if (verdict._tag !== "Accepted") return;
 
-    const changed = verdict.events.find((event) => event._tag === "TierChanged") as
+    const changed = verdict.events.find((event) => event._tag === "PlanChanged") as
       | { readonly credits: number }
       | undefined;
 
@@ -419,7 +419,7 @@ describe("the pool at the boundary", () => {
 
     if (verdict._tag !== "Accepted") return;
 
-    const changed = verdict.events.find((event) => event._tag === "TierChanged") as
+    const changed = verdict.events.find((event) => event._tag === "PlanChanged") as
       | { readonly credits: number; readonly prepaidCredits?: number }
       | undefined;
 

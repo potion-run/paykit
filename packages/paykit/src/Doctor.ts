@@ -126,6 +126,7 @@ const rowFromState = (account: string, state: EntitlementsState): BillingReadRow
   cancelAtPeriodEnd: state.cancelAtPeriodEnd,
   dunningAttempts: state.dunningAttempts,
   credits: state.credits,
+  prepaidCredits: state.prepaidCredits ?? 0,
   ...(state.currency === undefined ? {} : { currency: state.currency }),
   features: state.features,
 });

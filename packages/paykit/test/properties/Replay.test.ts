@@ -56,7 +56,7 @@ describe("replay", () => {
           switch (event._tag) {
             case "SubscriptionActivated":
             case "TrialStarted":
-            case "TierChanged":
+            case "PlanChanged":
               return [value.credits as number];
             case "UsageRecorded":
               return [value.creditsAfter as number];

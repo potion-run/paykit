@@ -23,16 +23,15 @@ No code, comment, doc or test names the product this API is modelled after. The 
 ## Status
 
 - **Phase 0 — done.** ADRs 0035–0037; `windows.qnt` and `standing.qnt` updated; stale docs fixed.
-- **Phase 1 — partial.** `Plan`, `PlanId`, `PlanKind`, `PlanTrial`, `PlanItem` and `planItem()`
-  are public, the catalog accepts `plans`, and a plan has `group`, `addOn`, `isDefault` and
-  `trial`. `attach` maps `planId` to the existing tier terms. The full removal of `Tier` and
-  `Allowance` from the public surface, item-level `reset`/`proration` aliases and `Customer` /
-  `Balance` schemas remain.
-- **Phase 2 — in progress.** `plans.qnt` and its scenarios are green. `Paykit.Attach` implements
+- **Phase 1 — done.** `Plan`, `PlanId`, `PlanKind`, `PlanTrial`, `PlanItem` and `planItem()` are
+  public, the catalog accepts `plans`, and a plan has `group`, `addOn`, `isDefault` and `trial`.
+  The internal command and event words are renamed: `PlanChanged`, `PlanChangeScheduled`,
+  `PlanNotInCatalog`, `PlanItemReset`; the source helpers are `planOf`, `planTermsOf`,
+  `planItemsOf`. `Tier` and `Allowance` remain the schema names while the state migration lands.
+- **Phase 2 — done.** `plans.qnt` and its scenarios are green. `Paykit.Attach` implements
   activation, immediate upgrade, scheduled downgrade and feature quantities. `Paykit.Update`
   implements quantities, cancel-at-boundary and uncancel. `PreviewAttach` and `PreviewUpdate`
-  expose the same decisions through the existing preview path. The transport surface and the
-  collection of quantity proration in the result are next.
+  expose the same decisions through the existing preview path. The transport surface is in.
 
   **Transport is in.** `Paykit.handler` serves `POST /plans/attach`, `POST /plans/update`,
   `POST /plans/preview-attach` and `POST /plans/preview-update` with the same schemas the bindings
@@ -112,24 +111,36 @@ paykit.balances.finalize({ lockId, action, overrideValue? })
   immediate cancellation and default plan.
 - Exit: one operation records the change and the money; the old command bindings remain advanced.
 
-### Phase 3 — check, track, balances and locks
+### Phase 3 — check, track, balances and locks (done)
 
-- `check` returns a `balance` object and takes `requiredBalance`, `lock` and `sendEvent`.
-- `track` takes `value` and `idempotencyKey`, returns `{ customerId, value, balance }`.
-- `balances.update({ usage })` writes occupied seats; `balances.finalize` confirms or releases a
-  lock.
-- Model gate: lock finalize once; purchased/occupied; negative balance blocks new occupancy.
-- Exit: the low-level `Hold`/`SettleHold`/`ReleaseHold` verbs are advanced, not primary.
+- `check` returns a `balance` object and takes `requiredBalance`, `lock` and `idempotencyKey`. A
+  lock is a hold; a refused check places nothing, and an allowed one answers `lockId`.
+- `track` takes `value` and `idempotencyKey`, returns `{ customerId, featureId, value, balance }`.
+- `balances.list/get/update` and `balances.finalize` are in. `balances.update({ usage })` writes
+  occupied seats (`SetUsage` -> `UsageSet`); `balances.finalize` commits or releases a lock and is
+  `SettleHold` / `ReleaseHold` underneath. The low-level verbs remain the advanced surface.
+- `sendEvent` is not a field: recording usage is `track`, which is the transactional write. A
+  `check` that wrote usage would make the read a second write path.
+- `balances.create` is Phase 4, because a standalone grant is a `BalanceSource` (ADR 0037) and
+  needs `balances.qnt` before it can be a write. It has since landed (see Phase 4).
+- Model gate: lock finalize once; purchased/occupied; negative balance blocks new occupancy. All
+  three were already in `paykit.qnt` and `windows.qnt`; `SetUsage` now has its coverage row, and
+  `Quantities.test.ts` pins the purchase/occupancy split.
 
-### Phase 4 — balance sources, rollover and customer controls
+### Phase 4 — balance sources, rollover and customer controls (sources done)
 
-- `BalanceSource` with `kind: "plan" | "addon" | "one_off" | "rollover" | "grant"`.
-- Deduction: shorter intervals first, then soonest expiry, lifetime last.
-- Plan source replaced at a plan change; lifetime and rollover survive.
-- Customer-level auto top-up, spend limits and usage alerts.
-- Model gate: `balances.qnt` and `controls.qnt`; conservation, deduction order, rollover caps,
-  lifetime survival, spend limit and top-up.
-- Exit: `Balance.breakdown` is real; `credits` and `prepaidCredits` are derived compatibility fields.
+- **Landed.** `balances.qnt` models a plan source, a rollover, an expiring grant and a lifetime
+  grant. The code stores standalone grants on the standing, derives the plan/rollover part as the
+  total less the grants, and spends the plan and rollover before a grant. `balances.create`
+  (`GrantBalance`) creates a lifetime or expiring grant; `BalanceExpiry` schedules `ExpireGrant`
+  at its deadline. A close and a plan change leave every grant alone, and `Balance.breakdown`
+  reports plan, rollover and grant sources.
+- **Remaining.** A resetting standalone grant is an add-on plan item (Phase 5). Customer-level
+  controls — auto top-up, spend limits and usage alerts — and `controls.qnt` are the next model.
+- Model gate: `balances.qnt`; conservation, deduction order, rollover caps, lifetime survival and
+  expiry. `controls.qnt` is still to be written.
+- Exit for the sources half: `Balance.breakdown` is real; `credits` and `prepaidCredits` are still
+  derived compatibility fields for the credit pool.
 
 ### Phase 5 — multiple plans and schedules
 

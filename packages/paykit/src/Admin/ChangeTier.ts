@@ -15,7 +15,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
 import { Admin } from "../Auth/Guards.ts";
-import { tierTermsOf } from "../Catalog.ts";
+import { planTermsOf } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Proration, sameProration } from "../Proration.ts";
@@ -27,10 +27,10 @@ import {
 } from "../Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { planChangeTier } from "../TierCommand.ts";
 import { AdminReadError, AdminReadFailed } from "./Reads.ts";
 
@@ -52,7 +52,7 @@ export type ChangeTierRequest = typeof ChangeTierRequest.Type;
 
 /** Every typed refusal a tier change can return as data. */
 export const ChangeTierRejection = Schema.Union([
-  TierNotInCatalog,
+  PlanNotInCatalog,
   NotSubscribed,
   StandingEnded,
   CurrencyMismatch,
@@ -137,7 +137,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         const ref = Subscription.ref(input.account);
         const state = yield* subscription.state(ref);
 
-        const terms = tierTermsOf(
+        const terms = planTermsOf(
           catalog,
           input.tier,
           state._tag === "Subscribed" ? state.currency : undefined,
@@ -146,7 +146,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         if (terms === null || terms.kind === "one_off") {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            rejection: new TierNotInCatalog({ tier: input.tier }),
+            rejection: new PlanNotInCatalog({ tier: input.tier }),
           });
         }
 
@@ -163,7 +163,7 @@ export const makeAdminChangeTier = Effect.gen(function* () {
         if (plan === null) {
           return ChangeTierRejected.make({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-            rejection: new TierNotInCatalog({ tier: input.tier }),
+            rejection: new PlanNotInCatalog({ tier: input.tier }),
           });
         }
 

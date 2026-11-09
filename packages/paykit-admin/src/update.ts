@@ -972,6 +972,7 @@ const rowOf = (
     periodEnd: billing.periodEnd,
     cancelAtPeriodEnd: billing.cancelAtPeriodEnd,
     credits: billing.credits,
+    prepaidCredits: 0,
     dunningAttempts: billing.dunningAttempts,
     ...(billing.currency === undefined ? {} : { currency: billing.currency }),
     features: entitlements.features,

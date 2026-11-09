@@ -4,8 +4,9 @@ import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "./Auth/Actor.ts";
-import { tierOf } from "./Catalog.ts";
+import { planOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
+import { PlanNotInCatalog } from "./Subscription/PlanNotInCatalog.rejection.ts";
 import { PurchaseCredits } from "./Subscription/PurchaseCredits.command.ts";
 import { RecordPayment } from "./Subscription/RecordPayment.command.ts";
 import { RecordPaymentFailure } from "./Subscription/RecordPaymentFailure.command.ts";
@@ -14,7 +15,6 @@ import { standingPhaseTagOfStatus, type StandingPhaseTag } from "./Subscription/
 import { Subscribe as SubscribeCommand } from "./Subscription/Subscribe.command.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
 import { purchaseCreditsInputOf, subscribeInputOf } from "./TierCommand.ts";
 
 /** The provider events paykit translates into its own commands. */
@@ -204,7 +204,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
       // A one-off tier is a pack, not a standing: a payment for it adds
       // never-expiring credits to the pool the account already holds. It does
       // not activate, change the tier or create a second subscription.
-      const sold = event.tier === undefined ? null : tierOf(catalog, event.tier);
+      const sold = event.tier === undefined ? null : planOf(catalog, event.tier);
       const oneOff = sold !== null && (sold.kind ?? "subscription") === "one_off";
 
       const purchase = Effect.gen(function* () {
@@ -215,7 +215,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         const purchase = purchaseCreditsInputOf(catalog, sold.id);
 
         if (purchase === null) {
-          return yield* new TierNotInCatalog({ tier: sold.id });
+          return yield* new PlanNotInCatalog({ tier: sold.id });
         }
 
         yield* asSystem(
@@ -236,7 +236,7 @@ export const webhookOperation = Effect.fn("Paykit.Webhook")(function* () {
         });
 
         if (activation === null) {
-          return yield* new TierNotInCatalog({ tier: event.tier });
+          return yield* new PlanNotInCatalog({ tier: event.tier });
         }
 
         // A delivery that raced a newer activation is a replay, not a failed

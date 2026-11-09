@@ -89,7 +89,7 @@ catalog refuses to let be `"period"`. `Subscribe` opens the provider's purchase 
 `kind: "one_off"` (Stripe `mode: "payment"`, a one-time price/product) and does not send a
 subscription command. The `payment_succeeded` / `checkout_completed` webhook sends `PurchaseCredits`,
 which records `CreditsPurchased` and grows the standing's pool. It never sends `Subscribe` or
-`TierChanged`.
+`PlanChanged`.
 
 **One pool, two expiry rules.** The pool is still one number, but the part a pack bought is protected:
 the standing carries `prepaidCredits` (`0 <= prepaidCredits <= credits`), spending drains the plan's

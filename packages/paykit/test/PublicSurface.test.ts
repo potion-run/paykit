@@ -114,7 +114,7 @@ it("exports the four groups from the package root", () => {
   expect(Paykit.mayActOn({ kind: "admin", id: "ops" }, "b")).toBe(true);
   // the money events carry what was charged
   expect(Paykit.SubscriptionActivated).toBeDefined();
-  expect(Paykit.TierChanged).toBeDefined();
+  expect(Paykit.PlanChanged).toBeDefined();
   // providers
   expect(Paykit.Memory().kind).toBe("memory");
   expect(Paykit.Manual().kind).toBe("manual");

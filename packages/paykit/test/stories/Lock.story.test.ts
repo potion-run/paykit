@@ -10,7 +10,7 @@ import { Hold as holdBinding } from "../../src/Billing/Hold.binding.ts";
 import { ReleaseHold as releaseBinding } from "../../src/Billing/ReleaseHold.binding.ts";
 import { SettleHold as settleBinding } from "../../src/Billing/SettleHold.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
@@ -42,7 +42,7 @@ const proTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
-const proAllowances = allowancesOf(testCatalog, "pro")!;
+const proAllowances = planItemsOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = Subscription.ref("acct_hold");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -218,7 +218,7 @@ it.effect("refuses what a hold may not do, each with its own tag", () =>
     ),
     Story.when(account, new SettleHold({ holdId: "hold_a" })),
     Story.then(account),
-    Story.replied({ billed: 0, released: 0 }),
+    Story.replied({ billed: 0, released: 0, feature: "" }),
   ),
 );
 
@@ -330,7 +330,7 @@ it.effect("the sweep releases a hold at its deadline, so a settle has nothing to
     // The work was never billed, so a late settle has nothing to bill.
     Story.when(account, new SettleHold({ holdId: "hold_a" })),
     Story.then(account),
-    Story.replied({ billed: 0, released: 0 }),
+    Story.replied({ billed: 0, released: 0, feature: "" }),
     // A late release is the same cleanup, recorded once.
     Story.when(account, new ReleaseHold({ holdId: "hold_a" })),
     Story.then(account),
@@ -422,17 +422,17 @@ it.live("the bindings hold, settle a partial amount, and release what is left", 
     expect(placed.remaining).toBe(1_600);
 
     // 250 ran: 150 comes back in the same call.
-    expect(yield* settle({ holdId: placed.holdId, amount: 250, dedupeKey: "lock-settle" })).toEqual(
-      {
-        billed: 250,
-        released: 150,
-      },
-    );
+    const settled = yield* settle({ holdId: placed.holdId, amount: 250, dedupeKey: "lock-settle" });
+    expect(settled.billed).toBe(250);
+    expect(settled.released).toBe(150);
+    expect(settled.featureId).toBe("messages");
+    expect(settled.balance.remaining).toBe(1_750);
 
     const second = yield* hold({ feature: "messages", amount: 100, dedupeKey: "lock-2" });
-    expect(yield* release({ holdId: second.holdId, dedupeKey: "lock-release-2" })).toEqual({
-      released: 100,
-    });
+    const released = yield* release({ holdId: second.holdId, dedupeKey: "lock-release-2" });
+    expect(released.released).toBe(100);
+    expect(released.featureId).toBe("messages");
+    expect(released.balance.remaining).toBe(1_750);
 
     // 250 billed, 100 returned: 1,750 is spendable and nothing is held.
     const view = yield* entitlements.query(Subscription.ref(account.id));

@@ -70,23 +70,24 @@ yield* Effect.gen(function* () {
   const check = yield* Paykit.Check("acct_1");
 
   yield* subscribe({ tier: "free" });
-  yield* track({ feature: "messages", amount: 1, dedupeKey: "req_1" });
+  yield* track({ featureId: "messages", value: 1, idempotencyKey: "req_1" });
 
-  const answer = yield* check({ feature: "messages", amount: 1 });
-  // { allowed: true, remaining: 99, resetsAt, standing: "good" }
+  const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
+  // { allowed: true, balance: { remaining: 99, ... }, standing: "good" }
 }).pipe(Effect.provide(World));
 ```
 
 `track` records usage in the same transaction that checks the allowance. A `block` allowance
-refuses with `AllowanceExceeded` before anything is written. A `dedupeKey` is also the command id,
-so a retry records once.
+refuses with `AllowanceExceeded` before anything is written. An `idempotencyKey` is also the command
+id, so a retry records once. `check` answers with the whole `Balance` for the feature; `Paykit.Balances`
+lists it, reads it, writes seat occupancy and finalizes a lock.
 
 ## The catalog
 
 `Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`, `Period`, `Usage` and
-`Standing` are the public words. `Tier` and `Allowance` are the internal names while the command
-and event migration lands; new code uses `plan()` and `planItem()`. The examples below still use
-the internal spellings where they describe the shipped command surface.
+`Standing` are the public words. `Tier` and `Allowance` are the internal schema names the state is
+written in; the events speak plan, the advanced command bindings keep their `Tier` names, and new
+code uses `plan()` and `planItem()`.
 
 ```ts
 const seats = Paykit.feature({ id: "seats", name: "Seats" });
@@ -202,7 +203,12 @@ const compute = Paykit.feature({
 });
 
 // A large spot machine: 16 credits × 0.3 = 5 credits a unit.
-yield* track({ feature: "compute_minutes", amount: 10, properties: { size: "large", lifecycle: "spot" } });
+yield* track({
+  featureId: "compute_minutes",
+  value: 10,
+  idempotencyKey: requestId,
+  properties: { size: "large", lifecycle: "spot" },
+});
 ```
 
 A named dimension wins first, then a matching rule, then `default`; every
@@ -245,17 +251,55 @@ if (proration !== undefined && proration.due > 0) {
 }
 ```
 
-`SetQuantity` sets the total, including the free grant; the billable difference
-is prorated for the rest of the period, and `prorate: "period_end"` defers the
-charge to the boundary. A provider that declares `quantity` is told the new total and updates the
+`SetQuantity` sets the total **purchased**, including the free grant; the
+billable difference is prorated for the rest of the period, and
+`prorate: "period_end"` defers the charge to the boundary. Occupancy is its own
+write: `balances.update({ featureId: "seats", usage: members.length })` records
+how many seats are in use, and `remaining` is `purchased - occupied`. It may be
+negative — a purchase below occupancy never removes a seat — and `check()` then
+answers `allowed: false` for a new seat while the people already using one keep
+working (ADR 0036).
+
+A provider that declares `quantity` is told the new total and updates the
 subscription: Stripe updates the item and invoices the difference, while Polar
 updates the subscription's one seat count for the next renewal and leaves the
 immediate charge to the local collector. The invoice a provider opens is
 recorded on the pending proration. A provider without `quantity` keeps
 the local path, and `ChargeQuantityProration` collects it. `TrackUsage` and
-`Hold` refuse a seat with `FeatureNotConsumable`. `check()` answers from the cap,
-not from a spendable count, and the row carries `quantity`, `included`, `cap`
-and `remaining`.
+`Hold` refuse a seat with `FeatureNotConsumable`. The row carries `quantity`
+(purchased), `used` (occupied), `included`, `cap` and `remaining`.
+
+### Balance sources
+
+A balance is a list of sources, not one number. `Balance.breakdown` reports the plan item, the
+rollover and every standalone grant, and a spend takes from them in that order: the plan, then
+rollover, then an expiring grant, then a lifetime grant.
+
+```ts
+const balances = yield* Paykit.Balances(account);
+
+// A lifetime grant. The plan and rollover are spent first, and a plan change
+// leaves it alone (ADR 0037).
+const granted = yield* balances.create({
+  featureId: "research_runs",
+  grantedBalance: 50,
+  reset: { interval: "one_off" },
+});
+
+// An expiring grant. BalanceExpiry schedules ExpireGrant at the deadline.
+const promo = yield* balances.create({
+  featureId: "research_runs",
+  grantedBalance: 20,
+  expiresAt: DateTime.add(DateTime.makeUnsafe(Date.now()), { months: 1 }),
+});
+
+for (const source of granted.breakdown) {
+  console.log(source.kind, source.remaining);
+}
+```
+
+`balances.create` is for a counted, non-flag feature. A credit-priced feature's pool is still the
+`credits` / `prepaidCredits` pair; its breakdown derives the plan and one-off sources from those.
 
 ### Resets, variants and currencies
 
@@ -317,10 +361,10 @@ period starts at `included + clamp(unspent, 0, included)`, `used` returns to `0`
 carries the rolled-over amount so a console can show it.
 
 `creditRates` prices a feature in credits instead of units. One pool per account: every
-credit-priced feature reports the same `remaining`, `track({ feature, amount, dimension })` spends
-`amount × rate` from it, and a request the pool cannot cover is refused with `CreditExceeded`.
-`check({ feature, amount, dimension })` prices the request before comparing it, so it answers from
-the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
+credit-priced feature reports the same `remaining`, `track({ featureId, value, dimension })` spends
+`value × rate` from it, and a request the pool cannot cover is refused with `CreditExceeded`.
+`check({ featureId, requiredBalance, dimension })` prices the request before comparing it, so it
+answers from the same local read. A tier grants the pool with `credits`, and `creditsExpire: "period"` (the
 default) zeroes it at a period close while `"never"` keeps it. A tier may also state `topUp`: the
 whole auto top-up line — `threshold` (the credit line at or below which a spend is a crossing),
 `cooldown` (the shortest time between two purchases on this tier) and `pack` (the `kind: "one_off"`

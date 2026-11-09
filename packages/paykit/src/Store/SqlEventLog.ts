@@ -402,8 +402,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         `INSERT INTO ${readModels}
-          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, proration, proration_invoice, currency, features)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (account) DO UPDATE SET
            tier = excluded.tier,
            status = excluded.status,
@@ -412,6 +412,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
            period_end = excluded.period_end,
            cancel_at_period_end = excluded.cancel_at_period_end,
            credits = excluded.credits,
+           prepaid_credits = excluded.prepaid_credits,
            dunning_attempts = excluded.dunning_attempts,
            proration = excluded.proration,
            proration_invoice = excluded.proration_invoice,
@@ -426,6 +427,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           row.periodEnd.epochMilliseconds,
           row.cancelAtPeriodEnd ? 1 : 0,
           row.credits,
+          row.prepaidCredits,
           row.dunningAttempts,
           row.proration === undefined ? null : JSON.stringify(row.proration),
           row.prorationInvoice ?? null,
@@ -442,7 +444,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 export type SqlEventLog = ReturnType<typeof SqlEventLog>;
 
 const READ_MODEL_COLUMNS =
-  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, dunning_attempts, proration, proration_invoice, currency, features";
+  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features";
 
 interface ReadModelColumns {
   readonly account: string;
@@ -454,6 +456,7 @@ interface ReadModelColumns {
   readonly period_end: number | string;
   readonly cancel_at_period_end: number | string;
   readonly credits: number | string;
+  readonly prepaid_credits: number | string;
   readonly dunning_attempts: number | string;
   readonly proration: string | null;
   readonly proration_invoice: string | null;
@@ -473,6 +476,7 @@ const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
       periodEnd: dateTimeFrom(numberFrom(row.period_end)),
       cancelAtPeriodEnd: numberFrom(row.cancel_at_period_end) === 1,
       credits: numberFrom(row.credits),
+      ...(row.prepaid_credits === null ? {} : { prepaidCredits: numberFrom(row.prepaid_credits) }),
       dunningAttempts: numberFrom(row.dunning_attempts),
       ...(row.proration === null ? {} : { proration: JSON.parse(row.proration) as never }),
       ...(row.proration_invoice === null ? {} : { prorationInvoice: row.proration_invoice }),
@@ -498,6 +502,16 @@ const featuresJson = (features: BillingReadRow["features"]): string =>
         {
           ...value,
           resetsAt: value.resetsAt === null ? null : value.resetsAt.epochMilliseconds,
+          ...(value.grants === undefined
+            ? {}
+            : {
+                grants: value.grants.map((grant) => ({
+                  ...grant,
+                  ...(grant.expiresAt === undefined
+                    ? {}
+                    : { expiresAt: grant.expiresAt.epochMilliseconds }),
+                })),
+              }),
         },
       ]),
     ),
@@ -509,13 +523,30 @@ const decodeFeatures = (json: string): BillingReadRow["features"] =>
     Object.entries(
       JSON.parse(json) as Record<
         string,
-        Omit<BillingReadRow["features"][string], "resetsAt"> & { resetsAt: number | null }
+        Omit<BillingReadRow["features"][string], "resetsAt" | "grants"> & {
+          resetsAt: number | null;
+          grants?: ReadonlyArray<
+            Omit<NonNullable<BillingReadRow["features"][string]["grants"]>[number], "expiresAt"> & {
+              expiresAt?: number;
+            }
+          >;
+        }
       >,
     ).map(([feature, value]) => [
       feature,
       {
         ...value,
         resetsAt: value.resetsAt === null ? null : dateTimeFrom(value.resetsAt),
+        ...(value.grants === undefined
+          ? {}
+          : {
+              grants: value.grants.map((grant) => ({
+                ...grant,
+                ...(grant.expiresAt === undefined
+                  ? {}
+                  : { expiresAt: dateTimeFrom(grant.expiresAt) }),
+              })),
+            }),
       },
     ]),
   ) as BillingReadRow["features"];

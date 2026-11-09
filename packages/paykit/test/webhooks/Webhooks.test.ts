@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
@@ -38,7 +38,7 @@ const packTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier, packTier] }));
-const pro = allowancesOf(testCatalog, "pro")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const account = "acct_hook";
 const graceUntil = DateTime.makeUnsafe("2030-01-08T00:00:00Z");
 

@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Payments, paymentsRouter, type MoneyProvider } from "../../src/Payments.ts";
@@ -16,7 +16,7 @@ import {
   AttachProviderRef,
   ProviderRefAttached,
 } from "../../src/Subscription/AttachProviderRef.command.ts";
-import { ChangeTier, TierChanged } from "../../src/Subscription/ChangeTier.command.ts";
+import { ChangeTier, PlanChanged } from "../../src/Subscription/ChangeTier.command.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -65,8 +65,8 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [meteredTier, retunedTier] }),
 );
 
-const metered = allowancesOf(testCatalog, "metered")!;
-const retuned = allowancesOf(testCatalog, "retuned")!;
+const metered = planItemsOf(testCatalog, "metered")!;
+const retuned = planItemsOf(testCatalog, "retuned")!;
 const repriced = { amount: 3, currency: "usd" } as const;
 const account = Subscription.ref("acct_period_usage");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -222,7 +222,7 @@ it.effect("splits one period's report across the prices its units were recorded 
       ),
       Story.then(
         account,
-        new TierChanged({
+        new PlanChanged({
           tier: "retuned",
           allowances: retuned,
           remaining: { messages: -50 },

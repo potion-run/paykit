@@ -5,8 +5,8 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import type { SubscriptionStatus } from "../Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { TrialAlreadyUsed } from "../Subscription/TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "../Subscription/TrialDeadlineNotLater.rejection.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
@@ -39,7 +39,7 @@ export interface StartTrialResult {
 const refusals = [
   TrialAlreadyUsed,
   TrialDeadlineNotLater,
-  TierNotInCatalog,
+  PlanNotInCatalog,
   CatalogMismatch,
   CurrencyMismatch,
   Unauthenticated,

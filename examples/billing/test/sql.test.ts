@@ -107,9 +107,9 @@ describe("the example on a SQL database", () => {
       }).pipe(Effect.provide(world));
 
       const check = yield* Check(account.id).pipe(Effect.provide(world));
-      const answer = yield* check({ feature: "messages", amount: 1 });
+      const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       expect(answer.allowed).toBe(true);
-      expect(answer.remaining).toBe(100);
+      expect(answer.balance.remaining).toBe(100);
 
       // The truth and the read model are rows in the same database.
       const event = database
@@ -145,7 +145,7 @@ describe("the example on a SQL database", () => {
       }).pipe(Effect.provide(world));
 
       const check = yield* Check(account.id).pipe(Effect.provide(world));
-      expect((yield* check({ feature: "messages" })).remaining).toBe(70);
+      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(70);
     }),
   );
 

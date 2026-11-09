@@ -257,7 +257,7 @@ export const polarWebhook = (
     // A product no tier maps is not a standing change: the event is dropped
     // rather than refused, so an unrelated one-off product does not make the
     // endpoint retry forever. A tier is never invented.
-    const tierOf = (productId: string | null): Effect.Effect<{ readonly tier?: string }> => {
+    const planOf = (productId: string | null): Effect.Effect<{ readonly tier?: string }> => {
       if (productId === null) return Effect.succeed({});
       const known = byProduct.get(productId);
 
@@ -290,7 +290,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "checkout_completed",
           account,
-          ...(yield* tierOf(checkout.product_id)),
+          ...(yield* planOf(checkout.product_id)),
           amount: checkout.total_amount,
           currency: checkout.currency,
           ...(checkout.id === null || checkout.id === undefined ? {} : { chargeId: checkout.id }),
@@ -311,7 +311,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_succeeded",
           account,
-          ...(yield* tierOf(order.product_id)),
+          ...(yield* planOf(order.product_id)),
           amount: order.total_amount,
           currency: order.currency,
           ...(order.id === null || order.id === undefined ? {} : { chargeId: order.id }),
@@ -332,7 +332,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "payment_failed",
           account,
-          ...(yield* tierOf(subscription.product_id)),
+          ...(yield* planOf(subscription.product_id)),
           amount: subscription.amount,
           currency: subscription.currency,
           reason: "past_due",
@@ -354,7 +354,7 @@ export const polarWebhook = (
           provider: "polar",
           kind: "subscription_canceled",
           account,
-          ...(yield* tierOf(subscription.product_id)),
+          ...(yield* planOf(subscription.product_id)),
         });
       }
 

@@ -5,6 +5,7 @@
 //   paykit.qnt     the spend path
 //   standing.qnt   the phase machine
 //   windows.qnt    the clocks the period does not own, and the quantity
+//   balances.qnt   the sources behind one count, and the order they are spent
 //   money.qnt      refunds, reversals and proration invoices
 //
 // `--tests` runs `quint test` instead of `quint run`; both paths typecheck
@@ -117,6 +118,25 @@ const SPECS: ReadonlyArray<Spec> = [
     ],
     tests: "specs/paykit/plans_test.qnt",
     testMain: "plans_test",
+    maxSteps: 30,
+  },
+  {
+    file: "specs/paykit/balances.qnt",
+    invariants: ["balancesInvariant"],
+    witnesses: [
+      "granted",
+      "grantedLifetime",
+      "spentPlan",
+      "spentGrant",
+      "rolledOver",
+      "closed",
+      "changedPlan",
+      "expiredGrant",
+      "fullySpent",
+      "lifetimeSurvivedClose",
+    ],
+    tests: "specs/paykit/balances_test.qnt",
+    testMain: "balances_test",
     maxSteps: 30,
   },
   {

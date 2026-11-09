@@ -29,7 +29,7 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Proration } from "../Proration.ts";
 import { AlreadyCanceled } from "../Subscription/AlreadyCanceled.rejection.ts";
-import { TierChanged } from "../Subscription/ChangeTier.command.ts";
+import { PlanChanged } from "../Subscription/ChangeTier.command.ts";
 import {
   DowngradeBelowCeiling,
   DowngradeBelowSpend,
@@ -37,9 +37,10 @@ import {
 } from "../Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../Subscription/CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { ProrationMismatch } from "../Subscription/ProrationMismatch.rejection.ts";
 import { CancellationScheduled } from "../Subscription/ScheduleCancellation.command.ts";
-import { TierChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
+import { PlanChangeScheduled } from "../Subscription/ScheduleTierChange.command.ts";
 import { StandingEnded } from "../Subscription/StandingEnded.rejection.ts";
 import { SubscriptionActivated } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
@@ -50,7 +51,6 @@ import {
   SubscriptionState,
   SubscriptionStatus,
 } from "../Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { TierChangeWithdrawn } from "../Subscription/WithdrawTierChange.command.ts";
 import { Verify, VerifyMismatch } from "../Verify.ts";
@@ -77,8 +77,8 @@ export type AdminReadError = typeof AdminReadError.Type;
 /** The events a preview can report. */
 export const PreviewEvents = Schema.Union([
   SubscriptionActivated,
-  TierChanged,
-  TierChangeScheduled,
+  PlanChanged,
+  PlanChangeScheduled,
   TierChangeWithdrawn,
   CancellationScheduled,
 ]);
@@ -87,7 +87,7 @@ export type PreviewEvents = typeof PreviewEvents.Type;
 
 /** The rejections a preview can report as data rather than a transport failure. */
 export const PreviewRejection = Schema.Union([
-  TierNotInCatalog,
+  PlanNotInCatalog,
   NotSubscribed,
   StandingEnded,
   CurrencyMismatch,
@@ -408,7 +408,7 @@ export const makeAdminReads = Effect.gen(function* () {
     preview: (input) =>
       preview(input).pipe(
         Effect.map(previewAnswerOf),
-        Effect.catchTag("TierNotInCatalog", (rejection) =>
+        Effect.catchTag("PlanNotInCatalog", (rejection) =>
           Effect.succeed(PreviewRejected.make({ rejection })),
         ),
       ),

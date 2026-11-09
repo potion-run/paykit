@@ -10,7 +10,7 @@ import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { ChargeProration } from "../../src/Billing/Portal.binding.ts";
 import { BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import {
   PaymentDeclined,
@@ -45,9 +45,9 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
 
-const free = allowancesOf(testCatalog, "free")!;
-const pro = allowancesOf(testCatalog, "pro")!;
-const scale = allowancesOf(testCatalog, "scale")!;
+const free = planItemsOf(testCatalog, "free")!;
+const pro = planItemsOf(testCatalog, "pro")!;
+const scale = planItemsOf(testCatalog, "scale")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const scalePrice = { amount: 9900, currency: "usd", interval: "month" as const };
 const account = "acct_proration";

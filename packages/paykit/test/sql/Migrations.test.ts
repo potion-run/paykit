@@ -23,12 +23,7 @@ import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
 import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
-const shipped = [
-  "0001_init",
-  "0002_consumer_backfill",
-  "0003_outbox_sequence",
-  "0004_view_outbox",
-] as const;
+const shipped = ["0001_init"] as const;
 
 const migrationRows = (sql: SqlExecutor, table = "billing_schema_version") =>
   sql.all<{
@@ -51,9 +46,6 @@ describe("migrations", () => {
   it("prints the DDL before anyone runs it", () => {
     const sql = migrateDryRun();
     expect(sql).toContain("-- 0001_init");
-    expect(sql).toContain("-- 0002_consumer_backfill");
-    expect(sql).toContain("-- 0003_outbox_sequence");
-    expect(sql).toContain("-- 0004_view_outbox");
     expect(sql).toContain("billing_event");
     expect(sql).toContain("billing_outbox");
     expect(sql).toContain("billing_rm_backfill");
@@ -73,8 +65,8 @@ describe("migrations", () => {
   it("carries every migration as statements and a canonical SQL string", () =>
     Effect.gen(function* () {
       const records = yield* readMigrationFiles({ dialect: "sqlite" });
-      expect(records.length).toBe(2);
-      expect(records.map((record) => record.name)).toEqual(["0001_init", "0002_consumer_backfill"]);
+      expect(records.length).toBe(1);
+      expect(records.map((record) => record.name)).toEqual(["0001_init"]);
 
       for (const record of records) {
         expect(record.hash).toMatch(/^[0-9a-f]{64}$/);
@@ -82,12 +74,13 @@ describe("migrations", () => {
         expect(record.statements.every((statement) => !statement.trim().endsWith(";"))).toBe(true);
       }
 
-      expect(records[0]!.statements.length).toBeGreaterThan(5);
+      const all = records[0]!.statements.join(";\n");
+      expect(records[0]!.statements.length).toBeGreaterThan(20);
       expect(records[0]!.statements[0]).toContain("CREATE TABLE IF NOT EXISTS");
-      expect(records[0]!.statements.join(";\n")).toContain("billing_rm_billing_read");
-      expect(records[1]!.statements.join(";\n")).toContain("billing_rm_backfill");
-      expect(records[2]!.statements.join(";\n")).toContain("billing_outbox_next");
-      expect(records[3]!.statements.join(";\n")).toContain("billing_rm_view_outbox");
+      expect(all).toContain("billing_rm_billing_read");
+      expect(all).toContain("billing_rm_backfill");
+      expect(all).toContain("billing_rm_view_outbox");
+      expect(all).toContain("billing_outbox");
     }));
 
   it.effect("renders deterministic, qualified DDL for every scope", () => {

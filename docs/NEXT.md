@@ -9,12 +9,19 @@ disagree, the ADR wins and this file is wrong.
 The current slice is the plan/customer/balance API, recorded in
 [ADR 0035](./adr/0035-plans-plan-items-and-balance-sources.md),
 [ADR 0036](./adr/0036-a-seat-is-purchased-and-occupied.md) and
-[ADR 0037](./adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words become `Plan`,
+[ADR 0037](./adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words are `Plan`,
 `PlanItem`, `Customer` and `Balance`; `attach` and `update` replace the command list; a seat has a
 purchased quantity and an occupied count; a lifetime grant is a balance source. `attach`,
-`update`, their previews, immediate cancellation and the typed HTTP routes have landed. The
-command-level notes below remain the shipped surface until the remaining migration lands.
-The working plan is [the API brief](./briefs/plan-customer-balance-api.md).
+`update`, their previews, immediate cancellation, the typed HTTP routes, the entitlement reads and
+the occupancy write are in. `check` answers with a `Balance`, `track` takes a `value` and an
+idempotency key, and `Paykit.Balances` lists, reads, updates occupancy, finalizes a lock and
+creates a standalone grant. The balance ledger is real: `balances.qnt` models a plan, a rollover,
+an expiring grant and a lifetime grant, `Balance.breakdown` reports each source, and a spend takes
+from the plan and rollover before a grant. The
+internal event and helper words are `PlanChanged` / `PlanChangeScheduled` / `PlanNotInCatalog` /
+`PlanItemReset`; `Tier` and `Allowance` remain the schema names while the state migration lands.
+The command-level notes below remain the advanced surface until that migration lands. The working
+plan is [the API brief](./briefs/plan-customer-balance-api.md).
 
 `@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
 (`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
@@ -54,9 +61,10 @@ vendor's quantity transform, a ladder as its tiered price. What the close does: 
 period's billable units to the account's provider once, with the period as the idempotency key.
 
 The client surface has a first-class Effect Atom module (`@potion.run/paykit/Atom`): `make` builds
-one runtime over the tenant Api, `entitlements(account)` and `billing(account)` are queries memoized
-per account, every tenant verb is a command atom, and a successful command invalidates
-`paykit/account/<id>` so the queries refresh without a manual call. `examples/tanstack` deploys it in
+one runtime over the tenant Api, `entitlements(account)`, `balances(account)` and `billing(account)`
+are queries memoized per account, every tenant verb is a command atom (`updateBalance` and
+`finalizeBalance` included), and a successful command invalidates `paykit/account/<id>` so the
+queries refresh without a manual call. `examples/tanstack` deploys it in
 a TanStack Start app on Alchemy, with the purchase operation left in the Worker that owns the
 provider.
 
@@ -66,15 +74,15 @@ when a provider will not collect a refill, and `RefundReversed`, when a provider
 Both are evidence that moves no counter, and both fold into the timeline.
 
 The billing machine is modelled in Quint ([ADR
-0034](./adr/0034-one-quint-model-per-protocol.md)) as five protocols: `specs/paykit/paykit.qnt` is
+0034](./adr/0034-one-quint-model-per-protocol.md)) as six protocols: `specs/paykit/paykit.qnt` is
 the spend path, `standing.qnt` the phase machine (trial, grace, dunning, cancellation, a scheduled
 tier change and the refill budget), `windows.qnt` the clocks the period does not own (reset windows,
-seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, and `money.qnt` the
-refund, reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with
-its witnesses on every push; `pnpm spec:test` runs five scenario modules; `scripts/spec-mutants.ts`
-kills 37 mutants across the five, so no invariant can survive as a tautology; `scripts/spec-coverage.ts`
-holds all 36 commands against the five action tables, so a command lands modelled or with a written
-reason. Three spend-path findings
+seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, `balances.qnt` the
+sources behind one count and the order a spend consumes them, and `money.qnt` the refund, reversal
+and proration-invoice identity rules. `pnpm spec` simulates every invariant with its witnesses on
+every push; `pnpm spec:test` runs six scenario modules; `scripts/spec-mutants.ts` kills 44 mutants
+across the six, so no invariant can survive as a tautology; `scripts/spec-coverage.ts` holds all 39
+commands against the six action tables, so a command lands modelled or with a written reason. Three spend-path findings
 are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
@@ -90,6 +98,13 @@ catalog data, the deploy provisions the vendor), [0002](./adr/0002-credits-are-t
 [0007](./adr/0007-outbound-events-are-a-policy-over-a-port.md) (outbound events are a policy over a
 delivery port; paykit signs and keys, the app sends). Newer decisions are named beside the slice
 they shaped.
+
+The entitlement plane reads one balance: `Balance.ts` derives `{ granted, remaining, usage,
+breakdown, purchased, occupied }` from the view, and `check`, `track` and `balances` all use that
+one function, so they cannot describe different state. `SetUsage` writes occupancy as its own
+command (`UsageSet`), `SetQuantity` writes the purchase, and `SetQuantity` may land below occupancy:
+`remaining` goes negative and `check` blocks a new seat without evicting anyone. The windows model
+already carried `setUsage`; the code now implements it.
 
 The standing's phases are now a read contract beside the model:
 `Subscription/StandingPhase.ts` names `Unsubscribed | Trialing | Active | Grace | Expired | Canceled`
@@ -129,17 +144,25 @@ The next work is the API migration, not another command. The order is:
 1. **Vocabulary and catalog** — `Plan` and `PlanItem` public aliases are in, with `plan()` and
    `planItem()`, `plans` on the catalog, and plan `group`, `addOn`, `isDefault` and `trial` fields.
    `Customer` and `Balance` schemas and the `resetOf`/`prorationOf`/`rolloverOf` views are in. The
-   old public names are gone from the namespace and root; internal commands and events still carry
-   `Tier`/`Allowance` and are the remaining rename.
+   old public names are gone; the events are `PlanChanged` / `PlanChangeScheduled` /
+   `PlanItemReset` and the refusals use `PlanNotInCatalog`. The advanced command bindings
+   (`ChangeTier`, `ScheduleTierChange`, `WithdrawTierChange`) keep their names; they are the
+   low-level surface, and the plan operations are what a caller uses. `Tier` and `Allowance` remain
+   the schema names the state is written in until the state migration lands.
 2. **Plan operations** — `billing.attach`, `billing.update`, `previewAttach`, `previewUpdate`.
    A downgrade is scheduled by default; a cancellation drops a pending change; `uncancel` removes
    either a cancellation or a scheduled change. Fold the proration charge into the operation.
-3. **Entitlement reads** — `check`, `track`, `balances`, locks and finalize. `check` returns a
-   balance object; `track` takes `value` and an idempotency key; `balances.update({ usage })`
-   writes occupancy for seats.
-4. **Balance sources** — plan, add-on, one-off, rollover and standalone grants; deduction order;
-   lifetime sources survive a plan change and plan sources do not.
-5. **Customer controls** — auto top-up, spend limits and usage alerts on the customer/entity.
+3. **Entitlement reads — done.** `check` returns a balance object; `track` takes `value` and an
+   idempotency key; `balances.list/get/update` and `balances.finalize` are in, and
+   `balances.update({ usage })` writes occupancy for seats. `balances.create` (Phase 4) writes a
+   standalone grant as a source, never as a direct change to `remaining`.
+4. **Balance sources — landed.** `balances.qnt` models plan, rollover, an expiring grant and a
+   lifetime grant. The code has a real `Balance.breakdown`, plan/rollover-before-grant deduction,
+   `balances.create` (`GrantBalance`), an expiry policy (`BalanceExpiry` -> `ExpireGrant`), and
+   grants that survive a close and a plan change. What remains from the brief is customer-level
+   controls and a resetting standalone grant, which is an add-on plan item in Phase 5.
+5. **Customer controls** — auto top-up, spend limits and usage alerts on the customer/entity. This
+   is the next model (`controls.qnt`).
 6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
    `multiAttach` / `multiUpdate`.
 7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`.
@@ -149,12 +172,21 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated 
 
 **Immediate next actions**
 
-- Rename the internal command and event words: `TierChanged`, `TierChangeScheduled`,
-  `TierNotInCatalog`, `AllowanceReset`, and the source helpers `tierOf`, `tierTermsOf`,
-  `allowancesOf`. They are no longer public, but the code still reads them.
-- Land Phase 3: `check` returns a balance object, `track` takes `value` and an idempotency key,
-  `balances.list/get/update/create` and `balances.finalize`, with `SetUsage` for seat occupancy.
-- Then balance sources, customer controls, multiple plans/schedules and entities, in that order.
+- Landed: the internal words are renamed. `PlanChanged`, `PlanChangeScheduled`,
+  `PlanNotInCatalog` and `PlanItemReset` are the events and refusals; `planOf`, `planTermsOf` and
+  `planItemsOf` are the source helpers. The `Tier` and `Allowance` schemas keep their names — they
+  are the state migration, not the vocabulary.
+- Landed: Phase 3. `check({ featureId, requiredBalance, lock?, idempotencyKey? })` answers
+  `{ allowed, balance, standing, lockId? }`; `track({ featureId, value, idempotencyKey })` answers
+  `{ customerId, featureId, value, balance }`; `Paykit.Balances(account)` lists, gets, writes seat
+  occupancy and finalizes a lock. `SetUsage` is the command behind `balances.update` and writes
+  `UsageSet`; `remaining` is `purchased - occupied` and may be negative (ADR 0036). The lock is a
+  hold, so `finalize` is `SettleHold` / `ReleaseHold` and the old verbs stay the advanced surface.
+- Landed: Phase 4's balance sources. `balances.qnt` and its scenarios are green; grants are a real
+  source in state and on the read model, `balances.create` creates a lifetime or expiring grant,
+  the plan and rollover are spent before a grant, and a lifetime grant survives a close and a plan
+  change. `BalanceExpiry` schedules `ExpireGrant` at a grant's deadline. The next slice is customer
+  controls (`controls.qnt`), then multiple plans/schedules and entities.
 
 ### 1. The remaining surfaces
 
@@ -237,7 +269,7 @@ service. A console is not one of them: what a library owes is the read model a c
 `Preview`, `List`, `BillingRead`, `AccountEvents` and the timeline are that. The screens themselves
 are the example's job.
 
-- **Per-customer custom plans.** A `TierChanged` already carries the allowances it granted, so history
+- **Per-customer custom plans.** A `PlanChanged` already carries the allowances it granted, so history
   stays exact; what refuses a bespoke deal today is `CatalogGuard`, which will not accept a standing
   whose allowances are not in the catalog. Making that an explicit opt-in (or a declared `custom` tier)
   is a decision, not code, and it is the one thing here a host cannot do for itself.
@@ -331,7 +363,7 @@ continues.
   command, then the event, then the state.
 - **One writer per account, not one plan.** An account may hold a plan plus add-ons; every command for the account still has one writer. A credit system is a feature, and a balance is a list of sources.
 - **Events carry the money.** `UsageRecorded.cost` and `.charge`/`.billedAfter`,
-  `Pricing`/`TierChanged` prices, the captured hold rate — a replay must reproduce every number, and
+  `Pricing`/`PlanChanged` prices, the captured hold rate — a replay must reproduce every number, and
   a catalog change must never reprice history.
 - **A cap is a purchase ceiling, not a standing.** `allowed: false` at a quantity or money ceiling while `standing` stays `good`. For seats, `cap` limits what may be purchased; `remaining` is `purchased - occupied` and may be negative.
 - **A deadline is a command, not a timer.** A policy schedules a command that never rejects, and

@@ -7,7 +7,7 @@ import { InsecureDevGuards } from "../src/Auth/FromHeaders.ts";
 import { BillingAdminApi } from "../src/BillingAdminApi.api.ts";
 import { BillingApi } from "../src/BillingApi.api.ts";
 import { MemoryBillingReadStore } from "../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../src/Catalog.ts";
+import { planItemsOf, catalog } from "../src/Catalog.ts";
 import { CatalogGuardLive } from "../src/CatalogGuard.ts";
 import { catalogLayer } from "../src/CatalogService.ts";
 import { messages } from "../src/Feature.ts";
@@ -21,7 +21,7 @@ const freeTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
-const free = allowancesOf(testCatalog, "free")!;
+const free = planItemsOf(testCatalog, "free")!;
 const account = Subscription.ref("acct_api");
 
 // The guards and the catalog a guarded command is checked against.

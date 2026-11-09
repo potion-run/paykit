@@ -147,9 +147,9 @@ function Usage({ account }: Readonly<{ account: string }>) {
           onClick={() =>
             run("Tracked 10 messages", () =>
               trackUsage({
-                feature: "messages",
-                amount: 10,
-                dedupeKey: crypto.randomUUID(),
+                featureId: "messages",
+                value: 10,
+                idempotencyKey: crypto.randomUUID(),
               }),
             )
           }
@@ -160,10 +160,10 @@ function Usage({ account }: Readonly<{ account: string }>) {
           type="button"
           onClick={() => {
             setNotice("Checking 25 messages…");
-            check({ feature: "messages", amount: 25 })
+            check({ featureId: "messages", requiredBalance: 25 })
               .then((result) => {
                 setAnswer(
-                  `allowed: ${result.allowed} · remaining: ${String(result.remaining)} · standing: ${result.standing}`,
+                  `allowed: ${result.allowed} · remaining: ${String(result.balance.remaining)} · standing: ${result.standing}`,
                 );
                 setNotice("Checked 25 messages.");
               })

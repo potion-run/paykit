@@ -95,8 +95,8 @@ describe("spend cap", () => {
 
           const asked = evaluateCheck(capView(state), {
             account: "acct_cap_property",
-            feature: "messages",
-            amount: step.amount,
+            featureId: "messages",
+            requiredBalance: step.amount,
           });
 
           if (asked.allowed !== isAccepted(decision)) return false;
@@ -157,7 +157,7 @@ describe("flags", () => {
               standing: "good",
               features: { sso: { overage: "allow", remaining: null, resetsAt: null } },
             },
-            { account: "acct_flag_property", feature: "sso", amount },
+            { account: "acct_flag_property", featureId: "sso", requiredBalance: amount },
           );
 
           if (!asked.allowed) return false;

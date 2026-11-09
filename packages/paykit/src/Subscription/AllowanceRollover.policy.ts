@@ -1,8 +1,8 @@
 import * as Domain from "@alchemy.run/domain";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { TierChanged } from "./ChangeTier.command.ts";
-import { AllowanceReset, ResetAllowance } from "./ResetAllowance.command.ts";
+import { PlanChanged } from "./ChangeTier.command.ts";
+import { PlanItemReset, ResetAllowance } from "./ResetAllowance.command.ts";
 import { TrialStarted } from "./StartTrial.command.ts";
 import { SubscriptionActivated } from "./Subscribe.command.ts";
 import { Subscription } from "./Subscription.aggregate.ts";
@@ -18,7 +18,7 @@ import { Subscription } from "./Subscription.aggregate.ts";
  */
 export class AllowanceRollover extends Domain.Policy("AllowanceRollover", {
   from: Subscription,
-  on: [SubscriptionActivated, TrialStarted, TierChanged, AllowanceReset],
+  on: [SubscriptionActivated, TrialStarted, PlanChanged, PlanItemReset],
 }) {}
 
 export const AllowanceRolloverLive = AllowanceRollover.toLayer(
@@ -27,7 +27,7 @@ export const AllowanceRolloverLive = AllowanceRollover.toLayer(
 
     return Effect.fn("Paykit.AllowanceRollover.react")(function* ({ key, event }) {
       const entries: ReadonlyArray<readonly [string, DateTime.Utc]> =
-        event._tag === "AllowanceReset"
+        event._tag === "PlanItemReset"
           ? event.resetAt === null
             ? []
             : [[event.feature, event.resetAt]]

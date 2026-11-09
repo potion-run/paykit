@@ -99,27 +99,33 @@ describe("the bindings over a real HTTP transport", () => {
         const trackUsage = yield* TrackUsage(account);
 
         const recorded = yield* trackUsage({
-          feature: "messages",
-          amount: 40,
-          dedupeKey: "over-http-1",
+          featureId: "messages",
+          value: 40,
+          idempotencyKey: "over-http-1",
         });
 
-        expect(recorded.remaining).toBe(60);
-        expect(recorded.used).toBe(40);
+        expect(recorded.balance.remaining).toBe(60);
+        expect(recorded.balance.usage).toBe(40);
 
         // Read-your-write survives the transport: the binding waited on the view
         // over the same Api before answering.
         const check = yield* Check(account);
-        expect((yield* check({ feature: "messages", amount: 1 })).remaining).toBe(60);
+        expect(
+          (yield* check({ featureId: "messages", requiredBalance: 1 })).balance.remaining,
+        ).toBe(60);
 
         // A replay is a replay on the wire too.
         expect(
-          (yield* trackUsage({ feature: "messages", amount: 40, dedupeKey: "over-http-1" })).used,
+          (yield* trackUsage({
+            featureId: "messages",
+            value: 40,
+            idempotencyKey: "over-http-1",
+          })).balance.usage,
         ).toBe(40);
 
         // A refusal decodes back into the class a caller matches.
         const refused = yield* Effect.exit(
-          trackUsage({ feature: "messages", amount: 61, dedupeKey: "over-http-2" }),
+          trackUsage({ featureId: "messages", value: 61, idempotencyKey: "over-http-2" }),
         );
 
         expect(refused._tag).toBe("Failure");

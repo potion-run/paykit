@@ -64,8 +64,9 @@ export interface JudgedFeature {
   /** The rate card, when the feature is priced in credits. */
   readonly creditRates?: RateCard;
   /**
-   * The quantity a non-consumable feature holds. A seat is set, not spent, so
-   * it is judged against `cap`, not against a spendable `remaining`.
+   * The quantity a non-consumable feature bought. A seat is bought and then
+   * occupied, so it is judged against `remaining` (`purchased - occupied`),
+   * which may be negative when occupancy is above the purchase.
    */
   readonly quantity?: number;
 }
@@ -207,14 +208,15 @@ export const capacityOf = (input: {
   if (standing === "blocked") return { _tag: "Standing", standing };
   const amount = ask.amount;
 
-  // A quantity is bought, not spent: its ceiling is the cap, and the free grant
-  // is a price boundary rather than a count that runs out.
+  // A quantity is bought and occupied: the guard is the occupancy balance,
+  // `purchased - occupied`, which may be negative. A purchase below occupancy
+  // therefore blocks a new seat without removing the people already using one
+  // (ADR 0036). The purchase ceiling itself is `SetQuantity`'s rule.
   if (feature.quantity !== undefined) {
-    if (feature.cap === undefined) return { _tag: "Allowed" };
-    const headroom = feature.cap - feature.quantity;
+    const remaining = feature.remaining ?? 0;
 
-    return amount > headroom
-      ? { _tag: "Ceiling", cap: feature.cap, headroom, requested: amount }
+    return amount > remaining
+      ? { _tag: "Remaining", requested: amount, remaining }
       : { _tag: "Allowed" };
   }
 

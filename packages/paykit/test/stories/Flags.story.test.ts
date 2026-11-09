@@ -10,7 +10,7 @@ import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
 import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
 import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { prorate } from "../../src/Proration.ts";
@@ -48,8 +48,8 @@ const testCatalog = Effect.runSync(
   catalog({ features: [sso, messages], tiers: [basicTier, enterpriseTier] }),
 );
 
-const enterprise = allowancesOf(testCatalog, "enterprise")!;
-const basic = allowancesOf(testCatalog, "basic")!;
+const enterprise = planItemsOf(testCatalog, "enterprise")!;
+const basic = planItemsOf(testCatalog, "basic")!;
 const price = { amount: 49_900, currency: "usd", interval: "month" as const };
 const account = Subscription.ref("acct_flags");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -189,9 +189,9 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
 
     yield* entitlements.query(readAccount, { atLeast: basicReceipt });
     yield* BillingRead.caughtUp(basicReceipt);
-    const ungranted = yield* inProcess({ feature: "sso" });
+    const ungranted = yield* inProcess({ featureId: "sso" });
     expect(ungranted.allowed).toBe(false);
-    expect(ungranted.remaining).toBe(0);
+    expect(ungranted.balance.remaining).toBe(0);
 
     // A granted flag: allowed, with no count and no reset to wait for.
     const receipt = yield* subscription.send(
@@ -218,16 +218,15 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     yield* BillingRead.caughtUp(receipt);
 
     const granted = yield* inProcess({
-      feature: "sso",
-      amount: 1_000_000,
+      featureId: "sso",
+      requiredBalance: 1_000_000,
     });
 
-    expect(granted).toEqual({
-      allowed: true,
-      remaining: null,
-      resetsAt: null,
-      standing: "good",
-    });
+    expect(granted.allowed).toBe(true);
+    expect(granted.balance.remaining).toBeNull();
+    expect(granted.balance.unlimited).toBe(true);
+    expect(granted.balance.nextResetAt).toBeNull();
+    expect(granted.standing).toBe("good");
 
     const readModel = yield* Effect.gen(function* () {
       // The read model answers from a row, so it needs the projection caught up.
@@ -240,7 +239,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
       return yield* checkBinding(readAccount.id);
     }).pipe(Effect.provide(CheckReadModelLayer));
 
-    expect(yield* readModel({ feature: "sso" })).toEqual(granted);
+    expect(yield* readModel({ featureId: "sso" })).toEqual(granted);
 
     // The row carries the flag's judgement, not a count it invented.
     const store = yield* BillingReadStore;
@@ -260,7 +259,7 @@ it.live("check() allows a granted flag, refuses an ungranted one, and the read m
     const track = yield* trackUsageBinding(readAccount.id);
 
     const refused = yield* Effect.exit(
-      track({ feature: "sso", amount: 1, dedupeKey: "flags-track" }),
+      track({ featureId: "sso", value: 1, idempotencyKey: "flags-track" }),
     );
 
     expect(refused._tag).toBe("Failure");

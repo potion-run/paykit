@@ -21,7 +21,7 @@ and calls every tenant command:
 const entitlements = useAtomValue(billing.entitlements(account));
 const trackUsage = useAtomSet(billing.trackUsage(account), { mode: "promise" });
 
-await trackUsage({ feature: "messages", amount: 10, dedupeKey: crypto.randomUUID() });
+await trackUsage({ featureId: "messages", value: 10, idempotencyKey: crypto.randomUUID() });
 // `entitlements` refreshes: the command invalidated the account's reactivity key.
 ```
 

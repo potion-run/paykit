@@ -28,7 +28,7 @@ Severity is about customer money or a state no later command can explain, not ab
 | F3 | Reusing a `SetQuantity` dedupe key overwrites a billed proration and can bill again | high |
 | F4 | A seat balance is derived from the purchase cap, not from purchased minus occupied | high |
 | F5 | A stale top-up retry rung can fire after a success and a new failure | high |
-| F6 | `TierChanged` does not reset the refill budget, contrary to ADR 0031 | high |
+| F6 | `PlanChanged` does not reset the refill budget, contrary to ADR 0031 | high |
 | F7 | A plan allowance and a lifetime grant are the same field, so a scheduled change cannot tell them apart | high |
 | F8 | `ResetAllowance` resets counters and holds of a terminal standing | medium |
 | F9 | A seat reduction's credit is recorded and never applied | medium |
@@ -50,7 +50,7 @@ Severity is about customer money or a state no later command can explain, not ab
 has not been invoiced. It does not read a proration id, an expected amount, or an expected currency.
 The event records whatever the caller sent. Two consequences:
 
-- A tier change replaces the proration (`TierChanged` clears `proration`, `prorationInvoice`, and
+- A tier change replaces the proration (`PlanChanged` clears `proration`, `prorationInvoice`, and
   `prorationId`). An invoice opened for the old change can then be recorded against the new one.
   With `B` at due 103 and then `C` at due 51, the old 103 invoice is accepted and `C` is marked
   billed while 51 was owed:
@@ -77,7 +77,7 @@ tier change, or a direct caller, reaches the state above.
 A read model and a refund ceiling both trust `charged`; a customer can be underbilled or overbilled
 with no event that says which change the money belonged to.
 
-**Proposed fix:** give `ProrationInvoiced` a `prorationId` (the `TierChanged` event already has one),
+**Proposed fix:** give `ProrationInvoiced` a `prorationId` (the `PlanChanged` event already has one),
 require the current `prorationId` to match, and require `amount == proration.due` and
 `currency == proration.currency`. `RecordQuantityProrationInvoice` is the precedent: it already
 carries the id.
@@ -155,7 +155,7 @@ replay only when the quantity is the same.
 ## F4 — a seat balance is derived from the purchase cap, not from occupancy
 
 **Where:** `Subscription.state.ts` `remaining` for a non-consumable feature,
-`Subscription.aggregate.ts` `startingRemaining`, `remainingAfterChange`, `TierChanged` evolve, and
+`Subscription.aggregate.ts` `startingRemaining`, `remainingAfterChange`, `PlanChanged` evolve, and
 `Allowance.verdict.ts` `capacityOf` (`cap - quantity`).
 
 **Model:** `windows.qnt` `seatBalance` is `purchased - occupied`; `setQuantity` may set the
@@ -169,7 +169,7 @@ seats in use. A plan change that lowers the cap clamps `remaining` to zero and h
 account is over its purchase ceiling.
 
 ```text
-5 change TierChanged
+5 change PlanChanged
 5 quantity 10 cap 5
 ```
 
@@ -220,7 +220,7 @@ Clearing old rungs when a new episode starts is the second half of the same rule
 
 ## F6 — a tier change does not reset the refill budget
 
-**Where:** `Subscription.aggregate.ts` `TierChanged` evolve (destructures the old top-up fields but
+**Where:** `Subscription.aggregate.ts` `PlanChanged` evolve (destructures the old top-up fields but
 never writes `topUpAttempts`).
 
 **Model:** `standing.qnt` `changeTier` sets `topUpAttempts: 0`.
@@ -229,18 +229,18 @@ never writes `topUpAttempts`).
 
 ```text
 6b attempts before tier change 1
-6b change TierChanged
+6b change PlanChanged
 6b attempts after tier change 1 failure still true
 ```
 
-ADR 0031 §5 says `TierChanged` resets the count "because each re-establishes the line or the pool —
+ADR 0031 §5 says `PlanChanged` resets the count "because each re-establishes the line or the pool —
 a fresh line with a new pool deserves a fresh budget". `SubscriptionActivated` and `PeriodClosed`
-do reset it; `TierChanged` is the missing one.
+do reset it; `PlanChanged` is the missing one.
 
 **Why it matters:** a tier that names a new line and pack inherits a spent budget from the old line,
 so its retries are suppressed exactly when a deployment moved it to a line that should try.
 
-**Proposed fix:** set `topUpAttempts: 0` in `TierChanged` (keep `topUpFailure` as history, per ADR
+**Proposed fix:** set `topUpAttempts: 0` in `PlanChanged` (keep `topUpFailure` as history, per ADR
 0027), and add the story/property that pins it.
 
 ---
@@ -261,7 +261,7 @@ expiry:
 
 ```text
 2 start credits 100 expire never
-2 close TierChanged,PeriodClosed,UsageReset
+2 close PlanChanged,PeriodClosed,UsageReset
 2 after close credits 5
 ```
 
@@ -292,7 +292,7 @@ the clock. It does not check `allowsUsage`/`rollsPeriod`/`isTerminalStatus`.
 
 ```text
 7 status expired resetAt { messages: 2030-01-02T00:00:00Z }
-7 reset on terminal AllowanceReset
+7 reset on terminal PlanItemReset
 7 after reset status expired remaining 10 resetAt { messages: 2030-01-03T00:00:00Z }
 ```
 
@@ -379,13 +379,13 @@ lapsed window.
 
 ## F12 — a cancellation and a pending tier both apply at the same close
 
-**Where:** `closePeriodEvents` emits `TierChanged` first, then `PeriodClosed` with
+**Where:** `closePeriodEvents` emits `PlanChanged` first, then `PeriodClosed` with
 `statusAfter: state.cancelAtPeriodEnd ? "canceled" : …`.
 
 **Model:** `standing.qnt` has both actions and its close applies both.
 
 **What happens.** A standing with `cancelAtPeriodEnd` and a `pendingTier` closes into `canceled` on
-the *new* tier, after recording a `TierChanged` and the new pool. No money is collected for the new
+the *new* tier, after recording a `PlanChanged` and the new pool. No money is collected for the new
 period (there is no next period), but the terminal standing's tier and pool are the scheduled
 change's, not the ones it was on when it canceled.
 
@@ -393,7 +393,7 @@ change's, not the ones it was on when it canceled.
 for an account that was on free when it canceled.
 
 **Proposed fix:** decide the precedence. The likely rule is that a cancellation wins the boundary and
-the pending change is withdrawn (no `TierChanged`), or the change is applied and the cancellation is
+the pending change is withdrawn (no `PlanChanged`), or the change is applied and the cancellation is
 the next boundary's. Pin it in the model and a story.
 
 ---
@@ -411,7 +411,7 @@ the next boundary's. Pin it in the model and a story.
 - **A goodwill grant on a terminal standing.** `GrantCredits` is allowed by ADR 0020, but a later
   `Subscribe` carries only `prepaidCredits`, so the granted credits do not survive the replacement.
   The docs say "goodwill"; if it is meant to survive, it needs the prepaid treatment.
-- **A new tier change replaces a credit proration.** `TierChanged` clears the old `proration` and
+- **A new tier change replaces a credit proration.** `PlanChanged` clears the old `proration` and
   `prorationInvoice`; a negative `due` (a credit the account was owed) is dropped rather than
   applied. The code says "a new tier change replaces what the old one owed"; a credit is not an
   "owed" in the same direction. Decide whether it should carry.

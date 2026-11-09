@@ -1,15 +1,18 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { balanceOf, emptyBalance } from "../Balance.ts";
 import { BillingApi } from "../BillingApi.api.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { scheduleTierChangeInputOf, subscribeInputOf } from "../TierCommand.ts";
+import { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
 import { BindingCall, callOptionsOf, mapBindingFailure } from "./Bindings.ts";
 import { Resume, ScheduleCancellation, toCancelError, toResumeError } from "./Cancel.binding.ts";
-import { Check, toCheckError } from "./Check.binding.ts";
+import { Check, CheckLockKeyMissing, toCheckError } from "./Check.binding.ts";
 import { ConsumeCredits, toConsumeCreditsError } from "./ConsumeCredits.binding.ts";
+import { GrantBalance, toGrantBalanceError } from "./GrantBalance.binding.ts";
 import { Hold, toHoldError } from "./Hold.binding.ts";
 import { ReleaseHold, toReleaseHoldError } from "./ReleaseHold.binding.ts";
 import {
@@ -20,6 +23,7 @@ import {
 } from "./ScheduleTierChange.binding.ts";
 import { SetQuantity, toSetQuantityError } from "./SetQuantity.binding.ts";
 import { SettleHold, toSettleHoldError } from "./SettleHold.binding.ts";
+import { SetUsage, toSetUsageError } from "./SetUsage.binding.ts";
 import { StartTrial, toStartTrialError } from "./StartTrial.binding.ts";
 import { toTrackUsageError, TrackUsage, usageOutcome } from "./TrackUsage.binding.ts";
 
@@ -48,7 +52,7 @@ const bound = mapBindingFailure;
  * @product Usage
  * @provides Paykit.TrackUsage, Paykit.Check, Paykit.Hold, Paykit.SettleHold, Paykit.ReleaseHold
  */
-export const BillingApiLayer = Layer.mergeAll(
+const BillingApiCore = Layer.mergeAll(
   Layer.effect(
     TrackUsage,
     Effect.gen(function* () {
@@ -65,13 +69,13 @@ export const BillingApiLayer = Layer.mergeAll(
             client.TrackUsage(
               id,
               {
-                feature: request.feature,
-                amount: request.amount,
+                feature: request.featureId,
+                amount: request.value,
                 ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
                 ...(request.properties === undefined ? {} : { properties: request.properties }),
-                dedupeKey: request.dedupeKey,
+                dedupeKey: request.idempotencyKey,
               },
-              options(request.dedupeKey),
+              options(request.idempotencyKey),
             ),
           );
 
@@ -79,7 +83,7 @@ export const BillingApiLayer = Layer.mergeAll(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
 
-          return usageOutcome(view, request);
+          return usageOutcome(view, account, request);
         });
       });
     }),
@@ -124,6 +128,99 @@ export const BillingApiLayer = Layer.mergeAll(
     }),
   ),
   Layer.effect(
+    GrantBalance,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return Effect.fn("Paykit.GrantBalance")(function* (account) {
+        const id = Subscription.ref(account).id;
+
+        return Effect.fn("Paykit.GrantBalance.grant")(function* (request) {
+          const commandId =
+            request.idempotencyKey ??
+            `grant:${request.featureId}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+          const receipt = yield* bound(toGrantBalanceError)(
+            client.GrantBalance(
+              id,
+              {
+                feature: request.featureId,
+                granted: request.granted,
+                ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
+              },
+              options(commandId),
+            ),
+          );
+
+          const view = yield* bound(toGrantBalanceError)(
+            client.Entitlements.get(id, { atLeast: receipt, ...options() }),
+          );
+
+          return {
+            featureId: request.featureId,
+            granted: receipt.reply.granted,
+            balance:
+              (view === null ? null : balanceOf(view, request.featureId)) ??
+              emptyBalance(account, request.featureId),
+          };
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    SetUsage,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return Effect.fn("Paykit.SetUsage")(function* (account) {
+        const id = Subscription.ref(account).id;
+
+        return Effect.fn("Paykit.SetUsage.set")(function* (request) {
+          const commandId =
+            request.idempotencyKey ??
+            `usage:${request.featureId}:${request.usage}:${yield* Effect.sync(() => crypto.randomUUID())}`;
+
+          const receipt = yield* bound(toSetUsageError)(
+            client.SetUsage(
+              id,
+              { feature: request.featureId, usage: request.usage },
+              options(commandId),
+            ),
+          );
+
+          const view = yield* bound(toSetUsageError)(
+            client.Entitlements.get(id, { atLeast: receipt, ...options() }),
+          );
+
+          return {
+            featureId: request.featureId,
+            usage: receipt.reply.usage,
+            remaining: receipt.reply.remaining,
+            balance:
+              (view === null ? null : balanceOf(view, request.featureId)) ??
+              emptyBalance(account, request.featureId),
+          };
+        });
+      });
+    }),
+  ),
+  Layer.effect(
+    BalancesRead,
+    Effect.gen(function* () {
+      const client = yield* BillingApi.Client;
+      const options = callOptionsOf(yield* Effect.serviceOption(BindingCall));
+
+      return {
+        view: (account: string) =>
+          bound(toBalancesReadError)(
+            client.Entitlements.get(Subscription.ref(account).id, options()),
+          ),
+      };
+    }),
+  ),
+  Layer.effect(
     Check,
     Effect.gen(function* () {
       const client = yield* BillingApi.Client;
@@ -135,9 +232,40 @@ export const BillingApiLayer = Layer.mergeAll(
         const id = Subscription.ref(account).id;
 
         return Effect.fn("Paykit.Check.ask")(function* (request) {
-          const view = yield* bound(toCheckError)(client.Entitlements.get(id, options()));
+          const requiredBalance = request.requiredBalance ?? 1;
+          const input = { account, ...request, requiredBalance };
 
-          return evaluateCheck(view, { account, ...request });
+          const view = yield* bound(toCheckError)(client.Entitlements.get(id, options()));
+          const answer = evaluateCheck(view, input);
+
+          if (request.lock !== true || !answer.allowed) return answer;
+
+          if (request.idempotencyKey === undefined) {
+            return yield* bound(toCheckError)(
+              Effect.fail(new CheckLockKeyMissing({ featureId: request.featureId })),
+            );
+          }
+
+          const receipt = yield* bound(toCheckError)(
+            client.Hold(
+              id,
+              {
+                holdId: request.idempotencyKey,
+                feature: request.featureId,
+                amount: requiredBalance,
+                ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
+                ...(request.properties === undefined ? {} : { properties: request.properties }),
+                dedupeKey: request.idempotencyKey,
+              },
+              options(request.idempotencyKey),
+            ),
+          );
+
+          const after = yield* bound(toCheckError)(
+            client.Entitlements.get(id, { atLeast: receipt, ...options() }),
+          );
+
+          return { ...evaluateCheck(after, input), lockId: request.idempotencyKey };
         });
       });
     }),
@@ -210,11 +338,17 @@ export const BillingApiLayer = Layer.mergeAll(
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
-          yield* bound(toSettleHoldError)(
+          const view = yield* bound(toSettleHoldError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
 
-          return receipt.reply;
+          return {
+            ...receipt.reply,
+            featureId: receipt.reply.feature,
+            balance:
+              (view === null ? null : balanceOf(view, receipt.reply.feature)) ??
+              emptyBalance(account, receipt.reply.feature),
+          };
         });
       });
     }),
@@ -238,11 +372,17 @@ export const BillingApiLayer = Layer.mergeAll(
           // The reply is this command's own answer, and the read is the next
           // caller's: a `Check` straight after a settle must see the usage the
           // settle recorded, so the wait is the same one `TrackUsage` makes.
-          yield* bound(toReleaseHoldError)(
+          const view = yield* bound(toReleaseHoldError)(
             client.Entitlements.get(id, { atLeast: receipt, ...options() }),
           );
 
-          return receipt.reply;
+          return {
+            ...receipt.reply,
+            featureId: receipt.reply.feature,
+            balance:
+              (view === null ? null : balanceOf(view, receipt.reply.feature)) ??
+              emptyBalance(account, receipt.reply.feature),
+          };
         });
       });
     }),
@@ -339,7 +479,7 @@ export const BillingApiLayer = Layer.mergeAll(
 
           if (scheduled === null) {
             return yield* bound(toScheduleTierChangeError)(
-              Effect.fail(new TierNotInCatalog({ tier: request.tier })),
+              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
             );
           }
 
@@ -401,7 +541,7 @@ export const BillingApiLayer = Layer.mergeAll(
 
           if (grant === null) {
             return yield* bound(toStartTrialError)(
-              Effect.fail(new TierNotInCatalog({ tier: request.tier })),
+              Effect.fail(new PlanNotInCatalog({ tier: request.tier })),
             );
           }
 
@@ -426,4 +566,9 @@ export const BillingApiLayer = Layer.mergeAll(
       });
     }),
   ),
+);
+
+export const BillingApiLayer = Layer.mergeAll(
+  BillingApiCore,
+  BalancesLive.pipe(Layer.provide(BillingApiCore)),
 );

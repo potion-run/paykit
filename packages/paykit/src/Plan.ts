@@ -10,7 +10,7 @@ import {
 
 /**
  * A purchasable plan. `Tier` is the internal schema name while the aggregate
- * still records `TierChanged`; the public word is `Plan`.
+ * still records `PlanChanged`; the public word is `Plan`.
  */
 export const Plan = TierSchema;
 

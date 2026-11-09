@@ -136,8 +136,8 @@ const Case = Schema.Struct({ script: Script, probe: Probe });
 
 const inputOf = (probe: Probe) => ({
   account: propertyAccount,
-  feature: probe.feature,
-  amount: probe.amount,
+  featureId: probe.feature,
+  requiredBalance: probe.amount,
   ...(probe.feature === "ai" && probe.dimension !== undefined
     ? { dimension: probe.dimension }
     : {}),
@@ -225,11 +225,15 @@ const viewMatchesState = (state: SubscriptionState, view: EntitlementsState): bo
   // `capacityOf`, so this pins the row's `allowed` to the read path and its
   // counters to the state the write path folded.
   for (const [feature, entry] of Object.entries(view.features)) {
-    const asked = evaluateCheck(view, { account: propertyAccount, feature, amount: 1 });
+    const asked = evaluateCheck(view, {
+      account: propertyAccount,
+      featureId: feature,
+      requiredBalance: 1,
+    });
 
     if (asked.allowed !== entry.allowed) return false;
 
-    if (asked.remaining !== entry.remaining) return false;
+    if (asked.balance.remaining !== entry.remaining) return false;
 
     if (asked.standing !== view.standing) return false;
   }

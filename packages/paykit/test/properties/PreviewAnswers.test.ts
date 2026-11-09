@@ -3,13 +3,13 @@ import * as Arbitrary from "effect/Arbitrary";
 import * as Schema from "effect/Schema";
 import { PreviewAnswer, previewAnswerOf } from "../../src/Admin/Reads.ts";
 import type { PreviewResult } from "../../src/Billing/Preview.operation.ts";
-import { tierTermsOf } from "../../src/Catalog.ts";
+import { planTermsOf } from "../../src/Catalog.ts";
 import { AlreadyCanceled } from "../../src/Subscription/AlreadyCanceled.rejection.ts";
 import { NotSubscribed } from "../../src/Subscription/NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "../../src/Subscription/PlanNotInCatalog.rejection.ts";
 import { ScheduleCancellation } from "../../src/Subscription/ScheduleCancellation.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../../src/Subscription/TierNotInCatalog.rejection.ts";
 import { assertProperty } from "../support/Property.ts";
 import {
   TierName,
@@ -55,7 +55,7 @@ const acceptedPreview = (move: Move): PreviewResult | null => {
       ? initialSubscriptionState
       : subscribedIn(testCatalog, move.startTier);
 
-  const terms = tierTermsOf(testCatalog, move.startTier);
+  const terms = planTermsOf(testCatalog, move.startTier);
 
   if (terms === null) return null;
 
@@ -81,12 +81,12 @@ const acceptedPreview = (move: Move): PreviewResult | null => {
   };
 };
 
-const RejectionTag = Schema.Literals(["TierNotInCatalog", "NotSubscribed", "AlreadyCanceled"]);
+const RejectionTag = Schema.Literals(["PlanNotInCatalog", "NotSubscribed", "AlreadyCanceled"]);
 
 const rejected = (tag: typeof RejectionTag.Type): PreviewResult => {
   switch (tag) {
-    case "TierNotInCatalog":
-      return { _tag: "rejected", rejection: new TierNotInCatalog({ tier: "gold" }) };
+    case "PlanNotInCatalog":
+      return { _tag: "rejected", rejection: new PlanNotInCatalog({ tier: "gold" }) };
     case "NotSubscribed":
       return { _tag: "rejected", rejection: new NotSubscribed({ account: "acct_1" }) };
     case "AlreadyCanceled":

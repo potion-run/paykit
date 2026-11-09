@@ -8,7 +8,7 @@ import { AdminChangeTier, AdminChangeTierLive } from "../../src/Admin/ChangeTier
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, planTermsOf } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
@@ -46,7 +46,7 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
 
-const proAllowances = allowancesOf(testCatalog, "pro")!;
+const proAllowances = planItemsOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_change";
 
@@ -159,7 +159,7 @@ it.live("refuses a change with no standing, and a tier the catalog lacks", () =>
     expect(unknown._tag).toBe("rejected");
 
     if (unknown._tag === "rejected") {
-      expect(unknown.rejection._tag).toBe("TierNotInCatalog");
+      expect(unknown.rejection._tag).toBe("PlanNotInCatalog");
     }
   }).pipe(run),
 );
@@ -191,7 +191,7 @@ it.effect("a quoted tier change is never refused for disagreeing with itself", (
         return decision._tag !== "ProrationMismatch";
       }
 
-      const changed = decision.find((event) => event._tag === "TierChanged") as
+      const changed = decision.find((event) => event._tag === "PlanChanged") as
         | { readonly proration?: Proration }
         | undefined;
 
@@ -246,7 +246,7 @@ const runEur = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(Effect.p
 it.live("quotes in the currency the standing was sold in", () =>
   Effect.gen(function* () {
     const subscription = yield* Subscription;
-    const terms = tierTermsOf(eurCatalog, "pro", "eur")!;
+    const terms = planTermsOf(eurCatalog, "pro", "eur")!;
     yield* subscription.send(
       Subscription.ref("acct_eur_change"),
       new Subscribe({

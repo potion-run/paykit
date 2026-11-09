@@ -48,6 +48,7 @@ const row = (account: string, spec: typeof RowSpec.Type): BillingReadRow => ({
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: spec.credits,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   features: {},
 });

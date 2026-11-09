@@ -236,7 +236,7 @@ export class BillingState extends Domain.View("BillingState", {
         context,
       );
     },
-    TierChanged: (view, event, context): BillingStateView => {
+    PlanChanged: (view, event, context): BillingStateView => {
       const {
         price: _previousPrice,
         proration: _previous,
@@ -402,7 +402,7 @@ export class BillingState extends Domain.View("BillingState", {
       withAccount({ ...view, cancelAtPeriodEnd: false }, context),
     // The scheduled tier is part of the page: "on pro, moving to small at the
     // period end" is one sentence an operator, and the button beside it, needs.
-    TierChangeScheduled: (view, event, context): BillingStateView =>
+    PlanChangeScheduled: (view, event, context): BillingStateView =>
       withAccount(
         {
           ...view,

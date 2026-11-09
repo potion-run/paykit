@@ -1,6 +1,6 @@
 import type * as DateTime from "effect/DateTime";
 import type { Allowances } from "./Allowance.ts";
-import { type Catalog, tierTermsOf, type TierTerms } from "./Catalog.ts";
+import { type Catalog, planTermsOf, type PlanTerms } from "./Catalog.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
@@ -40,7 +40,7 @@ export interface TierGrantInput {
 }
 
 /** The catalog fields every tier command shares, in one shape. */
-const grantOf = (tierId: string, terms: TierTerms): TierGrantInput => ({
+const grantOf = (tierId: string, terms: PlanTerms): TierGrantInput => ({
   tier: tierId,
   allowances: terms.allowances,
   credits: terms.credits,
@@ -73,7 +73,7 @@ export const subscribeInputOf = (
     readonly chargeId?: string;
   } = {},
 ): (TierGrantInput & { readonly anchorTz?: string }) | null => {
-  const terms = tierTermsOf(catalog, tierId, options.currency);
+  const terms = planTermsOf(catalog, tierId, options.currency);
 
   if (terms === null || terms.kind === "one_off") return null;
 
@@ -103,7 +103,7 @@ export const scheduleTierChangeInputOf = (
   tierId: string,
   currency?: string,
 ): TierGrantInput | null => {
-  const terms = tierTermsOf(catalog, tierId, currency);
+  const terms = planTermsOf(catalog, tierId, currency);
 
   if (terms === null || terms.kind === "one_off") return null;
 
@@ -135,7 +135,7 @@ export const purchaseCreditsInputOf = (
   readonly invoiceId?: string;
   readonly rates: CreditRateCards;
 } | null => {
-  const terms = tierTermsOf(catalog, tierId);
+  const terms = planTermsOf(catalog, tierId);
 
   if (terms === null || terms.kind !== "one_off") return null;
 
@@ -185,7 +185,7 @@ export const planChangeTier = (
   // The standing's currency is what the account was sold in. A move that
   // resolved the tier's base price instead would quote (and later guard) a
   // different currency than the one the standing carries.
-  const terms = tierTermsOf(
+  const terms = planTermsOf(
     catalog,
     tierId,
     state._tag === "Subscribed" ? state.currency : undefined,

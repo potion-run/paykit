@@ -66,12 +66,14 @@ export const startingQuantities = (allowances: Allowances): QuantityCounts =>
 /**
  * The spendable count every allowance starts a period with. A non-consumable
  * feature is not a counter: a tier change keeps the quantity the account holds
- * (or raises it to the new free grant), so its remaining is the new cap less
- * that quantity. An activation passes no quantities, and starts at the grant.
+ * (or raises it to the new free grant), and occupancy is untouched, so its
+ * remaining is `purchased - occupied`. An activation passes neither, and starts
+ * at the grant with nothing occupied.
  */
 export const startingRemaining = (
   allowances: Allowances,
   quantities: QuantityCounts = {},
+  occupied: QuantityCounts = {},
 ): Record<string, number | null> =>
   Object.fromEntries(
     Object.entries(allowances).map(([feature, allowance]) => {
@@ -79,10 +81,7 @@ export const startingRemaining = (
         const included = typeof allowance.included === "number" ? allowance.included : 0;
         const quantity = quantityAfterTierChange(quantities[feature] ?? included, included);
 
-        return [
-          feature,
-          allowance.cap === undefined ? null : Math.max(0, allowance.cap - quantity),
-        ];
+        return [feature, quantity - (occupied[feature] ?? 0)];
       }
 
       return [feature, includedRemainingOf(allowance)];
@@ -288,8 +287,21 @@ export const standingFrom = (
   grant: StandingGrant,
   previous: SubscriptionState,
   options: { readonly trialUsed: boolean },
-): SubscribedState =>
-  ({
+): SubscribedState => {
+  // A lifetime grant belongs to the customer, so a reactivation after a
+  // cancellation carries it in the way `prepaidCredits` carries a pack. It is a
+  // source of its own, so its units are added to the new plan's count.
+  const grants = previous._tag === "Subscribed" ? previous.grants : undefined;
+  const remaining = { ...grant.remaining };
+
+  if (grants !== undefined) {
+    for (const id of Object.keys(grants)) {
+      const held = grants[id]!;
+      remaining[held.feature] = (remaining[held.feature] ?? 0) + held.remaining;
+    }
+  }
+
+  return {
     _tag: "Subscribed",
     tier: grant.tier,
     status: grant.statusAfter,
@@ -320,8 +332,9 @@ export const standingFrom = (
     ...(grant.resetAt === undefined ? {} : { resetAt: grant.resetAt }),
     ...(grant.trialEndsAt === undefined ? {} : { trialEndsAt: grant.trialEndsAt }),
     usage: {},
-    remaining: grant.remaining,
+    remaining,
     holds: {},
+    ...(grants === undefined ? {} : { grants }),
     allowances: grant.allowances,
     quantities: startingQuantities(grant.allowances),
     refs: previous.refs,
@@ -330,4 +343,5 @@ export const standingFrom = (
     dunningAttempts: 0,
     // A new standing has no failed refills behind it (ADR 0031).
     topUpAttempts: 0,
-  }) satisfies SubscribedState;
+  } satisfies SubscribedState;
+};

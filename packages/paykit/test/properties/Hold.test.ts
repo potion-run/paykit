@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { prorate } from "../../src/Proration.ts";
 import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
@@ -546,7 +546,7 @@ describe("a hold's captured rate", () => {
     assertProperty(
       Arbitrary.schema(Schema.Struct({ held: Amount, settled: Amount })),
       ({ held, settled }) => {
-        const terms = tierTermsOf(before, "pro");
+        const terms = planTermsOf(before, "pro");
 
         if (terms === null) return false;
 
@@ -590,7 +590,7 @@ describe("a hold's captured rate", () => {
 
         // The catalog now says ten. A tier change carries the new card, and
         // its proration is the one the prices and the period work out to.
-        const repriced = tierTermsOf(after, "pro")!;
+        const repriced = planTermsOf(after, "pro")!;
 
         const proration = prorate({
           from: state.price,

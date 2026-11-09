@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import { allowance } from "../../src/Allowance.ts";
 import { Subscribe } from "../../src/Billing/Subscribe.binding.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
@@ -205,7 +205,7 @@ describe("Subscribe purchase path", () => {
   );
 
   it("the catalog has a priced pro tier and a free tier", () => {
-    expect(allowancesOf(testCatalog, "pro")?.messages.included).toBe(2000);
-    expect(allowancesOf(testCatalog, "free")?.messages.included).toBe(100);
+    expect(planItemsOf(testCatalog, "pro")?.messages.included).toBe(2000);
+    expect(planItemsOf(testCatalog, "free")?.messages.included).toBe(100);
   });
 });

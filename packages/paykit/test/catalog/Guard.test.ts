@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
-import { allowancesOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { messages } from "../../src/Feature.ts";
 import { tier } from "../../src/Tier.ts";
@@ -34,9 +34,9 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, ceilTier] }),
 );
 
-const free = allowancesOf(testCatalog, "free")!;
-const pro = allowancesOf(testCatalog, "pro")!;
-const ceil = allowancesOf(testCatalog, "ceil")!;
+const free = planItemsOf(testCatalog, "free")!;
+const pro = planItemsOf(testCatalog, "pro")!;
+const ceil = planItemsOf(testCatalog, "ceil")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const ceilPrice = { amount: 4900, currency: "usd", interval: "month" as const };
 const proTerms = creditTermsOf(testCatalog, "pro")!;

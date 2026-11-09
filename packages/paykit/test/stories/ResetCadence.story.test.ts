@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages, seats } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
@@ -35,7 +35,7 @@ const teamTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages, seats], tiers: [teamTier] }));
-const team = allowancesOf(testCatalog, "team")!;
+const team = planItemsOf(testCatalog, "team")!;
 
 const story = Story.make(PaykitModel, {
   layer: PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)),

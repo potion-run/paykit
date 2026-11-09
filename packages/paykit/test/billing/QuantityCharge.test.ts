@@ -5,7 +5,7 @@ import { asSystem } from "../../src/Auth/Actor.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { ChargeQuantityProration } from "../../src/Billing/ChargeQuantityProration.binding.ts";
 import { SetQuantity } from "../../src/Billing/SetQuantity.binding.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature } from "../../src/Feature.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
@@ -32,7 +32,7 @@ const teamTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [seats], tiers: [teamTier] }));
-const terms = tierTermsOf(testCatalog, "team")!;
+const terms = planTermsOf(testCatalog, "team")!;
 const account = "acct_seat_charge";
 
 const subscribed = (provider: string) =>

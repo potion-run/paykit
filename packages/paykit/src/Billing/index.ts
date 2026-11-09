@@ -16,7 +16,7 @@
  *
  * fetch: Effect.gen(function* () {
  *   const trackUsage = yield* TrackUsage(account);
- *   yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: requestId });
+ *   yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId });
  * }).pipe(Effect.provide(Layer.mergeAll(BillingInProcess, catalogLayer(Catalog))));
  * ```
  */
@@ -57,7 +57,39 @@ export {
   type ProrationBehavior,
 } from "./Attach.binding.ts";
 
-export { Check, type CheckError, type CheckRequest, type CheckVerb } from "./Check.binding.ts";
+export {
+  Check,
+  CheckLockKeyMissing,
+  type CheckError,
+  type CheckRefusal,
+  type CheckRequest,
+  type CheckVerb,
+} from "./Check.binding.ts";
+
+export {
+  BalanceCreateRequest,
+  BalanceFinalizeRequest,
+  BalanceGetRequest,
+  BalanceNotFound,
+  BalanceUpdateRequest,
+  Balances,
+  type BalancesError,
+  type BalancesRefusal,
+  type BalancesVerb,
+} from "./Balances.binding.ts";
+
+export { BalancesLive, BalancesRead, toBalancesReadError } from "./Balances.layer.ts";
+
+export {
+  GrantBalance,
+  isGrantBalanceRefusal,
+  toGrantBalanceError,
+  type GrantBalanceError,
+  type GrantBalanceRefusal,
+  type GrantBalanceRequest,
+  type GrantBalanceResult,
+  type GrantBalanceVerb,
+} from "./GrantBalance.binding.ts";
 
 export {
   TrackUsage,
@@ -216,6 +248,17 @@ export { BillingApiLayer } from "./BillingApi.layer.ts";
 export { BillingAdminInProcess } from "./BillingAdminInProcess.layer.ts";
 
 export { BillingAdminApiLayer } from "./BillingAdminApi.layer.ts";
+
+export {
+  SetUsage,
+  isSetUsageRefusal,
+  toSetUsageError,
+  type SetUsageError,
+  type SetUsageRefusal,
+  type SetUsageRequest,
+  type SetUsageResult,
+  type SetUsageVerb,
+} from "./SetUsage.binding.ts";
 
 export {
   SetQuantity,

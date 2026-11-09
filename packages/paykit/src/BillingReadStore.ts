@@ -17,6 +17,8 @@ export const BillingReadRow = Schema.Struct({
   periodEnd: Schema.DateTimeUtc,
   cancelAtPeriodEnd: Schema.Boolean,
   credits: Schema.Int,
+  /** The part of `credits` a one-off purchase bought: a lifetime source. */
+  prepaidCredits: Schema.Int,
   /** Payment failures recorded for this standing, including a policy retry. */
   dunningAttempts: Schema.Int,
   /** The money the last tier change moved, and the invoice it was billed on. */

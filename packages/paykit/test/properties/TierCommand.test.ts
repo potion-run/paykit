@@ -3,7 +3,7 @@ import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { prorate } from "../../src/Proration.ts";
 import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
@@ -59,14 +59,14 @@ describe("tier command builders", () => {
    * field, disagrees with the terms, or builds a payload for a shape the tier
    * cannot take, `CatalogGuard` is the only backstop — and a caller that never
    * goes through the guard would write a standing the deploy never sold. The
-   * check is therefore against `tierTermsOf` and the guard itself, not against
+   * check is therefore against `planTermsOf` and the guard itself, not against
    * a hand-written expectation.
    */
   it.effect("build the catalog's terms and pass the guard, or refuse the shape", () =>
     assertProperty(
       Arbitrary.schema(Case),
       (input) => {
-        const terms = tierTermsOf(buildersCatalog, input.tier);
+        const terms = planTermsOf(buildersCatalog, input.tier);
         const sellable = terms !== null && terms.kind !== "one_off";
         const packable = terms !== null && terms.kind === "one_off";
 

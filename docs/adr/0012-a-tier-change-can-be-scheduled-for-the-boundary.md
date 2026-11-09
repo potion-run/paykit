@@ -25,10 +25,10 @@ ends at the close. What it cannot express is "end up on that other tier instead"
 **1. A scheduled change is data on the standing, carried by the event.** `ScheduleTierChange` records
 `{ tier, allowances, price?, credits, creditsExpire, rates, currency?, interval? }` as `pendingTier`.
 The terms travel with it because the close runs without a catalog: the boundary has to be able to apply
-the change from the log alone, exactly as `SubscriptionActivated` and `TierChanged` already do.
+the change from the log alone, exactly as `SubscriptionActivated` and `PlanChanged` already do.
 
 **2. The close applies the change before it resets the counters.** `closePeriodEvents` emits
-`TierChanged` first, then `PeriodClosed`, `UsageReset` and `CreditsExpired`:
+`PlanChanged` first, then `PeriodClosed`, `UsageReset` and `CreditsExpired`:
 
 ```ts
 const allowances = pending?.allowances ?? state.allowances;
@@ -47,7 +47,7 @@ first — last intent wins, and no history of abandoned schedules is kept beyond
 the boundary would silently undo the change the account paid for.
 
 **4. The money is the boundary's.** A scheduled change carries no proration: the period it was scheduled
-in has ended, so there is nothing to prorate. The `priceAfter` on the `TierChanged` is what the next
+in has ended, so there is nothing to prorate. The `priceAfter` on the `PlanChanged` is what the next
 period bills.
 
 ## What this does not decide

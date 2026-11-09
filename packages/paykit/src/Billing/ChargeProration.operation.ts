@@ -78,7 +78,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
       return yield* new NoProrationDue({ account: input.account, reason: "billed" });
     }
 
-    // The change itself is the idempotency key. `TierChanged` gives every
+    // The change itself is the idempotency key. `PlanChanged` gives every
     // prorated change a sequence number, so two identical changes in one period
     // are two charges, while a retry of either is the same one. State recorded
     // before the field existed falls back to the money and period it moved.

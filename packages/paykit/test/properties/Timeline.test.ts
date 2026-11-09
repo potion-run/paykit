@@ -55,7 +55,7 @@ const walkLog = (script: Script): ReadonlyArray<TimelineInput> => {
 const kindOfTag: Readonly<Record<string, string>> = {
   SubscriptionActivated: "started",
   TrialStarted: "trial",
-  TierChanged: "tier",
+  PlanChanged: "tier",
   UsageRecorded: "usage",
   UsageReserved: "hold",
   UsageSettled: "settle",

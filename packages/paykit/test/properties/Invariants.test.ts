@@ -33,7 +33,7 @@ const updateBases = (
     switch (event._tag) {
       case "SubscriptionActivated":
       case "TrialStarted":
-      case "TierChanged": {
+      case "PlanChanged": {
         const allowances = (event as unknown as { readonly allowances: Record<string, Allowance> })
           .allowances;
 

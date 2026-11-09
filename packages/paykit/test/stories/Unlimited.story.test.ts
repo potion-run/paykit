@@ -10,7 +10,7 @@ import { Check as checkBinding } from "../../src/Billing/Check.binding.ts";
 import { CheckReadModel as CheckReadModelLayer } from "../../src/Billing/CheckReadModel.layer.ts";
 import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
@@ -36,7 +36,7 @@ const unlimitedTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [unlimitedTier] }));
-const unlimited = allowancesOf(testCatalog, "unlimited")!;
+const unlimited = planItemsOf(testCatalog, "unlimited")!;
 const price = { amount: 9_900, currency: "usd", interval: "month" as const };
 const account = Subscription.ref("acct_unlimited");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -240,25 +240,26 @@ it.live("check() answers remaining: null, and the read model keeps it", () =>
     const track = yield* trackUsageBinding(account.id);
 
     const tracked = yield* track({
-      feature: "messages",
-      amount: 1_000_000,
-      dedupeKey: "unlimited-track",
+      featureId: "messages",
+      value: 1_000_000,
+      idempotencyKey: "unlimited-track",
     });
 
-    expect(tracked.used).toBe(1_000_000);
+    expect(tracked.balance.usage).toBe(1_000_000);
 
     const inProcess = yield* checkBinding(account.id);
-    const answer = yield* inProcess({ feature: "messages" });
+    const answer = yield* inProcess({ featureId: "messages" });
     expect(answer.allowed).toBe(true);
     // Unlimited is the absence of a count, not a large one.
-    expect(answer.remaining).toBeNull();
+    expect(answer.balance.remaining).toBeNull();
+    expect(answer.balance.unlimited).toBe(true);
     // The period still exists, so it still answers when it ends.
-    expect(answer.resetsAt).not.toBeNull();
+    expect(answer.balance.nextResetAt).not.toBeNull();
     expect(answer.standing).toBe("good");
 
     // The read-model path and the in-process path agree, as they do for a count.
     const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
-    expect(yield* readModel({ feature: "messages" })).toEqual(answer);
+    expect(yield* readModel({ featureId: "messages" })).toEqual(answer);
 
     // The row round-trips the absence of a count, not a zero.
     const store = yield* BillingReadStore;

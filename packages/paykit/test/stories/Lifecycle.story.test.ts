@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { AlreadyCanceled } from "../../src/Subscription/AlreadyCanceled.rejection.ts";
@@ -80,7 +80,7 @@ const proTier = tier({
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
 
 const allowances = (id: string) => {
-  const found = allowancesOf(testCatalog, id);
+  const found = planItemsOf(testCatalog, id);
 
   if (found === null) throw new Error(`missing ${id}`);
 

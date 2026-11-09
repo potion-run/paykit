@@ -1,6 +1,6 @@
 import { allowance as allowanceOf, grant as grantOf, type Allowance } from "../../src/Allowance.ts";
 import { feature as featureOf, type Feature } from "../../src/Feature.ts";
-import { tier as tierOf, type Tier } from "../../src/Tier.ts";
+import { tier as planOf, type Tier } from "../../src/Tier.ts";
 
 /**
  * Constructors without their compile-time guards, for a test that deliberately
@@ -18,4 +18,4 @@ export const rawAllowance = (feature: Feature, input: unknown): Allowance =>
 
 export const rawGrant = (feature: Feature): Allowance => grantOf(feature as never);
 
-export const rawTier = (input: unknown): Tier => tierOf(input as never);
+export const rawTier = (input: unknown): Tier => planOf(input as never);

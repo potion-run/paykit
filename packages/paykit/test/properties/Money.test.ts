@@ -127,7 +127,7 @@ const applyMoney = (ledger: Ledger, events: ReadonlyArray<Event>): boolean => {
         break;
       }
 
-      case "TierChanged": {
+      case "PlanChanged": {
         // A tier change carries the period's billed money over: it moves what a
         // unit costs from here on, not what the account has already spent.
         const allowances = value.allowances as Readonly<Record<string, Allowance>>;

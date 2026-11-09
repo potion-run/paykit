@@ -114,6 +114,13 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
    */
   priced: Schema.optionalKey(Schema.Array(PricedLine)),
   dedupeKey: Schema.optionalKey(Schema.String),
+  /**
+   * The grants this usage spent, keyed by grant id. The plan and rollover are
+   * spent first, so this is present only once they are exhausted.
+   */
+  grantsUsed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
+  /** The hold this event settled, when the usage came from a hold, not a Track. */
+  holdId: Schema.optionalKey(Schema.String),
 }) {}
 
 /**

@@ -19,6 +19,7 @@ const row: BillingReadRow = {
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   features: {},
 };

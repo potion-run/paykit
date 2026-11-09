@@ -90,6 +90,9 @@ export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray
 const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
   const time = millisType(scope.dialect);
 
+  const sequence =
+    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+
   return [
     createTable(scope, BILLING_TABLES.event, [
       "aggregate TEXT NOT NULL",
@@ -121,7 +124,7 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
       "PRIMARY KEY (aggregate, account)",
     ]),
     createTable(scope, BILLING_TABLES.outbox, [
-      "seq INTEGER PRIMARY KEY",
+      `seq ${sequence}`,
       "aggregate TEXT NOT NULL",
       "account TEXT NOT NULL",
       "event_seq INTEGER NOT NULL",
@@ -148,6 +151,7 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
       `period_end ${time} NOT NULL`,
       "cancel_at_period_end INTEGER NOT NULL",
       "credits INTEGER NOT NULL",
+      "prepaid_credits INTEGER NOT NULL",
       "dunning_attempts INTEGER NOT NULL",
       "proration TEXT",
       "proration_invoice TEXT",
@@ -157,6 +161,26 @@ const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> 
     createIndex(scope, "billing_rm_billing_read_standing", BILLING_TABLES.readModel, [
       "standing",
       "tier",
+    ]),
+    createTable(scope, BILLING_TABLES.backfill, [
+      "consumer TEXT PRIMARY KEY",
+      "generation INTEGER NOT NULL",
+      "plan TEXT NOT NULL",
+      `completed_at ${time} NOT NULL`,
+    ]),
+    createTable(scope, BILLING_TABLES.viewOutbox, [
+      `seq ${sequence}`,
+      "view TEXT NOT NULL",
+      "key TEXT NOT NULL",
+      "entry_seq INTEGER NOT NULL",
+      "delivery TEXT NOT NULL",
+      `delivered_at ${time}`,
+    ]),
+    createIndex(scope, "billing_rm_view_outbox_pending", BILLING_TABLES.viewOutbox, [
+      "view",
+      "key",
+      "delivered_at",
+      "seq",
     ]),
     ...consumerStatements(scope),
   ];
@@ -189,6 +213,7 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
       view TEXT NOT NULL,
       key TEXT NOT NULL,
       seq INTEGER NOT NULL,
+      generation INTEGER NOT NULL DEFAULT 0,
       event TEXT NOT NULL,
       envelope TEXT NOT NULL,
       state TEXT NOT NULL,
@@ -250,93 +275,6 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
 };
 
 /**
- * Add the consumer generation and backfill bookkeeping the SQL platform needs
- * to rebuild a view or projection from history.
- *
- * `billing_rm_view_entry` gains the generation that wrote each entry: a key
- * rebuilt by a consumer version bump starts over, and its old entries must not
- * be read as if they belonged to the new fold. `billing_rm_backfill` records
- * which consumer generation has been caught up, so a restart does not replay
- * the whole log and a changed plan without a version bump is caught.
- */
-const backfillStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-
-  return [
-    `ALTER TABLE ${tableName(BILLING_TABLES.viewEntry, scope)} ADD COLUMN generation INTEGER NOT NULL DEFAULT 0`,
-    createTable(scope, BILLING_TABLES.backfill, [
-      "consumer TEXT PRIMARY KEY",
-      "generation INTEGER NOT NULL",
-      "plan TEXT NOT NULL",
-      `completed_at ${time} NOT NULL`,
-    ]),
-  ];
-};
-
-/**
- * Give the outbox a database-generated sequence. The first schema allocated
- * `seq` with `MAX(seq) + 1`, which is correct only when one writer holds the
- * database; two accounts committing concurrently on Postgres read the same
- * maximum and collide. An identity column lets the database allocate it, so a
- * commit needs no global lock.
- */
-const outboxSequenceStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-
-  const seq =
-    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
-
-  const outbox = tableName(BILLING_TABLES.outbox, scope);
-  const next = tableName("billing_outbox_next", scope);
-
-  return [
-    createTable(scope, "billing_outbox_next", [
-      `seq ${seq}`,
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "event_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    `INSERT INTO ${next} (aggregate, account, event_seq, delivery, delivered_at)
-       SELECT aggregate, account, event_seq, delivery, delivered_at FROM ${outbox} ORDER BY seq`,
-    `DROP TABLE ${outbox}`,
-    `ALTER TABLE ${next} RENAME TO ${tableName(BILLING_TABLES.outbox, { dialect: scope.dialect })}`,
-    createIndex(scope, "billing_outbox_pending", BILLING_TABLES.outbox, ["delivered_at", "seq"]),
-  ];
-};
-
-/**
- * A view's downstream deliveries, persisted in the same unit that writes its
- * entries. The upstream outbox retries the *input* delivery, not the output
- * one, so without this row a crash between a view's commit and its target's
- * acceptance would drop the downstream event permanently.
- */
-const viewOutboxStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-
-  const seq =
-    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
-
-  return [
-    createTable(scope, BILLING_TABLES.viewOutbox, [
-      `seq ${seq}`,
-      "view TEXT NOT NULL",
-      "key TEXT NOT NULL",
-      "entry_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    createIndex(scope, "billing_rm_view_outbox_pending", BILLING_TABLES.viewOutbox, [
-      "view",
-      "key",
-      "delivered_at",
-      "seq",
-    ]),
-  ];
-};
-
-/**
  * The migrations paykit ships, rendered for a dialect and schema. The list is
  * additive: a change appends a file, it never edits one already in the list.
  *
@@ -352,12 +290,7 @@ const viewOutboxStatements = (scope: Required<MigrationScope>): ReadonlyArray<st
 export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<MigrationFile> => {
   const scope = scopeOf(input);
 
-  return [
-    fileOf("0001_init", initStatements(scope)),
-    fileOf("0002_consumer_backfill", backfillStatements(scope)),
-    fileOf("0003_outbox_sequence", outboxSequenceStatements(scope)),
-    fileOf("0004_view_outbox", viewOutboxStatements(scope)),
-  ];
+  return [fileOf("0001_init", initStatements(scope))];
 };
 
 const fileOf = (id: string, statements: ReadonlyArray<string>): MigrationFile => ({

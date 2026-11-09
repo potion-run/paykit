@@ -8,8 +8,8 @@ import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { AlreadySubscribed } from "./AlreadySubscribed.rejection.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
+import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 
 /** The account's standing was activated for a tier, with a fresh period. */
 export class SubscriptionActivated extends Domain.Event("SubscriptionActivated", {
@@ -60,6 +60,6 @@ export class Subscribe extends Domain.Command("Subscribe", {
     chargeId: Schema.optionalKey(Schema.String),
   },
   events: [SubscriptionActivated],
-  rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch, AlreadySubscribed],
+  rejects: [PlanNotInCatalog, CurrencyMismatch, CatalogMismatch, AlreadySubscribed],
   middleware: [Session, CatalogGuard],
 }) {}

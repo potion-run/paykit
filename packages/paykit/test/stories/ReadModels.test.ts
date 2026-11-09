@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { AccountEvents } from "../../src/Subscription/AccountEvents.stream.ts";
@@ -26,7 +26,7 @@ const freeTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
-const free = allowancesOf(testCatalog, "free")!;
+const free = planItemsOf(testCatalog, "free")!;
 const account = Subscription.ref("acct_read");
 const start = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const end = DateTime.makeUnsafe("2030-02-01T00:00:00Z");

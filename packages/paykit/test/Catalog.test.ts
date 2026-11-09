@@ -29,12 +29,12 @@ import {
   CatalogUnitPriceWithoutBilling,
   CatalogUnknownFeature,
   CatalogUnlimitedOverage,
-  allowancesOf,
+  planItemsOf,
   catalog,
   creditTermsOf,
   defineCatalog,
   featureOf,
-  tierOf,
+  planOf,
 } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
 import { TierId } from "../src/Tier.ts";
@@ -89,9 +89,9 @@ describe("catalog", () => {
       const built = yield* catalog(valid);
       expect(built.features.map((feature) => feature.id)).toEqual(["messages", "seats"]);
       expect(built.tiers.map((tier) => tier.id)).toEqual(["free", "pro"]);
-      expect(tierOf(built, "pro")?.name).toBe("Pro");
+      expect(planOf(built, "pro")?.name).toBe("Pro");
       expect(featureOf(built, "seats")?.name).toBe("Seats");
-      expect(allowancesOf(built, "pro")).toEqual({
+      expect(planItemsOf(built, "pro")).toEqual({
         messages: {
           feature: "messages",
           kind: "metered",
@@ -115,9 +115,9 @@ describe("catalog", () => {
   it.effect("returns null for a tier or feature the catalog does not carry", () =>
     Effect.gen(function* () {
       const built = yield* catalog(valid);
-      expect(tierOf(built, "missing")).toBe(null);
+      expect(planOf(built, "missing")).toBe(null);
       expect(featureOf(built, "missing")).toBe(null);
-      expect(allowancesOf(built, "missing")).toBe(null);
+      expect(planItemsOf(built, "missing")).toBe(null);
     }),
   );
 
@@ -148,7 +148,7 @@ describe("catalog", () => {
     expect(Result.isSuccess(accepted)).toBe(true);
 
     if (Result.isSuccess(accepted)) {
-      expect(allowancesOf(accepted.success, "carrying")?.messages?.carryOver).toBe(true);
+      expect(planItemsOf(accepted.success, "carrying")?.messages?.carryOver).toBe(true);
     }
 
     const onFlag = tier({ id: "on_flag", grants: [{ ...grant(sso), carryOver: true }] });
@@ -198,7 +198,7 @@ describe("catalog", () => {
     expect(Result.isSuccess(accepted)).toBe(true);
 
     if (Result.isSuccess(accepted)) {
-      expect(allowancesOf(accepted.success, "enterprise")?.sso).toEqual({
+      expect(planItemsOf(accepted.success, "enterprise")?.sso).toEqual({
         feature: "sso",
         kind: "flag",
         included: 1,
@@ -251,7 +251,7 @@ describe("catalog", () => {
     expect(Result.isSuccess(result)).toBe(true);
 
     if (Result.isSuccess(result)) {
-      expect(allowancesOf(result.success, "unlimited")?.messages?.included).toBe("unlimited");
+      expect(planItemsOf(result.success, "unlimited")?.messages?.included).toBe("unlimited");
     }
   });
 
@@ -289,7 +289,7 @@ describe("catalog", () => {
 
     if (Result.isSuccess(result)) {
       expect(featureOf(result.success, "ai")?.creditRates).toEqual({ default: 1, "gpt-large": 10 });
-      expect(tierOf(result.success, "credits")?.credits).toBe(50_000);
+      expect(planOf(result.success, "credits")?.credits).toBe(50_000);
     }
   });
 
@@ -386,7 +386,7 @@ describe("catalog", () => {
     expect(Result.isSuccess(accepted)).toBe(true);
 
     if (Result.isSuccess(accepted)) {
-      const declared = tierOf(accepted.success, "credits_1m");
+      const declared = planOf(accepted.success, "credits_1m");
       expect(declared?.kind).toBe("one_off");
       // The constructor defaults a pack's credits to never expiring.
       expect(declared?.creditsExpire).toBe("never");

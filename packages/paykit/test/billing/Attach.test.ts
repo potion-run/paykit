@@ -227,7 +227,7 @@ describe("billing.attach", () => {
 
       expect(refused._tag).toBe("Failure");
 
-      if (refused._tag === "Failure") expect(String(refused.cause)).toContain("TierNotInCatalog");
+      if (refused._tag === "Failure") expect(String(refused.cause)).toContain("PlanNotInCatalog");
     }).pipe(Effect.provide(world)),
   );
 });

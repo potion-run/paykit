@@ -29,8 +29,9 @@ Every "just read it from the provider" is a migration we owe later.
 
 The public words are `Plan`, `PlanItem`, `Feature`, `Customer`, `Balance`, `Subscription`,
 `Period`, `Usage` and `Standing` ([ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md)).
-`Tier` and `Allowance` are internal schema names while state and events migrate; they are not a
-second public API. A balance is a list of sources, not one number. Before naming a type, a file or
+`Tier` and `Allowance` are internal schema names while the state migrates; the events speak plan,
+and the advanced command bindings keep their `Tier` names for now. They are not a second public
+API. A balance is a list of sources, not one number. Before naming a type, a file or
 an export, read the vocabulary in PLAN.md and the ADR above — a second spelling of an existing
 word is a breaking change.
 
@@ -78,8 +79,8 @@ Paykit.catalog({ features: [messages], tiers: [free, pro] });
 - `catalog()` / `defineCatalog()` validate the graph and refuse with `CatalogError`, a
   `Schema.Union` with one tag per refusal. A new semantic rule gets a new tag carrying its
   evidence and a test; `CatalogInvalid` is only for a schema failure.
-- Constructors stay pure; `catalog()` is the only effectful step. Lookups are `tierOf`,
-  `featureOf` and `allowancesOf`.
+- Constructors stay pure; `catalog()` is the only effectful step. Lookups are `planOf`,
+  `featureOf` and `planItemsOf`.
 - What a tier can express is a decision with a record: [ADR
   0001](../../docs/adr/0001-catalog-states-the-pricing-model.md) says pricing is catalog data and
   the deploy provisions the vendor, so a new shape lands as a field plus a `decide` rule, never as
@@ -128,6 +129,12 @@ exception because it never resets. A lifetime credit grant is a one-off item or 
 balance. A close that ends the standing (`canceled` or `expired`) opens no further
 period, and `EnterGrace` is refused once the standing is terminal.
 
+- A balance is a list of sources ([ADR 0037](../../docs/adr/0037-a-lifetime-grant-is-a-balance-source.md)).
+  `Balance.breakdown` reports the plan, the rollover and every standalone grant. A spend takes
+  from the plan and rollover before a grant, and an expiring grant before a lifetime one. A grant
+  is customer state, not plan data: `GrantBalance` writes `BalanceGranted`, `BalanceExpiry`
+  schedules `ExpireGrant` at `expiresAt`, and a close or plan change leaves every grant alone.
+  `balances.create` is the binding; a resetting standalone grant is an add-on plan item (Phase 5).
 - A seat has a **purchased** quantity and an **occupied** count
   ([ADR 0036](../../docs/adr/0036-a-seat-is-purchased-and-occupied.md)). `remaining` is
   `purchased - occupied` and may be negative. `SetQuantity` sets the purchase and may drop below
@@ -160,7 +167,7 @@ period, and `EnterGrace` is refused once the standing is terminal.
   reprices history. A money cap refuses in the same transaction as the usage and leaves the standing
   `good`.
 - A one-off pack is a purchase, not a tier change: its credits arrive through `PurchaseCredits` /
-  `CreditsPurchased`, never `TierChanged`, and never create a second standing. The standing tracks
+  `CreditsPurchased`, never `PlanChanged`, and never create a second standing. The standing tracks
   `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only
   `credits - prepaidCredits`, and spending drains the plan's credits before the protected pool.
 - An auto top-up is a policy over a crossing, not a timer. `Paykit.autoTopUp({ catalog, pack,
@@ -176,7 +183,7 @@ period, and `EnterGrace` is refused once the standing is terminal.
   neither capability is `ProviderCapabilityMissing`, never a free pack. With a `cooldown`, the
   purchase carries `cooldownUntil`, a crossing inside it is deferred rather than dropped, and
   `TopUpCooldownElapsed` clears the standing at the deadline so the policy re-asks.
-- Prices are logged. `SubscriptionActivated` carries `price`, `TierChanged` carries
+- Prices are logged. `SubscriptionActivated` carries `price`, `PlanChanged` carries
   `priceBefore`/`priceAfter`, and a downgrade to a free tier records the absence of a price.
   A catalog price change never rewrites a standing that already exists.
 - Every command has one typed rejection per way it can refuse.

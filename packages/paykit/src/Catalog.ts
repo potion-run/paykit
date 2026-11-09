@@ -1095,12 +1095,9 @@ export const defineCatalog = (input: CatalogInput): Result.Result<Catalog, Catal
 export const catalog = (input: CatalogInput): Effect.Effect<Catalog, CatalogError> =>
   Effect.fromResult(defineCatalog(input));
 
-/** A declared tier, or `null` when the catalog has no such tier. */
-export const tierOf = (catalog: Catalog, tierId: string): Tier | null =>
-  catalog.tiers.find((tier) => tier.id === tierId) ?? null;
-
-/** The public spelling of `tierOf`. */
-export const planOf = tierOf;
+/** A declared plan, or `null` when the catalog has no such plan. */
+export const planOf = (catalog: Catalog, planId: string): Tier | null =>
+  catalog.tiers.find((plan) => plan.id === planId) ?? null;
 
 /** A declared feature, or `null` when the catalog has no such feature. */
 export const featureOf = (catalog: Catalog, featureId: string): Feature | null =>
@@ -1130,7 +1127,7 @@ export const creditRatesOf = (catalog: Catalog): CreditRateCards => {
  * that feature's card; everything else is the catalog's.
  */
 export const ratesOf = (catalog: Catalog, tierId: string): CreditRateCards | null => {
-  const tier = tierOf(catalog, tierId);
+  const tier = planOf(catalog, tierId);
 
   if (tier === null) return null;
   const base = creditRatesOf(catalog);
@@ -1141,7 +1138,7 @@ export const ratesOf = (catalog: Catalog, tierId: string): CreditRateCards | nul
 };
 
 /** The credit terms a tier sells: its grant, when it expires, every rate, and its top-up line. */
-export interface TierCreditTerms {
+export interface PlanCreditTerms {
   readonly kind: TierKind;
   readonly credits: number;
   readonly creditsExpire: CreditsExpire;
@@ -1151,8 +1148,8 @@ export interface TierCreditTerms {
 }
 
 /** What a tier grants in credits, with the defaults the catalog implies. */
-export const creditTermsOf = (catalog: Catalog, tierId: string): TierCreditTerms | null => {
-  const tier = tierOf(catalog, tierId);
+export const creditTermsOf = (catalog: Catalog, tierId: string): PlanCreditTerms | null => {
+  const tier = planOf(catalog, tierId);
 
   if (tier === null) return null;
 
@@ -1171,19 +1168,19 @@ export const creditTermsOf = (catalog: Catalog, tierId: string): TierCreditTerms
  * helper, so a caller cannot assemble half of a tier and forget a field the
  * guard would then refuse.
  */
-export interface TierTerms extends TierCreditTerms {
+export interface PlanTerms extends PlanCreditTerms {
   readonly allowances: Allowances;
   readonly price?: Price;
 }
 
-/** The command fields a tier implies, or `null` when the catalog lacks it. */
-export const tierTermsOf = (
+/** The command fields a plan implies, or `null` when the catalog lacks it. */
+export const planTermsOf = (
   catalog: Catalog,
   tierId: string,
   currency?: string,
-): TierTerms | null => {
-  const tier = tierOf(catalog, tierId);
-  const allowances = allowancesOf(catalog, tierId);
+): PlanTerms | null => {
+  const tier = planOf(catalog, tierId);
+  const allowances = planItemsOf(catalog, tierId);
   const terms = creditTermsOf(catalog, tierId);
 
   if (tier === null || allowances === null || terms === null) return null;
@@ -1204,9 +1201,9 @@ export const tierTermsOf = (
   };
 };
 
-/** Fold a tier's `grants` into the map a command and a view carry. */
-export const allowancesOf = (catalog: Catalog, tierId: string): Allowances | null => {
-  const tier = tierOf(catalog, tierId);
+/** Fold a plan's `grants` into the map a command and a view carry. */
+export const planItemsOf = (catalog: Catalog, tierId: string): Allowances | null => {
+  const tier = planOf(catalog, tierId);
 
   if (tier === null) return null;
   const allowances: Record<string, Allowance> = {};
@@ -1215,9 +1212,3 @@ export const allowancesOf = (catalog: Catalog, tierId: string): Allowances | nul
 
   return allowances;
 };
-
-/** The public spelling of `allowancesOf`. */
-export const planItemsOf = allowancesOf;
-
-/** The public spelling of `tierTermsOf`. */
-export const planTermsOf = tierTermsOf;

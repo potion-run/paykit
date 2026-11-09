@@ -77,7 +77,7 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
-    tag: "TierChanged",
+    tag: "PlanChanged",
     body: body({
       tier: "pro",
       allowances: {},
@@ -241,6 +241,34 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
+    tag: "UsageSet",
+    body: body({
+      feature: "seats",
+      occupiedBefore: 5,
+      occupiedAfter: 8,
+      remainingAfter: 0,
+    }),
+  },
+  {
+    tag: "BalanceGranted",
+    body: body({
+      feature: "messages",
+      grantId: "grant_dev_1",
+      granted: 500,
+      planId: "pro",
+      remainingAfter: 2_500,
+    }),
+  },
+  {
+    tag: "BalanceExpired",
+    body: body({
+      feature: "messages",
+      grantId: "grant_dev_1",
+      amount: 200,
+      balanceAfter: 2_300,
+    }),
+  },
+  {
     tag: "QuantityProrationInvoiced",
     body: body({
       prorationId: "seats:add",
@@ -250,7 +278,7 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     }),
   },
   {
-    tag: "AllowanceReset",
+    tag: "PlanItemReset",
     body: body({
       feature: "messages",
       remaining: 100,
@@ -263,7 +291,7 @@ export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
     body: body({ invoiceId: "in_dev_1", amount: 950, currency: "usd" }),
   },
   {
-    tag: "TierChangeScheduled",
+    tag: "PlanChangeScheduled",
     body: body({
       tier: "pro",
       allowances: {},

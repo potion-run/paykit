@@ -3,6 +3,7 @@ import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { Overage, Pricing } from "./Allowance.ts";
+import { Balance, balanceOfFeature, emptyBalance } from "./Balance.ts";
 import type { BillingReadRow } from "./BillingReadStore.ts";
 import type { RateCard } from "./Feature.ts";
 import { capacityOf } from "./Subscription/Allowance.verdict.ts";
@@ -12,24 +13,30 @@ import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.
 /** What a caller asks before doing work. */
 export const CheckInput = Schema.Struct({
   account: Schema.String,
-  feature: Schema.String,
-  /** How much will be consumed. Defaults to 1. */
-  amount: Schema.optionalKey(Schema.Int),
+  /** The feature the work needs. */
+  featureId: Schema.String,
+  /** How much the work will consume. Defaults to 1. */
+  requiredBalance: Schema.optionalKey(Schema.Int),
   /** Which rate prices it, for a credit-priced feature. */
   dimension: Schema.optionalKey(Schema.String),
   /** The event's properties, which a rate card's rules and multipliers match. */
   properties: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  /** Reserve `requiredBalance` when the answer is allowed. */
+  lock: Schema.optionalKey(Schema.Boolean),
+  /** The retry key, which is also the hold id when `lock` is set. */
+  idempotencyKey: Schema.optionalKey(Schema.String),
 });
 
 export type CheckInput = typeof CheckInput.Type;
 
-/** What every `Check` implementation answers. */
+/** What every `Check` implementation answers: the verdict and the balance it read. */
 export const CheckResult = Schema.Struct({
   allowed: Schema.Boolean,
-  /** Spendable now. `null` means there is no count: an unlimited allowance or a flag. */
-  remaining: Schema.NullOr(Schema.Int),
-  resetsAt: Schema.NullOr(Schema.DateTimeUtc),
+  /** What the customer can spend of the feature, with its sources. */
+  balance: Balance,
   standing: Standing,
+  /** The hold this check placed, when it was asked to lock. */
+  lockId: Schema.optionalKey(Schema.String),
 });
 
 export type CheckResult = typeof CheckResult.Type;
@@ -47,14 +54,7 @@ export class CheckTransport extends Context.Service<
   }
 >()("paykit/CheckTransport") {}
 
-const blocked: CheckResult = {
-  allowed: false,
-  remaining: 0,
-  resetsAt: null,
-  standing: "blocked",
-};
-
-/** Judge one feature from a read model. Every read path uses this. */
+/** Every read path uses this one judgement. */
 export const evaluateCheck = (
   state: {
     readonly standing: Standing;
@@ -91,14 +91,34 @@ export const evaluateCheck = (
   } | null,
   input: CheckInput,
 ): CheckResult => {
-  if (state === null) return blocked;
-  const feature = state.features[input.feature];
-
-  if (feature === undefined) {
-    return { allowed: false, remaining: 0, resetsAt: null, standing: state.standing };
+  if (state === null) {
+    return {
+      allowed: false,
+      balance: emptyBalance(input.account, input.featureId),
+      standing: "blocked",
+    };
   }
 
-  const amount = input.amount ?? 1;
+  const feature = state.features[input.featureId];
+
+  if (feature === undefined) {
+    return {
+      allowed: false,
+      balance: emptyBalance(input.account, input.featureId),
+      standing: state.standing,
+    };
+  }
+
+  // SAFETY: a full `EntitlementsState` carries these fields; a hand-built state
+  // carries only the feature facts, and every reader here treats them as absent.
+  const plan = state as {
+    readonly tier?: string;
+    readonly credits?: number;
+    readonly prepaidCredits?: number;
+  };
+
+  const balance = balanceOfFeature(input.account, input.featureId, feature, plan);
+  const requiredBalance = input.requiredBalance ?? 1;
 
   // One judgement, the same one `decide` runs: the `allowed` a row carries and
   // the answer `check()` gives cannot disagree because there is one rule.
@@ -119,7 +139,7 @@ export const evaluateCheck = (
       ...(feature.quantity === undefined ? {} : { quantity: feature.quantity }),
     },
     ask: {
-      amount,
+      amount: requiredBalance,
       ...(input.dimension === undefined ? {} : { dimension: input.dimension }),
       ...(input.properties === undefined ? {} : { properties: input.properties }),
     },
@@ -127,8 +147,7 @@ export const evaluateCheck = (
 
   return {
     allowed: verdict._tag === "Allowed",
-    remaining: feature.remaining,
-    resetsAt: feature.resetsAt,
+    balance,
     standing: state.standing,
   };
 };
@@ -145,6 +164,7 @@ export const rowToState = (row: BillingReadRow): EntitlementsState => ({
   credits: row.credits,
   dunningAttempts: row.dunningAttempts,
   ...(row.currency === undefined ? {} : { currency: row.currency }),
+  prepaidCredits: row.prepaidCredits,
   features: row.features,
 });
 

@@ -8,7 +8,7 @@ import { catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Hold } from "../../src/Subscription/Hold.command.ts";
-import { AllowanceReset, ResetAllowance } from "../../src/Subscription/ResetAllowance.command.ts";
+import { PlanItemReset, ResetAllowance } from "../../src/Subscription/ResetAllowance.command.ts";
 import { resetWindowsOf } from "../../src/Subscription/Standing.ts";
 import {
   includedRemainingOf,
@@ -353,7 +353,7 @@ describe("a reset runs on its own schedule", () => {
         if (!isAccepted(due) || due.length === 0) return false;
 
         const reset = due.find(
-          (event): event is InstanceType<typeof AllowanceReset> => event._tag === "AllowanceReset",
+          (event): event is InstanceType<typeof PlanItemReset> => event._tag === "PlanItemReset",
         );
 
         if (reset === undefined) return false;

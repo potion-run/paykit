@@ -8,13 +8,13 @@ import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import { PendingTier } from "./Subscription.state.ts";
-import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 
 /** The standing will move to `tier` at the close of the current period. */
-export class TierChangeScheduled extends Domain.Event("TierChangeScheduled", PendingTier.fields) {}
+export class PlanChangeScheduled extends Domain.Event("PlanChangeScheduled", PendingTier.fields) {}
 
 /**
  * Move to another tier when the period ends, rather than now.
@@ -29,7 +29,7 @@ export class TierChangeScheduled extends Domain.Event("TierChangeScheduled", Pen
  * mid-period `ChangeTier` cancels it, because the account has already moved.
  *
  * The terms are the catalog's, and they are checked the way `ChangeTier` checks
- * them: a schedule that grants no allowance is not a tier (`TierNotInCatalog`,
+ * them: a schedule that grants no allowance is not a tier (`PlanNotInCatalog`,
  * which is what an attempt to schedule a one-off pack is), and a price in
  * another currency than the standing's is `CurrencyMismatch`. The close applies
  * the schedule from the log alone, so a wrong payload would be a wrong standing
@@ -46,7 +46,7 @@ export class ScheduleTierChange extends Domain.Command("ScheduleTierChange", {
     topUp: Schema.optionalKey(TopUpTerms),
     rates: CreditRateCards,
   },
-  events: [TierChangeScheduled],
-  rejects: [NotSubscribed, StandingEnded, TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
+  events: [PlanChangeScheduled],
+  rejects: [NotSubscribed, StandingEnded, PlanNotInCatalog, CurrencyMismatch, CatalogMismatch],
   middleware: [Session, CatalogGuard],
 }) {}

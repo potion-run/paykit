@@ -6,10 +6,10 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { ChangeTier, TierChanged } from "../../src/Subscription/ChangeTier.command.ts";
+import { ChangeTier, PlanChanged } from "../../src/Subscription/ChangeTier.command.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -54,8 +54,8 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [proTier, nextTier, packTier] }),
 );
 
-const pro = allowancesOf(testCatalog, "pro")!;
-const next = allowancesOf(testCatalog, "next")!;
+const pro = planItemsOf(testCatalog, "pro")!;
+const next = planItemsOf(testCatalog, "next")!;
 const account = Subscription.ref("acct_prepaid");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -232,7 +232,7 @@ it.effect("a tier change carries the pack instead of re-granting it", () =>
     ),
     Story.then(
       account,
-      new TierChanged({
+      new PlanChanged({
         tier: "next",
         allowances: next,
         remaining: { messages: 200 },

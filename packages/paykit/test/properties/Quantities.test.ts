@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance, pricingOf, type Allowance } from "../../src/Allowance.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { prorate, prorateQuantity } from "../../src/Proration.ts";
 import { capacityOf } from "../../src/Subscription/Allowance.verdict.ts";
@@ -17,7 +17,9 @@ import {
 } from "../../src/Subscription/QuantityProration.command.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { QuantityChanged, SetQuantity } from "../../src/Subscription/SetQuantity.command.ts";
+import { SetUsage, UsageSet } from "../../src/Subscription/SetUsage.command.ts";
 import {
+  occupiedOf,
   quantityAfterTierChange,
   quantityOf,
   type SubscribedState,
@@ -108,7 +110,7 @@ type Stock = typeof Stock.Type;
 const Quantity = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 32 })));
 
 const termsOf = (tier: Stock) => {
-  const terms = tierTermsOf(seatsCatalog, tier);
+  const terms = planTermsOf(seatsCatalog, tier);
 
   if (terms === null) throw new Error(`the seat catalog is missing ${tier}`);
 
@@ -255,9 +257,9 @@ describe("a seat is a quantity that is set", () => {
           if (next._tag !== "Subscribed") return false;
 
           if (next.quantities?.seats !== quantity) return false;
-          const remaining = cap === undefined ? null : Math.max(0, cap - quantity);
+          // Nothing is occupied in this script, so the balance is the purchase.
 
-          if (next.remaining.seats !== remaining) return false;
+          if (next.remaining.seats !== quantity) return false;
 
           // Setting the quantity the account already holds records nothing.
           const replay = decideAt(
@@ -321,46 +323,42 @@ describe("a seat is a quantity that is set", () => {
   });
 
   /**
-   * A quantity is judged against its cap, not against a spendable `remaining`:
-   * a seat at 12 with a cap of 20 allows 8 more, and refuses the 9th, whatever
-   * the free grant was. Without a cap there is nothing to judge.
+   * A quantity is judged by the occupancy balance, `purchased - occupied`,
+   * which may be negative. The cap is the purchase ceiling and `SetQuantity`
+   * enforces it; `check` only answers whether one more seat fits (ADR 0036).
    */
-  it.effect("check() answers from the cap, not from a spendable count", () =>
+  it.effect("check() answers from the occupancy balance, not from the cap", () =>
     assertProperty(
       Arbitrary.schema(
         Schema.Struct({
           quantity: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 30 }))),
           included: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 10 }))),
-          cap: Schema.optionalKey(
-            Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 30 }))),
-          ),
+          occupied: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 30 }))),
           amount: Amount,
         }),
       ),
-      ({ quantity, included, cap, amount }) => {
+      ({ quantity, included, occupied, amount }) => {
+        const remaining = quantity - occupied;
+
         const verdict = capacityOf({
           standing: "good",
           feature: {
             overage: "bill",
             included,
             quantity,
-            ...(cap === undefined ? {} : { cap }),
             billed: 0,
-            used: 0,
+            used: occupied,
             reserved: 0,
-            remaining: cap === undefined ? null : Math.max(0, cap - quantity),
+            remaining,
           },
           ask: { amount },
         });
 
-        if (cap === undefined) return verdict._tag === "Allowed";
-        const headroom = cap - quantity;
-
-        if (amount > headroom) {
-          return verdict._tag === "Ceiling" && verdict.cap === cap && verdict.headroom === headroom;
-        }
-
-        return verdict._tag === "Allowed";
+        return amount > remaining
+          ? verdict._tag === "Remaining" &&
+              verdict.requested === amount &&
+              verdict.remaining === remaining
+          : verdict._tag === "Allowed";
       },
       { runs: 100 },
     ),
@@ -405,13 +403,10 @@ describe("a seat is a quantity that is set", () => {
           includedOf(target.allowances.seats!),
         );
 
-        const remainingFor = (next: SubscribedState) => {
-          const stock = seatsAllowance(next);
-
-          return stock.cap === undefined
-            ? null
-            : Math.max(0, stock.cap - quantityOf(next, "seats", stock));
-        };
+        // Occupancy is untouched by a plan change, and this script never sets
+        // it, so the balance is the purchase.
+        const remainingFor = (next: SubscribedState) =>
+          quantityOf(next, "seats", seatsAllowance(next));
 
         if (scheduled) {
           const schedule = decideAt(
@@ -495,6 +490,107 @@ describe("a seat is a quantity that is set", () => {
    * refused as nothing due. A reduction's credit stays for the next period, so
    * it is recorded with a negative `due` rather than invoiced.
    */
+  it("occupancy is its own write: purchased and occupied move independently", () => {
+    const opened = subscribedIn(seatsCatalog, "team");
+    const allowanceOf = seatsAllowance(opened);
+
+    expect(quantityOf(opened, "seats", allowanceOf)).toBe(5);
+    expect(occupiedOf(opened, "seats")).toBe(0);
+
+    const set = decideAt(opened, new SetUsage({ feature: "seats", usage: 3 }), start, "use");
+
+    expect(isAccepted(set)).toBe(true);
+
+    if (!isAccepted(set)) throw new Error("expected an accepted usage write");
+
+    expect(set).toHaveLength(1);
+    expect(set[0]).toBeInstanceOf(UsageSet);
+
+    const used = evolveAt(opened, set, start, "use");
+
+    if (used._tag !== "Subscribed") throw new Error("expected a standing");
+
+    expect(used.quantities?.seats).toBe(5);
+    expect(occupiedOf(used, "seats")).toBe(3);
+    expect(used.remaining.seats).toBe(2);
+
+    // Setting the same occupancy again records nothing.
+    const replay = decideAt(used, new SetUsage({ feature: "seats", usage: 3 }), start, "use-2");
+    expect(isAccepted(replay)).toBe(true);
+    expect(replay).toHaveLength(0);
+
+    // Lowering the purchase below occupancy is allowed; remaining goes negative.
+    const down = decideAt(
+      used,
+      new SetQuantity({ feature: "seats", quantity: 2, dedupeKey: "seats:down" }),
+      start,
+      "down",
+    );
+
+    expect(isAccepted(down)).toBe(true);
+
+    if (!isAccepted(down)) throw new Error("expected the purchase change");
+
+    const below = evolveAt(used, down, start, "down");
+
+    if (below._tag !== "Subscribed") throw new Error("expected a standing");
+
+    expect(below.quantities?.seats).toBe(2);
+    expect(occupiedOf(below, "seats")).toBe(3);
+    expect(below.remaining.seats).toBe(-1);
+
+    // A seat cannot be used as metered usage, and a usage write cannot land on
+    // a metered feature.
+    const usageOfSeat = decideAt(
+      below,
+      new TrackUsage({ feature: "seats", amount: 1 }),
+      start,
+      "t",
+    );
+
+    expect(tagOf(usageOfSeat)).toBe("FeatureNotConsumable");
+
+    const usageOfMessages = decideAt(
+      below,
+      new SetUsage({ feature: "messages", usage: 1 }),
+      start,
+      "m",
+    );
+
+    expect(tagOf(usageOfMessages)).toBe("FeatureNotConsumable");
+  });
+
+  it("records occupancy going away and back", () => {
+    const opened = subscribedIn(seatsCatalog, "team");
+
+    const one = decideAt(opened, new SetUsage({ feature: "seats", usage: 5 }), start, "one");
+
+    if (!isAccepted(one)) throw new Error("expected five");
+    const atFive = evolveAt(opened, one, start, "one");
+
+    if (atFive._tag !== "Subscribed") throw new Error("expected a standing");
+
+    const two = decideAt(atFive, new SetUsage({ feature: "seats", usage: 3 }), start, "two");
+    expect(isAccepted(two)).toBe(true);
+
+    if (!isAccepted(two)) throw new Error("expected three");
+    expect(two).toHaveLength(1);
+    expect(occupiedOf(atFive, "seats")).toBe(5);
+  });
+
+  it("refuses a raise on a blocked standing, and still frees a seat there", () => {
+    const opened = subscribedIn(seatsCatalog, "team");
+    const ended: SubscribedState = { ...opened, status: "canceled" };
+    const raised = decideAt(ended, new SetUsage({ feature: "seats", usage: 1 }), start, "raise");
+
+    expect(isAccepted(raised)).toBe(false);
+    expect(tagOf(raised)).toBe("StandingBlocksUsage");
+
+    // Freeing a seat is a cleanup a terminal standing may still do.
+    const freed = decideAt(ended, new SetUsage({ feature: "seats", usage: 0 }), start, "free");
+    expect(isAccepted(freed)).toBe(true);
+  });
+
   it.effect("a quantity proration is invoiced once, and a credit is never billed", () =>
     assertProperty(
       Arbitrary.schema(

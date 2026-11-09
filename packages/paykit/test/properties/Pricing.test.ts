@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { allowancesOf, tierOf } from "../../src/Catalog.ts";
+import { planItemsOf, planOf } from "../../src/Catalog.ts";
 import {
   initialSubscriptionState,
   type SubscribedState,
@@ -45,7 +45,7 @@ const subscribed = (state: ReturnType<typeof evolveAt>): SubscribedState => {
   return state;
 };
 
-const priceOf = (tier: TierName) => tierOf(testCatalog, tier)?.price;
+const priceOf = (tier: TierName) => planOf(testCatalog, tier)?.price;
 
 describe("pricing", () => {
   it.effect("replaying the log reproduces the price the account was sold at", () =>
@@ -85,7 +85,7 @@ describe("pricing", () => {
           const before = subscribed(state);
 
           if (plan._tag === "ChangeTier") {
-            const changed = decision.find((event) => event._tag === "TierChanged") as
+            const changed = decision.find((event) => event._tag === "PlanChanged") as
               | {
                   readonly priceBefore?: { readonly amount: number };
                   readonly priceAfter?: { readonly amount: number };
@@ -99,7 +99,7 @@ describe("pricing", () => {
             if (!same(changed.priceAfter, priceOf(plan.tier))) return false;
           } else {
             // A period boundary does not rewrite what the account pays.
-            if (decision.some((event) => event._tag === "TierChanged")) return false;
+            if (decision.some((event) => event._tag === "PlanChanged")) return false;
           }
 
           committed.push(...decision);
@@ -130,7 +130,7 @@ describe("pricing", () => {
         }),
       ),
       ({ priced }) => {
-        const free = allowancesOf(testCatalog, "free")!;
+        const free = planItemsOf(testCatalog, "free")!;
 
         const opened = decideAt(
           initialSubscriptionState,
@@ -154,7 +154,7 @@ describe("pricing", () => {
         if (!isAccepted(changed)) return false;
         state = evolveAt(state, changed, start, "upgrade");
 
-        if (!same(subscribed(state).price, tierOf(testCatalog, priced)?.price)) return false;
+        if (!same(subscribed(state).price, planOf(testCatalog, priced)?.price)) return false;
 
         const downgraded = decideAt(
           state,
@@ -175,7 +175,7 @@ describe("pricing", () => {
   );
 
   it("an activation records the price it was sold at", () => {
-    const pro = allowancesOf(testCatalog, "pro")!;
+    const pro = planItemsOf(testCatalog, "pro")!;
 
     const decision = decideAt(
       initialSubscriptionState,

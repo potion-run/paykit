@@ -9,7 +9,7 @@ import { CheckOverTransport } from "../../src/Billing/CheckOverTransport.layer.t
 import { CheckReadModel } from "../../src/Billing/CheckReadModel.layer.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { CheckTransport, type CheckResult } from "../../src/Check.ts";
 import { messages } from "../../src/Feature.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
@@ -32,8 +32,8 @@ const proTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
-const free = allowancesOf(testCatalog, "free")!;
-const pro = allowancesOf(testCatalog, "pro")!;
+const free = planItemsOf(testCatalog, "free")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const account = "acct_paths";
 
 /**
@@ -79,17 +79,17 @@ describe("Check read paths", () => {
     Effect.gen(function* () {
       yield* subscribeFree;
       const inProcess = yield* Check(account);
-      const first = yield* inProcess({ feature: "messages", amount: 1 });
+      const first = yield* inProcess({ featureId: "messages", requiredBalance: 1 });
 
       const second = yield* Effect.gen(function* () {
         const readModel = yield* Check(account);
 
-        return yield* readModel({ feature: "messages", amount: 1 });
+        return yield* readModel({ featureId: "messages", requiredBalance: 1 });
       }).pipe(Effect.provide(CheckReadModel));
 
       expect(second).toEqual(first);
       expect(first.allowed).toBe(true);
-      expect(first.remaining).toBe(100);
+      expect(first.balance.remaining).toBe(100);
     }).pipe(run),
   );
 
@@ -100,7 +100,7 @@ describe("Check read paths", () => {
       const store = yield* BillingReadStore;
       // The binding guarantees the view; the row is the projection's, so wait for
       // it to catch up with that view before reading the other path.
-      yield* track({ feature: "messages", amount: 40, dedupeKey: "read-paths-40" });
+      yield* track({ featureId: "messages", value: 40, idempotencyKey: "read-paths-40" });
       const entitlements = yield* Entitlements;
       yield* waitForProjection(
         store,
@@ -112,11 +112,11 @@ describe("Check read paths", () => {
       const readModel = yield* Effect.gen(function* () {
         const read = yield* Check(account);
 
-        return yield* read({ feature: "messages", amount: 1 });
+        return yield* read({ featureId: "messages", requiredBalance: 1 });
       }).pipe(Effect.provide(CheckReadModel));
 
-      expect(readModel).toEqual(yield* inProcess({ feature: "messages", amount: 1 }));
-      expect(readModel.remaining).toBe(60);
+      expect(readModel).toEqual(yield* inProcess({ featureId: "messages", requiredBalance: 1 }));
+      expect(readModel.balance.remaining).toBe(60);
     }).pipe(run),
   );
 
@@ -125,23 +125,29 @@ describe("Check read paths", () => {
       const answer = yield* Effect.gen(function* () {
         const read = yield* Check("acct_missing");
 
-        return yield* read({ feature: "messages" });
+        return yield* read({ featureId: "messages" });
       }).pipe(Effect.provide(CheckReadModel));
 
-      expect(answer).toEqual({
-        allowed: false,
-        remaining: 0,
-        resetsAt: null,
-        standing: "blocked",
-      });
+      expect(answer.allowed).toBe(false);
+      expect(answer.standing).toBe("blocked");
+      expect(answer.balance.remaining).toBe(0);
     }).pipe(run),
   );
 
   it.live("the HTTP path delegates to its transport", () => {
     const expected: CheckResult = {
       allowed: true,
-      remaining: 7,
-      resetsAt: null,
+      balance: {
+        customerId: account,
+        featureId: "messages",
+        granted: 100,
+        remaining: 7,
+        usage: 93,
+        unlimited: false,
+        overageAllowed: false,
+        nextResetAt: null,
+        breakdown: [],
+      },
       standing: "good",
     };
 
@@ -152,13 +158,19 @@ describe("Check read paths", () => {
         Effect.sync(() => {
           calls++;
 
-          return { ...expected, remaining: input.amount === undefined ? 7 : expected.remaining };
+          return {
+            ...expected,
+            balance: {
+              ...expected.balance,
+              remaining: input.requiredBalance === undefined ? 7 : expected.balance.remaining,
+            },
+          };
         }),
     });
 
     return Effect.gen(function* () {
       const http = yield* Check(account);
-      expect(yield* http({ feature: "messages", amount: 1 })).toEqual(expected);
+      expect(yield* http({ featureId: "messages", requiredBalance: 1 })).toEqual(expected);
       expect(calls).toBe(1);
     }).pipe(Effect.provide(CheckOverTransport), Effect.provide(transport), Effect.provide(World));
   });
@@ -179,7 +191,7 @@ describe("Check read paths", () => {
     Effect.gen(function* () {
       yield* subscribeFree;
       const check = yield* Check(account);
-      const answer = yield* check({ feature: "seats" });
+      const answer = yield* check({ featureId: "seats" });
       expect(answer.allowed).toBe(false);
       expect(answer.standing).toBe("good");
     }).pipe(run),
@@ -195,18 +207,18 @@ describe("the read model answers what check() answers", () => {
       const check = yield* Check(account);
 
       const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
-      const answered = yield* check({ feature: "messages", amount: 1 });
+      const answered = yield* check({ featureId: "messages", requiredBalance: 1 });
       expect(view?.features.messages?.allowed).toBe(answered.allowed);
-      expect(view?.features.messages?.remaining).toBe(answered.remaining);
+      expect(view?.features.messages?.remaining).toBe(answered.balance.remaining);
       expect(view?.standing).toBe(answered.standing);
 
       // Spend the whole allowance: the view says no, and so does check().
       const track = yield* TrackUsage(account);
-      yield* track({ feature: "messages", amount: 100, dedupeKey: "read-paths-100" });
+      yield* track({ featureId: "messages", value: 100, idempotencyKey: "read-paths-100" });
       const empty = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
       expect(empty?.features.messages?.allowed).toBe(false);
       expect(empty?.features.messages?.remaining).toBe(0);
-      expect((yield* check({ feature: "messages", amount: 1 })).allowed).toBe(false);
+      expect((yield* check({ featureId: "messages", requiredBalance: 1 })).allowed).toBe(false);
     }).pipe(run),
   );
 
@@ -229,14 +241,14 @@ describe("the read model answers what check() answers", () => {
 
       yield* entitlements.query(Subscription.ref(account), { atLeast: receipt });
       yield* (yield* TrackUsage(account))({
-        feature: "messages",
-        amount: 2000,
-        dedupeKey: "read-paths-2000",
+        featureId: "messages",
+        value: 2000,
+        idempotencyKey: "read-paths-2000",
       });
       const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
       expect(view?.features.messages?.remaining).toBe(0);
       expect(view?.features.messages?.allowed).toBe(true);
-      expect((yield* check({ feature: "messages", amount: 1 })).allowed).toBe(true);
+      expect((yield* check({ featureId: "messages", requiredBalance: 1 })).allowed).toBe(true);
     }).pipe(run),
   );
 });

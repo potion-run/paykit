@@ -49,6 +49,7 @@ const page = BillingReadPage.make({
       periodEnd: at,
       cancelAtPeriodEnd: false,
       credits: 0,
+      prepaidCredits: 0,
       dunningAttempts: 0,
       currency: "usd",
       features: {},
@@ -90,6 +91,7 @@ const billing = {
   anchorTz: "UTC",
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   currency: "usd",
 };

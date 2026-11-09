@@ -54,8 +54,8 @@ The bind takes the **encoded** id — a `string` — and the layer brands it onc
 `static ref(id: Encoded): Ref<Self>` decodes the plain id to the branded one
 (`Aggregate.ts`, `decodeUnknownSync(definition.id)`). The brand belongs inside the domain, where
 `decide` and the Api client need it; the boundary takes what the caller has. That is also why a tier
-id is a `string` in the request: the binding validates it against the catalog (`tierOf` →
-`TierNotInCatalog`), so a brand there would buy nothing and cost every caller a cast.
+id is a `string` in the request: the binding validates it against the catalog (`planOf` →
+`PlanNotInCatalog`), so a brand there would buy nothing and cost every caller a cast.
 
 The rule this replaced was the opposite, and it produced `as never` at forty call sites. `never` is
 assignable to everything, so a wrong argument type-checked silently — the cast removed the very check
@@ -142,7 +142,7 @@ Two things the slice found:
 
 **2 — landed, in part.** `ConsumeCredits`, `ScheduleCancellation`, `Resume` as command bindings on
 both layers, and `ChangeTier` as an operation binding reusing `planChangeTier` — the binding joins the
-catalog's `tierTermsOf` and the standing so a caller writes `{ tier }` and nothing else, which is what
+catalog's `planTermsOf` and the standing so a caller writes `{ tier }` and nothing else, which is what
 `tierCommand` did by hand in the example. 30 cases in `test/bindings`, still one body per claim.
 
 Three things the slice found:
@@ -157,7 +157,7 @@ Three things the slice found:
 - **`ChangeTier` cannot be a command binding.** See decision 8.
 
 **2b — landed.** `ScheduleTierChange`, `WithdrawTierChange` and `StartTrial` as command bindings on
-both layers — each joins `tierTermsOf` in the layer, so a caller names a tier and `CatalogGuard` sees
+both layers — each joins `planTermsOf` in the layer, so a caller names a tier and `CatalogGuard` sees
 a payload that agrees with the deploy. `Subscribe` and `Preview` as operation bindings, each
 **delegating to the binding that already walks that path** (`subscribeOf()`, `previewOf()`) rather
 than re-implementing a purchase or a quote: a layer's job is the tag, the types and the failure
@@ -169,7 +169,7 @@ because its scope is the deployment and not an account, the `Stripe.CreateChecko
 `Webhook` followed: an empty bind like `List`, taking the *decoded* event, answering an
 `WebhookAction`. It is the one binding that does **not** wait for a read model afterwards — it has no
 receipt of its own, and a provider needs an answer, not a snapshot. Its failure contract is the edge's
-own two judgements (`WebhookInvalid`, `TierNotInCatalog`); a model rejection that reaches it becomes
+own two judgements (`WebhookInvalid`, `PlanNotInCatalog`); a model rejection that reaches it becomes
 `BindingFailed` on purpose, because a delivery paykit could not apply is one the provider should
 retry.
 

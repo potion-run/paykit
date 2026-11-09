@@ -6,17 +6,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
-import { tierOf, tierTermsOf, type Catalog } from "../Catalog.ts";
+import { planOf, planTermsOf, type Catalog } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { Payments, ProviderCapabilityMissing, type PaymentsService } from "../Payments.ts";
 import { unusedFraction } from "../Proration.ts";
 import type { Proration } from "../Proration.ts";
 import { CancelImmediately } from "../Subscription/CancelImmediately.command.ts";
 import { NotSubscribed } from "../Subscription/NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { refundableOf } from "../Subscription/Subscription.state.ts";
 import type { SubscriptionState } from "../Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import type { CancelVerb, ResumeVerb } from "./Cancel.binding.ts";
 import { Resume, ScheduleCancellation } from "./Cancel.binding.ts";
 import type { ChangeTierVerb } from "./ChangeTier.binding.ts";
@@ -218,19 +218,19 @@ const attachWith = Effect.fn("Paykit.Attach.attach")(function* (
   const changeTier = yield* deps.changeTier(account);
   const scheduleTierChange = yield* deps.scheduleTierChange(account);
   const chargeProration = yield* deps.chargeProration(account);
-  const tier = tierOf(deps.catalog, request.planId);
+  const tier = planOf(deps.catalog, request.planId);
 
-  if (tier === null) return yield* new TierNotInCatalog({ tier: request.planId });
+  if (tier === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const state = yield* deps.subscription.state(Subscription.ref(account));
 
-  const terms = tierTermsOf(
+  const terms = planTermsOf(
     deps.catalog,
     request.planId,
     state._tag === "Subscribed" ? state.currency : undefined,
   );
 
-  if (terms === null) return yield* new TierNotInCatalog({ tier: request.planId });
+  if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const kind = tier.kind ?? "subscription";
 
@@ -475,9 +475,9 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
   account: string,
   request: PreviewAttachRequest,
 ) {
-  const tier = tierOf(deps.catalog, request.planId);
+  const tier = planOf(deps.catalog, request.planId);
 
-  if (tier === null) return yield* new TierNotInCatalog({ tier: request.planId });
+  if (tier === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const state = yield* deps.subscription.state(Subscription.ref(account));
   const preview = yield* deps.preview(account);
@@ -497,13 +497,13 @@ const previewAttachWith = Effect.fn("Paykit.PreviewAttach.preview")(function* (
     return { outcome: "updated", planId: request.planId } as const satisfies PreviewAttachResult;
   }
 
-  const terms = tierTermsOf(
+  const terms = planTermsOf(
     deps.catalog,
     request.planId,
     state._tag === "Subscribed" ? state.currency : undefined,
   );
 
-  if (terms === null) return yield* new TierNotInCatalog({ tier: request.planId });
+  if (terms === null) return yield* new PlanNotInCatalog({ tier: request.planId });
 
   const upgrade = amountOf(terms.price) > amountOf(state.price);
   const immediate = upgrade || request.planSchedule === "immediate";

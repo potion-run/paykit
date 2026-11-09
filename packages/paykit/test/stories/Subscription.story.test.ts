@@ -7,21 +7,21 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, type Catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, type Catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { BillingState } from "../../src/Subscription/BillingState.view.ts";
 import {
   ChangeTier,
   DowngradeBelowUsage,
-  TierChanged,
+  PlanChanged,
 } from "../../src/Subscription/ChangeTier.command.ts";
 import { CurrencyMismatch } from "../../src/Subscription/CurrencyMismatch.rejection.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
+import { PlanNotInCatalog } from "../../src/Subscription/PlanNotInCatalog.rejection.ts";
 import { StartTrial, TrialStarted } from "../../src/Subscription/StartTrial.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
-import { TierNotInCatalog } from "../../src/Subscription/TierNotInCatalog.rejection.ts";
 import {
   AllowanceExceeded,
   TrackUsage,
@@ -52,7 +52,7 @@ export const testCatalog: Catalog = Effect.runSync(
 );
 
 const allowances = (id: string) => {
-  const found = allowancesOf(testCatalog, id);
+  const found = planItemsOf(testCatalog, id);
 
   if (found === null) throw new Error(`test catalog is missing ${id}`);
 
@@ -356,7 +356,7 @@ it.effect("refuses a tier the catalog does not carry", () =>
         allowances: {},
       }),
     ),
-    Story.rejected(new TierNotInCatalog({ tier: "nope" })),
+    Story.rejected(new PlanNotInCatalog({ tier: "nope" })),
   ),
 );
 
@@ -421,7 +421,7 @@ it.effect("changes tier and refuses a downgrade below usage", () =>
     ),
     Story.then(
       account,
-      new TierChanged({
+      new PlanChanged({
         tier: "scale",
         credits: 0,
         creditsExpire: "period",
@@ -512,7 +512,7 @@ it.effect("carries proration on a mid-cycle tier change for audit", () =>
     ),
     Story.then(
       account,
-      new TierChanged({
+      new PlanChanged({
         tier: "scale",
         credits: 0,
         creditsExpire: "period",

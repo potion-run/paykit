@@ -22,6 +22,8 @@ export class UsageReleased extends Domain.Event("UsageReleased", {
    * which are releases.
    */
   reason: Schema.optionalKey(Schema.Literals(["released", "expired", "reset"])),
+  /** The grant units the hold returned, keyed by grant id. */
+  grantsReturned: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
 }) {}
 
 /**
@@ -37,6 +39,6 @@ export class ReleaseHold extends Domain.Command("ReleaseHold", {
   events: [UsageReleased],
   rejects: [HoldUnknown, HoldSettled],
   // The units this release returned, from the event it committed.
-  reply: { released: Schema.Int },
+  reply: { released: Schema.Int, feature: Schema.String },
   middleware: [Session],
 }) {}

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { type Catalog, tierOf } from "./Catalog.ts";
+import { type Catalog, planOf } from "./Catalog.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { PaymentCapability, PaymentsProvider, PaymentsRouter, providerFor } from "./Payments.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
@@ -94,7 +94,7 @@ export const verifyState = (
     return carriesRef ? [new OrphanProviderRef({ account, provider: Object.keys(refs)[0]! })] : [];
   }
 
-  const tier = tierOf(catalog, state.tier);
+  const tier = planOf(catalog, state.tier);
 
   if (tier === null) return [];
 

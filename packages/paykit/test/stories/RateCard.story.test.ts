@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Hold, UsageReserved } from "../../src/Subscription/Hold.command.ts";
@@ -34,7 +34,7 @@ const proTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [compute, messages], tiers: [proTier] }));
-const terms = tierTermsOf(testCatalog, "pro")!;
+const terms = planTermsOf(testCatalog, "pro")!;
 const account = Subscription.ref("acct_rate_card");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");

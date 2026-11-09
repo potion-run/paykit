@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { pricingOf, type Allowance } from "./Allowance.ts";
-import { allowancesOf, ratesOf, tierOf } from "./Catalog.ts";
+import { planItemsOf, ratesOf, planOf } from "./Catalog.ts";
 import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
@@ -82,11 +82,11 @@ const ratesKey = (rates: CreditRateCards): string =>
  * name the first disagreement. Pure, so a test can call it without an Api.
  */
 export const catalogMismatchOf = (
-  catalog: Parameters<typeof tierOf>[0],
+  catalog: Parameters<typeof planOf>[0],
   input: CatalogCarried,
 ): CatalogMismatch | null => {
   if (input.tier === undefined) return null;
-  const tier = tierOf(catalog, input.tier);
+  const tier = planOf(catalog, input.tier);
 
   if (tier === null) {
     return new CatalogMismatch({
@@ -97,7 +97,7 @@ export const catalogMismatchOf = (
     });
   }
 
-  const granted = allowancesOf(catalog, input.tier);
+  const granted = planItemsOf(catalog, input.tier);
 
   if (granted !== null && input.allowances !== undefined) {
     const expected = allowancesKey(granted);
@@ -202,7 +202,7 @@ export const catalogMismatchOf = (
  *   target: AccountId,
  *   input: { tier: Schema.String, allowances: Allowances, price: Schema.optionalKey(Price) },
  *   events: [SubscriptionActivated],
- *   rejects: [TierNotInCatalog, CurrencyMismatch, CatalogMismatch],
+ *   rejects: [PlanNotInCatalog, CurrencyMismatch, CatalogMismatch],
  *   middleware: [Session, CatalogGuard],
  * }) {}
  * ```

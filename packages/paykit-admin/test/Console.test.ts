@@ -67,6 +67,7 @@ const row = {
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   currency: "usd",
   features: {},
@@ -129,6 +130,7 @@ const entitlementsState = {
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   currency: "usd",
   features: {

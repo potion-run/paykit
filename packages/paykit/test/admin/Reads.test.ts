@@ -11,7 +11,7 @@ import {
   type BillingReadRow,
   MemoryBillingReadStore,
 } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
@@ -39,7 +39,7 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
 
-const proAllowances = allowancesOf(testCatalog, "pro")!;
+const proAllowances = planItemsOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_admin_reads";
 
@@ -72,6 +72,7 @@ const row = (id: string, overrides: Partial<BillingReadRow> = {}): BillingReadRo
   periodEnd: at,
   cancelAtPeriodEnd: false,
   credits: 0,
+  prepaidCredits: 0,
   dunningAttempts: 0,
   features: {},
   ...overrides,
@@ -153,7 +154,7 @@ describe("the admin read port", () => {
       expect(answer._tag).toBe("accepted");
 
       if (answer._tag !== "accepted") return;
-      expect(answer.events.map((event) => event._tag)).toEqual(["TierChanged"]);
+      expect(answer.events.map((event) => event._tag)).toEqual(["PlanChanged"]);
       expect(answer.proration?.due).toBe(8000);
     }).pipe(run),
   );
@@ -222,7 +223,7 @@ describe("the admin read port", () => {
       expect(answer._tag).toBe("rejected");
 
       if (answer._tag !== "rejected") return;
-      expect(answer.rejection._tag).toBe("TierNotInCatalog");
+      expect(answer.rejection._tag).toBe("PlanNotInCatalog");
     }).pipe(run),
   );
 

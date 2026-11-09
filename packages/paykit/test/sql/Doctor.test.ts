@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { doctor } from "../../src/Doctor.ts";
 import { messages } from "../../src/Feature.ts";
 import { migrate } from "../../src/Migrations/index.ts";
@@ -23,7 +23,7 @@ const freeTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier] }));
-const free = allowancesOf(testCatalog, "free")!;
+const free = planItemsOf(testCatalog, "free")!;
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 
 const opened = (account = "acct_doctor") =>

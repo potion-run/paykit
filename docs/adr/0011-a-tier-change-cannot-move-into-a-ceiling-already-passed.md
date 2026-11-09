@@ -13,7 +13,7 @@ A standing carries two ceilings per billed feature, and both are kept across a t
 - a **unit ceiling**, `included + cap`, enforced as `used + reserved + amount > included + cap`.
 
 Both are records of what this period may still spend, and `billed` and `used` survive a
-`TierChanged` because a tier change is not a period boundary — `UsageReset` is what clears them.
+`PlanChanged` because a tier change is not a period boundary — `UsageReset` is what clears them.
 
 `ChangeTier` did not check either. Before [ADR 0009](./0009-only-a-blocking-allowance-refuses-a-move-below-its-usage.md)
 that was invisible: the old refusal to move below usage incidentally blocked the money case. 0009 narrowed

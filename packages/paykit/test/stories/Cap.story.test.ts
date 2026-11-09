@@ -15,7 +15,7 @@ import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.bi
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
 import {
   CatalogCapWithoutBilling,
-  allowancesOf,
+  planItemsOf,
   catalog,
   defineCatalog,
 } from "../../src/Catalog.ts";
@@ -70,7 +70,7 @@ const story = Story.make(PaykitModel, {
 });
 
 const subscribed = (tierId: string) => {
-  const allowances = allowancesOf(testCatalog, tierId)!;
+  const allowances = planItemsOf(testCatalog, tierId)!;
 
   return [
     Story.provide(Actor, system("test")),
@@ -330,7 +330,7 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
       ref,
       new Subscribe({
         tier: "capped",
-        allowances: allowancesOf(testCatalog, "capped")!,
+        allowances: planItemsOf(testCatalog, "capped")!,
         price,
         credits: 0,
         creditsExpire: "period",
@@ -341,27 +341,27 @@ it.live("check() refuses at the ceiling while the standing stays good, on every 
     yield* entitlements.query(ref, { atLeast: receipt });
 
     const check = yield* checkBinding(account.id);
-    const withinCeiling = yield* check({ feature: "messages", amount: 120 });
+    const withinCeiling = yield* check({ featureId: "messages", requiredBalance: 120 });
     expect(withinCeiling.allowed).toBe(true);
-    expect(withinCeiling.remaining).toBe(100);
+    expect(withinCeiling.balance.remaining).toBe(100);
     expect(withinCeiling.standing).toBe("good");
-    expect(withinCeiling.resetsAt).not.toBeNull();
+    expect(withinCeiling.balance.nextResetAt).not.toBeNull();
     // 121 units would pass `included + cap`.
-    expect((yield* check({ feature: "messages", amount: 121 })).allowed).toBe(false);
+    expect((yield* check({ featureId: "messages", requiredBalance: 121 })).allowed).toBe(false);
 
     const track = yield* trackUsageBinding(account.id);
-    yield* track({ feature: "messages", amount: 120, dedupeKey: "cap-track" });
+    yield* track({ featureId: "messages", value: 120, idempotencyKey: "cap-track" });
 
-    const atCeiling = yield* check({ feature: "messages", amount: 1 });
+    const atCeiling = yield* check({ featureId: "messages", requiredBalance: 1 });
     expect(atCeiling.allowed).toBe(false);
     // Out of what it bought, not in trouble: the standing is still good.
     expect(atCeiling.standing).toBe("good");
-    expect(atCeiling.remaining).toBe(-20);
+    expect(atCeiling.balance.remaining).toBe(-20);
 
     // The three read paths agree, from the row alone.
     yield* waitForProjection(store, account.id, Option.getOrNull(yield* entitlements.query(ref)));
     const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
-    expect(yield* readModel({ feature: "messages", amount: 1 })).toEqual(atCeiling);
+    expect(yield* readModel({ featureId: "messages", requiredBalance: 1 })).toEqual(atCeiling);
 
     const row = yield* waitForProjection(
       store,

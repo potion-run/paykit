@@ -435,7 +435,7 @@ Every example copies this:
 ```ts
 const statusOf = (error: { readonly _tag?: string }): number => {
   switch (error._tag) {
-    case "TierNotInCatalog": return 400;
+    case "PlanNotInCatalog": return 400;
     case "Unauthenticated": return 401;
     case "Forbidden": return 403;
     case "PaymentDeclined": return 402;

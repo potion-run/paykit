@@ -32,6 +32,7 @@ const SPEC_FILES = {
   standing: "specs/paykit/standing.qnt",
   windows: "specs/paykit/windows.qnt",
   plans: "specs/paykit/plans.qnt",
+  balances: "specs/paykit/balances.qnt",
   money: "specs/paykit/money.qnt",
 } as const;
 
@@ -49,11 +50,13 @@ type Coverage = Partial<Record<SpecName, ReadonlyArray<string>>>;
  */
 const SPEC_COVERAGE = {
   // ── the spend path ─────────────────────────────────────────────────────────
-  Hold: { paykit: ["hold"] },
+  Hold: { paykit: ["hold"], balances: ["spend"] },
+  GrantBalance: { balances: ["createGrant"] },
+  ExpireGrant: { balances: ["expireGrant"] },
   HoldElapsed: { paykit: ["expireHold"] },
   ReleaseHold: { paykit: ["releaseHold"] },
   SettleHold: { paykit: ["settleHold"] },
-  TrackUsage: { paykit: ["trackUsage"], windows: ["track"] },
+  TrackUsage: { paykit: ["trackUsage"], windows: ["track"], balances: ["spend"] },
   ConsumeCredits: {
     paykit: ["consumeCredits"],
     standing: ["spendCredits"],
@@ -77,13 +80,14 @@ const SPEC_COVERAGE = {
     plans: ["cancelAtBoundary"],
   },
   Resume: { standing: ["resume"], plans: ["uncancel"] },
-  ScheduleTierChange: { standing: ["scheduleTier"], plans: ["attach"] },
+  ScheduleTierChange: { standing: ["scheduleTier"], plans: ["attach"], balances: ["changePlan"] },
   WithdrawTierChange: { standing: ["withdrawTier"], plans: ["uncancel"] },
   ChangeTier: {
     standing: ["changeTier"],
     plans: ["attach"],
     money: ["changeTier"],
     windows: ["changeTierCap"],
+    balances: ["changePlan"],
   },
   DunningRetry: { standing: ["dunningRung"] },
 
@@ -93,6 +97,7 @@ const SPEC_COVERAGE = {
     standing: ["closePeriod"],
     windows: ["closePeriod"],
     plans: ["close"],
+    balances: ["closePeriod"],
   },
   PeriodEnded: {
     paykit: ["closePeriod"],
@@ -100,9 +105,9 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
   },
-  ResetAllowance: { windows: ["resetWindow"] },
-  // Occupancy is the second half of the seat API; the command lands with it.
-  SetQuantity: { windows: ["setQuantity", "setUsage"], money: ["setQuantity"] },
+  ResetAllowance: { windows: ["resetWindow"], balances: ["closePeriod"] },
+  SetQuantity: { windows: ["setQuantity"], money: ["setQuantity"] },
+  SetUsage: { windows: ["setUsage"] },
   PurchaseCredits: {
     standing: ["buyTopUp"],
     windows: ["buyTopUp"],
@@ -133,6 +138,7 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   standing: ["init", "step", "tick"],
   windows: ["init", "step", "tick", "fireAnyRung"],
   plans: ["init", "step", "tick", "cancelImmediately"],
+  balances: ["init", "step", "tick"],
   money: ["init", "step"],
 };
 

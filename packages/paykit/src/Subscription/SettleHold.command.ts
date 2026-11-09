@@ -20,6 +20,8 @@ export class UsageSettled extends Domain.Event("UsageSettled", {
   /** Credits the hold reserved; `0` for a feature counted in its own units. */
   cost: Schema.Int,
   remainingAfter: Schema.NullOr(Schema.Int),
+  /** The grant units the released part of the hold returned, keyed by grant id. */
+  grantsReturned: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
 }) {}
 
 /**
@@ -50,6 +52,6 @@ export class SettleHold extends Domain.Command("SettleHold", {
   ],
   // What this command billed and returned. A caller reading it over a transport
   // gets the money the event recorded, not a second guess from the read model.
-  reply: { billed: Schema.Int, released: Schema.Int },
+  reply: { billed: Schema.Int, released: Schema.Int, feature: Schema.String },
   middleware: [Session],
 }) {}

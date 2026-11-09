@@ -106,17 +106,17 @@ describe("the example's money routes", () => {
 
       // 3. The entitlement answers from local state, no provider in the read.
       const check = yield* Check(account);
-      let answer = yield* check({ feature: "messages", amount: 1 });
+      let answer = yield* check({ featureId: "messages", requiredBalance: 1 });
 
       // A view is fed by deliveries, so the read catches up just after the
       // command commits.
       for (let attempt = 0; attempt < 500 && !answer.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
-        answer = yield* check({ feature: "messages", amount: 1 });
+        answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       }
 
       expect(answer.allowed).toBe(true);
-      expect(answer.remaining).toBe(2_000);
+      expect(answer.balance.remaining).toBe(2_000);
     }).pipe(Effect.provide(world(polar()))),
   );
 

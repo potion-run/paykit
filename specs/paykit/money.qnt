@@ -12,7 +12,7 @@
 //   charge              ↔ PurchaseCredits.command.ts / PaymentRecorded
 //   refund              ↔ Refund.command.ts             (RefundRecorded)
 //   reverse             ↔ ReverseRefund.command.ts      (RefundReversed)
-//   changeTier          ↔ ChangeTier.command.ts          (TierChanged.proration)
+//   changeTier          ↔ ChangeTier.command.ts          (PlanChanged.proration)
 //   invoiceProration    ↔ RecordProrationInvoice.command.ts (ProrationInvoiced)
 //   setQuantity         ↔ SetQuantity.command.ts        (QuantityChanged.proration)
 //   invoiceQuantity     ↔ RecordQuantityProrationInvoice.command.ts

@@ -157,10 +157,10 @@ describe("paykit bindings", () => {
   both("answers blocked before a standing exists", () =>
     Effect.gen(function* () {
       const check = yield* Check(account);
-      const answer = yield* check({ feature: "messages", amount: 1 });
+      const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       expect(answer.allowed).toBe(false);
       expect(answer.standing).toBe("blocked");
-      expect(answer.remaining).toBe(0);
+      expect(answer.balance.remaining).toBe(0);
     }),
   );
 
@@ -169,25 +169,34 @@ describe("paykit bindings", () => {
       yield* subscribe;
       const trackUsage = yield* TrackUsage(account);
 
-      const first = yield* trackUsage({ feature: "messages", amount: 30, dedupeKey: "u-1" });
-      expect(first.remaining).toBe(70);
-      expect(first.used).toBe(30);
-      expect(first.reserved).toBe(0);
+      const first = yield* trackUsage({
+        featureId: "messages",
+        value: 30,
+        idempotencyKey: "u-1",
+      });
 
-      const replay = yield* trackUsage({ feature: "messages", amount: 30, dedupeKey: "u-1" });
-      expect(replay.remaining).toBe(70);
-      expect(replay.used).toBe(30);
+      expect(first.balance.remaining).toBe(70);
+      expect(first.balance.usage).toBe(30);
+
+      const replay = yield* trackUsage({
+        featureId: "messages",
+        value: 30,
+        idempotencyKey: "u-1",
+      });
+
+      expect(replay.balance.remaining).toBe(70);
+      expect(replay.balance.usage).toBe(30);
 
       const refused = yield* Effect.exit(
-        trackUsage({ feature: "messages", amount: 71, dedupeKey: "u-2" }),
+        trackUsage({ featureId: "messages", value: 71, idempotencyKey: "u-2" }),
       );
 
       expect(refused._tag).toBe("Failure");
 
       if (refused._tag === "Failure") expect(String(refused.cause)).toContain("AllowanceExceeded");
 
-      const after = yield* (yield* Check(account))({ feature: "messages", amount: 0 });
-      expect(after.remaining).toBe(70);
+      const after = yield* (yield* Check(account))({ featureId: "messages", requiredBalance: 0 });
+      expect(after.balance.remaining).toBe(70);
       expect(after.allowed).toBe(true);
     }),
   );
@@ -196,9 +205,14 @@ describe("paykit bindings", () => {
     Effect.gen(function* () {
       yield* subscribe;
       const trackUsage = yield* TrackUsage(account);
-      const record = yield* trackUsage({ feature: "emails", amount: 25, dedupeKey: "mail-1" });
-      expect(record.billed).toBe(25);
-      expect(record.used).toBe(25);
+
+      const record = yield* trackUsage({
+        featureId: "emails",
+        value: 25,
+        idempotencyKey: "mail-1",
+      });
+
+      expect(record.balance.usage).toBe(25);
     }),
   );
 
@@ -208,17 +222,22 @@ describe("paykit bindings", () => {
       const trackUsage = yield* TrackUsage(account);
 
       const used = yield* trackUsage({
-        feature: "ai",
-        amount: 2,
+        featureId: "ai",
+        value: 2,
         dimension: "gpt-large",
-        dedupeKey: "ai-1",
+        idempotencyKey: "ai-1",
       });
 
-      expect(used.cost).toBe(20);
-      expect(used.credits).toBe(980);
+      expect(used.balance.usage).toBe(20);
+      expect(used.balance.remaining).toBe(980);
 
       const refused = yield* Effect.exit(
-        trackUsage({ feature: "ai", amount: 100, dimension: "gpt-large", dedupeKey: "ai-2" }),
+        trackUsage({
+          featureId: "ai",
+          value: 100,
+          dimension: "gpt-large",
+          idempotencyKey: "ai-2",
+        }),
       );
 
       expect(refused._tag).toBe("Failure");
@@ -239,8 +258,10 @@ describe("paykit bindings", () => {
       expect(placed.remaining).toBe(90);
 
       // Held units are out of `remaining` and visible as `reserved`.
-      expect((yield* check({ feature: "messages", amount: 0 })).remaining).toBe(90);
-      expect((yield* check({ feature: "messages", amount: 91 })).allowed).toBe(false);
+      expect((yield* check({ featureId: "messages", requiredBalance: 0 })).balance.remaining).toBe(
+        90,
+      );
+      expect((yield* check({ featureId: "messages", requiredBalance: 91 })).allowed).toBe(false);
 
       const settled = yield* settleHold({
         holdId: placed.holdId,
@@ -250,7 +271,9 @@ describe("paykit bindings", () => {
 
       expect(settled.billed).toBe(4);
       expect(settled.released).toBe(6);
-      expect((yield* check({ feature: "messages", amount: 0 })).remaining).toBe(96);
+      expect((yield* check({ featureId: "messages", requiredBalance: 0 })).balance.remaining).toBe(
+        96,
+      );
 
       // Settling the same hold again records nothing: the retry answers the first reply.
       const replay = yield* settleHold({
@@ -276,7 +299,9 @@ describe("paykit bindings", () => {
 
       const released = yield* releaseHold({ holdId: placed.holdId, dedupeKey: "job-1:release" });
       expect(released.released).toBe(10);
-      expect((yield* check({ feature: "messages", amount: 0 })).remaining).toBe(100);
+      expect((yield* check({ featureId: "messages", requiredBalance: 0 })).balance.remaining).toBe(
+        100,
+      );
     }),
   );
 
@@ -351,7 +376,7 @@ describe("paykit bindings", () => {
       const unknown = yield* Effect.exit(changeTier({ tier: "nope", dedupeKey: "upgrade-2" }));
       expect(unknown._tag).toBe("Failure");
 
-      if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("TierNotInCatalog");
+      if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("PlanNotInCatalog");
     }).pipe(Effect.provide(inProcessWorld)),
   );
 
@@ -426,9 +451,9 @@ describe("paykit bindings", () => {
       const subscribe = yield* SubscribeBinding(account);
       // A free tier activates and waits for the view, so a Check right after sees it.
       expect(yield* subscribe({ tier: "free" })).toEqual({ activated: true });
-      expect((yield* (yield* Check(account))({ feature: "messages", amount: 1 })).allowed).toBe(
-        true,
-      );
+      expect(
+        (yield* (yield* Check(account))({ featureId: "messages", requiredBalance: 1 })).allowed,
+      ).toBe(true);
 
       // A priced tier opens the provider's path; the standing activates when the
       // webhook arrives, not here. This is a fresh account: a plan on an open
@@ -460,7 +485,7 @@ describe("paykit bindings", () => {
 
       expect(unknown._tag).toBe("Failure");
 
-      if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("TierNotInCatalog");
+      if (unknown._tag === "Failure") expect(String(unknown.cause)).toContain("PlanNotInCatalog");
     }).pipe(Effect.provide(inProcessWorld)),
   );
 
@@ -562,8 +587,14 @@ describe("paykit bindings", () => {
       const trackUsage = yield* TrackUsage(account);
       // `account` is not a field of the request: the type carries it, and a
       // second account in the payload would not compile.
-      const result = yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: "one" });
-      expect(result.used).toBe(1);
+
+      const result = yield* trackUsage({
+        featureId: "messages",
+        value: 1,
+        idempotencyKey: "one",
+      });
+
+      expect(result.balance.usage).toBe(1);
     }).pipe(Effect.provide(inProcessWorld)),
   );
 });

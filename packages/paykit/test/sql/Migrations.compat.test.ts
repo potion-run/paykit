@@ -38,20 +38,11 @@ describe("Alchemy migration registry compatibility", () => {
       sql.exec(migrationFiles()[0]!.sql);
 
       // 0001 is adopted, not replayed; only the new migrations apply.
-      expect(yield* migrate(sql)).toEqual([
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(yield* migrate(sql)).toEqual([]);
 
       expect(columns(sql)).toEqual(ALCHEMY_COLUMNS);
       const rows = migrationRows(sql);
-      expect(rows.map((row) => row.name)).toEqual([
-        "0001_init",
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(rows.map((row) => row.name)).toEqual(["0001_init"]);
       // Backfilled from the matching local record, not a placeholder.
       expect(rows[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
       // The original applied_at survives the rebuild.
@@ -70,19 +61,10 @@ describe("Alchemy migration registry compatibility", () => {
       );
       sql.exec(migrationFiles()[0]!.sql);
 
-      expect(yield* migrate(sql)).toEqual([
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(yield* migrate(sql)).toEqual([]);
 
       expect(columns(sql)).toEqual(ALCHEMY_COLUMNS);
-      expect(migrationRows(sql).map((row) => row.name)).toEqual([
-        "0001_init",
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(migrationRows(sql).map((row) => row.name)).toEqual(["0001_init"]);
     }),
   );
 
@@ -99,20 +81,10 @@ describe("Alchemy migration registry compatibility", () => {
       sql.exec(migrationFiles()[0]!.sql);
 
       // The registry records the adopted history; it does not replay 0001.
-      expect(yield* migrate(sql)).toEqual([
-        "0001_init",
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(yield* migrate(sql)).toEqual(["0001_init"]);
 
       const rows = migrationRows(sql);
-      expect(rows.map((row) => row.name)).toEqual([
-        "0001_init",
-        "0002_consumer_backfill",
-        "0003_outbox_sequence",
-        "0004_view_outbox",
-      ]);
+      expect(rows.map((row) => row.name)).toEqual(["0001_init"]);
       expect(rows[0]!.hash).toMatch(/^[0-9a-f]{64}$/);
       expect(rows[0]!.applied_at).toContain("2024-01-01");
 

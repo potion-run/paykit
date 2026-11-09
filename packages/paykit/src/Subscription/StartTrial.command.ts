@@ -7,9 +7,9 @@ import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
 import { CreditRateCards } from "../Feature.ts";
 import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
+import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
 import type { SubscriptionStatus } from "./Subscription.state.ts";
-import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 import { TrialAlreadyUsed } from "./TrialAlreadyUsed.rejection.ts";
 import { TrialDeadlineNotLater } from "./TrialDeadlineNotLater.rejection.ts";
 
@@ -56,7 +56,7 @@ export class StartTrial extends Domain.Command("StartTrial", {
   events: [TrialStarted],
   rejects: [
     TrialAlreadyUsed,
-    TierNotInCatalog,
+    PlanNotInCatalog,
     CatalogMismatch,
     CurrencyMismatch,
     TrialDeadlineNotLater,

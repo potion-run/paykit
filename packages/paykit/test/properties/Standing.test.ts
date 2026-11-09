@@ -98,7 +98,7 @@ const allowanceOf = (spec: GrantSpec): Allowance => {
 };
 
 /** A record keyed by feature, so a duplicate declaration cannot hide a grant. */
-const allowancesOf = (specs: ReadonlyArray<GrantSpec>): Allowances => {
+const planItemsOf = (specs: ReadonlyArray<GrantSpec>): Allowances => {
   const entries = specs.map((spec) => [spec.feature, allowanceOf(spec)] as const);
   const unique = new Map<FeatureKey, Allowance>(entries);
 
@@ -114,7 +114,7 @@ const previousOf = (kind: ActivationCase["previous"]): SubscriptionState => {
   const refs = { stripe: { customer: "cus_previous" } };
 
   if (kind === "empty") return { ...initialSubscriptionState, refs };
-  const terms = allowancesOf([]);
+  const terms = planItemsOf([]);
 
   const previousGrant = activationOf({
     tier: "prior",
@@ -193,7 +193,7 @@ describe("activationOf", () => {
     assertProperty(
       Arbitrary.schema(ActivationCase),
       (input) => {
-        const allowances = allowancesOf(input.grants);
+        const allowances = planItemsOf(input.grants);
 
         const period = {
           start,
@@ -282,7 +282,7 @@ describe("standingFrom", () => {
     assertProperty(
       Arbitrary.schema(ActivationCase),
       (input) => {
-        const allowances = allowancesOf(input.grants);
+        const allowances = planItemsOf(input.grants);
 
         const period = {
           start,
@@ -398,7 +398,7 @@ describe("standingFrom", () => {
     assertProperty(
       Arbitrary.schema(ActivationCase),
       (input) => {
-        const allowances = allowancesOf(input.grants);
+        const allowances = planItemsOf(input.grants);
 
         const period = {
           start,

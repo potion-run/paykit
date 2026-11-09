@@ -2,7 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { allowancesOf } from "../../src/Catalog.ts";
+import { planItemsOf } from "../../src/Catalog.ts";
 import {
   initialSubscriptionState,
   type SubscribedState,
@@ -31,7 +31,7 @@ const UsageScript = Schema.Struct({
 });
 
 const activated = (tier: TierName): SubscribedState => {
-  const allowances = allowancesOf(testCatalog, tier)!;
+  const allowances = planItemsOf(testCatalog, tier)!;
 
   const decision = decideAt(
     initialSubscriptionState,

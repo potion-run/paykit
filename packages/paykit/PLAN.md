@@ -138,11 +138,16 @@ const recorded = yield* Paykit.BillingStack("Billing", billing);
 
 // 2. runtime — Binding.Services, one contract each, several implementations
 const check = yield* Paykit.Check(account);
-yield* check({ feature: "messages", amount: 1 });   // => { allowed, remaining, resetsAt, standing }
+yield* check({ featureId: "messages", requiredBalance: 1 }); // => { allowed, balance, standing }
 
 // The bind is the account; the request is the rest.
 const trackUsage = yield* Paykit.TrackUsage(account);
-yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: requestId });
+yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId });
+
+const balances = yield* Paykit.Balances(account);
+yield* balances.list();
+yield* balances.update({ featureId: "seats", usage: 8 });
+yield* balances.create({ featureId: "messages", grantedBalance: 50 }); // a lifetime grant
 
 const hold = yield* Paykit.Hold(account);
 const { holdId } = yield* hold({ feature: "messages", amount: 10, dedupeKey: turnId });
@@ -206,7 +211,7 @@ A catalog is three plain declarations, and every value it holds is serializable:
   must state a price.
 - `feature({ id, name, kind, creditRates })` may declare a rate card, which makes the feature
   credit-priced: `track({ feature, amount, dimension })` then spends `amount × rate` from the pool,
-  and `check({ feature, amount, dimension })` compares against it.
+  and `check({ featureId, requiredBalance, dimension })` compares against it.
 - `allowance(feature, { ..., cap })` states a ceiling in the feature's own unit: the most a period
   may bill past `included`. It needs `overage: "bill"`, and `Track` and `Hold` both refuse past it
   with `SpendCapExceeded`.
@@ -265,9 +270,9 @@ the target.
 
 | Command | Events | Rejections | Guard |
 | --- | --- | --- | --- |
-| `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `TierNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
-| `Subscribe` | `SubscriptionActivated` | `TierNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
-| `ChangeTier` | `TierChanged` | `DowngradeBelowUsage`, `TierNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `StartTrial` | `TrialStarted` | `TrialAlreadyUsed`, `PlanNotInCatalog`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `Subscribe` | `SubscriptionActivated` | `PlanNotInCatalog`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
+| `ChangeTier` | `PlanChanged` | `DowngradeBelowUsage`, `PlanNotInCatalog`, `NotSubscribed`, `CurrencyMismatch`, `CatalogMismatch` | `Session`, `CatalogGuard` |
 | `TrackUsage` | `UsageRecorded` | `AllowanceExceeded`, `StandingBlocksUsage`, `FeatureNotMetered`, `SpendCapExceeded`, `MoneyCapExceeded` | `Session` |
 | `Hold` | `UsageReserved` | `HoldExceeded`, `StandingBlocksUsage`, `FeatureNotMetered` | `Session` |
 | `SettleHold` | `UsageRecorded`, `UsageSettled` | `HoldUnknown`, `HoldSettled`, `HoldExpired`, `HoldExceeded`, `StandingBlocksUsage` | `Session` |
@@ -341,7 +346,7 @@ separate step, and needs a `Payments` operation the port does not have yet.
 
 ### Prices are logged, not looked up
 
-`SubscriptionActivated` carries the `price` the account was sold at, and `TierChanged` carries
+`SubscriptionActivated` carries the `price` the account was sold at, and `PlanChanged` carries
 `priceBefore` and `priceAfter`. A catalog price change therefore never rewrites history: an
 invoice can be reconciled against the log alone, and "what were we charging this account in
 March" is one fold. A downgrade to a free tier records the absence of a price rather than

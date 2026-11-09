@@ -145,7 +145,7 @@ const text = (body: string, status: number) => HttpServerResponse.text(body, { s
  * keeps its `Effect.provide` at the call site.
  *
  * A refusal answers `Paykit.httpStatus`, so the five examples cannot disagree
- * about what a `TierNotInCatalog` or a spent `RefundExceedsCharged` returns. A
+ * about what a `PlanNotInCatalog` or a spent `RefundExceedsCharged` returns. A
  * delivery answers 202 whether or not it recorded anything, because a provider
  * should not retry an event paykit does not model.
  *

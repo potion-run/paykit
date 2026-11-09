@@ -6,7 +6,7 @@ import * as Redacted from "effect/Redacted";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
 import { Outbound, OutboundDeliveryError, type OutboundRequest } from "../../src/Outbound.ts";
@@ -22,7 +22,7 @@ const proTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [proTier] }));
-const pro = allowancesOf(testCatalog, "pro")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const secret = "whsec_outbound_test";
 const endpoint = { url: "https://app.example/hooks/paykit", secret: Redacted.make(secret) };
 const account = "acct_outbound";

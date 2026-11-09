@@ -56,7 +56,7 @@ so a catalog change mid-flight does not reprice work already priced.
 gains `hour`, `day`, `week`, `quarter`, `semi_annual` and `annual`, and
 `resetEvery` counts intervals. A monthly or annual allowance with `resetEvery: 1`
 is the standing's period; everything else runs on its own boundary. The standing
-carries `resetAt` per feature, `ResetAllowance` closes one window, `AllowanceReset`
+carries `resetAt` per feature, `ResetAllowance` closes one window, `PlanItemReset`
 records the outcome, and `AllowanceRollover` schedules the next boundary. A
 period close resets only the allowances whose boundary it is; an independent
 allowance is `kept` by that close and reset by its own command.
@@ -99,7 +99,7 @@ Landed. `RateCard`, `RateRule`, `RateMultiplier`, `creditRateOf`, the
 
 Landed. `resetEvery`, the full `Resets` set, `periodTiedReset`, `nextResetAt`,
 `resetAt` on the standing and the read model, `ResetAllowance` /
-`AllowanceReset`, `AllowanceRollover`, and `carryCap`.
+`PlanItemReset`, `AllowanceRollover`, and `carryCap`.
 
 ### 4 — variants and currencies
 

@@ -70,9 +70,9 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
 
       const check = yield* Paykit.Check(account.id);
-      const answer = yield* check({ feature: "messages", amount: 1 });
+      const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       expect(answer.allowed).toBe(true);
-      expect(answer.remaining).toBe(100);
+      expect(answer.balance.remaining).toBe(100);
       expect(answer.standing).toBe("good");
       expect(receipt.stream).toContain("Subscription/");
     }).pipe(run),
@@ -85,16 +85,16 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
 
       const track = yield* Paykit.TrackUsage(account.id);
-      yield* track({ feature: "messages", amount: 60, dedupeKey: "req-1" });
+      yield* track({ featureId: "messages", value: 60, idempotencyKey: "req-1" });
       // The same key records once.
-      yield* track({ feature: "messages", amount: 60, dedupeKey: "req-1" });
+      yield* track({ featureId: "messages", value: 60, idempotencyKey: "req-1" });
 
       const check = yield* Paykit.Check(account.id);
-      expect((yield* check({ feature: "messages" })).remaining).toBe(40);
+      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(40);
 
       // A blocking allowance refuses before anything is written.
       const refused = yield* Effect.exit(
-        track({ dedupeKey: "ex10", feature: "messages", amount: 41 }),
+        track({ idempotencyKey: "ex10", featureId: "messages", value: 41 }),
       );
 
       expect(refused._tag).toBe("Failure");
@@ -120,21 +120,21 @@ describe("the example billing app", () => {
       });
 
       // The held units are out of `remaining`, and none of them is billed yet.
-      expect((yield* check({ feature: "messages" })).remaining).toBe(70);
+      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(70);
 
       // One call: 20 ran, so 20 is billed and the other 10 returns.
-      expect(yield* settle({ dedupeKey: "ex9", holdId: first.holdId, amount: 20 })).toEqual({
-        billed: 20,
-        released: 10,
-      });
-      expect((yield* check({ feature: "messages" })).remaining).toBe(80);
+      const settled = yield* settle({ dedupeKey: "ex9", holdId: first.holdId, amount: 20 });
+      expect(settled.billed).toBe(20);
+      expect(settled.released).toBe(10);
+      expect(settled.balance.remaining).toBe(80);
+      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(80);
 
       // A hold nothing ran against comes back whole.
       const second = yield* hold({ dedupeKey: "ex8", feature: "messages", amount: 10 });
-      expect(yield* release({ dedupeKey: "ex7", holdId: second.holdId })).toEqual({
-        released: 10,
-      });
-      expect((yield* check({ feature: "messages" })).remaining).toBe(80);
+      const released = yield* release({ dedupeKey: "ex7", holdId: second.holdId });
+      expect(released.released).toBe(10);
+      expect(released.balance.remaining).toBe(80);
+      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(80);
     }).pipe(run),
   );
 
@@ -146,15 +146,15 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
 
       const track = yield* Paykit.TrackUsage(account.id);
-      yield* track({ dedupeKey: "ex6", feature: "messages", amount: 1_000_000 });
+      yield* track({ idempotencyKey: "ex6", featureId: "messages", value: 1_000_000 });
 
       const check = yield* Paykit.Check(account.id);
-      const answer = yield* check({ feature: "messages", amount: 1_000_000 });
+      const answer = yield* check({ featureId: "messages", requiredBalance: 1_000_000 });
       expect(answer.allowed).toBe(true);
       // Unlimited is the absence of a count, not a large one.
-      expect(answer.remaining).toBeNull();
+      expect(answer.balance.remaining).toBeNull();
       // The period still exists, so it still says when it ends.
-      expect(answer.resetsAt).not.toBeNull();
+      expect(answer.balance.nextResetAt).not.toBeNull();
       expect(answer.standing).toBe("good");
     }).pipe(run),
   );
@@ -167,15 +167,19 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
 
       const check = yield* Paykit.Check(account.id);
-      const answer = yield* check({ feature: "sso" });
+      const answer = yield* check({ featureId: "sso" });
       expect(answer.allowed).toBe(true);
       // On/off: there is no count, and nothing ever resets.
-      expect(answer.remaining).toBeNull();
-      expect(answer.resetsAt).toBeNull();
+      expect(answer.balance.remaining).toBeNull();
+      expect(answer.balance.nextResetAt).toBeNull();
 
       // SSO cannot be consumed, so recording it is refused by tag.
       const track = yield* Paykit.TrackUsage(account.id);
-      const refused = yield* Effect.exit(track({ dedupeKey: "ex5", feature: "sso", amount: 1 }));
+
+      const refused = yield* Effect.exit(
+        track({ idempotencyKey: "ex5", featureId: "sso", value: 1 }),
+      );
+
       expect(refused._tag).toBe("Failure");
       expect(String(refused)).toContain("FeatureNotMetered");
     }).pipe(run),
@@ -194,7 +198,7 @@ describe("the example billing app", () => {
       yield* tenant.StartTrial(account.id, { ...pro, trialEndsAt: ended }, asAccount);
 
       const track = yield* Paykit.TrackUsage(account.id);
-      yield* track({ dedupeKey: "ex4", feature: "messages", amount: 520 });
+      yield* track({ idempotencyKey: "ex4", featureId: "messages", value: 520 });
 
       // The rollover is the model's, not the test's: wait for the closed period
       // to be replaced before reading the answer.
@@ -212,11 +216,11 @@ describe("the example billing app", () => {
       );
 
       const check = yield* Paykit.Check(account.id);
-      const answer = yield* check({ feature: "messages", amount: 1 });
+      const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       // 1,480 unspent rolled over, so 3,480 is available — more than the 2,000
       // the tier includes. Whether the 520 was recorded before or after the
       // close, the answer is the same.
-      expect(answer.remaining).toBe(3_480);
+      expect(answer.balance.remaining).toBe(3_480);
       expect(answer.allowed).toBe(true);
     }).pipe(run),
   );
@@ -230,30 +234,35 @@ describe("the example billing app", () => {
 
       const track = yield* Paykit.TrackUsage(account.id);
       // 100 large-model units at 10 credits each: 1,000 credits of the pool.
-      yield* track({ dedupeKey: "ex3", feature: "ai", amount: 100, dimension: "gpt-large" });
+      yield* track({
+        idempotencyKey: "ex3",
+        featureId: "ai",
+        value: 100,
+        dimension: "gpt-large",
+      });
 
       const check = yield* Paykit.Check(account.id);
 
       const answer = yield* check({
-        feature: "ai",
-        amount: 1,
+        featureId: "ai",
+        requiredBalance: 1,
         dimension: "gpt-large",
       });
 
       expect(answer.allowed).toBe(true);
       // 50,000 granted, 1,000 spent: `remaining` is the pool, not a counter.
-      expect(answer.remaining).toBe(49_000);
+      expect(answer.balance.remaining).toBe(49_000);
 
       // 5,000 large-model units cost 50,000, which the pool cannot cover.
       const tooMuch = yield* check({
-        feature: "ai",
-        amount: 5_000,
+        featureId: "ai",
+        requiredBalance: 5_000,
         dimension: "gpt-large",
       });
 
       expect(tooMuch.allowed).toBe(false);
       // The same 5,000 units at the default rate cost 5,000, which it can.
-      expect((yield* check({ feature: "ai", amount: 5_000 })).allowed).toBe(true);
+      expect((yield* check({ featureId: "ai", requiredBalance: 5_000 })).allowed).toBe(true);
     }).pipe(run),
   );
 
@@ -265,17 +274,17 @@ describe("the example billing app", () => {
 
       const track = yield* Paykit.TrackUsage(account.id);
       // The whole allowance: 2,000 included plus the 10,000 the cap allows.
-      yield* track({ dedupeKey: "ex2", feature: "messages", amount: 12_000 });
+      yield* track({ idempotencyKey: "ex2", featureId: "messages", value: 12_000 });
 
       const check = yield* Paykit.Check(account.id);
-      const atCeiling = yield* check({ feature: "messages", amount: 1 });
+      const atCeiling = yield* check({ featureId: "messages", requiredBalance: 1 });
       expect(atCeiling.allowed).toBe(false);
       // Out of what it bought, not in trouble.
       expect(atCeiling.standing).toBe("good");
-      expect(atCeiling.remaining).toBe(-10_000);
+      expect(atCeiling.balance.remaining).toBe(-10_000);
 
       const refused = yield* Effect.exit(
-        track({ dedupeKey: "ex1", feature: "messages", amount: 1 }),
+        track({ idempotencyKey: "ex1", featureId: "messages", value: 1 }),
       );
 
       expect(refused._tag).toBe("Failure");
@@ -299,7 +308,7 @@ describe("the example billing app", () => {
 
       if (result._tag !== "accepted") return;
       expect(result.proration?.due).toBe(8000);
-      expect(result.events.map((event) => event._tag)).toEqual(["TierChanged"]);
+      expect(result.events.map((event) => event._tag)).toEqual(["PlanChanged"]);
     }).pipe(run),
   );
 
@@ -339,7 +348,7 @@ describe("the example billing app", () => {
       yield* caughtUp(receipt);
       // Wait for the view, then for the projection that consumes it.
       const check = yield* Paykit.Check(account.id);
-      yield* check({ feature: "messages" });
+      yield* check({ featureId: "messages" });
       const page = yield* listed(account.id);
       expect(page.rows.map((row) => row.account)).toContain(account.id);
       expect(page.rows[0]?.tier).toBe("free");

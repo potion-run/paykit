@@ -37,18 +37,18 @@ export const BillingTestLive = Paykit.world({
 export const track = Effect.fn("Example.track")(function* (
   account: string,
   usage: {
-    readonly feature: string;
-    readonly dedupeKey: string;
-    readonly amount?: number;
+    readonly featureId: string;
+    readonly idempotencyKey: string;
+    readonly value?: number;
     readonly dimension?: string;
   },
 ) {
   const trackUsage = yield* Paykit.TrackUsage(account);
 
   return yield* trackUsage({
-    feature: usage.feature,
-    amount: usage.amount ?? 1,
-    dedupeKey: usage.dedupeKey,
+    featureId: usage.featureId,
+    value: usage.value ?? 1,
+    idempotencyKey: usage.idempotencyKey,
     ...(usage.dimension === undefined ? {} : { dimension: usage.dimension }),
   });
 });

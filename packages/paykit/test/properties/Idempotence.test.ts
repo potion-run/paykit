@@ -9,7 +9,7 @@ import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitModel, PaykitHandlers } from "../../src/Paykit.model.ts";
 import { RecordPaymentFailure } from "../../src/Subscription/RecordPaymentFailure.command.ts";
@@ -33,8 +33,8 @@ const proTier = tier({
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [freeTier, proTier] }));
 
-const free = allowancesOf(testCatalog, "free")!;
-const pro = allowancesOf(testCatalog, "pro")!;
+const free = planItemsOf(testCatalog, "free")!;
+const pro = planItemsOf(testCatalog, "pro")!;
 const price = { amount: 1900, currency: "usd", interval: "month" as const };
 
 const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))

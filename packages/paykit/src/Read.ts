@@ -166,7 +166,19 @@ export {
 
 export { VerifyMismatch } from "./Verify.ts";
 
-export { AllowanceReset } from "./Subscription/ResetAllowance.command.ts";
+export { PlanItemReset } from "./Subscription/ResetAllowance.command.ts";
+
+export {
+  Balance,
+  BalancePage,
+  BalanceSource,
+  BalanceSourceKind,
+  balanceOf,
+  balancesOf,
+  emptyBalance,
+} from "./Balance.ts";
+
+export { Customer, CustomerId, CustomerPlan, BillingControls } from "./Customer.ts";
 
 export { plan } from "./Plan.ts";
 

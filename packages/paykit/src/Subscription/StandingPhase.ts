@@ -511,7 +511,7 @@ export const STANDING_PHASE_EDGES: ReadonlyArray<StandingPhaseEdge> = [
   {
     from: "Active",
     to: "Active",
-    by: ["TierChanged", "UsageRecorded", "UsageReserved", "PeriodClosed"],
+    by: ["PlanChanged", "UsageRecorded", "UsageReserved", "PeriodClosed"],
     note: "`Subscribe` refuses an open standing; `StartTrial` is the one deliberate replacement.",
   },
   {

@@ -1,7 +1,7 @@
 # The paykit models
 
 One Quint model per **protocol**, not one per file ([ADR 0034](../../docs/adr/0034-one-quint-model-per-protocol.md)).
-The four models are the machines `src/Subscription` implements, with the money and the clock
+The six models are the machines `src/Subscription` implements, with the money and the clock
 abstracted:
 
 | File | Protocol | What it grounds |
@@ -10,17 +10,18 @@ abstracted:
 | [`standing.qnt`](./standing.qnt) | the phase machine | trial, grace, dunning, cancellation, a scheduled tier change, the refill budget |
 | [`windows.qnt`](./windows.qnt) | the clocks the period does not own | reset windows, a quantity that is set, a cooldown, retry rungs |
 | [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, cancellation, uncancel, reactivation |
+| [`balances.qnt`](./balances.qnt) | the balance ledger | plan, rollover, expiring and lifetime grants; deduction order; what a close and a plan change preserve |
 | [`money.qnt`](./money.qnt) | the money facts | refunds, reversals, tier and quantity proration invoices |
 
-The first is the original spend model; the next three were added by the lifecycle audit recorded in
-[`FINDINGS.md`](./FINDINGS.md). The findings are the review before any fix; the models are the
-ground truth for what the fixes should make true.
+The first is the original spend model; the next four were added by the lifecycle audit recorded in
+[`FINDINGS.md`](./FINDINGS.md) and by the plan/balance API. The findings are the review before any
+fix; the models are the ground truth for what the fixes should make true.
 
 ```sh
 pnpm spec          # typecheck every module, then simulate every invariant with its witnesses
 pnpm spec:test     # the named scenarios in every *_test.qnt
-pnpm spec:mutants  # break one rule at a time across all four models and prove an invariant notices
-pnpm spec:coverage # hold the four models' actions against every command
+pnpm spec:mutants  # break one rule at a time across all six models and prove an invariant notices
+pnpm spec:coverage # hold the six models' actions against every command
 ```
 
 ## Run it
@@ -52,6 +53,7 @@ the rest became checkable.
 | auto top-up cooldown | `topUpCooldownUntil`, `TopUpCooldownElapsed` | `windows.qnt` | modelled |
 | per-feature reset windows | `resetAt`, `ResetAllowance`, `AllowanceRollover.policy.ts` | `windows.qnt` | modelled |
 | quantity (seat) state | `quantities`, `SetQuantity`, seat usage | `windows.qnt` | modelled (purchased vs occupied) |
+| balance grants and expiry | `grants`, `GrantBalance`, `ExpireGrant`, `BalanceExpiry` | `balances.qnt` | modelled |
 | tier proration state | `proration`, `prorationId`, `ChangeTier`, `RecordProrationInvoice` | `money.qnt` | modelled |
 | quantity proration state | `quantityProrations`, `SetQuantity`, `RecordQuantityProrationInvoice` | `money.qnt` | modelled |
 | refund and reversal state | `charged`, `refunded`, `refunds`, `Refund`, `ReverseRefund` | `money.qnt` | modelled |
@@ -157,7 +159,9 @@ plan change may leave the account above its purchase cap; neither removes an occ
 | `track` | `TrackUsage` (the count effect) |
 | `resetWindow` | `ResetAllowance` |
 | `closePeriod` | `ClosePeriod` (`UsageReset`, kept features) |
-| `setQuantity`, `setUsage`, `changeTierCap` | `SetQuantity`, seat usage, `ChangeTier` (quantity branch) |
+| `setQuantity` | `SetQuantity` |
+| `setUsage` | `SetUsage` (occupancy, and the read `check` uses) |
+| `changeTierCap` | `ChangeTier` (quantity branch) |
 | `spendCredits` | `ConsumeCredits` (the pool effect) |
 | `failTopUp`, `fireRung`, `buyTopUp`, `cooldownElapsed` | `RecordTopUpFailure` + `AutoTopUp`, `RetryTopUp`, `PurchaseCredits`, `TopUpCooldownElapsed` |
 | `endStanding`, `tick` | `Expire`/`GraceElapsed`, the platform clock |
@@ -171,6 +175,30 @@ Two deliberate decisions are visible here. A late reset starts the next window w
 fired, not where the boundary was. And a period close resets only the windows whose boundary is the
 period; a daily allowance is left alone. Both are pinned by `windows_test.qnt`.
 
+## The balance ledger (`balances.qnt`)
+
+One counted feature's balance is a plan source, a rollover, and two classes of grant. The model
+keeps the plan's include count fixed, a cap on the rollover, and one expiring and one lifetime
+grant; the cardinality is not the invariant, the order is.
+
+| Action | Source | Event |
+| --- | --- | --- |
+| `createGrant` | `GrantBalance` / `balances.create` | `BalanceGranted` |
+| `spend` | `TrackUsage`, and a hold's reservation | `UsageRecorded`, `UsageReserved` |
+| `closePeriod` | `ClosePeriod`, `ResetAllowance` | `UsageReset`, `PlanItemReset` |
+| `changePlan` | `ChangeTier` / `ScheduleTierChange` | `PlanChanged` |
+| `expireGrant` | `BalanceExpiry.policy.ts` / `ExpireGrant` | `BalanceExpired` |
+| `tick` | the platform clock | — |
+
+Invariants: `sourcesNonNegative`, `totalNonNegative`, `grantSpentOnlyAfterPlan` (a grant was
+touched only when the plan and rollover were empty), `rolloverBounded`, `carriedWithinCap`,
+`expiringConserved` (an expiring grant's units are spent or expired, never dropped),
+`lifetimeConserved` (a close or plan change cannot destroy a lifetime grant), and `expiryIsFinal`.
+
+The model collapses credits into the plan source. A credit-priced feature's pool is still
+`credits` + `prepaidCredits` in the code; its `Balance.breakdown` is derived from those two, not
+from a stored source. That is the next refinement, not a rule this model states.
+
 ## The money (`money.qnt`)
 
 | Action | Source | Event |
@@ -178,7 +206,7 @@ period; a daily allowance is left alone. Both are pinned by `windows_test.qnt`.
 | `charge` | `PurchaseCredits` / `RecordPayment` | `CreditsPurchased` / `PaymentRecorded` |
 | `refund` | `Refund` | `RefundRecorded` |
 | `reverse` | `ReverseRefund` | `RefundReversed` |
-| `changeTier` | `ChangeTier` | `TierChanged.proration` |
+| `changeTier` | `ChangeTier` | `PlanChanged.proration` |
 | `invoiceProration` | `RecordProrationInvoice` | `ProrationInvoiced` |
 | `setQuantity` | `SetQuantity` | `QuantityChanged.proration` |
 | `invoiceQuantity` | `RecordQuantityProrationInvoice` | `QuantityProrationInvoiced` |
@@ -194,8 +222,9 @@ its due. `canInvoiceQuantity` adds the one the implementation's command layer is
 
 ## The mutants
 
-`pnpm spec:mutants` kills 37 mutants across the five models: 17 for the spend path, 3 for the
-standing, 6 for the windows, 4 for the plan operations and 7 for the money protocol. Each mutant is a textual replacement and
+`pnpm spec:mutants` kills 44 mutants across the six models: 17 for the spend path, 3 for the
+standing, 6 for the windows, 4 for the plan operations, 7 for the balance ledger and 7 for the
+money protocol. Each mutant is a textual replacement and
 the gate fails when an invariant **survives** it. The new models' mutants are the same discipline as
 the original: an invariant with nothing behind it is a claim, not a check.
 

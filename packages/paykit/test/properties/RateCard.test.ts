@@ -4,7 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { allowance } from "../../src/Allowance.ts";
-import { catalog, ratesOf, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, ratesOf, planTermsOf } from "../../src/Catalog.ts";
 import {
   cardFromRates,
   creditRateOf,
@@ -235,7 +235,7 @@ const capture = (() => {
 })();
 
 const termsOf = (tierId: string) => {
-  const terms = tierTermsOf(capture.source, tierId);
+  const terms = planTermsOf(capture.source, tierId);
 
   if (terms === null) throw new Error(`the rate-card catalog is missing ${tierId}`);
 

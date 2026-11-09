@@ -10,6 +10,14 @@ import type * as Reactivity from "effect/reactivity/Reactivity";
 import type * as RpcClientError from "effect/rpc/RpcClientError";
 import type { Forbidden } from "./Auth/Forbidden.rejection.ts";
 import type { Unauthenticated } from "./Auth/Unauthenticated.rejection.ts";
+import { balancesOf, type Balance } from "./Balance.ts";
+import {
+  Balances,
+  type BalanceCreateRequest,
+  type BalanceFinalizeRequest,
+  type BalanceUpdateRequest,
+  type BalancesError,
+} from "./Billing/Balances.binding.ts";
 import { BillingApiLayer } from "./Billing/BillingApi.layer.ts";
 import { BindingCall, callOptionsOf } from "./Billing/Bindings.ts";
 import {
@@ -27,6 +35,7 @@ import {
   type ConsumeCreditsRequest,
   type ConsumeCreditsResult,
 } from "./Billing/ConsumeCredits.binding.ts";
+import { GrantBalance } from "./Billing/GrantBalance.binding.ts";
 import { Hold, type HoldError, type HoldRequest, type HoldResult } from "./Billing/Hold.binding.ts";
 import {
   ReleaseHold,
@@ -98,6 +107,9 @@ export type BillingMutation<Request, Result, Error, E = never> = Atom.AtomResult
 
 /** The command atoms `make` exposes, named after the bindings they wrap. */
 export type BillingAtomVerb =
+  | "createBalance"
+  | "updateBalance"
+  | "finalizeBalance"
   | "trackUsage"
   | "hold"
   | "settleHold"
@@ -116,6 +128,8 @@ export type BillingClient = Domain.Api.ClientKey<"BillingApi">;
 export type BillingAtomServices =
   | BillingClient
   | CatalogService
+  | Balances
+  | GrantBalance
   | Check
   | TrackUsage
   | Hold
@@ -189,6 +203,8 @@ export interface BillingAtoms<E = never> {
   readonly entitlements: (account: string) => BillingQuery<EntitlementsState, E>;
   /** One account's billing page: tier, price, period, pending change, grace. */
   readonly billing: (account: string) => BillingQuery<BillingStateView, E>;
+  /** Every feature the account holds a balance for, with its sources. */
+  readonly balances: (account: string) => BillingQuery<ReadonlyArray<Balance>, E>;
   /**
    * Ask whether an amount is allowed. A command atom because the amount is
    * part of the question: write the request, read the answer. The `entitlements`
@@ -199,6 +215,18 @@ export interface BillingAtoms<E = never> {
   readonly trackUsage: (
     account: string,
   ) => BillingMutation<TrackUsageRequest, TrackUsageResult, TrackUsageError, E>;
+  /** Create a standalone grant, and answer the feature's balance. */
+  readonly createBalance: (
+    account: string,
+  ) => BillingMutation<BalanceCreateRequest, Balance, BalancesError, E>;
+  /** Set seat occupancy, and answer the feature's balance. */
+  readonly updateBalance: (
+    account: string,
+  ) => BillingMutation<BalanceUpdateRequest, Balance, BalancesError, E>;
+  /** Commit or release a lock `check` placed. */
+  readonly finalizeBalance: (
+    account: string,
+  ) => BillingMutation<BalanceFinalizeRequest, Balance, BalancesError, E>;
   /** Reserve units for work that has started. */
   readonly hold: (account: string) => BillingMutation<HoldRequest, HoldResult, HoldError, E>;
   /** Bill what ran and return the rest of a hold. */
@@ -413,6 +441,15 @@ export const make = <E = never>(
       ).pipe(withAccount(account)),
   );
 
+  // A balance is a read of the entitlement view: one query, mapped, so the
+  // atom and `check` cannot describe different state.
+  const balances = Atom.family(
+    (account: string): BillingQuery<ReadonlyArray<Balance>, E | CatalogError> =>
+      Atom.map(entitlements(account), (result) =>
+        AsyncResult.map(result, (state) => (state === null ? [] : balancesOf(state))),
+      ),
+  );
+
   const billing = Atom.family((account: string): BillingQuery<BillingStateView, E | CatalogError> =>
     Atom.withServerValueInitial(
       // SAFETY: the same alias as `entitlementsAtom`, for the same reason.
@@ -472,11 +509,60 @@ export const make = <E = never>(
     >,
   ) => Atom.family((account: string) => command(verb, service)(account));
 
+  const createBalance = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<BalanceCreateRequest, Balance, BalancesError, E | CatalogError> =>
+      runtime.fn(
+        (request: BalanceCreateRequest) =>
+          Effect.gen(function* () {
+            const bound = yield* Balances(account);
+
+            return yield* bound.create(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.createBalance) },
+      ),
+  );
+
+  const updateBalance = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<BalanceUpdateRequest, Balance, BalancesError, E | CatalogError> =>
+      runtime.fn(
+        (request: BalanceUpdateRequest) =>
+          Effect.gen(function* () {
+            const bound = yield* Balances(account);
+
+            return yield* bound.update(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.updateBalance) },
+      ),
+  );
+
+  const finalizeBalance = Atom.family(
+    (
+      account: string,
+    ): BillingMutation<BalanceFinalizeRequest, Balance, BalancesError, E | CatalogError> =>
+      runtime.fn(
+        (request: BalanceFinalizeRequest) =>
+          Effect.gen(function* () {
+            const bound = yield* Balances(account);
+
+            return yield* bound.finalize(request);
+          }),
+        { reactivityKeys: keysFor(account, options.reactivityKeys?.finalizeBalance) },
+      ),
+  );
+
   return {
     runtime,
     entitlements,
     billing,
+    balances,
     check,
+    createBalance,
+    updateBalance,
+    finalizeBalance,
     trackUsage: motion("trackUsage", TrackUsage),
     hold: motion("hold", Hold),
     settleHold: motion("settleHold", SettleHold),

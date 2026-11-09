@@ -144,17 +144,17 @@ describe("Polar, from checkout to check()", () => {
 
       // The entitlement answers from local state, with no provider in the read.
       const check = yield* Check(account);
-      let result = yield* check({ feature: "messages", amount: 1 });
+      let result = yield* check({ featureId: "messages", requiredBalance: 1 });
 
       // A view is fed by deliveries, so the read catches up just after the
       // command commits. The budget is in seconds: a loaded suite is slower.
       for (let attempt = 0; attempt < 500 && !result.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
-        result = yield* check({ feature: "messages", amount: 1 });
+        result = yield* check({ featureId: "messages", requiredBalance: 1 });
       }
 
       expect(result.allowed).toBe(true);
-      expect(result.remaining).toBe(2_000);
+      expect(result.balance.remaining).toBe(2_000);
       expect(result.standing).toBe("good");
     }).pipe(Effect.provide(world(polarClient()))),
   );

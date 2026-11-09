@@ -328,7 +328,7 @@ export const appendTimeline = (timeline: UsageTimeline, input: TimelineInput): U
       return { ...extended, lastSeq: envelope.seq };
     }
 
-    case "TierChanged": {
+    case "PlanChanged": {
       const entry: TimelineEntry = {
         ...stamped(input, periodOf),
         kind: "tier",

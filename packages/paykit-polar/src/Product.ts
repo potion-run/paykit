@@ -224,7 +224,7 @@ const metadataOf = (product: VendorProduct): Record<string, string> =>
     ),
   );
 
-const tierOf = (product: VendorProduct): string => metadataOf(product)[PAYKIT_TIER] ?? "";
+const planOf = (product: VendorProduct): string => metadataOf(product)[PAYKIT_TIER] ?? "";
 
 const attrsOf = (product: VendorProduct): Product["Attributes"] => {
   const price = product.prices.filter(isFixedPrice).find((candidate) => !candidate.is_archived);
@@ -232,7 +232,7 @@ const attrsOf = (product: VendorProduct): Product["Attributes"] => {
   return {
     id: product.id,
     name: product.name,
-    tier: tierOf(product),
+    tier: planOf(product),
     kind: kindOf(product),
     priceId: price?.id ?? "",
     price: {
@@ -391,7 +391,7 @@ const generationsOf = Effect.fn(function* (stage: string, tier: string) {
   // The name carries the stage and the metadata carries the tier. Both must
   // match, so a product from another stage is never adopted.
   const matches = (yield* listAll()).filter(
-    (product) => product.name === name && tierOf(product) === tier,
+    (product) => product.name === name && planOf(product) === tier,
   );
 
   // A price change creates a new generation; the newest wins when state is lost.

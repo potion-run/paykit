@@ -19,8 +19,8 @@ it.live("the operation the Worker's bootstrap calls starts the free tier", () =>
     // The standing is there for the Api client the browser's atom runtime
     // builds; the Atom package's own test covers that path end to end.
     const checkOf = yield* Paykit.Check(account);
-    const answer = yield* checkOf({ feature: "messages", amount: 1 });
+    const answer = yield* checkOf({ featureId: "messages", requiredBalance: 1 });
     expect(answer.allowed).toBe(true);
-    expect(answer.remaining).toBe(100);
+    expect(answer.balance.remaining).toBe(100);
   }).pipe(Effect.provide(BillingTestLive)),
 );

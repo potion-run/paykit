@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
@@ -53,10 +53,10 @@ const testCatalog = Effect.runSync(
   }),
 );
 
-const carrying = allowancesOf(testCatalog, "carrying")!;
-const plain = allowancesOf(testCatalog, "plain")!;
-const overdraw = allowancesOf(testCatalog, "overdraw")!;
-const unlimited = allowancesOf(testCatalog, "unlimited")!;
+const carrying = planItemsOf(testCatalog, "carrying")!;
+const plain = planItemsOf(testCatalog, "plain")!;
+const overdraw = planItemsOf(testCatalog, "overdraw")!;
+const unlimited = planItemsOf(testCatalog, "unlimited")!;
 
 const account = Subscription.ref("acct_rollover");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
@@ -337,6 +337,6 @@ it.effect("an unlimited allowance closes to no count and carries nothing", () =>
 it("a period that carried nothing starts at what it includes", () => {
   // The arithmetic on its own: no clock, no store, one pure decision input.
   const built = Effect.runSync(catalog({ features: [messages], tiers: [plainTier, carryingTier] }));
-  expect(allowancesOf(built, "carrying")?.messages?.carryOver).toBe(true);
-  expect(allowancesOf(built, "plain")?.messages?.carryOver).toBe(false);
+  expect(planItemsOf(built, "carrying")?.messages?.carryOver).toBe(true);
+  expect(planItemsOf(built, "plain")?.messages?.carryOver).toBe(false);
 });

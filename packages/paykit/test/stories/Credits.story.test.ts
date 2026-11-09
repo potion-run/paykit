@@ -13,10 +13,10 @@ import { Hold as holdBinding } from "../../src/Billing/Hold.binding.ts";
 import { ReleaseHold as releaseBinding } from "../../src/Billing/ReleaseHold.binding.ts";
 import { TrackUsage as trackUsageBinding } from "../../src/Billing/TrackUsage.binding.ts";
 import { MemoryBillingReadStore, BillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
-import { ChangeTier, TierChanged } from "../../src/Subscription/ChangeTier.command.ts";
+import { ChangeTier, PlanChanged } from "../../src/Subscription/ChangeTier.command.ts";
 import {
   CreditsExpired,
   PeriodClosed,
@@ -102,7 +102,7 @@ const subscribed = (tierId: string, grant: typeof creditsTerms) =>
       account,
       new Subscribe({
         tier: tierId,
-        allowances: allowancesOf(testCatalog, tierId)!,
+        allowances: planItemsOf(testCatalog, tierId)!,
         price,
         credits: grant.credits,
         creditsExpire: grant.creditsExpire,
@@ -113,7 +113,7 @@ const subscribed = (tierId: string, grant: typeof creditsTerms) =>
       account,
       new SubscriptionActivated({
         tier: tierId,
-        allowances: allowancesOf(testCatalog, tierId)!,
+        allowances: planItemsOf(testCatalog, tierId)!,
         remaining: { messages: 100 },
         credits: grant.credits,
         creditsExpire: grant.creditsExpire,
@@ -292,7 +292,7 @@ it.effect("a rate change after the hold does not change the bill", () =>
       account,
       new ChangeTier({
         tier: "smaller",
-        allowances: allowancesOf(testCatalog, "smaller")!,
+        allowances: planItemsOf(testCatalog, "smaller")!,
         price,
         credits: 0,
         creditsExpire: "period",
@@ -302,9 +302,9 @@ it.effect("a rate change after the hold does not change the bill", () =>
     ),
     Story.then(
       account,
-      new TierChanged({
+      new PlanChanged({
         tier: "smaller",
-        allowances: allowancesOf(testCatalog, "smaller")!,
+        allowances: planItemsOf(testCatalog, "smaller")!,
         remaining: { messages: 100 },
         credits: 50_000,
         creditsExpire: "period",
@@ -410,7 +410,7 @@ it.effect("a tier change carries the balance over instead of re-granting", () =>
       account,
       new ChangeTier({
         tier: "smaller",
-        allowances: allowancesOf(testCatalog, "smaller")!,
+        allowances: planItemsOf(testCatalog, "smaller")!,
         price,
         credits: 0,
         creditsExpire: "period",
@@ -421,9 +421,9 @@ it.effect("a tier change carries the balance over instead of re-granting", () =>
     ),
     Story.then(
       account,
-      new TierChanged({
+      new PlanChanged({
         tier: "smaller",
-        allowances: allowancesOf(testCatalog, "smaller")!,
+        allowances: planItemsOf(testCatalog, "smaller")!,
         remaining: { messages: 100 },
         credits: 40_000,
         creditsExpire: "period",
@@ -456,7 +456,7 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       ref,
       new Subscribe({
         tier: "credits",
-        allowances: allowancesOf(testCatalog, "credits")!,
+        allowances: planItemsOf(testCatalog, "credits")!,
         price,
         credits: creditsTerms.credits,
         creditsExpire: creditsTerms.creditsExpire,
@@ -469,34 +469,34 @@ it.live("check prices a request from the pool, by dimension, on every read path"
 
     const track = yield* trackUsageBinding(account.id);
     yield* track({
-      feature: "ai",
-      amount: 100,
+      featureId: "ai",
+      value: 100,
       dimension: "gpt-large",
-      dedupeKey: "credits-track",
+      idempotencyKey: "credits-track",
     });
 
     const check = yield* checkBinding(account.id);
 
     // 1,000 credits gone, 49,000 left; a big-model call costs 10.
     const granted = yield* check({
-      feature: "ai",
-      amount: 1,
+      featureId: "ai",
+      requiredBalance: 1,
       dimension: "gpt-large",
     });
 
     expect(granted.allowed).toBe(true);
-    expect(granted.remaining).toBe(49_000);
+    expect(granted.balance.remaining).toBe(49_000);
 
     // 5,000 units of the big model cost 50,000: more than the pool holds.
     const refused = yield* check({
-      feature: "ai",
-      amount: 5_000,
+      featureId: "ai",
+      requiredBalance: 5_000,
       dimension: "gpt-large",
     });
 
     expect(refused.allowed).toBe(false);
     // The default rate prices the same request at 5,000, which fits.
-    const cheap = yield* check({ feature: "ai", amount: 5_000 });
+    const cheap = yield* check({ featureId: "ai", requiredBalance: 5_000 });
     expect(cheap.allowed).toBe(true);
 
     // A hold takes credits out of the pool before anything is billed.
@@ -509,18 +509,22 @@ it.live("check prices a request from the pool, by dimension, on every read path"
       dedupeKey: "credits-hold",
     });
 
-    expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(39_000);
+    expect((yield* check({ featureId: "ai", dimension: "gpt-large" })).balance.remaining).toBe(
+      39_000,
+    );
     const released = yield* releaseBinding(account.id);
     const releaseResult = yield* released({ holdId: placed.holdId, dedupeKey: "credits-release" });
-    expect(releaseResult).toEqual({ released: 1_000 });
-    expect((yield* check({ feature: "ai", dimension: "gpt-large" })).remaining).toBe(49_000);
+    expect(releaseResult.released).toBe(1_000);
+    expect((yield* check({ featureId: "ai", dimension: "gpt-large" })).balance.remaining).toBe(
+      49_000,
+    );
 
     // The row carries the card and the pool, so the edge prices it the same way.
     const readModel = yield* Effect.provide(checkBinding(account.id), CheckReadModelLayer);
     expect(
       yield* readModel({
-        feature: "ai",
-        amount: 5_000,
+        featureId: "ai",
+        requiredBalance: 5_000,
         dimension: "gpt-large",
       }),
     ).toEqual(refused);

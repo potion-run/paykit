@@ -77,6 +77,18 @@ export type { TopUpTermsInput } from "./Tier.ts";
 export { Plan, PlanCustomize, PlanId, PlanKind, plan } from "./Plan.ts";
 
 export {
+  Balance,
+  BalancePage,
+  BalanceSource,
+  BalanceSourceKind,
+  balanceOf,
+  balancesOf,
+  emptyBalance,
+} from "./Balance.ts";
+
+export { BillingControls, Customer, CustomerId, CustomerPlan } from "./Customer.ts";
+
+export {
   Catalog,
   CatalogDuplicateAllowance,
   CatalogDuplicateFeature,
@@ -270,6 +282,10 @@ export * as Billing from "./Billing/index.ts";
 // returns the verb, so a call site cannot name a second account.
 export {
   BillingApiLayer,
+  Balances,
+  BalancesLive,
+  BalancesRead,
+  GrantBalance,
   BillingInProcess,
   ChangeTier,
   ChargeProration,
@@ -285,6 +301,7 @@ export {
   Resume,
   ScheduleCancellation,
   ScheduleTierChange,
+  SetUsage,
   SettleHold,
   StartTrial,
   Subscribe,
@@ -294,7 +311,20 @@ export {
 } from "./Billing/index.ts";
 
 export type {
+  BalancesError,
+  BalancesRefusal,
+  BalancesVerb,
+  BalanceCreateRequest,
+  BalanceFinalizeRequest,
+  BalanceGetRequest,
+  BalanceNotFound,
+  BalanceUpdateRequest,
   CancelError,
+  GrantBalanceError,
+  GrantBalanceRefusal,
+  GrantBalanceRequest,
+  GrantBalanceResult,
+  GrantBalanceVerb,
   CancelRequest,
   ChangeTierError,
   ChangeTierRequest,
@@ -331,6 +361,11 @@ export type {
   ResumeVerb,
   ScheduleTierChangeError,
   ScheduleTierChangeVerb,
+  SetUsageError,
+  SetUsageRefusal,
+  SetUsageRequest,
+  SetUsageResult,
+  SetUsageVerb,
   SettleHoldError,
   SettleHoldRequest,
   SettleHoldResult,
@@ -400,6 +435,12 @@ export type {
 } from "./Handler.ts";
 
 export type { CheckInput, CheckResult } from "./Check.ts";
+
+export { CheckLockKeyMissing } from "./Billing/Check.binding.ts";
+
+export type { CheckRefusal } from "./Billing/Check.binding.ts";
+
+export { SetUsage as SetUsageBinding } from "./Billing/SetUsage.binding.ts";
 
 export { Proration, ProrationPeriod, prorate, unusedFraction } from "./Proration.ts";
 
@@ -618,7 +659,7 @@ export { PeriodRollover } from "./Subscription/PeriodRollover.policy.ts";
 
 export {
   ScheduleTierChange as ScheduleTierChangeCommand,
-  TierChangeScheduled,
+  PlanChangeScheduled,
 } from "./Subscription/ScheduleTierChange.command.ts";
 
 export {
@@ -676,7 +717,7 @@ export {
 } from "./Subscription/StartTrial.command.ts";
 
 export {
-  TierChanged,
+  PlanChanged,
   ChangeTier as ChangeTierCommand,
   DowngradeBelowUsage,
   DowngradeBelowSpend,
@@ -834,11 +875,11 @@ export { NotSubscribed } from "./Subscription/NotSubscribed.rejection.ts";
 
 export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";
 
-export { TierNotInCatalog } from "./Subscription/TierNotInCatalog.rejection.ts";
+export { PlanNotInCatalog } from "./Subscription/PlanNotInCatalog.rejection.ts";
 
 export { TrialAlreadyUsed } from "./Subscription/TrialAlreadyUsed.rejection.ts";
 
-export { AllowanceReset, ResetAllowance } from "./Subscription/ResetAllowance.command.ts";
+export { PlanItemReset, ResetAllowance } from "./Subscription/ResetAllowance.command.ts";
 
 export { FeatureNotConsumable } from "./Subscription/FeatureNotConsumable.rejection.ts";
 
@@ -849,6 +890,25 @@ export {
   QuantityInvalid,
   SetQuantity,
 } from "./Subscription/SetQuantity.command.ts";
+
+export {
+  SetUsage as SetUsageCommand,
+  UsageInvalid,
+  UsageSet,
+} from "./Subscription/SetUsage.command.ts";
+
+export {
+  BalanceGranted,
+  FeatureNotCounted,
+  FeaturePricedInCredits,
+  GrantBalance as GrantBalanceCommand,
+  GrantExpiryNotLater,
+} from "./Subscription/GrantBalance.command.ts";
+
+export {
+  BalanceExpired,
+  ExpireGrant as ExpireGrantCommand,
+} from "./Subscription/ExpireGrant.command.ts";
 
 export {
   NoQuantityProrationDue,

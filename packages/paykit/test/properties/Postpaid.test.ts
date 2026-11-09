@@ -223,8 +223,8 @@ describe("postpaid money", () => {
 
           const asked = evaluateCheck(viewOf(before), {
             account,
-            feature: "messages",
-            amount: step._tag === "Track" || step._tag === "Hold" ? step.amount : 1,
+            featureId: "messages",
+            requiredBalance: step._tag === "Track" || step._tag === "Hold" ? step.amount : 1,
           });
 
           // A hold id already issued is a replay that records nothing; the

@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
-import { tierOf } from "../Catalog.ts";
+import { planOf } from "../Catalog.ts";
 import { CatalogService } from "../CatalogService.ts";
 import {
   type PaymentError,
@@ -15,10 +15,10 @@ import {
 import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { AttachProviderRef } from "../Subscription/AttachProviderRef.command.ts";
 import { Entitlements } from "../Subscription/Entitlements.view.ts";
+import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts";
 import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
-import { TierNotInCatalog } from "../Subscription/TierNotInCatalog.rejection.ts";
 import { priceFor } from "../Tier.ts";
 import { subscribeInputOf } from "../TierCommand.ts";
 
@@ -105,10 +105,10 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
   const router = yield* Effect.serviceOption(PaymentsRouter);
 
   return Effect.fn("Paykit.Subscribe.start")(function* (input: SubscribeInput) {
-    const tier = tierOf(catalog, input.tier);
+    const tier = planOf(catalog, input.tier);
 
     if (tier === null) {
-      return yield* new TierNotInCatalog({ tier: input.tier });
+      return yield* new PlanNotInCatalog({ tier: input.tier });
     }
 
     const kind = tier.kind ?? "subscription";
@@ -121,7 +121,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
           : priceFor(tier.price, input.currency);
 
     if (tier.price !== undefined && resolvedPrice === null) {
-      return yield* new TierNotInCatalog({ tier: input.tier });
+      return yield* new PlanNotInCatalog({ tier: input.tier });
     }
 
     const ref = Subscription.ref(input.account);
@@ -152,13 +152,13 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       // to buy. The catalog refuses this shape, so a runtime that sees it has
       // a stale catalog rather than a caller mistake.
       if (kind === "one_off") {
-        return yield* new TierNotInCatalog({ tier: input.tier });
+        return yield* new PlanNotInCatalog({ tier: input.tier });
       }
 
       const activation = subscribeInputOf(catalog, input.tier, anchored);
 
       if (activation === null) {
-        return yield* new TierNotInCatalog({ tier: input.tier });
+        return yield* new PlanNotInCatalog({ tier: input.tier });
       }
 
       const receipt = yield* asSystem(subscription.send(ref, new SubscribeCommand(activation)));
@@ -172,7 +172,7 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     // that runs. Buying one never creates a second standing.
     // Bound here: narrowing a property does not survive into the generator.
     if (resolvedPrice === null) {
-      return yield* new TierNotInCatalog({ tier: input.tier });
+      return yield* new PlanNotInCatalog({ tier: input.tier });
     }
 
     const price = resolvedPrice;

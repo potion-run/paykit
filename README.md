@@ -45,10 +45,13 @@ const recorded = yield* Paykit.BillingStack("Billing", billing);
 
 ```ts
 const check = yield* Paykit.Check(account);
-yield* check({ feature: "messages" });        // { allowed, remaining, resetsAt, standing }
+yield* check({ featureId: "messages" });      // { allowed, balance, standing }
 
 const track = yield* Paykit.TrackUsage(account);
-yield* track({ feature: "messages", dedupeKey: requestId });
+yield* track({ featureId: "messages", value: 1, idempotencyKey: requestId });
+
+const balances = yield* Paykit.Balances(account);
+yield* balances.get({ featureId: "messages" });
 ```
 
 [`examples/billing`](./examples/billing) is a runnable Worker that bills with a real database and no

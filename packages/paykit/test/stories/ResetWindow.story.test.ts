@@ -6,11 +6,11 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { catalog, planTermsOf } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
-import { AllowanceReset, ResetAllowance } from "../../src/Subscription/ResetAllowance.command.ts";
+import { PlanItemReset, ResetAllowance } from "../../src/Subscription/ResetAllowance.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import { TrackUsage, UsageRecorded } from "../../src/Subscription/TrackUsage.command.ts";
@@ -26,7 +26,7 @@ const dailyTier = tier({
 });
 
 const testCatalog = Effect.runSync(catalog({ features: [messages], tiers: [dailyTier] }));
-const terms = tierTermsOf(testCatalog, "daily")!;
+const terms = planTermsOf(testCatalog, "daily")!;
 const account = Subscription.ref("acct_daily");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -90,7 +90,7 @@ it.effect("a daily allowance resets at its own boundary, not the period's", () =
     Story.when(account, new ResetAllowance({ feature: "messages", at: dayLater })),
     Story.then(
       account,
-      new AllowanceReset({
+      new PlanItemReset({
         feature: "messages",
         remaining: 10,
         carried: 0,

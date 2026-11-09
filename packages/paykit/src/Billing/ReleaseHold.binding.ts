@@ -2,6 +2,7 @@ import * as Binding from "alchemy/Binding";
 import type * as Effect from "effect/Effect";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Unauthenticated } from "../Auth/Unauthenticated.rejection.ts";
+import type { Balance } from "../Balance.ts";
 import { HoldSettled, HoldUnknown } from "../Subscription/Hold.command.ts";
 import { type BindingError, oneOf, toBindingError } from "./Bindings.ts";
 
@@ -16,6 +17,10 @@ export interface ReleaseHoldRequest {
 /** What a release returned. */
 export interface ReleaseHoldResult {
   readonly released: number;
+  /** The feature the hold was taken on, so `Balances.finalize` can answer it. */
+  readonly featureId: string;
+  /** The feature's balance after the release. */
+  readonly balance: Balance;
 }
 
 /** A released hold is an unknown one, or one already settled. */

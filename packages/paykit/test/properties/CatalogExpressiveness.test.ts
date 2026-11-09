@@ -7,8 +7,8 @@ import { allowance, type Allowance } from "../../src/Allowance.ts";
 import {
   catalog,
   defineCatalog,
-  tierOf,
-  tierTermsOf,
+  planOf,
+  planTermsOf,
   type Catalog,
   type CatalogError,
 } from "../../src/Catalog.ts";
@@ -148,7 +148,7 @@ describe("a price ladder the catalog can express", () => {
           }
         }
 
-        const resolved = tierOf(accepted(bandedCatalog(input, currency))!, "metered")!;
+        const resolved = planOf(accepted(bandedCatalog(input, currency))!, "metered")!;
 
         return same(resolved.grants[0]!.pricing, banded);
       },
@@ -299,8 +299,8 @@ describe("a tier can be customized and sold in more than one currency", () => {
         const resolved = accepted({ features: [messages], tiers: [base, variant] });
 
         if (resolved === null) return false;
-        const annual = tierOf(resolved, "annual")!;
-        const original = tierOf(resolved, "base")!;
+        const annual = planOf(resolved, "annual")!;
+        const original = planOf(resolved, "base")!;
 
         const name = rename ?? "Base";
 
@@ -357,7 +357,7 @@ describe("a tier can be customized and sold in more than one currency", () => {
   /**
    * An additional currency is a stated amount, never a conversion: `priceFor`
    * answers the base currency and every stated one, and `null` for a currency
-   * the tier does not sell. `tierTermsOf` refuses that pairing before a command
+   * the tier does not sell. `planTermsOf` refuses that pairing before a command
    * is built.
    */
   it.effect("states each currency explicitly and never converts", () =>
@@ -483,8 +483,8 @@ describe("a tier can be customized and sold in more than one currency", () => {
     });
 
     const source = Effect.runSync(catalog({ features: [messages], tiers: [pro] }));
-    expect(priceFor(tierOf(source, "pro")!.price!, "eur")?.amount).toBe(1_800);
-    expect(priceFor(tierOf(source, "pro")!.price!, "gbp")).toBe(null);
+    expect(priceFor(planOf(source, "pro")!.price!, "eur")?.amount).toBe(1_800);
+    expect(priceFor(planOf(source, "pro")!.price!, "gbp")).toBe(null);
   });
 });
 
@@ -571,7 +571,7 @@ describe("a standing is quoted in the currency it was sold in", () => {
         return (
           planChangeTier(source, "scale", { ...standing, currency: "gbp" }, start) === null &&
           scheduleTierChangeInputOf(source, "scale", "gbp") === null &&
-          tierTermsOf(source, "scale", "gbp") === null
+          planTermsOf(source, "scale", "gbp") === null
         );
       },
       { runs: 100, size: 30 },

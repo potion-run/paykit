@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { Preview } from "../../src/Billing/Preview.binding.ts";
-import { allowancesOf, catalog, tierTermsOf } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, planTermsOf } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
 import { ScheduleTierChange } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
@@ -34,7 +34,7 @@ const testCatalog = Effect.runSync(
   catalog({ features: [messages], tiers: [freeTier, proTier, scaleTier] }),
 );
 
-const proAllowances = allowancesOf(testCatalog, "pro")!;
+const proAllowances = planItemsOf(testCatalog, "pro")!;
 const account = "acct_preview";
 
 const World = bindingsWorld({
@@ -120,7 +120,7 @@ it.live("previews a change and a schedule in the standing's currency", () =>
   Effect.gen(function* () {
     const account = "acct_preview_eur";
     const subscription = yield* Subscription;
-    const terms = tierTermsOf(eurCatalog, "pro", "eur")!;
+    const terms = planTermsOf(eurCatalog, "pro", "eur")!;
     yield* subscription.send(
       Subscription.ref(account),
       new Subscribe({
@@ -174,7 +174,7 @@ it.live("a preview of a tier the catalog does not carry fails typed", () =>
     );
 
     expect(exit._tag).toBe("Failure");
-    expect(String(exit)).toContain("TierNotInCatalog");
+    expect(String(exit)).toContain("PlanNotInCatalog");
   }).pipe(run),
 );
 
@@ -196,7 +196,7 @@ it("a preview's events match what the same command records", () =>
         creditsExpire: "period",
         rates: {},
         tier: "free",
-        allowances: allowancesOf(testCatalog, "free")!,
+        allowances: planItemsOf(testCatalog, "free")!,
       }),
     );
 
@@ -243,7 +243,7 @@ it.live("previews scheduling a change without recording it", () =>
     // A scheduled change carries no proration: the period it was scheduled in
     // has ended, so there is nothing to prorate.
     expect(result.proration).toBeUndefined();
-    expect(result.events.map((event) => event._tag)).toEqual(["TierChangeScheduled"]);
+    expect(result.events.map((event) => event._tag)).toEqual(["PlanChangeScheduled"]);
     expect(result.state._tag === "Subscribed" ? result.state.pendingTier?.tier : undefined).toBe(
       "scale",
     );
@@ -278,7 +278,7 @@ it.live("previews the withdrawal of a scheduled change", () =>
       Subscription.ref(account),
       new ScheduleTierChange({
         tier: "scale",
-        allowances: allowancesOf(testCatalog, "scale")!,
+        allowances: planItemsOf(testCatalog, "scale")!,
         credits: 0,
         creditsExpire: "period",
         rates: {},

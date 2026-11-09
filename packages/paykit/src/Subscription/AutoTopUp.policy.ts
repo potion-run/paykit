@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
-import { creditRatesOf, tierOf, type Catalog } from "../Catalog.ts";
+import { creditRatesOf, planOf, type Catalog } from "../Catalog.ts";
 import type { CreditRateCards } from "../Feature.ts";
 import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
 import type { Price, TopUpTerms } from "../Tier.ts";
@@ -181,7 +181,7 @@ const resolvePack = (
   packId: string,
 ): Effect.Effect<AutoTopUpPack, AutoTopUpInvalid> =>
   Effect.gen(function* () {
-    const pack = tierOf(catalog, packId);
+    const pack = planOf(catalog, packId);
 
     if (pack === null) {
       return yield* new AutoTopUpInvalid({ pack: packId, reason: "unknown-pack" });

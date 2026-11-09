@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { allowancesOf, type Catalog } from "./Catalog.ts";
+import { planItemsOf, type Catalog } from "./Catalog.ts";
 import { downgradeOf } from "./Subscription/Allowance.verdict.ts";
 import {
   outstandingRefundOf,
@@ -123,7 +123,7 @@ const changeTiers = (
     )
     .filter((tier) => {
       if (entitlements === undefined) return true;
-      const allowances = allowancesOf(catalog, tier.id);
+      const allowances = planItemsOf(catalog, tier.id);
 
       if (allowances === null) return false;
 

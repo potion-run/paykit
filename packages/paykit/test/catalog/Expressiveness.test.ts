@@ -22,12 +22,12 @@ import {
   CatalogVariantCycle,
   CatalogVariantOnPack,
   CatalogVolumeRateRises,
-  allowancesOf,
+  planItemsOf,
   catalog,
   defineCatalog,
   ratesOf,
-  tierOf,
-  tierTermsOf,
+  planOf,
+  planTermsOf,
 } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { creditRateOf, feature, messages, rateCard } from "../../src/Feature.ts";
@@ -531,11 +531,11 @@ describe("a variant is a named alternative of a base tier", () => {
 
   it("inherits every field it does not state", () => {
     const result = Effect.runSync(catalog({ features: [messages], tiers: [monthly, annual] }));
-    const resolved = tierOf(result, "pro_annual");
+    const resolved = planOf(result, "pro_annual");
     expect(resolved?.price?.amount).toBe(19_000);
     expect(resolved?.price?.interval).toBe("annual");
     expect(resolved?.credits).toBe(1_000);
-    expect(allowancesOf(result, "pro_annual")?.messages?.included).toBe(2_000);
+    expect(planItemsOf(result, "pro_annual")?.messages?.included).toBe(2_000);
     expect(resolved?.variantOf).toBeUndefined();
   });
 
@@ -625,9 +625,9 @@ describe("a tier can be sold in more than one currency", () => {
       }),
     );
 
-    expect(tierTermsOf(result, "pro", "eur")?.price?.amount).toBe(1_800);
-    expect(tierTermsOf(result, "pro", "eur")?.price?.currency).toBe("eur");
-    expect(tierTermsOf(result, "pro", "jpy")).toBe(null);
+    expect(planTermsOf(result, "pro", "eur")?.price?.amount).toBe(1_800);
+    expect(planTermsOf(result, "pro", "eur")?.price?.currency).toBe("eur");
+    expect(planTermsOf(result, "pro", "jpy")).toBe(null);
     // The guard accepts the same price the tier states in that currency.
     expect(
       catalogMismatchOf(result, {

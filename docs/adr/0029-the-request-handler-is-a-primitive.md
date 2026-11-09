@@ -63,7 +63,7 @@ it.
 
 **5. A refusal is answered by `Paykit.httpStatus`, not by the deployment.** Both `/checkout` and
 `/webhooks` currently map a typed failure to a status in the example. The handler does it, so the four
-examples cannot disagree about what a `TierNotInCatalog` or a spent `RefundExceedsCharged` answers.
+examples cannot disagree about what a `PlanNotInCatalog` or a spent `RefundExceedsCharged` answers.
 
 ## Consequences
 

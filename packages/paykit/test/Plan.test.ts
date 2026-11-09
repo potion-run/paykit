@@ -67,6 +67,7 @@ describe("the public plan item, customer and balance shapes", () => {
     expect(Schema.is(Customer)(customer)).toBe(true);
 
     const balance = {
+      customerId: "cus_1",
       featureId: "messages",
       granted: 100,
       remaining: 80,

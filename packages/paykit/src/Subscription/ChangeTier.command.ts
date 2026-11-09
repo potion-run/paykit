@@ -9,10 +9,10 @@ import { Proration as ProrationValue } from "../Proration.ts";
 import { CreditsExpire, Price, TopUpTerms } from "../Tier.ts";
 import { CurrencyMismatch } from "./CurrencyMismatch.rejection.ts";
 import { NotSubscribed } from "./NotSubscribed.rejection.ts";
+import { PlanNotInCatalog } from "./PlanNotInCatalog.rejection.ts";
 import { ProrationMismatch } from "./ProrationMismatch.rejection.ts";
 import { StandingEnded } from "./StandingEnded.rejection.ts";
 import { AccountId } from "./Subscription.id.ts";
-import { TierNotInCatalog } from "./TierNotInCatalog.rejection.ts";
 
 /**
  * A tier change would leave a blocking allowance below what is already used, so
@@ -59,7 +59,7 @@ export class DowngradeBelowCeiling extends Domain.Rejection("DowngradeBelowCeili
 }) {}
 
 /** The account is now on another tier; the prices it moved between, and any proration. */
-export class TierChanged extends Domain.Event("TierChanged", {
+export class PlanChanged extends Domain.Event("PlanChanged", {
   tier: Schema.String,
   allowances: Allowances,
   remaining: Schema.Record(Schema.String, Schema.NullOr(Schema.Int)),
@@ -101,9 +101,9 @@ export class ChangeTier extends Domain.Command("ChangeTier", {
     rates: CreditRateCards,
     proration: Schema.optionalKey(ProrationValue),
   },
-  events: [TierChanged],
+  events: [PlanChanged],
   rejects: [
-    TierNotInCatalog,
+    PlanNotInCatalog,
     NotSubscribed,
     StandingEnded,
     CurrencyMismatch,

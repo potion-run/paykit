@@ -4,7 +4,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { grant, type Allowance } from "../../src/Allowance.ts";
 import type { CatalogInput } from "../../src/Catalog.ts";
-import { defineCatalog, tierTermsOf, type Catalog } from "../../src/Catalog.ts";
+import { defineCatalog, planTermsOf, type Catalog } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { type Tier } from "../../src/Tier.ts";
 import { assertProperty } from "../support/Property.ts";
@@ -173,7 +173,7 @@ describe("catalog properties", () => {
         // Every term the catalog implies passes its own guard. A command built
         // by the catalog's owner must never be refused by the guard.
         for (const declared of catalog.tiers) {
-          const terms = tierTermsOf(catalog, declared.id);
+          const terms = planTermsOf(catalog, declared.id);
 
           if (terms === null) return false;
           const mismatch = catalogMismatchOf(catalog, { tier: declared.id, ...terms });
@@ -211,7 +211,7 @@ describe("catalog properties", () => {
 
         if (catalog === null) return false;
         const declared = catalog.tiers[tierIndex % catalog.tiers.length]!;
-        const terms = tierTermsOf(catalog, declared.id);
+        const terms = planTermsOf(catalog, declared.id);
 
         if (terms === null) return false;
 

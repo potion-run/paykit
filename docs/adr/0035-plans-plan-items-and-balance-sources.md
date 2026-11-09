@@ -30,8 +30,8 @@ second charge call.
 | `BalanceSource` | where one part of a balance came from: a plan, an add-on, a one-off grant, a rollover or a standalone grant | `prepaidCredits`, plan credits |
 | `Entity` | a child scope under a customer, with its own plans and balances | none |
 
-`Tier` and `Allowance` remain internal schema names while state and events migrate. They are not
-a second public API. `Credit` is not a special field on a plan: a credit system is a `Feature`
+`Tier` and `Allowance` remain internal schema names while the state migrates; the events speak
+plan, and the advanced command bindings keep their names. They are not a second public API. `Credit` is not a special field on a plan: a credit system is a `Feature`
 of `type: "credit_system"`, and the credits it holds are a balance source like any other.
 
 **2. Two operations replace the command list.** `billing.attach` handles a new plan, an immediate

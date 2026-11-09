@@ -23,7 +23,7 @@ const LIST_PAGE_SIZE = 100;
 const LIST_MAX_PAGES = 100;
 
 /** The tier a product declares, or `null` when the metadata carries none. */
-const tierOf = (product: Polar.Product): string | null => {
+const planOf = (product: Polar.Product): string | null => {
   const tier = product.metadata[PAYKIT_TIER];
 
   return typeof tier === "string" ? tier : null;
@@ -32,7 +32,7 @@ const tierOf = (product: Polar.Product): string | null => {
 const found = (product: Polar.Product): FoundProduct => ({
   id: product.id,
   name: product.name,
-  tier: tierOf(product),
+  tier: planOf(product),
   archived: product.is_archived,
 });
 

@@ -86,16 +86,16 @@ describe("the Polar example", () => {
       expect(applied.eventId).toBe("msg_polar_example");
 
       const check = yield* Check(account);
-      let answer = yield* check({ feature: "messages", amount: 1 });
+      let answer = yield* check({ featureId: "messages", requiredBalance: 1 });
 
       // A view catches up just after the command commits.
       for (let attempt = 0; attempt < 500 && !answer.allowed; attempt++) {
         yield* Effect.sleep("10 millis");
-        answer = yield* check({ feature: "messages", amount: 1 });
+        answer = yield* check({ featureId: "messages", requiredBalance: 1 });
       }
 
       expect(answer.allowed).toBe(true);
-      expect(answer.remaining).toBe(2_000);
+      expect(answer.balance.remaining).toBe(2_000);
     }).pipe(Effect.provide(world)),
   );
 

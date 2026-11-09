@@ -43,7 +43,7 @@ export class BindingFailed extends Schema.TaggedError<BindingFailed>()("BindingF
  * ```typescript
  * const Caller = Layer.succeed(BindingCall, { headers: { authorization: token } });
  *
- * yield* trackUsage({ feature: "messages", amount: 1, dedupeKey: requestId }).pipe(
+ * yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId }).pipe(
  *   Effect.provide(Caller),
  * );
  * ```

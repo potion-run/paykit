@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
-import { allowancesOf, catalog, creditRatesOf, type Catalog } from "../../src/Catalog.ts";
+import { planItemsOf, catalog, creditRatesOf, type Catalog } from "../../src/Catalog.ts";
 import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import {
@@ -95,9 +95,9 @@ const testCatalog = Effect.runSync(
   }),
 );
 
-const terms = allowancesOf(testCatalog, "plan")!;
+const terms = planItemsOf(testCatalog, "plan")!;
 const rates = creditRatesOf(testCatalog);
-const retryingTerms = allowancesOf(testCatalog, "retrying")!;
+const retryingTerms = planItemsOf(testCatalog, "retrying")!;
 const account = Subscription.ref("acct_auto_top_up");
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 const start = at("2030-01-01T00:00:00Z");
@@ -139,7 +139,7 @@ const subscribed = [
   ),
 ] as const;
 
-const plainTerms = allowancesOf(testCatalog, "plain")!;
+const plainTerms = planItemsOf(testCatalog, "plain")!;
 
 const subscribedPlain = [
   Story.provide(Actor, system("test")),
@@ -834,7 +834,7 @@ const pickyCatalog = Effect.runSync(
   catalog({ features: [messages, ai], tiers: [picky, pack, smallPack] }),
 );
 
-const pickyTerms = allowancesOf(pickyCatalog, "picky")!;
+const pickyTerms = planItemsOf(pickyCatalog, "picky")!;
 const pickyLine = { threshold: 1_000, cooldown: Duration.hours(1), pack: "pack_small" };
 const tierCooldownEnds = at("2030-01-01T01:00:00Z");
 
