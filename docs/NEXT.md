@@ -78,13 +78,16 @@ The billing machine is modelled in Quint ([ADR
 the spend path, `standing.qnt` the phase machine (trial, grace, dunning, cancellation, a scheduled
 tier change and the refill budget), `windows.qnt` the clocks the period does not own (reset windows,
 seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, `balances.qnt` the
-sources behind one count and the order a spend consumes them, `money.qnt` the refund, reversal and
-proration-invoice identity rules, and `controls.qnt` the customer's spend ceiling and usage alerts.
-`pnpm spec` simulates every invariant with its witnesses on every push; `pnpm spec:test` runs seven
-scenario modules; `scripts/spec-mutants.ts` kills 50 mutants across the seven, so no invariant can
-survive as a tautology; `scripts/spec-coverage.ts` holds all 40 commands against the seven action
-tables, so a command lands modelled or with a written reason. Three spend-path findings
-are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
+sources behind one count and the order a spend consumes them, `entities.qnt` the child scopes, the
+shared pool, the transfer and the archive ([ADR
+0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)), `schedules.qnt` the plan set and its
+phases, `controls.qnt` the customer's spend ceiling and usage alerts, and `money.qnt` the refund,
+reversal and proration-invoice identity rules. `pnpm spec` simulates every invariant with its
+witnesses on every push; `pnpm spec:test` runs nine scenario modules; `scripts/spec-mutants.ts`
+kills 72 mutants across the nine, so no invariant can survive as a tautology;
+`scripts/spec-coverage.ts` holds all 40 commands against the nine action tables, so a command
+lands modelled or with a written reason. Three spend-path findings are still recorded rather than
+fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
 are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md); they are review, not yet fixed.
@@ -171,10 +174,13 @@ The next work is the API migration, not another command. The order is:
    plan exists because the command carries the catalog's `features` facts past `CatalogGuard`.
 6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
    `multiAttach` / `multiUpdate`.
-7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`.
+7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`. The ADR
+   ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` are in; the
+   implementation is the remaining work.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
-the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated `windows.qnt` are.
+the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated
+`windows.qnt` are.
 
 **Immediate next actions**
 
@@ -196,8 +202,14 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated 
   the customer's auto top-up override, spend ceilings and usage alerts, `Paykit.Customers(account)`
   reads them, `SpendLimitExceeded` is a `capacityOf` variant so `check`, `allowed` and `decide`
   agree, and `UsageAlertFired` is evidence that never refuses. The write is canonical and
-  idempotent, works before a plan exists, and survives a plan change and a close. The next slice is
-  multiple plans and schedules, then entities and transfer.
+  idempotent, works before a plan exists, and survives a plan change and a close.
+- Landed: the plan-set model. `schedules.qnt` and its 27 scenarios are green; ADR
+  [0039](./adr/0039-one-plan-per-group-and-add-ons-stack.md) decides one plan per group, add-ons
+  stack, a two-phase schedule and the cancellation fallback to the group's default. The
+  implementation is the next slice.
+- Landed: the entity model. `entities.qnt` and its 14 scenarios are green; ADR
+  [0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md) decides a child scope, a pooled plan
+  item, the transfer and the archive. The implementation is the slice after the plan set.
 
 ### 1. The remaining surfaces
 

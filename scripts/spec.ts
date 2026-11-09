@@ -7,6 +7,7 @@
 //   windows.qnt    the clocks the period does not own, and the quantity
 //   plans.qnt      the plan operations against one plan
 //   balances.qnt   the sources behind one count, and the order they are spent
+//   entities.qnt   the scopes under one customer, the shared pool and the transfer
 //   money.qnt      refunds, reversals and proration invoices
 //   controls.qnt   a customer's spend ceiling and the alerts that never refuse
 //   schedules.qnt  the plan set, its groups, add-ons and multi-phase schedules
@@ -181,6 +182,25 @@ const SPECS: ReadonlyArray<Spec> = [
     tests: "specs/paykit/controls_test.qnt",
     testMain: "controls_test",
     maxSteps: 25,
+  },
+  {
+    file: "specs/paykit/entities.qnt",
+    invariants: ["entitiesInvariant"],
+    witnesses: [
+      "entityAttached",
+      "entityPlan",
+      "entityGranted",
+      "pooledGranted",
+      "poolDrawnByTwoEntities",
+      "ownSpent",
+      "transferred",
+      "archived",
+      "expiredAtClose",
+      "lifetimeSurvivedClose",
+    ],
+    tests: "specs/paykit/entities_test.qnt",
+    testMain: "entities_test",
+    maxSteps: 30,
   },
   {
     file: "specs/paykit/money.qnt",

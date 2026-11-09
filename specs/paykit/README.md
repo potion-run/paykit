@@ -1,8 +1,9 @@
 # The paykit models
 
 One Quint model per **protocol**, not one per file ([ADR 0034](../../docs/adr/0034-one-quint-model-per-protocol.md)).
-The eight models are the machines `src/Subscription` implements, with the money and the clock
-abstracted:
+The nine models are the billing machine, with the money and the clock abstracted: eight are the
+machines `src/Subscription` implements, and `entities.qnt` is the scope model [ADR
+0040](../../docs/adr/0040-an-entity-is-a-scope-not-a-customer.md) is about to implement.
 
 | File | Protocol | What it grounds |
 | --- | --- | --- |
@@ -12,18 +13,20 @@ abstracted:
 | [`plans.qnt`](./plans.qnt) | plan operations | attach classification, upgrade, scheduled downgrade, cancellation, uncancel, reactivation |
 | [`schedules.qnt`](./schedules.qnt) | the plan set and its phases | plan groups, the one-plan rule, the add-on, a multi-phase schedule, cancellation, the terminal close |
 | [`balances.qnt`](./balances.qnt) | the balance ledger | plan, rollover, expiring and lifetime grants; deduction order; what a close and a plan change preserve |
+| [`entities.qnt`](./entities.qnt) | the entity scopes | a child scope's plans and balances, the shared pool, the transfer, what an archive returns |
 | [`money.qnt`](./money.qnt) | the money facts | refunds, reversals, tier and quantity proration invoices |
 | [`controls.qnt`](./controls.qnt) | customer controls | the spend ceiling, the usage alerts that never refuse, and what a close preserves |
 
-The first is the original spend model; the next seven were added by the lifecycle audit recorded in
-[`FINDINGS.md`](./FINDINGS.md), by the plan/balance API and by customer controls. The findings are
-the review before any fix; the models are the ground truth for what the fixes should make true.
+The first is the original spend model; the next eight were added by the lifecycle audit recorded in
+[`FINDINGS.md`](./FINDINGS.md), the plan/balance API, customer controls and the entity slice. The
+findings are the review before any fix; the models are the ground truth for what the fixes should
+make true.
 
 ```sh
 pnpm spec          # typecheck every module, then simulate every invariant with its witnesses
 pnpm spec:test     # the named scenarios in every *_test.qnt
-pnpm spec:mutants  # break one rule at a time across all eight models and prove an invariant notices
-pnpm spec:coverage # hold the eight models' actions against every command
+pnpm spec:mutants  # break one rule at a time across all nine models and prove an invariant notices
+pnpm spec:coverage # hold the nine models' actions against every command
 ```
 
 ## Run it
@@ -58,7 +61,8 @@ the rest became checkable.
 | per-feature reset windows | `resetAt`, `ResetAllowance`, `AllowanceRollover.policy.ts` | `windows.qnt` | modelled |
 | quantity (seat) state | `quantities`, `SetQuantity`, seat usage | `windows.qnt` | modelled (purchased vs occupied) |
 | balance grants and expiry | `grants`, `GrantBalance`, `ExpireGrant`, `BalanceExpiry` | `balances.qnt` | modelled |
-| customer spend ceiling and usage alerts | `controls`, `SetBillingControls`, `UsageAlertReached` | `controls.qnt` | modelled |
+| customer spend ceiling and usage alerts | `controls`, `SetBillingControls`, `UsageAlertFired` | `controls.qnt` | modelled |
+| entity scope, pool and transfer | `Entity` in ADR 0035, no code yet | `entities.qnt` | modelled (ADR 0040) |
 | tier proration state | `proration`, `prorationId`, `ChangeTier`, `RecordProrationInvoice` | `money.qnt` | modelled |
 | quantity proration state | `quantityProrations`, `SetQuantity`, `RecordQuantityProrationInvoice` | `money.qnt` | modelled |
 | refund and reversal state | `charged`, `refunded`, `refunds`, `Refund`, `ReverseRefund` | `money.qnt` | modelled |
@@ -262,6 +266,56 @@ The model collapses credits into the plan source. A credit-priced feature's pool
 `credits` + `prepaidCredits` in the code; its `Balance.breakdown` is derived from those two, not
 from a stored source. That is the next refinement, not a rule this model states.
 
+## The entities and the transfer (`entities.qnt`)
+
+One customer with a parent scope and two child entities. An entity has its own plan and lifetime
+sources; the parent owns one pooled item that every attached entity draws on. A transfer moves units
+between two scopes of the customer and records one event. The model gives the customer one period,
+so a plan-class transfer has the same deadline on both ends; per-scope reset intervals are
+`windows.qnt`'s protocol.
+
+| Action | Source | Event |
+| --- | --- | --- |
+| `attachEntity` | the entity create operation (planned) | `EntityAttached` |
+| `archiveEntity` | the entity archive operation (planned) | `EntityArchived` (carries `returned`) |
+| `attachPlan` | `Subscribe` / the entity branch of attach | `PlanChanged` |
+| `grant` | `GrantBalance` | `BalanceGranted` |
+| `spend` | `TrackUsage` | `UsageRecorded` |
+| `transfer` | `Transfer` (planned; ADR 0040) | `BalanceTransferred` |
+| `closePeriod` | `ClosePeriod` | `UsageReset` / `PlanItemReset` |
+| `tick` | the platform clock | — |
+
+| Invariant | What it says | ADR |
+| --- | --- | --- |
+| `scopedConservation` | a scope's own balance is its grants less its spend, expiry and transfer-out; a spend that debits a sibling breaks it even though the total adds up | 0035, 0037 |
+| `lifetimeConserved` | a lifetime grant's units are held or spent, never removed by a close, a transfer or an archive | 0037 |
+| `totalConservedAcrossScopes` | the customer's remaining, spent, expired and pooled units equal what it was granted; a transfer moves units and changes nothing | 0040 |
+| `entityBalancesNonNegative` | no scope and no pool goes below zero | 0040 |
+| `transferStaysInsideOneCustomer` | both endpoints of every recorded transfer belong to this customer | 0040 |
+| `pooledGrantShared` | every attached scope reports the same pooled remaining, so one scope's spend lowers the sibling's | 0040 |
+| `archivedEntityHoldsNothing` | an archived entity has no plan, no grant and no pooled row | 0040 |
+| `spendOnlyFromOwnOrPooled` | a scope reaches the shared pool only after its own sources are empty; it has no third source | 0037, 0040 |
+| `noSpendAfterArchive` | nothing leaves an archived scope | 0040 |
+
+A pooled source is one number owned by the parent. The model keeps a per-scope `poolView` beside it,
+which is the row `Balance.breakdown` shows an entity: the invariant is that every attached scope's
+view is the same pool, so a scope that kept a private copy fails. An archived entity's view is zero.
+
+What the slice deliberately leaves out:
+
+- **Occupancy.** A seat's `purchased`/`occupied` is `windows.qnt`; `EntityHasOccupancy` is an ADR
+  rule, not an action here, because the transfer decision is about balance units, not seats.
+- **Credits.** A credit system is one pool per customer (ADR 0002); the model has no credit feature
+  and the ADR refuses `TransferOfCreditSystem`.
+- **Rollover.** The plan class collapses plan and rollover; `balances.qnt` owns the rollover cap and
+  the expiry order within a class.
+- **Per-scope periods.** Every scope closes with the customer, so a transfer preserves one deadline.
+  The ADR's "never extend a deadline" rule is what a per-scope period would have to implement.
+- **Entity commands.** `attachEntity`, `archiveEntity` and `transfer` are modelled before their
+  `*.command.ts` exists, so they are named in `scripts/spec-coverage.ts`'s `MACHINE_ACTIONS` rather
+  than in a command row. The row for each lands with its command: `CreateEntity` / `ArchiveEntity`
+  for the two lifecycle actions, `Transfer` for the transfer.
+
 ## The money (`money.qnt`)
 
 | Action | Source | Event |
@@ -285,12 +339,12 @@ its due. `canInvoiceQuantity` adds the one the implementation's command layer is
 
 ## The mutants
 
-`pnpm spec:mutants` kills 63 mutants across the eight models: 17 for the spend path, 3 for the
+`pnpm spec:mutants` kills 72 mutants across the nine models: 17 for the spend path, 3 for the
 standing, 6 for the windows, 4 for the plan operations, 13 for the plan set and its schedules, 7 for
-the balance ledger, 7 for the money protocol and 6 for customer controls. Each mutant is a textual
-replacement and
-the gate fails when an invariant **survives** it. The new models' mutants are the same discipline as
-the original: an invariant with nothing behind it is a claim, not a check.
+the balance ledger, 9 for the entities, 7 for the money protocol and 6 for customer controls. Each
+mutant is a textual replacement and the gate fails when an invariant **survives** it. The new
+models' mutants are the same discipline as the original: an invariant with nothing behind it is a
+claim, not a check.
 
 One rule is **not** an invariant: "a terminal standing may not settle". It conserves every counter,
 so only `cancelRefusesSettleTest` catches it — the two halves check different things on purpose.
