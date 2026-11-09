@@ -1,6 +1,6 @@
 {
   "files": [],
-  "exclude": ["node_modules", "dist", "lib", ".agent_sources", ".agent-sources"],
+  "exclude": ["node_modules", "dist", "lib", ".agent_sources", ".agent-sources", "specs"],
   "references": [
     {
       "path": "./packages/paykit-polar"

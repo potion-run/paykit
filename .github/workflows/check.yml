@@ -54,6 +54,12 @@ jobs:
       - name: Test
         run: pnpm test
 
+      # The Quint model is a gate, not a proof: it typechecks, simulates ten
+      # thousand traces with every invariant, and runs the named scenarios.
+      # `quint verify` needs a JVM, so it is not here.
+      - name: Check the paykit model
+        run: pnpm spec && pnpm spec:coverage && pnpm spec:mutants && pnpm spec:test
+
       # The docs site is an app, not a published package. Build it after the
       # library gates so a broken package fails first, then run Nimbus's
       # preflight against the built output.

@@ -34,6 +34,8 @@ export default defineConfig({
     // The vendored anti-slop plugin is upstream source; its provenance record
     // is `tools/oxlint/anti-slop/UPSTREAM.md`.
     "tools/oxlint/anti-slop/**",
+    // Quint models are laid out by `quint`, which has no oxfmt integration.
+    "specs/**",
     "**/*.md",
     "**/*.mdx",
     // TanStack Router owns this file: it is emitted with single quotes and no

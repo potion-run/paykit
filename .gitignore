@@ -12,6 +12,12 @@ coverage/
 .tmp/
 *.tgz
 
+# Quint's by-products: Apalache's scratch directory and the ITF traces
+# `--out-itf` writes. The models themselves are checked in.
+_apalache-out/
+*.itf.json
+*.itf
+
 # Husky's generated hooks; the hook we author is checked in.
 .husky/_
 !.husky/pre-commit

@@ -14,6 +14,9 @@ packages:
 # does not need.
 allowBuilds:
   esbuild: true
+  # quint depends on protobufjs; its postinstall only wires the protobufjs CLI,
+  # which no gate here runs.
+  protobufjs: false
   sharp: false
   workerd: true
   "@scarf/scarf": false
@@ -41,6 +44,9 @@ catalog:
   "@foldkit/devtools": "^0.170.0"
   "@foldkit/ui": "^0.170.0"
   "@foldkit/vite-plugin": "^0.29.0"
+  # The Quint CLI checks the models under `specs/`. It is a dev-only tool: the
+  # specs are not published, so nothing in `packages/*` depends on it.
+  "@informalsystems/quint": "0.33.1"
   "@tanstack/react-router": "^1.170.46"
   "@tanstack/react-start": "^1.169.4"
   "@types/bun": "1.4.4"
