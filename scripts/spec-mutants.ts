@@ -404,12 +404,103 @@ const BALANCES_MUTANTS: ReadonlyArray<Mutant> = [
   },
 ];
 
+const ENTITIES_MUTANTS: ReadonlyArray<Mutant> = [
+  {
+    name: "transfer-creates-units",
+    invariant: "totalConservedAcrossScopes",
+    from: "      plan: s.plan.set(from, s.plan.get(from) - fromPlan).set(target, s.plan.get(target) + fromPlan),",
+    to: "      plan: s.plan.set(from, s.plan.get(from) - fromPlan),",
+    why: "a transfer that debits the source without crediting the target",
+  },
+  {
+    name: "transfer-overdraws-the-source",
+    invariant: "entityBalancesNonNegative",
+    from: "    amount <= ownOf(state, from),",
+    to: "    true,",
+    why: "a transfer for more than the source owns, borrowing from nowhere",
+  },
+  {
+    name: "transfer-crosses-customers",
+    invariant: "transferStaysInsideOneCustomer",
+    from:
+      "  action transfer(from: Scope, target: Scope, amount: int): bool = all {\n" +
+      "    owns(from),\n" +
+      "    owns(target),",
+    to:
+      "  action transfer(from: Scope, target: Scope, amount: int): bool = all {\n" +
+      "    true,\n" +
+      "    true,",
+    why: "a transfer whose endpoints are not both scopes of this customer",
+  },
+  {
+    name: "pool-reported-only-at-the-parent",
+    invariant: "pooledGrantShared",
+    from: "      if (attached(s, scope)) acc.set(scope, poolAfter) else acc.set(scope, 0)),",
+    to: "      if (scope == Parent) acc.set(scope, poolAfter) else acc.set(scope, 0)),",
+    why: "a pool reported on the parent while every entity keeps a stale copy",
+  },
+  {
+    name: "archive-keeps-the-balance",
+    invariant: "archivedEntityHoldsNothing",
+    from: "      plan: s.plan.set(scope, 0).set(Parent, s.plan.get(Parent) + movedPlan),",
+    to: "      plan: s.plan.set(Parent, s.plan.get(Parent) + movedPlan),",
+    why: "an archive that copies the entity's plan to the parent without emptying it",
+  },
+  {
+    name: "spend-reaches-the-pool-first",
+    invariant: "spendOnlyFromOwnOrPooled",
+    from:
+      "    val fromPlan = if (amount <= s.plan.get(scope)) amount else s.plan.get(scope)\n" +
+      "    val afterPlan = amount - fromPlan\n" +
+      "    val fromGrant = if (afterPlan <= s.grant.get(scope)) afterPlan else s.grant.get(scope)\n" +
+      "    val afterOwn = afterPlan - fromGrant\n" +
+      "    val fromPool = afterOwn",
+    to:
+      "    val fromPlan = 0\n" +
+      "    val fromGrant = 0\n" +
+      "    val fromPool = amount\n" +
+      "    val afterOwn = amount",
+    why: "a spend that draws the shared pool while the scope still holds its own units",
+  },
+  {
+    name: "spend-after-archive",
+    invariant: "noSpendAfterArchive",
+    from:
+      "  action spend(scope: Scope, amount: int): bool = all {\n" +
+      "    owns(scope),\n" +
+      "    attached(state, scope),",
+    to:
+      "  action spend(scope: Scope, amount: int): bool = all {\n" +
+      "    owns(scope),\n" +
+      "    true,",
+    why: "a spend that an archived entity can still draw from the shared pool",
+  },
+  {
+    name: "spend-debits-the-parent",
+    invariant: "scopedConservation",
+    from: "      plan: s.plan.set(scope, s.plan.get(scope) - fromPlan),",
+    to: "      plan: s.plan.set(Parent, s.plan.get(Parent) - fromPlan),",
+    why: "a spend that charges the customer's source instead of the spending scope's",
+  },
+  {
+    name: "close-zeros-the-lifetime-grant",
+    invariant: "lifetimeConserved",
+    from: "      expired: expiredPlans,\n      plan: resetPlans,",
+    to:
+      "      expired: expiredPlans,\n" +
+      "      plan: resetPlans,\n" +
+      "      grant: SCOPES.fold(s.grant, (acc, scope) => acc.set(scope, 0)),",
+    why: "a close that empties a lifetime grant along with the plan source",
+  },
+];
+
 const SPECS: ReadonlyArray<SpecMutants> = [
   { file: SPEC, maxSteps: 30, mutants: PAYKIT_MUTANTS },
   { file: "specs/paykit/standing.qnt", maxSteps: 30, mutants: STANDING_MUTANTS },
   { file: "specs/paykit/windows.qnt", maxSteps: 20, mutants: WINDOWS_MUTANTS },
   { file: "specs/paykit/plans.qnt", maxSteps: 30, mutants: PLANS_MUTANTS },
   { file: "specs/paykit/balances.qnt", maxSteps: 30, mutants: BALANCES_MUTANTS },
+  { file: "specs/paykit/entities.qnt", maxSteps: 30, mutants: ENTITIES_MUTANTS },
   { file: "specs/paykit/money.qnt", maxSteps: 30, mutants: MONEY_MUTANTS },
 ];
 

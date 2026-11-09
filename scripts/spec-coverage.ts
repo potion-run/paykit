@@ -5,8 +5,9 @@
 //
 // `specs/paykit` is one model per protocol, not one per file: `paykit.qnt` is
 // the spend path, `standing.qnt` the phase machine, `windows.qnt` the clocks the
-// period does not own, and `money.qnt` the money facts. A command can be
-// modelled in more than one protocol (a purchase is a phase reset and a pool
+// period does not own, `balances.qnt` the sources behind one count, `entities.qnt`
+// the scopes under one customer, and `money.qnt` the money facts. A command can
+// be modelled in more than one protocol (a purchase is a phase reset and a pool
 // grant), and a command can be deliberately out of every slice. The table below
 // is that decision written down; this gate fails when the code and the table
 // disagree in either direction:
@@ -33,6 +34,7 @@ const SPEC_FILES = {
   windows: "specs/paykit/windows.qnt",
   plans: "specs/paykit/plans.qnt",
   balances: "specs/paykit/balances.qnt",
+  entities: "specs/paykit/entities.qnt",
   money: "specs/paykit/money.qnt",
 } as const;
 
@@ -51,12 +53,17 @@ type Coverage = Partial<Record<SpecName, ReadonlyArray<string>>>;
 const SPEC_COVERAGE = {
   // ── the spend path ─────────────────────────────────────────────────────────
   Hold: { paykit: ["hold"], balances: ["spend"] },
-  GrantBalance: { balances: ["createGrant"] },
+  GrantBalance: { balances: ["createGrant"], entities: ["grant"] },
   ExpireGrant: { balances: ["expireGrant"] },
   HoldElapsed: { paykit: ["expireHold"] },
   ReleaseHold: { paykit: ["releaseHold"] },
   SettleHold: { paykit: ["settleHold"] },
-  TrackUsage: { paykit: ["trackUsage"], windows: ["track"], balances: ["spend"] },
+  TrackUsage: {
+    paykit: ["trackUsage"],
+    windows: ["track"],
+    balances: ["spend"],
+    entities: ["spend"],
+  },
   ConsumeCredits: {
     paykit: ["consumeCredits"],
     standing: ["spendCredits"],
@@ -65,7 +72,12 @@ const SPEC_COVERAGE = {
 
   // ── the phase machine ──────────────────────────────────────────────────────
   StartTrial: { standing: ["startTrial"] },
-  Subscribe: { paykit: ["subscribe"], standing: ["subscribe"], plans: ["attach"] },
+  Subscribe: {
+    paykit: ["subscribe"],
+    standing: ["subscribe"],
+    plans: ["attach"],
+    entities: ["attachPlan"],
+  },
   ExtendTrial: { standing: ["extendTrial"] },
   EnterGrace: { paykit: ["enterGrace"], standing: ["enterGrace"] },
   RecordPayment: { standing: ["recordPayment"], money: ["charge"] },
@@ -98,6 +110,7 @@ const SPEC_COVERAGE = {
     windows: ["closePeriod"],
     plans: ["close"],
     balances: ["closePeriod"],
+    entities: ["closePeriod"],
   },
   PeriodEnded: {
     paykit: ["closePeriod"],
@@ -132,6 +145,13 @@ const SPEC_COVERAGE = {
  * Actions that are part of a machine rather than of the protocol: the entry
  * points, the clock a policy runs on, and a scheduler's choice among queued
  * rungs. They are named here rather than in a command row.
+ *
+ * `entities` is the one planned exception. `attachEntity`, `archiveEntity` and
+ * `transfer` are modelled by ADR 0040 before their commands land, so they have
+ * no `*.command.ts` to name them. Each joins a command row the moment its
+ * command exists; until then naming them here is what keeps the action
+ * accounted for without inventing a row for a file that is not there. The
+ * README says the same thing beside the model.
  */
 const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   paykit: ["init", "step", "tick"],
@@ -139,6 +159,7 @@ const MACHINE_ACTIONS: Readonly<Record<SpecName, ReadonlyArray<string>>> = {
   windows: ["init", "step", "tick", "fireAnyRung"],
   plans: ["init", "step", "tick", "cancelImmediately"],
   balances: ["init", "step", "tick"],
+  entities: ["init", "step", "tick", "attachEntity", "archiveEntity", "transfer"],
   money: ["init", "step"],
 };
 

@@ -74,16 +74,18 @@ when a provider will not collect a refill, and `RefundReversed`, when a provider
 Both are evidence that moves no counter, and both fold into the timeline.
 
 The billing machine is modelled in Quint ([ADR
-0034](./adr/0034-one-quint-model-per-protocol.md)) as six protocols: `specs/paykit/paykit.qnt` is
+0034](./adr/0034-one-quint-model-per-protocol.md)) as seven protocols: `specs/paykit/paykit.qnt` is
 the spend path, `standing.qnt` the phase machine (trial, grace, dunning, cancellation, a scheduled
 tier change and the refill budget), `windows.qnt` the clocks the period does not own (reset windows,
 seats, cooldowns and retry rungs), `plans.qnt` the attach/update plan operation, `balances.qnt` the
-sources behind one count and the order a spend consumes them, and `money.qnt` the refund, reversal
-and proration-invoice identity rules. `pnpm spec` simulates every invariant with its witnesses on
-every push; `pnpm spec:test` runs six scenario modules; `scripts/spec-mutants.ts` kills 44 mutants
-across the six, so no invariant can survive as a tautology; `scripts/spec-coverage.ts` holds all 39
-commands against the six action tables, so a command lands modelled or with a written reason. Three spend-path findings
-are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
+sources behind one count and the order a spend consumes them, `entities.qnt` the child scopes, the
+shared pool, the transfer and the archive ([ADR
+0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)), and `money.qnt` the refund, reversal and
+proration-invoice identity rules. `pnpm spec` simulates every invariant with its witnesses on
+every push; `pnpm spec:test` runs seven scenario modules; `scripts/spec-mutants.ts` kills 53 mutants
+across the seven, so no invariant can survive as a tautology; `scripts/spec-coverage.ts` holds all 39
+commands against the seven action tables, so a command lands modelled or with a written reason.
+Three spend-path findings are still recorded rather than fixed: a credit-priced feature's stored `remaining` is stale after
 `ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
 `used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
 are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md); they are review, not yet fixed.
@@ -165,10 +167,13 @@ The next work is the API migration, not another command. The order is:
    is the next model (`controls.qnt`).
 6. **Multiple plans and schedules** — one plan per group, add-ons stack, multi-phase schedules,
    `multiAttach` / `multiUpdate`.
-7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`.
+7. **Entities and transfer** — entity-scoped plans and balances, `billing.transfer`. The ADR
+   ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)) and `entities.qnt` are in; the
+   implementation is the remaining work.
 
 Each step starts with its Quint model and its named scenarios. The command coverage table is not
-the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated `windows.qnt` are.
+the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` and the updated
+`windows.qnt` are.
 
 **Immediate next actions**
 
@@ -185,8 +190,10 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt` and the updated 
 - Landed: Phase 4's balance sources. `balances.qnt` and its scenarios are green; grants are a real
   source in state and on the read model, `balances.create` creates a lifetime or expiring grant,
   the plan and rollover are spent before a grant, and a lifetime grant survives a close and a plan
-  change. `BalanceExpiry` schedules `ExpireGrant` at a grant's deadline. The next slice is customer
-  controls (`controls.qnt`), then multiple plans/schedules and entities.
+  change. `BalanceExpiry` schedules `ExpireGrant` at a grant's deadline. The next model is customer
+  controls (`controls.qnt`), then multiple plans/schedules; the entities model and ADR are in
+  ([0040](./adr/0040-an-entity-is-a-scope-not-a-customer.md)), so item 7's remaining work is the
+  implementation.
 
 ### 1. The remaining surfaces
 
