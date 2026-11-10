@@ -18,8 +18,8 @@ import type {
 } from "@alchemy.run/domain/Platform";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { KeyedLock } from "./KeyedLock.ts";
 import {
   asyncOf,
   type SqlAsync,
@@ -54,6 +54,17 @@ export interface SqlConsumerOptions {
 }
 
 const DEFAULT_POLL = 250;
+
+/**
+ * How many keys a view remembers as already caught up before it forgets the
+ * oldest.
+ *
+ * The set is only a fast path — "this key already has a snapshot at this
+ * generation" — so a miss is safe: the key re-reads its snapshot and marks
+ * itself again. Bounding it keeps a long-lived host's per-view memory constant
+ * instead of one string per account it has ever served.
+ */
+export const CAUGHT_UP_CAP = 1024;
 
 interface StoredSnapshot {
   readonly snapshot: ViewSnapshot;
@@ -95,7 +106,17 @@ const scopeOf = (options: SqlConsumerOptions, dialect: SqlDialect): TableScope =
 export const SqlViewStore = (
   executor: SqlExecutor,
   options: SqlConsumerOptions,
-): Effect.Effect<{ store: ViewStore; bind: (kit: ViewKit) => ViewStore }> =>
+): Effect.Effect<{
+  store: ViewStore;
+  bind: (kit: ViewKit) => ViewStore;
+  /** Diagnostics for a test; not part of the `ViewStore` the kernel binds. */
+  readonly diagnostics: {
+    /** How many keys currently hold a lock entry. */
+    readonly lockSize: () => number;
+    /** How many keys the catch-up fast path currently remembers. */
+    readonly caughtUpSize: () => number;
+  };
+}> =>
   Effect.sync(() => {
     const sql: SqlAsync = asyncOf(executor);
     const table = (logical: string) => tableName(logical, scopeOf(options, executor.dialect));
@@ -109,24 +130,27 @@ export const SqlViewStore = (
     // A key's fold is single-writer. The lock also keeps a lazy key's catch-up
     // from racing the live delivery that happens to arrive while it reads its
     // source: both would read the same snapshot and the later write would drop
-    // the other's events.
-    const locks = new Map<string, Semaphore.Semaphore>();
-
-    const lockFor = (key: string): Semaphore.Semaphore => {
-      const found = locks.get(key);
-
-      if (found !== undefined) return found;
-      const made = Semaphore.makeUnsafe(1);
-      locks.set(key, made);
-
-      return made;
-    };
+    // the other's events. The lock drops an entry once no fiber holds or waits
+    // on it, so a host that serves every account does not grow a semaphore per
+    // account.
+    const locks = KeyedLock();
 
     const withKey = <A, E, R>(key: string, effect: Effect.Effect<A, E, R>) =>
-      lockFor(key).withPermits(1)(effect);
+      locks.withKey(key, effect);
 
     /** A key whose catch-up this process has already performed. */
     const caughtUp = new Set<string>();
+
+    const rememberCaughtUp = (marker: string): void => {
+      caughtUp.add(marker);
+
+      if (caughtUp.size <= CAUGHT_UP_CAP) return;
+      // Insertion order is the eviction order; re-marking a present key does
+      // not move it, so the oldest marker is the one deleted.
+      const oldest = caughtUp.values().next().value;
+
+      if (oldest !== undefined) caughtUp.delete(oldest);
+    };
 
     const readSnapshot = (key: string, generation: number) =>
       Effect.map(
@@ -164,6 +188,20 @@ export const SqlViewStore = (
             stored,
           };
         },
+      );
+
+    /**
+     * The version `readSnapshot` would report for this generation, without
+     * decoding the snapshot. A missing row and a row from another generation
+     * are both version 0, exactly as `readSnapshot` describes them.
+     */
+    const storedVersion = (key: string, generation: number) =>
+      Effect.map(
+        sql.get<{ version: number | string }>(
+          `SELECT version FROM ${state} WHERE view = ? AND key = ? AND generation = ?`,
+          [view, key, generation],
+        ),
+        (row) => (row === undefined ? 0 : Number(row.version)),
       );
 
     const storedGeneration = (key: string) =>
@@ -457,7 +495,7 @@ export const SqlViewStore = (
         const { snapshot, stored } = yield* readSnapshot(key, generation);
 
         if (stored === generation && snapshot.version > 0) {
-          caughtUp.add(marker);
+          rememberCaughtUp(marker);
 
           return;
         }
@@ -473,7 +511,7 @@ export const SqlViewStore = (
           );
         }
 
-        caughtUp.add(marker);
+        rememberCaughtUp(marker);
       }).pipe(Effect.orDie);
 
     const store: ViewStore = {
@@ -503,8 +541,13 @@ export const SqlViewStore = (
           }),
         ).pipe(Effect.orDie),
 
-      changes: (key) =>
-        poll(pollMillis).pipe(
+      changes: (key) => {
+        // Per subscriber: the version it last emitted. An idle tick reads one
+        // small column and skips the snapshot; only a moved version pays for
+        // the row, whose parse is what the old `changesWith` then dropped.
+        let last: number | undefined;
+
+        return poll(pollMillis).pipe(
           Stream.mapEffect(() =>
             withKey(
               key,
@@ -514,14 +557,21 @@ export const SqlViewStore = (
                 if (bound === undefined)
                   return yield* Effect.die("view store used before it was built");
                 yield* ensureCaughtUp(key);
+                const version = yield* storedVersion(key, bound.generation);
 
-                return (yield* readSnapshot(key, bound.generation)).snapshot;
+                if (version === last) return undefined;
+                const snapshot = (yield* readSnapshot(key, bound.generation)).snapshot;
+
+                last = snapshot.version;
+
+                return snapshot;
               }),
             ),
           ),
-          Stream.changesWith((left, right) => left.version === right.version),
+          Stream.filter((snapshot): snapshot is ViewSnapshot => snapshot !== undefined),
           Stream.orDie,
-        ),
+        );
+      },
 
       list: (key) =>
         withKey(
@@ -582,6 +632,15 @@ export const SqlViewStore = (
         kit = built;
 
         return store;
+      },
+      /**
+       * Diagnostics for a test: how many keys hold a lock entry and how many
+       * caught-up markers the view remembers. Neither is part of `ViewStore`,
+       * and nothing outside a test reads them.
+       */
+      diagnostics: {
+        lockSize: () => locks.size(),
+        caughtUpSize: () => caughtUp.size,
       },
     };
   });
@@ -869,6 +928,19 @@ export const SqlStreamStore = (
     const after = (origin: readonly [number, number], last: readonly [number, number]): boolean =>
       origin[0] > last[0] || (origin[0] === last[0] && origin[1] > last[1]);
 
+    /**
+     * The sequence `read` would report, without decoding the checkpoints. A
+     * missing row is sequence 0, exactly as `read` describes it.
+     */
+    const storedSeq = (key: string) =>
+      Effect.map(
+        sql.get<{ seq: number | string }>(
+          `SELECT seq FROM ${metaTable} WHERE stream = ? AND key = ?`,
+          [stream, key],
+        ),
+        (row) => (row === undefined ? 0 : Number(row.seq)),
+      );
+
     // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
     const entries = (key: string, after?: number) =>
       Effect.map(
@@ -932,12 +1004,29 @@ export const SqlStreamStore = (
 
       read: (key) => read(key).pipe(Effect.orDie),
 
-      changes: (key) =>
-        poll(pollMillis).pipe(
-          Stream.mapEffect(() => read(key)),
-          Stream.changesWith((left, right) => left.seq === right.seq),
-          Stream.orDie,
-        ),
+      changes: (key) => {
+        // Per subscriber: the sequence it last emitted. An idle tick reads one
+        // integer rather than parsing the meta row, and `advance` moving only
+        // checkpoints keeps moving `seq` not at all — the same value the old
+        // `changesWith` kept.
+        let last: number | undefined;
+
+        return poll(pollMillis).pipe(
+          Stream.mapEffect(() =>
+            Effect.gen(function* () {
+              const seq = yield* storedSeq(key);
+
+              if (seq === last) return undefined;
+              const meta = yield* read(key);
+
+              last = meta.seq;
+
+              return meta;
+            }).pipe(Effect.orDie),
+          ),
+          Stream.filter((meta): meta is StreamMeta => meta !== undefined),
+        );
+      },
 
       list: (key) => entries(key).pipe(Effect.orDie),
 

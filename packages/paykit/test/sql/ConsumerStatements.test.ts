@@ -1,10 +1,13 @@
 import { Database } from "bun:sqlite";
 import type { Delivery, ViewEntry, ViewSnapshot } from "@alchemy.run/domain/Platform";
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import { migrate } from "../../src/Migrations/index.ts";
 import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
-import { SqlViewStore } from "../../src/Store/SqlConsumers.ts";
+import { CAUGHT_UP_CAP, SqlViewStore } from "../../src/Store/SqlConsumers.ts";
 import { BILLING_TABLES } from "../../src/Store/Tables.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
@@ -32,6 +35,12 @@ const delivery = (seq: number, source = `Account/${KEY}`, generation = 1): Deliv
 
 const countOf = (snapshot: ViewSnapshot): number =>
   snapshot.state === null ? 0 : (snapshot.state as { readonly count: number }).count;
+
+/** The same delivery, for a key other than the shared fixture's. */
+const keyedDelivery = (key: string, seq: number, generation = 1): Delivery => ({
+  ...delivery(seq, `Account/${key}`, generation),
+  key,
+});
 
 /** A kit that folds each delivery into a count and emits one entry for it. */
 const foldKit = (
@@ -289,6 +298,107 @@ describe("the statements a view store sends", () => {
             KEY,
           ]),
         ).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.effect("drops every lock entry once 300 distinct keys are written", () =>
+    withWorld(({ sql }) =>
+      Effect.gen(function* () {
+        const view = yield* SqlViewStore(sql, { name: VIEW, now: () => AT });
+        const store = view.bind(foldKit(1) as never);
+        const keys = Array.from({ length: 300 }, (_, index) => `${KEY}_${index}`);
+
+        for (const [index, key] of keys.entries()) {
+          yield* store.receive(key, [keyedDelivery(key, index + 1)]);
+        }
+
+        // Each receive took a reference to its key and released it; nothing
+        // here should still hold a semaphore for an account it has finished.
+        expect(view.diagnostics.lockSize()).toBe(0);
+
+        const snapshot = yield* store.read(keys[42]!);
+
+        expect(snapshot.version).toBe(1);
+        expect(countOf(snapshot)).toBe(1);
+      }),
+    ),
+  );
+
+  it.effect("bounds the caught-up markers and re-reads a key it forgot", () =>
+    withWorld(({ sql, reads }) =>
+      Effect.gen(function* () {
+        const view = yield* SqlViewStore(sql, { name: VIEW, now: () => AT });
+
+        const store = view.bind({
+          ...foldKit(1),
+          catchUp: { source: "Account" },
+        } as never);
+
+        // The first key touched is the oldest marker, so a sweep past the cap
+        // is what forgets it.
+        yield* store.receive(KEY, [delivery(1)]);
+
+        const keys = Array.from(
+          { length: CAUGHT_UP_CAP + 50 },
+          (_, index) => `${KEY}_touched_${index}`,
+        );
+
+        for (const key of keys) yield* store.read(key);
+
+        expect(view.diagnostics.caughtUpSize()).toBe(CAUGHT_UP_CAP);
+
+        const stateReads = () =>
+          reads.filter((statement) => statement.includes(BILLING_TABLES.viewState)).length;
+
+        // A key still in the fast path answers from the snapshot it reads once.
+        const warmBefore = stateReads();
+
+        yield* store.read(keys[keys.length - 1]!);
+        expect(stateReads() - warmBefore).toBe(1);
+
+        // A forgotten key re-reads the snapshot in `ensureCaughtUp` and marks
+        // itself again; a miss costs a read, never a wrong answer.
+        const forgottenBefore = stateReads();
+        const snapshot = yield* store.read(KEY);
+
+        expect(stateReads() - forgottenBefore).toBe(2);
+        expect(snapshot.version).toBe(1);
+        expect(countOf(snapshot)).toBe(1);
+        expect(view.diagnostics.caughtUpSize()).toBe(CAUGHT_UP_CAP);
+      }),
+    ),
+  );
+
+  it.live("changes emits the current value, then one value per another writer's commit", () =>
+    withWorld(({ sql }) =>
+      Effect.gen(function* () {
+        const reader = yield* SqlViewStore(sql, { name: VIEW, now: () => AT, pollMillis: 5 });
+        const writer = yield* SqlViewStore(sql, { name: VIEW, now: () => AT, pollMillis: 5 });
+        const subscriber = reader.bind(foldKit(1) as never);
+        const publisher = writer.bind(foldKit(1) as never);
+        const first = yield* Deferred.make<void>();
+
+        const watched = subscriber.changes(KEY).pipe(
+          Stream.tap((snapshot) =>
+            snapshot.version === 0 ? Deferred.succeed(first, undefined) : Effect.void,
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+        );
+
+        const fiber = yield* Effect.forkChild(watched);
+
+        // The first value is the snapshot as it stands, before any write.
+        yield* Deferred.await(first);
+        // A second store over the same database: a cheap version read that
+        // only looked in this instance's memory would never see this commit.
+        yield* publisher.receive(KEY, [delivery(1)]);
+
+        const emitted = Array.from(yield* Fiber.join(fiber));
+
+        expect(emitted.map((snapshot) => snapshot.version)).toEqual([0, 1]);
+        expect(emitted.map(countOf)).toEqual([0, 1]);
       }),
     ),
   );
