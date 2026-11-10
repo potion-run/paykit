@@ -136,10 +136,14 @@ the field the implementation does not have (finding F5).
 ## The plan operations (`plans.qnt`)
 
 `attach` turns one request into an activation, an immediate upgrade, a scheduled downgrade or a
-no-op. A downgrade waits for the boundary unless the caller asks for it now. `update` carries the
-cancellation, the uncancel and the immediate cancellation. The model keeps one active plan; the plan
-set, its groups and the multi-phase schedule are [`schedules.qnt`](./schedules.qnt), and this model
-is the classification an operation performs before either writes.
+no-op. A downgrade waits for the boundary unless the caller asks for it now. A request for the plan
+already held at an older generation is disabled rather than scheduled or applied: the aggregate
+refuses it with `PlanVersionStale` (ADR 0047 §5), and `staleVersionIsRefusedTest` and
+`staleVersionImmediateIsRefusedTest` pin both the boundary and the immediate request. The same
+generation is still the no-op `sameGenerationIsNoopTest` pins. `update` carries the cancellation,
+the uncancel and the immediate cancellation. The model keeps one active plan; the plan set, its
+groups and the multi-phase schedule are [`schedules.qnt`](./schedules.qnt), and this model is the
+classification an operation performs before either writes.
 
 | Action | Source |
 | --- | --- |
@@ -150,8 +154,10 @@ is the classification an operation performs before either writes.
 | `close` | `ClosePeriod`, `PeriodEnded` |
 | `tick` | the platform clock |
 
-Invariants: `activePlanIsKnown`, `scheduledChangeIsADowngrade`, `pendingIsNotCurrent`,
-`terminalHasNoIntent`, `noPlanHasNoIntent`, `noPeriodPastEnd`.
+Invariants: `activePlanIsKnown`, `scheduledChangeIsNotAnUpgrade`, `pendingIsNotCurrent`,
+`terminalHasNoIntent`, `noPlanHasNoIntent`, `noPeriodPastEnd`. The stale-version refusal is not an
+invariant: it conserves every counter, so the run is the proof, because a refusal is a disabled
+action.
 
 A cancellation wins the boundary and drops a pending change. An uncancel clears whichever intent is
 pending. An immediate cancellation clears both. A canceled plan can be bought again; that is a new

@@ -146,6 +146,20 @@ module plans_test {
       .then(attach(Pro, 2, false))
       .then(attach(Pro, 2, false).fail())
 
+  // A version only moves forward: the held plan at an older generation is
+  // refused when it asks for the boundary (PlanVersionStale, ADR 0047 §5).
+  run staleVersionIsRefusedTest =
+    init
+      .then(attach(Pro, 2, false))
+      .then(attach(Pro, 1, false).fail())
+
+  // The immediate request is refused by the same rule, not treated as a
+  // deliberate downgrade.
+  run staleVersionImmediateIsRefusedTest =
+    init
+      .then(attach(Pro, 2, false))
+      .then(attach(Pro, 1, true).fail())
+
   // A generation the catalogue does not state is not attachable.
   run unknownGenerationIsRefusedTest =
     init

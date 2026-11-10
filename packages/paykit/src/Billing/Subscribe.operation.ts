@@ -20,7 +20,7 @@ import { PlanNotInCatalog } from "../Subscription/PlanNotInCatalog.rejection.ts"
 import { Subscribe as SubscribeCommand } from "../Subscription/Subscribe.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 import { isTerminalStatus } from "../Subscription/Subscription.state.ts";
-import { priceFor, samePrice, type Price } from "../Tier.ts";
+import { INITIAL_PLAN_VERSION, priceFor, samePrice, type Price } from "../Tier.ts";
 import { subscribeInputOf, withGrants } from "../TierCommand.ts";
 
 /** What `Subscribe` asks for. */
@@ -282,7 +282,9 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
                     reference,
                     terms: {
                       ...quoted,
-                      ...(version === undefined || version === 1 ? {} : { version }),
+                      ...(version === undefined || version === INITIAL_PLAN_VERSION
+                        ? {}
+                        : { version }),
                       ...(input.anchorTz === undefined ? {} : { anchorTz: input.anchorTz }),
                     },
                   },

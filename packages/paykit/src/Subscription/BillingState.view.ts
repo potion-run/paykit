@@ -7,7 +7,7 @@ import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
 import { BillingControls, CustomerDetails, EntityId, EntityStatus } from "../Customer.ts";
 import { Proration } from "../Proration.ts";
-import { Interval, Price, TopUpTerms } from "../Tier.ts";
+import { INITIAL_PLAN_VERSION, Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
   PlanRow,
   PlanSchedule,
@@ -392,7 +392,7 @@ export class BillingState extends Domain.View("BillingState", {
           plans: {
             [event.tier]: {
               planId: event.tier,
-              version: event.version ?? 1,
+              version: event.version ?? INITIAL_PLAN_VERSION,
               group: event.group ?? "default",
               addOn: event.addOn ?? false,
               allowances: event.allowances,
@@ -446,7 +446,7 @@ export class BillingState extends Domain.View("BillingState", {
           plans: {
             [event.tier]: {
               planId: event.tier,
-              version: event.version ?? 1,
+              version: event.version ?? INITIAL_PLAN_VERSION,
               group: event.group ?? "default",
               addOn: event.addOn ?? false,
               allowances: event.allowances,
@@ -495,7 +495,7 @@ export class BillingState extends Domain.View("BillingState", {
 
       const row: PlanRow = {
         planId: event.tier,
-        version: event.versionAfter ?? 1,
+        version: event.versionAfter ?? INITIAL_PLAN_VERSION,
         group: event.group ?? "default",
         addOn: event.addOn ?? false,
         allowances: event.allowances,
@@ -721,7 +721,7 @@ export class BillingState extends Domain.View("BillingState", {
           ...view,
           schedule: withPhase(view.schedule, {
             planId: event.tier,
-            version: event.version ?? 1,
+            version: event.version ?? INITIAL_PLAN_VERSION,
             group: event.group ?? "default",
             addOn: event.addOn ?? false,
             allowances: event.allowances,
