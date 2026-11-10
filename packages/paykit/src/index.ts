@@ -275,6 +275,7 @@ export { d1Executor } from "./Store/D1.ts";
 export type { D1Like, D1Prepared } from "./Store/D1.ts";
 
 export {
+  converge,
   MigrationError,
   MigrationHistoryConflictError,
   RewrittenMigrationHistoryError,
@@ -284,9 +285,12 @@ export {
   migrationFingerprint,
   readMigrationFiles,
   schemaFingerprint,
+  sync,
 } from "./Migrations/index.ts";
 
 export type {
+  ConvergeOptions,
+  ConvergeResult,
   MigrationApplyError,
   MigrationFile,
   MigrationRecord,
@@ -296,9 +300,24 @@ export type {
 
 // The billing DDL as a typed description, so a tool can render or fingerprint
 // the schema without parsing a migration file.
-export { BILLING_SCHEMA, schemaStatementsOf } from "./Migrations/Schema.ts";
+export {
+  BILLING_SCHEMA,
+  indexStatement,
+  schemaStatementsOf,
+  tableStatement,
+} from "./Migrations/Schema.ts";
 
 export type { Column, ColumnType, Index, SchemaDefinition, Table } from "./Migrations/Schema.ts";
+
+// The billing database: one service, one deploy-time Action, a layer per target.
+export {
+  Database,
+  registerMigrations,
+  type DatabaseMigrate,
+  type DatabaseService,
+  type MigrateOutput,
+  type RegisterMigrationsOptions,
+} from "./Database/index.ts";
 
 // ── 2. runtime ──────────────────────────────────────────────────────────────
 /**

@@ -24,6 +24,7 @@ import {
   quoteIdentifier,
   tableName,
 } from "../Store/Tables.ts";
+import { converge } from "./Converge.ts";
 import { BILLING_SCHEMA, schemaStatementsOf, type SchemaDefinition } from "./Schema.ts";
 
 /** Where a migration's DDL is rendered: a dialect and, on Postgres, a schema. */
@@ -234,6 +235,14 @@ const describeCause = (cause: unknown): string => {
  */
 const isAsync = (sql: SqlExecutor): boolean => sql.query !== undefined;
 
+/**
+ * The registry's bookkeeping binds are strings, numbers and null. Narrowing
+ * here keeps every adapter honest about the values a migration can bind.
+ */
+const binds = (params: ReadonlyArray<unknown> | undefined): ReadonlyArray<SqlValue> =>
+  // SAFETY: the registry's params are migration bookkeeping values (name, hash, timestamp), never a caller's object.
+  (params ?? []) as ReadonlyArray<SqlValue>;
+
 const queryFailure = (scope: Required<MigrationScope>, cause: { readonly message: string }) =>
   new MigrationError({
     message: `${scope.dialect} query failed: ${cause.message}`,
@@ -264,12 +273,7 @@ const migrationExecutor = (
       transactionalDdl: true,
       query: (statement, params) =>
         Effect.try({
-          try: () => [
-            ...sql.all<Record<string, unknown>>(
-              statement,
-              (params ?? []) as ReadonlyArray<SqlValue>,
-            ),
-          ],
+          try: () => [...sql.all<Record<string, unknown>>(statement, binds(params))],
           catch: (cause) => queryFailure(scope, { message: describeCause(cause) }),
         }),
       batch: (statements) =>
@@ -291,12 +295,10 @@ const migrationExecutor = (
     ...defaultSchema,
     transactionalDdl: true,
     query: (statement, params) =>
-      port
-        .query<Record<string, unknown>>(statement, (params ?? []) as ReadonlyArray<SqlValue>)
-        .pipe(
-          Effect.map((rows) => [...rows]),
-          Effect.mapError((cause) => queryFailure(scope, cause)),
-        ),
+      port.query<Record<string, unknown>>(statement, binds(params)).pipe(
+        Effect.map((rows) => [...rows]),
+        Effect.mapError((cause) => queryFailure(scope, cause)),
+      ),
     batch: (statements) =>
       port.batch(statements).pipe(Effect.mapError((cause) => batchFailure(scope, cause))),
   };
@@ -476,6 +478,7 @@ const readAppliedNames = (
     );
 
     if (Result.isSuccess(primary)) return primary.success;
+
     if (!recoverable(primary.failure)) return yield* primary.failure;
 
     // The oldest Alchemy shape carries the name in `id`, so read that too —
@@ -485,6 +488,7 @@ const readAppliedNames = (
     );
 
     if (Result.isSuccess(legacy)) return legacy.success;
+
     if (!recoverable(legacy.failure)) return yield* legacy.failure;
 
     return [];
@@ -555,6 +559,37 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
 
   return (yield* readAppliedNames(sql, scope)).filter((name) => !before.has(name));
 });
+
+/**
+ * Apply every pending migration, then converge the shipped description against
+ * the target. This is what a deploy runs: the files are the baseline a reviewer
+ * read, and the convergence is the additive delta between the description and
+ * what the database actually has.
+ *
+ * A redeploy over an up-to-date target applies nothing and adds nothing.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { sync } from "@potion.run/paykit"
+ *
+ * const result = yield* sync(sql, { schema: "billing" })
+ * console.log(result.applied, result.columns)
+ * ```
+ */
+export const sync = Effect.fn("Paykit.sync")(function* (sql: SqlExecutor, input?: MigrateOptions) {
+  const applied = yield* migrate(sql, input);
+
+  const converged = yield* converge(
+    sql,
+    input?.schema === undefined ? {} : { schema: input.schema },
+  );
+
+  return { applied, ...converged };
+});
+
+export { converge, type ConvergeOptions, type ConvergeResult } from "./Converge.ts";
 
 export {
   MigrationError,

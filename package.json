@@ -21,14 +21,15 @@
     "prepare": "pnpm prepare:hooks && pnpm prepare:patch",
     "prepare:hooks": "husky",
     "prepare:patch": "effect-tsgo patch --oxlint --no-typescript",
+    "schema": "node packages/paykit/scripts/schema.ts",
     "spec": "node scripts/spec.ts",
     "spec:coverage": "node scripts/spec-coverage.ts",
+    "spec:mutants": "node scripts/spec-mutants.ts",
     "spec:test": "node scripts/spec.ts --tests",
     "test": "pnpm -r --filter \"./packages/*\" --filter \"./examples/*\" run test",
     "typecheck": "tsrs -b",
     "validate:publish-packages": "node scripts/validate-publish-packages.ts",
-    "vendor:agent-sources": "./scripts/vendor-agent-sources.sh",
-    "spec:mutants": "node scripts/spec-mutants.ts"
+    "vendor:agent-sources": "./scripts/vendor-agent-sources.sh"
   },
   "devDependencies": {
     "@effect/platform-node": "catalog:",

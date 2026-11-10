@@ -17,10 +17,10 @@ driver, `check()` still answers from one local read, and a Worker never runs a m
 interface DatabaseService {
   dialect: "sqlite" | "postgres";
   schema?: string; // the Postgres schema, when the target has one
-  identity: Input<Record<string, unknown>>; // non-secret identity of the target
   runtime: Effect<SqlExecutor, never, RuntimeContext | Scope.Scope>; // per execution
   migrate?: {
     // absent when the target cannot migrate
+    identity: Input<Record<string, unknown>>; // non-secret identity of the target
     connect: Effect<Effect<SqlExecutor, MigrationApplyError, Scope.Scope>, never, RuntimeContext>;
   };
 }
@@ -34,7 +34,7 @@ dedicated session: the registry's bookkeeping queries are unqualified, so Postgr
 The two connections are also separate because they exist in different places. A Hyperdrive
 connection string is only valid inside the Worker, so the deploy cannot use it; migrations take the
 origin URL, or the target has no `migrate` at all. `identity` is the non-secret identity of the
-target — a database id, a host and database name — and never a URL with a password, because it is
+target — a URL digest on Postgres, a filename on SQLite — and never the URL itself, because it is
 persisted in the migration Action's input. `schema` names the Postgres schema (`billing` by default;
 `public` is never touched) and is ignored by SQLite.
 
@@ -50,22 +50,30 @@ The driver is a peer dependency, so a Worker that imports the package must not p
 | D1 in a Worker | `@potion.run/paykit/Database/D1` | the D1 binding, asynchronous | none — the D1 resource applies the directory |
 | Postgres (Hyperdrive, Neon, Aurora, plain) | `@potion.run/paykit/Database/Postgres` | Hyperdrive inside a Worker, `pg` where sockets exist | `migrate.connect` uses the origin URL |
 
-Provide one layer where the deployment builds its world; the model reads the executor from it:
+Provide one layer where the deployment builds its world, and read the executor from the service:
 
 ```ts
 import { Paykit } from "@potion.run/paykit";
 import { Postgres } from "@potion.run/paykit/Database/Postgres";
-import * as Layer from "effect/Layer";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
 
-const World = Paykit.world({ catalog }).pipe(Layer.provide(Postgres));
+Effect.gen(function* () {
+  const url = yield* Config.Redacted("POSTGRES_URL");
+  const store = Postgres(url, { schema: "billing" });
+
+  yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(store));
+  // a request later reads `store`'s executor from `Paykit.Database`
+});
 ```
 
 **SQLite** is the development and test target. One file, one process, migrations and requests share
 the same connection, and there is nothing to provision. It is what the SQL tests run.
 
 **D1** is the Worker target without a separate migration step. The database resource applies the
-committed `./migrations` directory itself, so the port serves runtime reads and the migration Action
-opts out with `migrate: false`:
+committed `./migrations` directory itself, so the port serves runtime reads and the layer carries no
+`migrate`: `registerMigrations` is a no-op there, and asking for `migrate: true` fails with a message
+naming this reason.
 
 ```ts
 import * as Cloudflare from "@alchemy.run/cloudflare";
@@ -123,7 +131,7 @@ idempotent, so a crash mid-deploy converges on the next run.
 
 ## What a deploy guarantees, and what it refuses
 
-`Paykit.Migrations` registers one Action per migrated target, with this input:
+`Paykit.registerMigrations` registers one Action per migrated target, with this input:
 
 ```ts
 { identity, schemaFingerprint, migrationFingerprint, dialect }
@@ -147,7 +155,7 @@ It refuses:
 | Add a `NOT NULL` column with no default | A typed refusal naming the table and column, because the table may already have rows. |
 | Rewrite or remove a file a database already applied | The registry refuses it: the applied hash is history. |
 | Put the billing tables in `public` | Refused. Postgres gets its own schema. |
-| Migrate D1 through the port | Opted out with `migrate: false`; the D1 resource applies the directory. |
+| Migrate D1 through the port | No `migrate` on the target: the D1 resource applies the directory. `migrate: true` fails, naming the reason. |
 
 ## Auth and billing own their own tables
 
@@ -158,7 +166,7 @@ a version bump in one never rewrites the other's history.
 | Owner | Migrator | Tables |
 | --- | --- | --- |
 | Better Auth | `@alchemy.run/better-auth` | the auth tables, plugins included |
-| paykit | `Paykit.Migrations` | `billing_event`, `billing_receipt`, `billing_state`, `billing_outbox`, `billing_schedule`, `billing_rm_*` |
+| paykit | `Paykit.registerMigrations` | `billing_event`, `billing_receipt`, `billing_state`, `billing_outbox`, `billing_schedule`, `billing_rm_*` |
 
 The split matters most on D1. Sessions are a small, transactional read/write workload that D1 serves
 well; the billing store is the event log, and a plugin that needs interactive transactions has no

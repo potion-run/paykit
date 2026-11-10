@@ -1,11 +1,12 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Paykit } from "@potion.run/paykit";
+import { Postgres } from "@potion.run/paykit/Database/Postgres";
 import * as Alchemy from "alchemy";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { billing } from "./src/billing.config.ts";
 import { BillingHyperdrive } from "./src/Hyperdrive.ts";
-import { MigrateBilling } from "./src/Migrate.ts";
 import PostgresWorker from "./src/PostgresWorker.ts";
 
 /**
@@ -30,9 +31,18 @@ const PostgresExample = Alchemy.Stack(
   Effect.gen(function* () {
     const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
 
-    // `import.meta.url` is the stack file, so the directory resolves in the
-    // example whether the CLI runs it from source or from a build.
-    yield* MigrateBilling({ dir: new URL("./migrations", import.meta.url).pathname });
+    // The deploy's own connection. `POSTGRES_URL` is read once here, so the
+    // connection string is a deploy secret and the Worker keeps reaching
+    // Postgres through Hyperdrive. A literal or `Redacted` source is
+    // deploy-resolvable, so `Postgres` offers it to migrations by default.
+    const url = yield* Config.Redacted("POSTGRES_URL").pipe(Effect.orDie);
+    const database = Postgres(url, { schema: "billing" });
+
+    // One Action, keyed by the target's identity and the shipped fingerprints:
+    // a new migration file, a changed table, or a different database re-runs
+    // it; an unchanged deploy is a no-op. Its output is bound into the
+    // Worker's environment, so first-deploy traffic cannot race the schema.
+    yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(database));
 
     const connection = yield* BillingHyperdrive;
     const worker = yield* PostgresWorker;

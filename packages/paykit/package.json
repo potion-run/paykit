@@ -23,7 +23,11 @@
     "./Read": "./src/Read.ts",
     "./Surfaces": "./src/Surfaces.ts",
     "./Webhooks": "./src/Webhooks.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./Database": "./src/Database/index.ts",
+    "./Database/Postgres": "./src/Database/Postgres.ts",
+    "./Database/Sqlite": "./src/Database/Sqlite.ts",
+    "./Database/D1": "./src/Database/D1.ts"
   },
   "publishConfig": {
     "exports": {
@@ -67,7 +71,27 @@
         "bun": "./src/Webhooks.ts",
         "default": "./lib/Webhooks.js"
       },
-      "./package.json": "./package.json"
+      "./package.json": "./package.json",
+      "./Database": {
+        "types": "./lib/Database/index.d.ts",
+        "bun": "./src/Database/index.ts",
+        "default": "./lib/Database/index.js"
+      },
+      "./Database/Postgres": {
+        "types": "./lib/Database/Postgres.d.ts",
+        "bun": "./src/Database/Postgres.ts",
+        "default": "./lib/Database/Postgres.js"
+      },
+      "./Database/Sqlite": {
+        "types": "./lib/Database/Sqlite.d.ts",
+        "bun": "./src/Database/Sqlite.ts",
+        "default": "./lib/Database/Sqlite.js"
+      },
+      "./Database/D1": {
+        "types": "./lib/Database/D1.d.ts",
+        "bun": "./src/Database/D1.ts",
+        "default": "./lib/Database/D1.js"
+      }
     },
     "access": "public"
   },

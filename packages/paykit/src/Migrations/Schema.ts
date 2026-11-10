@@ -88,7 +88,12 @@ const typeOf = (type: ColumnType, dialect: SqlDialect): string => {
   }
 };
 
-const renderColumn = (column: Column, dialect: SqlDialect): string => {
+/**
+ * One column's definition, as it appears inside `CREATE TABLE`. Exposed so a
+ * convergence `ALTER TABLE ADD COLUMN` renders the same type and constraints
+ * the shipped migration does.
+ */
+export const columnStatement = (column: Column, dialect: SqlDialect): string => {
   const parts = [quoteIdentifier(column.name), typeOf(column.type, dialect)];
 
   if (column.notNull === true) parts.push("NOT NULL");
@@ -100,8 +105,9 @@ const renderColumn = (column: Column, dialect: SqlDialect): string => {
   return parts.join(" ");
 };
 
-const renderTable = (entry: Table, scope: TableScope): string => {
-  const columns = entry.columns.map((column) => renderColumn(column, scope.dialect));
+/** One table's `CREATE TABLE IF NOT EXISTS` statement. */
+export const tableStatement = (entry: Table, scope: TableScope): string => {
+  const columns = entry.columns.map((column) => columnStatement(column, scope.dialect));
 
   const key =
     entry.primaryKey === undefined
@@ -113,7 +119,8 @@ const renderTable = (entry: Table, scope: TableScope): string => {
   return `CREATE TABLE IF NOT EXISTS ${tableName(entry.name, scope)} (${[...columns, ...key].join(", ")})`;
 };
 
-const renderIndex = (entry: Index, scope: TableScope): string =>
+/** One index's `CREATE INDEX IF NOT EXISTS` statement. */
+export const indexStatement = (entry: Index, scope: TableScope): string =>
   // An index name is never schema-qualified: the index lands in its table's
   // schema, and `CREATE INDEX "schema"."name"` is a syntax error on Postgres.
   `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(entry.name)} ON ${tableName(entry.on, scope)} (${entry.columns.map(quoteIdentifier).join(", ")})`;
@@ -127,7 +134,9 @@ export const schemaStatementsOf = (
   schema: SchemaDefinition,
   scope: TableScope,
 ): ReadonlyArray<string> =>
-  schema.items.map((item) => (isIndex(item) ? renderIndex(item, scope) : renderTable(item, scope)));
+  schema.items.map((item) =>
+    isIndex(item) ? indexStatement(item, scope) : tableStatement(item, scope),
+  );
 
 /**
  * Every table and index paykit's billing store owns. The order is the
