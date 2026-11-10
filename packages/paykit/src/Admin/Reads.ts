@@ -21,8 +21,8 @@ import { previewOperation, type PreviewResult } from "../Billing/Preview.operati
 import {
   BillingReadPage,
   BillingReadQuery,
-  MAX_PAGE,
-  type BillingReadRow,
+  BillingReadStore,
+  type BillingReadSummary,
 } from "../BillingReadStore.ts";
 import { Catalog } from "../Catalog.ts";
 import { CatalogMismatch } from "../CatalogMismatch.rejection.ts";
@@ -53,6 +53,7 @@ import {
 } from "../Subscription/Subscription.state.ts";
 import { NoTierChangeScheduled } from "../Subscription/WithdrawTierChange.command.ts";
 import { TierChangeWithdrawn } from "../Subscription/WithdrawTierChange.command.ts";
+import type { Price } from "../Tier.ts";
 import { Verify, VerifyMismatch } from "../Verify.ts";
 
 /** A preview that could not be turned into a wire value. */
@@ -203,19 +204,14 @@ const STATUS_ORDER: ReadonlyArray<SubscriptionStatus> = [
 
 const STANDING_ORDER: ReadonlyArray<Standing> = ["good", "grace", "blocked"];
 
-const monthlyPriceOf = (row: BillingReadRow, catalog: Catalog): number => {
-  const price = catalog.tiers.find((tier) => String(tier.id) === row.tier)?.price;
-
+const monthlyPriceOf = (price: Price | undefined): number => {
   if (price === undefined) return 0;
 
   return price.interval === "annual" ? Math.round(price.amount / 12) : price.amount;
 };
 
-const priceCurrencyOf = (row: BillingReadRow, catalog: Catalog): string | undefined =>
-  catalog.tiers.find((tier) => String(tier.id) === row.tier)?.price?.currency ?? row.currency;
-
 const overviewOf = (
-  rows: ReadonlyArray<BillingReadRow>,
+  summaries: ReadonlyArray<BillingReadSummary>,
   catalog: Catalog,
   asOf: DateTime.Utc,
 ): BillingOverview => {
@@ -223,17 +219,31 @@ const overviewOf = (
   const standingCounts = new Map(STANDING_ORDER.map((standing) => [standing, 0]));
   const tierCounts = new Map<string, number>(catalog.tiers.map((tier) => [String(tier.id), 0]));
 
+  // One lookup per tier, not one scan of the catalog per row: the monthly price
+  // depends only on the tier, so the summary's counts multiply it.
+  const prices = new Map<string, Price | undefined>(
+    catalog.tiers.map((tier) => [String(tier.id), tier.price]),
+  );
+
   const revenue = new Map<
     string,
     { mrr: number; trialPipeline: number; atRisk: number; churned: number }
   >();
 
-  for (const row of rows) {
-    statusCounts.set(row.status, (statusCounts.get(row.status) ?? 0) + 1);
-    standingCounts.set(row.standing, (standingCounts.get(row.standing) ?? 0) + 1);
-    tierCounts.set(row.tier, (tierCounts.get(row.tier) ?? 0) + 1);
-    const currency = priceCurrencyOf(row, catalog);
-    const monthly = monthlyPriceOf(row, catalog);
+  let accounts = 0;
+
+  for (const summary of summaries) {
+    accounts += summary.accounts;
+    statusCounts.set(summary.status, (statusCounts.get(summary.status) ?? 0) + summary.accounts);
+    standingCounts.set(
+      summary.standing,
+      (standingCounts.get(summary.standing) ?? 0) + summary.accounts,
+    );
+    tierCounts.set(summary.tier, (tierCounts.get(summary.tier) ?? 0) + summary.accounts);
+
+    const price = prices.get(summary.tier);
+    const monthly = monthlyPriceOf(price);
+    const currency = price?.currency;
 
     if (currency === undefined || monthly === 0) continue;
 
@@ -244,14 +254,16 @@ const overviewOf = (
       churned: 0,
     };
 
-    if (row.status === "active" || row.status === "grace") {
-      entry.mrr += monthly;
+    const amount = monthly * summary.accounts;
 
-      if (row.status === "grace") entry.atRisk += monthly;
-    } else if (row.status === "trialing") {
-      entry.trialPipeline += monthly;
+    if (summary.status === "active" || summary.status === "grace") {
+      entry.mrr += amount;
+
+      if (summary.status === "grace") entry.atRisk += amount;
+    } else if (summary.status === "trialing") {
+      entry.trialPipeline += amount;
     } else {
-      entry.churned += monthly;
+      entry.churned += amount;
     }
 
     revenue.set(currency, entry);
@@ -259,7 +271,7 @@ const overviewOf = (
 
   return BillingOverview.make({
     asOf,
-    accounts: rows.length,
+    accounts,
     byStatus: STATUS_ORDER.map((status) => ({ status, count: statusCounts.get(status) ?? 0 })),
     byStanding: STANDING_ORDER.map((standing) => ({
       standing,
@@ -278,28 +290,6 @@ const overviewOf = (
       .toSorted((left, right) => left.currency.localeCompare(right.currency)),
   });
 };
-
-const allRows = (
-  list: (query?: BillingReadQuery) => Effect.Effect<BillingReadPage, AdminReadError>,
-): Effect.Effect<ReadonlyArray<BillingReadRow>, AdminReadError> =>
-  Effect.gen(function* () {
-    const rows: BillingReadRow[] = [];
-    let after: string | undefined;
-
-    for (;;) {
-      const page = yield* list({
-        take: MAX_PAGE,
-        ...(after === undefined ? {} : { after }),
-      });
-
-      rows.push(...page.rows);
-
-      if (page.next === null || page.next === after) break;
-      after = page.next;
-    }
-
-    return rows;
-  });
 
 /** The preview request schema, matching `PreviewInput`'s `kind` discriminant. */
 export const PreviewCommandSchema = Schema.Union([
@@ -402,6 +392,7 @@ export const makeAdminReads = Effect.gen(function* () {
   const verify = yield* Verify();
   const subscription = yield* Subscription;
   const catalog = yield* CatalogService;
+  const store = yield* BillingReadStore;
 
   return {
     list: (query) => list(query),
@@ -446,9 +437,9 @@ export const makeAdminReads = Effect.gen(function* () {
       }),
     overview: () =>
       Effect.gen(function* () {
-        const rows = yield* allRows(list);
+        const summaries = yield* store.summary();
 
-        return overviewOf(rows, catalog, DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        return overviewOf(summaries, catalog, DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
       }),
     catalog: () => Effect.succeed(catalog),
   } satisfies AdminReadsShape;

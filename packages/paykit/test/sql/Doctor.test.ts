@@ -67,6 +67,38 @@ const opened = (account = "acct_doctor") =>
     return { sql, log };
   });
 
+/**
+ * A log holding one account's whole history, with the events a script walked
+ * and the command id each one was stored under.
+ */
+const historyLog = (
+  account: string,
+  events: ReadonlyArray<{ readonly _tag: string }>,
+  commandIds: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const sql = sqliteExecutor();
+    yield* migrate(sql);
+    const log = SqlEventLog(sql, { now: () => 1_000 });
+
+    for (const [index, event] of events.entries()) {
+      const cls = Subscription.definition.events.find((candidate) => candidate.tag === event._tag)!;
+
+      yield* log.append({
+        aggregate: "Subscription",
+        account,
+        commandId: commandIds[index]!,
+        at: at.epochMilliseconds + index,
+        events: [Schema.encodeUnknownSync(Schema.toCodecJson(cls as never) as never)(event)],
+        state: {},
+        receipt: {},
+        deliveries: [],
+      });
+    }
+
+    return log;
+  });
+
 describe("doctor", () => {
   it.effect("reports a missing read model and rebuilds the right row", () =>
     Effect.gen(function* () {
@@ -127,6 +159,50 @@ describe("doctor", () => {
       expect(mismatches.length).toBe(1);
       expect(mismatches[0]?.stored?.features.messages?.billed).toBe(750);
       expect(mismatches[0]?.commandIds).toEqual(["evt_1"]);
+    }),
+  );
+
+  it.effect("reports every mismatch across several accounts and events", () =>
+    Effect.gen(function* () {
+      // Three commands, three event tags: the codec map is a lookup, and this
+      // pins that it decodes each tag for each account the same way.
+      const history: Script = {
+        steps: [
+          { command: { _tag: "Subscribe", tier: "free" }, advanceDays: 0 },
+          { command: { _tag: "ChangeTier", tier: "pro" }, advanceDays: 1 },
+          { command: { _tag: "TrackUsage", amount: 5 }, advanceDays: 1 },
+        ],
+      };
+
+      const events = walk(history).events;
+      const commandIds = events.map((_, index) => `cmd-${index}`);
+
+      const a = yield* historyLog("acct_a", events, commandIds);
+      const b = yield* historyLog("acct_b", events, commandIds);
+
+      for (const row of yield* b.events("Subscription", "acct_b")) {
+        yield* a.append({
+          aggregate: row.aggregate,
+          account: "acct_b",
+          commandId: row.commandId,
+          at: row.at,
+          events: [JSON.parse(row.event)],
+          state: {},
+          receipt: {},
+          deliveries: [],
+        });
+      }
+
+      const mismatches = yield* doctor(a);
+
+      expect(mismatches.map((mismatch) => mismatch.account)).toEqual(["acct_a", "acct_b"]);
+      // The tier is what `PlanChanged` moved and the counter is what
+      // `UsageRecorded` moved, so both tags replayed through the codec map.
+      expect(mismatches.map((mismatch) => mismatch.rebuilt.tier)).toEqual(["pro", "pro"]);
+      expect(mismatches.map((mismatch) => mismatch.rebuilt.features.messages?.used)).toEqual([
+        5, 5,
+      ]);
+      expect(mismatches.map((mismatch) => mismatch.commandIds)).toEqual([commandIds, commandIds]);
     }),
   );
 
