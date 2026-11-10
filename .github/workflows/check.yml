@@ -48,6 +48,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The DDL a deploy applies must equal the DDL the library ships and a test
+      # applies; a committed migration that drifts fails here, not at a database.
+      - name: Check committed migrations
+        run: pnpm migrations:check
+
       - name: Lint
         run: pnpm lint
 
