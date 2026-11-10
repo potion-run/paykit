@@ -54,8 +54,8 @@ behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a
 rewrites a standing and there is no automatic migration.
 
 The billing database is a port now. `Paykit.Database` gives a target one `DatabaseService` with a
-per-execution `runtime` connection and, when the target can migrate, a separate deploy-time
-`migrate.connect`; `Database/Sqlite`, `Database/Postgres`, `Database/MySQL`, `Database/D1` and
+scoped `executor` and, when the target can migrate, a separate deploy-time `DatabaseMigrate`
+service; `Database/Sqlite`, `Database/Postgres`, `Database/MySQL`, `Database/D1` and
 `Database/Drizzle` are imported from their own export condition because the driver is a peer. The
 schema is a description (`BILLING_SCHEMA`), a frozen baseline (`BILLING_SCHEMA_V1`) is what
 `migrationFiles()` renders, and a test pins its hash — no `.sql` file is committed. A deploy applies
@@ -75,6 +75,13 @@ columns render as `VARCHAR(191)` because MySQL rejects `TEXT` in a key, converge
 live. `examples/mysql` and `examples/drizzle` are the two new hosts, each with a live case gated on
 its connection URL. The record is [ADR
 0049](./adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md).
+
+The runtime port is Effect-only now, and a host is an adapter rather than a variant ([ADR
+0050](./adr/0050-a-host-is-an-adapter-not-a-variant.md)): `DatabaseService.executor` is scoped by the
+caller, `DatabaseMigrate` is the deploy plane, and `examples/node` serves `Paykit.handler` on
+`NodeHttpServer` with no Worker and no deploy resource. A `paykit-node` package is deliberately not
+created yet; it earns the name when the host owns lifecycle the core cannot (a process pool, drain,
+boot-time migration), not when it is only `serve`.
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver` with a `carryCap`, credits with a rate card (a `creditRates` shorthand, or a

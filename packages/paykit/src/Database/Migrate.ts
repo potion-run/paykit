@@ -1,10 +1,57 @@
 import { Action, Stack, type Input } from "alchemy";
-import { CurrentRuntimeContext, sanitizeKey } from "alchemy/RuntimeContext";
+import { CurrentRuntimeContext, sanitizeKey, type RuntimeContext } from "alchemy/RuntimeContext";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { migrationFingerprint, schemaFingerprint, sync } from "../Migrations/index.ts";
+import type * as Scope from "effect/Scope";
+import {
+  migrationFingerprint,
+  schemaFingerprint,
+  sync,
+  type MigrationApplyError,
+} from "../Migrations/index.ts";
+import type { SqlExecutor } from "../Store/Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA } from "../Store/Tables.ts";
 import { Database, type DatabaseService } from "./Database.ts";
+
+/**
+ * Deploy-time migration support for one target: the identity a deploy records
+ * and the connection it applies files through.
+ *
+ * The connection is two-stage, mirroring Alchemy's own resource doctrine. The
+ * OUTER effect runs while the stack is evaluated, so the resource Outputs it
+ * yields — a database id, a connection-string attribute — become dependency
+ * captures that resolve at apply time. The INNER effect runs at apply, opens
+ * the connection on the deploy's scope, and yields the executor the migration
+ * runs against. No I/O in the outer half, ever.
+ */
+export interface DatabaseMigrateService {
+  /**
+   * Non-secret identity of the target database, part of the migration Action's
+   * input so a replaced database re-runs the migration even when the schema is
+   * unchanged. It is persisted to Alchemy state, so it must never contain a
+   * connection string — a digest of one is what a layer supplies.
+   */
+  readonly identity: Input<Record<string, unknown>>;
+  /** Two-stage connection: capture at deploy, connect at apply. */
+  readonly connect: Effect.Effect<
+    Effect.Effect<SqlExecutor, MigrationApplyError, Scope.Scope>,
+    never,
+    RuntimeContext
+  >;
+}
+
+/**
+ * The deploy plane of a database: a target provides this service only when it
+ * can migrate itself. A runtime host reads it once, at deploy; a request never
+ * does. Keeping it off `DatabaseService` is what lets a Node host provide the
+ * runtime port without pretending it has a deploy.
+ *
+ * @primitive
+ */
+export class DatabaseMigrate extends Context.Service<DatabaseMigrate, DatabaseMigrateService>()(
+  "paykit/DatabaseMigrate",
+) {}
 
 /** The input one migration Action is keyed by. */
 interface MigrateInput {
@@ -88,11 +135,10 @@ const migrationInput = (
  */
 const register = Effect.fn("Paykit.registerMigrations")(function* (
   database: DatabaseService,
+  support: DatabaseMigrateService | undefined,
   id: string,
   options: RegisterMigrationsOptions = {},
 ) {
-  const support = database.migrate;
-
   if (support === undefined) {
     if (options.migrate === true) {
       return yield* Effect.die(
@@ -163,18 +209,23 @@ const register = Effect.fn("Paykit.registerMigrations")(function* (
 });
 
 /**
- * The public registration: the caller owns only `Database`. `Stack` and
- * `RuntimeContext` are the stack's own ambient services — present when a
- * deploy evaluates the stack, absent when a test or a Worker calls this, and
- * the body returns before touching either in that case.
+ * The public registration: the caller owns only `Database`. Deploy support is
+ * read from `DatabaseMigrate` when the layer provides it, so a runtime host is
+ * not forced to pretend it has a deploy. `Stack` and `RuntimeContext` are the
+ * stack's own ambient services — present when a deploy evaluates the stack,
+ * absent when a test or a Worker calls this, and the body returns before
+ * touching either in that case.
  */
 export const registerMigrations = (
   id: string,
   options: RegisterMigrationsOptions = {},
 ): Effect.Effect<void, never, Database> => {
-  const effect: unknown = Effect.flatMap(Effect.service(Database), (database) =>
-    register(database, id, options),
-  );
+  const effect: unknown = Effect.gen(function* () {
+    const database = yield* Database;
+    const support = Option.getOrUndefined(yield* Effect.serviceOption(DatabaseMigrate));
+
+    return yield* register(database, support, id, options);
+  });
 
   // SAFETY: the inner effect's only caller-owned requirement is `Database`; the ambient stack services are checked at runtime with `serviceOption`.
   return effect as Effect.Effect<void, never, Database>;
@@ -192,6 +243,7 @@ export const registerMigrations = (
  */
 export const registerDatabaseMigration = (
   database: DatabaseService,
+  support: DatabaseMigrateService | undefined,
   id: string,
   options: RegisterMigrationsOptions = {},
-) => register(database, id, options);
+) => register(database, support, id, options);

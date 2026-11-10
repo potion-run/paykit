@@ -12,7 +12,7 @@ import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { evaluateCheck } from "./Check.ts";
 import { Database } from "./Database/Database.ts";
-import { registerMigrations } from "./Database/Migrate.ts";
+import { DatabaseMigrate, registerMigrations } from "./Database/Migrate.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
 import { handler, moneyRoutes } from "./Handler.ts";
@@ -111,6 +111,7 @@ export const Paykit = {
   mysqlExecutor,
   toPostgresPlaceholders,
   Database,
+  DatabaseMigrate,
   registerMigrations,
   // runtime — the tenant surface, one binding per command
   Attach: Billing.Attach,

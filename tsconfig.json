@@ -51,6 +51,12 @@
       "path": "./examples/postgres/tsconfig.test.json"
     },
     {
+      "path": "./examples/node"
+    },
+    {
+      "path": "./examples/node/tsconfig.test.json"
+    },
+    {
       "path": "./scripts/tsconfig.json"
     },
     {

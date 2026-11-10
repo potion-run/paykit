@@ -27,8 +27,11 @@ changes. `examples/tanstack` deploys a TanStack Start app on Cloudflare and make
 first-class Effect Atom client: `PaykitAtom.make({ layer })` over the tenant Api, with
 account-keyed queries and command atoms that refresh them. `examples/mysql` hosts the model on
 MySQL through Alchemy's `@effect/sql-mysql2` client, and `examples/drizzle` adopts the `pg` pool a
-Drizzle instance already opened. All ten are in the workspace, in the root `tsconfig.json` and in
-`pnpm test`, so an API change that breaks the advertised usage breaks a gate.
+Drizzle instance already opened. `examples/node` serves the same handler on a Node HTTP server
+through Alchemy's `NodeHttpServer`, with no Worker and no deploy resource — the host proof for
+ADR [0050](./docs/adr/0050-a-host-is-an-adapter-not-a-variant.md). All eleven are in the workspace,
+in the root `tsconfig.json` and in `pnpm test`, so an API change that breaks the advertised usage
+breaks a gate.
 
 A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
 carries rules a reader needs before touching it, and add it to the workspace globs and the root

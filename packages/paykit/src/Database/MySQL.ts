@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { mysqlExecutor } from "../Store/MySQLDriver.ts";
 import { Database, type DatabaseService } from "./Database.ts";
+import { DatabaseMigrate, type DatabaseMigrateService } from "./Migrate.ts";
 
 /** Options for the MySQL target. */
 export interface MySQLOptions {
@@ -25,10 +26,10 @@ export interface MySQLOptions {
 /**
  * A MySQL billing database, from any connection source.
  *
- * The client is Alchemy's own `SQL.MySQL` — an `@effect/sql-mysql2` pool that is
- * built once per execution and closed when the event settles — adapted to
- * paykit's executor by `mysqlExecutor`. MySQL binds `?` natively, so there is
- * no placeholder rewrite.
+ * The client is Alchemy's own `SQL.MySQL` — an `@effect/sql-mysql2` pool built
+ * on the caller's scope and closed when that scope closes — adapted to paykit's
+ * executor by `mysqlExecutor`. MySQL binds `?` natively, so there is no
+ * placeholder rewrite.
  *
  * MySQL has no schema separate from the connection's database: `DatabaseService.schema`
  * stays undefined and every table is quoted with backticks. Migration identity
@@ -59,30 +60,31 @@ export const MySQL = (
   source: ConnectionSource,
   options: MySQLOptions = {},
 ): Layer.Layer<Database> =>
-  Layer.effect(
-    Database,
+  Layer.unwrap(
     Effect.gen(function* () {
       const url = yield* resolveConnectionSource(source);
       const migrateSource = staticConnectionSource(source, options.migrate);
 
-      return {
+      const database = Layer.succeed(Database, {
         dialect: "mysql",
-        runtime: Effect.map(SQL.MySQL({ url }), mysqlExecutor),
-        ...(migrateSource === undefined
-          ? {}
-          : {
-              migrate: {
-                identity: { urlDigest: connectionSourceDigest(migrateSource) },
-                connect: Effect.succeed(
-                  Effect.gen(function* () {
-                    const migrateUrl = yield* resolveConnectionSource(migrateSource);
-                    const client = yield* SQL.MySQL({ url: migrateUrl });
+        executor: Effect.map(SQL.MySQL({ url }), mysqlExecutor),
+      } satisfies DatabaseService);
 
-                    return mysqlExecutor(client);
-                  }),
-                ),
-              },
-            }),
-      } satisfies DatabaseService;
+      const migrate =
+        migrateSource === undefined
+          ? Layer.empty
+          : Layer.succeed(DatabaseMigrate, {
+              identity: { urlDigest: connectionSourceDigest(migrateSource) },
+              connect: Effect.succeed(
+                Effect.gen(function* () {
+                  const migrateUrl = yield* resolveConnectionSource(migrateSource);
+                  const client = yield* SQL.MySQL({ url: migrateUrl });
+
+                  return mysqlExecutor(client);
+                }),
+              ),
+            } satisfies DatabaseMigrateService);
+
+      return Layer.merge(database, migrate);
     }),
   );

@@ -322,11 +322,12 @@ export {
 
 export type { Column, ColumnType, Index, SchemaDefinition, Table } from "./Migrations/Schema.ts";
 
-// The billing database: one service, one deploy-time Action, a layer per target.
+// The billing database: a runtime service, a deploy service, a layer per target.
 export {
   Database,
+  DatabaseMigrate,
   registerMigrations,
-  type DatabaseMigrate,
+  type DatabaseMigrateService,
   type DatabaseService,
   type MigrateOutput,
   type RegisterMigrationsOptions,

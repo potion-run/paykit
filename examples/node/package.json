@@ -1,0 +1,31 @@
+{
+  "name": "@potion.run/example-node",
+  "version": "0.0.0",
+  "private": true,
+  "description": "paykit on a Node HTTP server, with no Worker and no deploy resource.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/node"
+  },
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.ts",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/domain": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}
