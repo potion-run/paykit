@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
+import { sqlClientExecutor } from "./SqlClientDriver.ts";
 
 /**
  * Rewrite paykit's `?` placeholders to Postgres's `$1..$n`.
@@ -116,47 +117,8 @@ const failure = (statement: string, cause: unknown) =>
  *
  * @primitive
  */
-export const postgresExecutor = (client: SqlClient.SqlClient): SqlExecutor => {
-  const query = <A = Record<string, unknown>>(
-    statement: string,
-    params: ReadonlyArray<SqlValue> = [],
-  ): Effect.Effect<ReadonlyArray<A>, SqlError> =>
-    client
-      .unsafe<A & object>(toPostgresPlaceholders(statement), params)
-      .pipe(Effect.mapError((cause) => failure(statement, cause)));
-
-  const refuse = (method: string) => (): never => {
-    throw new Error(
-      `Postgres has no synchronous ${method}. Its port is asynchronous: a store reaches it ` +
-        `through SqlAsyncExecutor (query / write / batch / atomic), never the synchronous half.`,
-    );
-  };
-
-  return {
-    dialect: "postgres",
-    run: refuse("run"),
-    exec: refuse("exec"),
-    get: refuse("get"),
-    all: refuse("all"),
-    transaction: refuse("transaction"),
-    lock: () => {},
-    query,
-    write: (statement: string, params: ReadonlyArray<SqlValue> = []) =>
-      Effect.asVoid(query(statement, params)),
-    batch: (statements) =>
-      client
-        .withTransaction(Effect.forEach(statements, (statement) => client.unsafe(statement)))
-        .pipe(
-          Effect.asVoid,
-          Effect.catchTag("SqlError", (cause) => Effect.fail(failure("batch", cause))),
-        ),
-    atomic: (effect) =>
-      client
-        .withTransaction(effect)
-        .pipe(Effect.catchTag("SqlError", (cause) => Effect.fail(failure("transaction", cause)))),
-    isolation: "serializable",
-  };
-};
+export const postgresExecutor = (client: SqlClient.SqlClient): SqlExecutor =>
+  sqlClientExecutor(client, "postgres");
 
 // ── a raw `pg` pool ─────────────────────────────────────────────────────────
 //

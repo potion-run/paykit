@@ -71,21 +71,56 @@ export const tablesOf = (schema: SchemaDefinition): ReadonlyArray<Table> =>
 export const indexesOf = (schema: SchemaDefinition): ReadonlyArray<Index> =>
   schema.items.filter(isIndex);
 
-const typeOf = (type: ColumnType, dialect: SqlDialect): string => {
-  switch (type) {
-    case "text":
-      return "TEXT";
-    case "integer":
-      return "INTEGER";
-    case "boolean":
-      // SQLite has no boolean storage class; INTEGER is the dialect's own
-      // spelling and leaves the column unchanged on a dialect move.
-      return dialect === "postgres" ? "BOOLEAN" : "INTEGER";
-    case "millis":
-      return dialect === "postgres" ? "BIGINT" : "INTEGER";
-    case "serial":
-      return dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
+/**
+ * The columns a dialect must keep short. MySQL indexes and primary keys cannot
+ * include a `TEXT` column without a prefix length, so a key column is a
+ * `VARCHAR(191)` there — wide enough for an aggregate name, an account id, a
+ * command id (a UUID or a vendor event id) and a tier.
+ */
+const KEYED_TEXT = "VARCHAR(191)";
+
+const SCALAR_TYPES: Record<Exclude<ColumnType, "text">, Record<SqlDialect, string>> = {
+  integer: { sqlite: "INTEGER", postgres: "INTEGER", mysql: "INTEGER" },
+  // SQLite has no boolean storage class, so INTEGER is its spelling and reads
+  // back as 0/1. MySQL's TINYINT(1) is its boolean spelling, and does too.
+  boolean: { sqlite: "INTEGER", postgres: "BOOLEAN", mysql: "TINYINT(1)" },
+  // Postgres INTEGER is 32-bit; epoch millis need 64 on both it and MySQL.
+  millis: { sqlite: "INTEGER", postgres: "BIGINT", mysql: "BIGINT" },
+  serial: {
+    sqlite: "INTEGER PRIMARY KEY AUTOINCREMENT",
+    postgres: "BIGSERIAL PRIMARY KEY",
+    mysql: "BIGINT AUTO_INCREMENT PRIMARY KEY",
+  },
+};
+
+const typeOf = (type: ColumnType, dialect: SqlDialect, keyed: boolean): string => {
+  if (type !== "text") return SCALAR_TYPES[type][dialect];
+
+  if (dialect === "mysql" && keyed) return KEYED_TEXT;
+
+  return "TEXT";
+};
+
+/**
+ * The column names a table's primary key or any of its indexes uses. MySQL
+ * renders those as `VARCHAR(191)` rather than `TEXT`; every other dialect
+ * renders a column the same way wherever it appears.
+ */
+export const keyedColumnsOf = (schema: SchemaDefinition, table: string): ReadonlySet<string> => {
+  const entry = tablesOf(schema).find((candidate) => candidate.name === table);
+  const keyed = new Set<string>(entry?.primaryKey ?? []);
+
+  for (const column of entry?.columns ?? []) {
+    if (column.primaryKey === true) keyed.add(column.name);
   }
+
+  for (const index of indexesOf(schema)) {
+    if (index.on !== table) continue;
+
+    for (const column of index.columns) keyed.add(column);
+  }
+
+  return keyed;
 };
 
 /**
@@ -93,8 +128,8 @@ const typeOf = (type: ColumnType, dialect: SqlDialect): string => {
  * convergence `ALTER TABLE ADD COLUMN` renders the same type and constraints
  * the shipped migration does.
  */
-export const columnStatement = (column: Column, dialect: SqlDialect): string => {
-  const parts = [quoteIdentifier(column.name), typeOf(column.type, dialect)];
+export const columnStatement = (column: Column, dialect: SqlDialect, keyed = false): string => {
+  const parts = [quoteIdentifier(column.name, dialect), typeOf(column.type, dialect, keyed)];
 
   if (column.notNull === true) parts.push("NOT NULL");
 
@@ -107,23 +142,34 @@ export const columnStatement = (column: Column, dialect: SqlDialect): string => 
 
 /** One table's `CREATE TABLE IF NOT EXISTS` statement. */
 export const tableStatement = (entry: Table, scope: TableScope): string => {
-  const columns = entry.columns.map((column) => columnStatement(column, scope.dialect));
+  const keyed = keyedColumnsOf(BILLING_SCHEMA, entry.name);
+
+  const columns = entry.columns.map((column) =>
+    columnStatement(column, scope.dialect, keyed.has(column.name)),
+  );
 
   const key =
     entry.primaryKey === undefined
       ? []
-      : [`PRIMARY KEY (${entry.primaryKey.map(quoteIdentifier).join(", ")})`];
+      : [
+          `PRIMARY KEY (${entry.primaryKey.map((name) => quoteIdentifier(name, scope.dialect)).join(", ")})`,
+        ];
 
   // One line per table: the file is read as a schema, and a column's
   // constraints are easier to compare when the row is not wrapped.
   return `CREATE TABLE IF NOT EXISTS ${tableName(entry.name, scope)} (${[...columns, ...key].join(", ")})`;
 };
 
-/** One index's `CREATE INDEX IF NOT EXISTS` statement. */
-export const indexStatement = (entry: Index, scope: TableScope): string =>
+/** One index's `CREATE INDEX` statement. */
+export const indexStatement = (entry: Index, scope: TableScope): string => {
   // An index name is never schema-qualified: the index lands in its table's
   // schema, and `CREATE INDEX "schema"."name"` is a syntax error on Postgres.
-  `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(entry.name)} ON ${tableName(entry.on, scope)} (${entry.columns.map(quoteIdentifier).join(", ")})`;
+  const guarded = scope.dialect === "mysql" ? "CREATE INDEX" : "CREATE INDEX IF NOT EXISTS";
+
+  // MySQL 8 has no `CREATE INDEX IF NOT EXISTS`; convergence checks
+  // `information_schema.statistics` before it runs the statement instead.
+  return `${guarded} ${quoteIdentifier(entry.name, scope.dialect)} ON ${tableName(entry.on, scope)} (${entry.columns.map((name) => quoteIdentifier(name, scope.dialect)).join(", ")})`;
+};
 
 /**
  * Render a description as one CREATE statement per table and per index, in

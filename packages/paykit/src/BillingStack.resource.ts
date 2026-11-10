@@ -17,6 +17,7 @@ export const BillingStore = Schema.Union([
   Schema.TaggedStruct("MemoryStore", {}),
   Schema.TaggedStruct("PostgresStore", { schema: Schema.String }),
   Schema.TaggedStruct("SqliteStore", { schema: Schema.String }),
+  Schema.TaggedStruct("MySQLStore", {}),
 ]);
 
 export type BillingStore = typeof BillingStore.Type;

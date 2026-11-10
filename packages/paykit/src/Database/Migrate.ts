@@ -44,7 +44,7 @@ export interface RegisterMigrationsOptions {
 
 const migrationInput = (
   database: DatabaseService,
-  schema: string,
+  schema: string | undefined,
   table: string,
 ): Effect.Effect<Omit<MigrateInput, "identity">> =>
   Effect.gen(function* () {
@@ -115,7 +115,11 @@ const register = Effect.fn("Paykit.registerMigrations")(function* (
 
   if (Option.isNone(stack)) return;
 
-  const schema = options.schema ?? database.schema ?? DEFAULT_SCHEMA;
+  const schema =
+    database.dialect === "mysql"
+      ? undefined
+      : (options.schema ?? database.schema ?? DEFAULT_SCHEMA);
+
   const table = options.table ?? BILLING_TABLES.schemaVersion;
 
   const Migrate = Action(

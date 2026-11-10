@@ -11,6 +11,7 @@ import { BillingReadRow as BillingReadRowSchema } from "../BillingReadStore.ts";
 import type { EntityEntitlement, FeatureEntitlement } from "../Subscription/Entitlements.view.ts";
 import { asyncOf, type SqlDialect, type SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
+import { insertIgnoring, upsertRow } from "./Upsert.ts";
 
 /** One committed event, as a row. */
 export interface StoredEventRow {
@@ -119,10 +120,12 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
   // serializes two writers of one account; SQLite's `BEGIN IMMEDIATE` already
   // does. Without the lock both would read the same `MAX(seq)` and one would
   // fail on the primary key instead of taking the next sequence.
-  const claim =
-    executor.dialect === "postgres"
-      ? `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, 0, 'null') ON CONFLICT (aggregate, account) DO NOTHING`
-      : `INSERT OR IGNORE INTO ${state} (aggregate, account, version, state) VALUES (?, ?, 0, 'null')`;
+  const claim = insertIgnoring(executor.dialect, state, [
+    "aggregate",
+    "account",
+    "version",
+    "state",
+  ]);
 
   /** A write lost a primary-key race: another writer claimed the same row. */
   const uniqueViolation = (error: SqlError): boolean => {
@@ -148,7 +151,7 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
     sql
       .atomic(
         Effect.gen(function* () {
-          yield* sql.write(claim, [input.aggregate, input.account]);
+          yield* sql.write(claim, [input.aggregate, input.account, 0, "null"]);
           yield* sql.get(
             executor.dialect === "postgres"
               ? `SELECT version FROM ${state} WHERE aggregate = ? AND account = ? FOR UPDATE`
@@ -210,8 +213,12 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           }
 
           yield* sql.write(
-            `INSERT INTO ${state} (aggregate, account, version, state) VALUES (?, ?, ?, ?)
-           ON CONFLICT (aggregate, account) DO UPDATE SET version = excluded.version, state = excluded.state`,
+            upsertRow(
+              executor.dialect,
+              state,
+              ["aggregate", "account", "version", "state"],
+              ["aggregate", "account"],
+            ),
             [input.aggregate, input.account, version, JSON.stringify(input.state)],
           );
           yield* sql.write(
@@ -306,8 +313,13 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 
     schedule: (input: ScheduledCommand) =>
       sql.write(
-        `INSERT INTO ${schedule} (aggregate, account, command_id, due_at, command) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (aggregate, account, command_id) DO UPDATE SET due_at = excluded.due_at, command = excluded.command, delivered_at = NULL`,
+        upsertRow(
+          executor.dialect,
+          schedule,
+          ["aggregate", "account", "command_id", "due_at", "command"],
+          ["aggregate", "account", "command_id"],
+          { reset: ["delivered_at"] },
+        ),
         [input.aggregate, input.account, input.commandId, input.dueAt, input.command],
       ),
 
@@ -402,24 +414,28 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
-        `INSERT INTO ${readModels}
-          (account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features, entities)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (account) DO UPDATE SET
-           tier = excluded.tier,
-           status = excluded.status,
-           standing = excluded.standing,
-           period_start = excluded.period_start,
-           period_end = excluded.period_end,
-           cancel_at_period_end = excluded.cancel_at_period_end,
-           credits = excluded.credits,
-           prepaid_credits = excluded.prepaid_credits,
-           dunning_attempts = excluded.dunning_attempts,
-           proration = excluded.proration,
-           proration_invoice = excluded.proration_invoice,
-           currency = excluded.currency,
-           features = excluded.features,
-           entities = excluded.entities`,
+        upsertRow(
+          executor.dialect,
+          readModels,
+          [
+            "account",
+            "tier",
+            "status",
+            "standing",
+            "period_start",
+            "period_end",
+            "cancel_at_period_end",
+            "credits",
+            "prepaid_credits",
+            "dunning_attempts",
+            "proration",
+            "proration_invoice",
+            "currency",
+            "features",
+            "entities",
+          ],
+          ["account"],
+        ),
         [
           row.account,
           row.tier,

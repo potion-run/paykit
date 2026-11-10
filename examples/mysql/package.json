@@ -1,0 +1,35 @@
+{
+  "name": "@potion.run/example-mysql",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The billing model on MySQL, migrated by Paykit.registerMigrations.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/mysql"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/sql": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "alchemy": "catalog:",
+    "effect": "catalog:",
+    "mysql2": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

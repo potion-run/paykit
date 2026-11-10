@@ -61,6 +61,8 @@ const storeKindOf = (store: Store): BillingStore => {
       return { _tag: "PostgresStore", schema: store.schema };
     case "SqliteStore":
       return { _tag: "SqliteStore", schema: store.schema };
+    case "MySQLStore":
+      return { _tag: "MySQLStore" };
   }
 };
 

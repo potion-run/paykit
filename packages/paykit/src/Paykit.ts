@@ -25,8 +25,9 @@ import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
 import { plan } from "./Plan.ts";
 import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
-import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
+import { MemoryStore, MySQL, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
+import { mysqlExecutor } from "./Store/MySQLDriver.ts";
 import {
   pgPoolExecutor,
   postgresExecutor,
@@ -99,6 +100,7 @@ export const Paykit = {
   MemoryStore,
   Postgres,
   Sqlite,
+  MySQL,
   SqlAggregateStore,
   SqlPlatform,
   layerSqlPlatform,
@@ -106,6 +108,7 @@ export const Paykit = {
   d1Executor,
   postgresExecutor,
   pgPoolExecutor,
+  mysqlExecutor,
   toPostgresPlaceholders,
   Database,
   registerMigrations,

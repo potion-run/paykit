@@ -1,0 +1,36 @@
+{
+  "name": "@potion.run/example-drizzle",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The billing model on the Postgres pool a Drizzle instance already opened.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/potion-run/paykit.git",
+    "directory": "examples/drizzle"
+  },
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "dev": "alchemy dev",
+    "destroy": "alchemy destroy",
+    "test": "alchemy-test",
+    "typecheck": "tsrs -b"
+  },
+  "dependencies": {
+    "@alchemy.run/domain": "catalog:",
+    "@alchemy.run/sql": "catalog:",
+    "@potion.run/paykit": "workspace:*",
+    "alchemy": "catalog:",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@alchemy.run/test": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "typescript": "catalog:"
+  }
+}

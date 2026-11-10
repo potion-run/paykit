@@ -266,6 +266,8 @@ export {
   toPostgresPlaceholders,
 } from "./Store/PostgresDriver.ts";
 
+export { mysqlExecutor } from "./Store/MySQLDriver.ts";
+
 export type {
   SqlAsyncExecutor,
   SqlDialect,

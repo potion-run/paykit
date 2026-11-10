@@ -51,7 +51,7 @@ supplies one `DatabaseService`:
 
 ```ts
 interface DatabaseService {
-  dialect: "sqlite" | "postgres";
+  dialect: "sqlite" | "postgres" | "mysql";
   schema?: string; // the Postgres schema, when the target has one
   identity: Input<Record<string, unknown>>; // non-secret identity of the target
   runtime: Effect<SqlExecutor, never, RuntimeContext | Scope.Scope>; // per execution
@@ -130,10 +130,13 @@ process.
 - A change that is not additive — dropping a column, retyping one, renaming a table — is a new ADR
   and a reviewed migration, not something a deploy infers. The event log is the truth and is never
   destroyed to make a schema agree.
-- MySQL is not a dialect flag. Its `TEXT` columns cannot be a primary key without a prefix length, so
-  the key columns would become `VARCHAR(n)` and the schema a different one; its upserts also spell
-  `ON DUPLICATE KEY UPDATE`, which is a store-level branch at every write. It stays out until that is
-  a decision rather than a fourth renderer case.
+- MySQL is a third dialect, and it is not only a renderer case. Its `TEXT` columns cannot be a
+  primary key or an index without a prefix length, so the description marks the columns a key or an
+  index touches and renders those as `VARCHAR(191)`; MySQL 8 has no `CREATE INDEX IF NOT EXISTS`, so
+  convergence asks `information_schema.statistics` first; and its upserts spell
+  `ON DUPLICATE KEY UPDATE col = VALUES(col)`, so `Store/Upsert.ts` is the one place the three
+  spellings live. The live case is gated on `MYSQL_URL`, because a rendering test cannot prove a
+  server accepts the DDL.
 - Drizzle is a connection, never the schema owner: `Database/Drizzle` unwraps the pool an application
   already holds and paykit's stores write their own SQL through it. Letting Drizzle generate the
   schema would make the user's ORM the source and this description a generator.
@@ -179,9 +182,8 @@ process.
 - **A destructive change the product requires**, such as dropping a column or retyping money. It
   needs its own record, an explicit retention or archive rule and a reviewed migration; it must not
   arrive through convergence.
-- **MySQL support.** It needs more than a third dialect: `TEXT` primary keys become `VARCHAR(n)`,
-  every `ON CONFLICT` upsert gains an `ON DUPLICATE KEY UPDATE` sibling, and a live test needs a
-  server this repo does not provision.
+- **A fourth dialect.** Each one costs a keyed-column rule, an index-existence check and an upsert
+  spelling, not a flag; `Store/Upsert.ts` and `Migrations/Schema.ts` are where that shows up.
 - **A target that cannot be introspected** (an HTTP-only database with no catalog read). Convergence
   would need a different observation, or the target ships files only.
 - **Drizzle or another ORM as the schema owner.** The description would become a generator for

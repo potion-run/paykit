@@ -56,7 +56,7 @@ const committedOf = (scope: Scope): string =>
 
 const prefixOf = (item: Table | Index, scope: Scope): string =>
   "on" in item
-    ? `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(item.name)} ON ${tableName(item.on, scope)} (`
+    ? `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(item.name, scope.dialect)} ON ${tableName(item.on, scope)} (`
     : `CREATE TABLE IF NOT EXISTS ${tableName(item.name, scope)} (`;
 
 const withColumn = (schema: SchemaDefinition, on: string, column: Column): SchemaDefinition => ({
@@ -108,11 +108,11 @@ describe("the billing schema description", () => {
 
           if ("on" in item) {
             for (const column of item.columns) {
-              expect(statement).toContain(quoteIdentifier(column));
+              expect(statement).toContain(quoteIdentifier(column, scope.dialect));
             }
           } else {
             for (const column of item.columns) {
-              expect(statement).toContain(quoteIdentifier(column.name));
+              expect(statement).toContain(quoteIdentifier(column.name, scope.dialect));
             }
           }
         });

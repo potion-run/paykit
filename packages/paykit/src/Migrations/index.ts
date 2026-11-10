@@ -69,7 +69,7 @@ const scopeOf = (input: Partial<MigrationScope> | undefined): Required<Migration
 /** The schema creation, before any table. Postgres only. */
 export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
   scope.dialect === "postgres"
-    ? [`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(scope.schema)}`]
+    ? [`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(scope.schema, scope.dialect)}`]
     : [];
 
 // The DDL is a rendering of the one typed description, so the file a deploy

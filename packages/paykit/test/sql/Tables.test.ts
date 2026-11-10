@@ -39,6 +39,6 @@ describe("billing table names", () => {
   });
 
   it("escapes a quote in an identifier", () => {
-    expect(quoteIdentifier('odd"name')).toBe('"odd""name"');
+    expect(quoteIdentifier('odd"name', "postgres")).toBe('"odd""name"');
   });
 });

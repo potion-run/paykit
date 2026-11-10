@@ -21,6 +21,7 @@ import {
   columnStatement,
   indexStatement,
   indexesOf,
+  keyedColumnsOf,
   tableStatement,
   tablesOf,
 } from "./Schema.ts";
@@ -81,6 +82,21 @@ const inspectorOf = (sql: SqlExecutor, scope: TableScope): MigrationSqlExecutor 
   };
 };
 
+/** The index names a MySQL table already has, from `information_schema`. */
+const indexNamesOf = (
+  sql: SqlExecutor,
+  table: string,
+): Effect.Effect<ReadonlyArray<string>, MigrationApplyError> =>
+  asyncOf(sql)
+    .query<{ name: string }>(
+      "SELECT DISTINCT index_name AS name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ?",
+      [table],
+    )
+    .pipe(
+      Effect.map((rows) => rows.map((row) => String(row.name))),
+      Effect.mapError((cause) => introspectFailure(cause)),
+    );
+
 const run = (sql: SqlExecutor, statement: string): Effect.Effect<void, MigrationApplyError> =>
   asyncOf(sql)
     .batch([statement])
@@ -131,7 +147,9 @@ export const converge = Effect.fn("Paykit.converge")(function* (
 ) {
   const scope: TableScope = {
     dialect: sql.dialect,
-    schema: options.schema ?? DEFAULT_SCHEMA,
+    // MySQL's namespace is the connection's database, not a schema: passing one
+    // would make introspection look in a database that does not exist.
+    schema: sql.dialect === "postgres" ? (options.schema ?? DEFAULT_SCHEMA) : undefined,
   };
 
   if (scope.dialect === "postgres" && !isSchemaName(scope.schema ?? "")) {
@@ -168,9 +186,11 @@ export const converge = Effect.fn("Paykit.converge")(function* (
         return yield* addColumn(table.name, column, scope);
       }
 
+      const keyed = keyedColumnsOf(BILLING_SCHEMA, table.name).has(column.name);
+
       yield* run(
         sql,
-        `ALTER TABLE ${tableName(table.name, scope)} ADD COLUMN ${columnStatement(column, scope.dialect)}`,
+        `ALTER TABLE ${tableName(table.name, scope)} ADD COLUMN ${columnStatement(column, scope.dialect, keyed)}`,
       );
       columns.push(`${table.name}.${column.name}`);
     }
@@ -183,6 +203,12 @@ export const converge = Effect.fn("Paykit.converge")(function* (
   }
 
   for (const index of indexesOf(BILLING_SCHEMA)) {
+    // MySQL 8 has no `CREATE INDEX IF NOT EXISTS`, so the target's own catalog
+    // answers whether the index is already there.
+    if (scope.dialect === "mysql" && (yield* indexNamesOf(sql, index.on)).includes(index.name)) {
+      continue;
+    }
+
     yield* run(sql, indexStatement(index, scope));
     indexes.push(index.name);
   }

@@ -21,6 +21,7 @@ import {
 } from "./SqlConsumers.ts";
 import type { SqlEventLog } from "./SqlEventLog.ts";
 import { BILLING_TABLES, tableName } from "./Tables.ts";
+import { upsertRow } from "./Upsert.ts";
 
 /** What a SQL platform needs to host a model. */
 export interface SqlPlatformOptions {
@@ -414,12 +415,12 @@ export const SqlPlatform = (
 
           yield* backfill(target, plan);
           yield* sql.write(
-            `INSERT INTO ${backfillTable} (consumer, generation, plan, completed_at)
-             VALUES (?, ?, ?, ?)
-             ON CONFLICT (consumer) DO UPDATE SET
-               generation = excluded.generation,
-               plan = excluded.plan,
-               completed_at = excluded.completed_at`,
+            upsertRow(
+              executor.dialect,
+              backfillTable,
+              ["consumer", "generation", "plan", "completed_at"],
+              ["consumer"],
+            ),
             [target, generationOf(target), signature, options.now()],
           );
         }

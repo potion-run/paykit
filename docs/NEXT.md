@@ -67,9 +67,12 @@ depends on its output. D1 keeps applying its own directory with no `migrate` at 
 Drizzle already opened is a connection, not a schema owner: `Database/Drizzle` unwraps its `pg` pool
 and gives paykit the same executor, while `BILLING_SCHEMA` stays the source of truth.
 `examples/auth/test/coexistence.test.ts` runs both migrators — Better Auth's and paykit's — against
-one SQLite handle and proves the two table families never touch. MySQL is not a target yet; ADR 0049
-records what would reopen it and why a `TEXT` primary key makes it a schema decision rather than a
-fourth dialect flag. The record is [ADR
+one SQLite handle and proves the two table families never touch. MySQL is a target: key and index
+columns render as `VARCHAR(191)` because MySQL rejects `TEXT` in a key, convergence checks
+`information_schema.statistics` because MySQL 8 has no `CREATE INDEX IF NOT EXISTS`, and
+`Store/Upsert.ts` is the one place the three `ON CONFLICT` / `ON DUPLICATE KEY UPDATE` spellings
+live. `examples/mysql` and `examples/drizzle` are the two new hosts, each with a live case gated on
+its connection URL. The record is [ADR
 0049](./adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md).
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`

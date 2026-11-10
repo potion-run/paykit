@@ -29,6 +29,7 @@ import {
   type SqlValue,
 } from "./Sql.ts";
 import { BILLING_TABLES, tableName, type TableScope } from "./Tables.ts";
+import { insertIgnoring, upsertRow } from "./Upsert.ts";
 
 /** What every consumer store needs beyond the executor. */
 export interface SqlConsumerOptions {
@@ -58,21 +59,16 @@ const parse = (json: string | null): unknown => (json === null ? null : JSON.par
 
 const poll = (interval: number) => Stream.tick(Duration.millis(interval));
 
-const columns = (names: ReadonlyArray<string>): string => names.join(", ");
-const placeholders = (names: ReadonlyArray<string>): string => names.map(() => "?").join(", ");
-
-/** `INSERT OR IGNORE` on SQLite, `ON CONFLICT DO NOTHING` on Postgres. */
 const insertIgnore = (dialect: SqlDialect, table: string, names: ReadonlyArray<string>): string =>
-  dialect === "postgres"
-    ? `INSERT INTO ${table} (${columns(names)}) VALUES (${placeholders(names)}) ON CONFLICT DO NOTHING`
-    : `INSERT OR IGNORE INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})`;
+  insertIgnoring(dialect, table, names);
 
-/** Upsert one row by its primary key. */
-const upsert = (table: string, names: ReadonlyArray<string>, key: ReadonlyArray<string>): string =>
-  `INSERT INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})
-   ON CONFLICT (${key.join(", ")}) DO UPDATE SET ${names
-     .flatMap((name) => (key.includes(name) ? [] : [`${name} = excluded.${name}`]))
-     .join(", ")}`;
+/** Upsert one row by its primary key, spelled for the target's dialect. */
+const upsert = (
+  dialect: SqlDialect,
+  table: string,
+  names: ReadonlyArray<string>,
+  key: ReadonlyArray<string>,
+): string => upsertRow(dialect, table, names, key);
 
 const scopeOf = (options: SqlConsumerOptions, dialect: SqlDialect): TableScope => ({
   dialect,
@@ -225,6 +221,7 @@ export const SqlViewStore = (
 
           yield* sql.write(
             upsert(
+              executor.dialect,
               state,
               ["view", "key", "generation", "version", "seq", "checkpoints", "state"],
               ["view", "key"],
@@ -243,6 +240,7 @@ export const SqlViewStore = (
           for (const emitted of entries) {
             yield* sql.write(
               upsert(
+                executor.dialect,
                 entry,
                 ["view", "key", "generation", "seq", "event", "envelope", "state"],
                 ["view", "key", "seq"],
@@ -582,7 +580,12 @@ export const SqlProjectionStore = (
         yield* sql.atomic(
           Effect.gen(function* () {
             yield* sql.write(
-              upsert(cursors, ["projection", "key", "position"], ["projection", "key"]),
+              upsert(
+                executor.dialect,
+                cursors,
+                ["projection", "key", "position"],
+                ["projection", "key"],
+              ),
               [projection, key, last],
             );
             yield* sql.write(
@@ -803,6 +806,7 @@ export const SqlStreamStore = (
     const writeMeta = (key: string, meta: StreamMeta) =>
       sql.write(
         upsert(
+          executor.dialect,
           metaTable,
           ["stream", "key", "seq", "checkpoints", "origin_a", "origin_b"],
           ["stream", "key"],
@@ -844,6 +848,7 @@ export const SqlStreamStore = (
                 seq += 1;
                 yield* sql.write(
                   upsert(
+                    executor.dialect,
                     entryTable,
                     ["stream", "key", "seq", "event", "envelope"],
                     ["stream", "key", "seq"],
