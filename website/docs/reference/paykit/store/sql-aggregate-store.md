@@ -3,7 +3,7 @@ title: "SqlAggregateStore"
 description: "A Domain.AggregateStore over SqlEventLog."
 ---
 
-> **Source:** [`packages/paykit/src/Store/SqlAggregateStore.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlAggregateStore.ts#L55)
+> **Source:** [`packages/paykit/src/Store/SqlAggregateStore.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlAggregateStore.ts#L62)
 > **Kind:** Primitive
 
 A `Domain.AggregateStore` over `SqlEventLog`.
