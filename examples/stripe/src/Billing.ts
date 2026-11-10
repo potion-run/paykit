@@ -13,6 +13,7 @@ import { billingCatalog, messagePrice, proPrice } from "./catalog.ts";
  */
 export interface StripeEnv {
   readonly STRIPE_SECRET_KEY: string;
+  /** The signing secret the deploy minted with the endpoint it created. */
   readonly STRIPE_WEBHOOK_SECRET: string;
   /** The base price's lookup key, from `StripeBilling("...").sold.prices.pro`. */
   readonly STRIPE_PRICE_PRO: string;

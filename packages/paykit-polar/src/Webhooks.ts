@@ -7,6 +7,7 @@ import {
   WebhookInvalid,
   WebhookSignatureInvalid,
 } from "@potion.run/paykit";
+import * as Output from "alchemy/Output";
 import * as Clock from "effect/Clock";
 import { Mac, SecureRandom } from "effect/crypto";
 import * as Effect from "effect/Effect";
@@ -26,10 +27,11 @@ export type PolarWebhookRequest = WebhookRequest;
 /** What `polarWebhook` needs: the signing secret and the tier → product map. */
 export interface PolarWebhookProps {
   /**
-   * The endpoint's signing secret, from Polar's dashboard. A secret, so it
-   * arrives redacted: `yield* Config.redacted("POLAR_WEBHOOK_SECRET")`.
+   * The endpoint's signing secret. A Worker reads it from its environment and
+   * passes a `Redacted`; `PolarBilling` passes the endpoint's secret attribute
+   * as an `Output`, which the decoder resolves when a delivery needs it.
    */
-  readonly secret: Redacted.Redacted<string>;
+  readonly secret: Redacted.Redacted<string> | Output.Output<Redacted.Redacted<string>, never>;
   /** Tier → Polar product, the same map `Polar()` was given. */
   readonly tiers?: Readonly<Record<string, PolarTier>>;
   /** How old a signed request may be. Polar's spec recommends five minutes. */
@@ -211,7 +213,6 @@ export const polarWebhook = (
     else deferred.push([tier, mapped]);
   }
 
-  const secret = Redacted.value(props.secret);
   const toleranceSeconds = props.toleranceSeconds ?? 300;
 
   return Effect.fn("Polar.webhook")(function* (request: PolarWebhookRequest) {
@@ -239,6 +240,13 @@ export const polarWebhook = (
         reason: "missing webhook-signature header",
       });
     }
+
+    // A plain secret is the Worker's form. An Output is the deploy's: the
+    // endpoint's attribute is not resolvable while the stack is declared, so
+    // it is read when a delivery is actually verified.
+    const secret = Output.isOutput(props.secret)
+      ? yield* Effect.map(yield* props.secret, Redacted.value)
+      : Redacted.value(props.secret);
 
     yield* verifySignature({
       id,

@@ -5,7 +5,6 @@ import { AdminFrom, GuardsFrom, SessionFrom, authenticate } from "./Auth/FromRes
 import * as Billing from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
 import { BillingApi } from "./BillingApi.api.ts";
-import { providers } from "./BillingStack.resource.ts";
 import { BillingStack as BillingStackDeploy } from "./BillingStack.ts";
 import { planItemsOf, planOf } from "./Catalog.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
@@ -25,6 +24,7 @@ import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
 import { plan } from "./Plan.ts";
 import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
+import { providers } from "./Providers.ts";
 import {
   D1Store,
   DurableObjectStore,

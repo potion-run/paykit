@@ -85,6 +85,11 @@ export type Meter = Resource<
  * reconciles to the same meter instead of creating a second one, and a meter
  * with no ownership metadata is never adopted.
  *
+ * The resource declares `retain`: a stack destroy drops Alchemy's state row and
+ * leaves the meter in place for the prices that reference it. `PolarPrices`
+ * still pipes `RemovalPolicy.retain` explicitly, and a call site that asks for
+ * `destroy` archives the meter rather than deleting it.
+ *
  * ### Declaring a meter
  * **Example:** One meter per billable feature
  * ```typescript
@@ -95,7 +100,9 @@ export type Meter = Resource<
  * @resource
  * @product Meter
  */
-export const Meter = Resource<Meter>("Polar.Meter");
+export const Meter = Resource<Meter>("Polar.Meter", {
+  defaultRemovalPolicy: "retain",
+});
 
 const metadataOf = (meter: Polar.Meter): Record<string, string> =>
   Object.fromEntries(
@@ -201,8 +208,9 @@ export const MeterProvider = () =>
   Provider.succeed(Meter, {
     stables: ["id", "eventName", "createdAt"],
     // A meter a metered price references is financial history, like the price
-    // itself. `PolarPrices` declares it with `RemovalPolicy.retain`, and nuke
-    // must not archive one out from under a retained product.
+    // itself. The resource declares `retain` and `PolarPrices` still pipes
+    // `RemovalPolicy.retain` explicitly, so nuke must not archive one out from
+    // under a retained product.
     nuke: { skip: true },
 
     diff: Effect.fn(function* ({ news, output }) {
@@ -300,8 +308,9 @@ export const MeterProvider = () =>
     }),
 
     // Retention, not deletion: a destroy archives the meter, so a price that
-    // still references it keeps a stable meter. `PolarPrices` retains it like
-    // the product and leaves the archive to the same sweep.
+    // still references it keeps a stable meter. The resource declares `retain`
+    // and `PolarPrices` still pipes it like the product, leaving the archive to
+    // the same sweep.
     delete: Effect.fn(function* ({ output }) {
       const existing = yield* getById(output.id);
 

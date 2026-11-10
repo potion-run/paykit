@@ -5,8 +5,9 @@ import { billingCatalog, messagePrice, proPrice } from "./catalog.ts";
 
 /**
  * The values the deploy writes into the Worker's environment. The token and
- * the webhook secret are secrets; the product and meter ids are the outputs of
- * the `PolarBilling` call in `alchemy.run.ts`.
+ * the webhook secret are secrets; the secret is minted by the endpoint
+ * `PolarBilling` created in `alchemy.run.ts`. The product and meter ids are
+ * that deploy's outputs too.
  */
 export interface PolarEnv {
   readonly POLAR_ACCESS_TOKEN: string;

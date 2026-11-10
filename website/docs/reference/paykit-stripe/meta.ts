@@ -11,5 +11,6 @@ export default defineMeta({
     "stripe-billing",
     "stripe-prices",
     "stripe-webhook",
+    "stripe-webhook-endpoint",
   ],
 });

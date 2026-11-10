@@ -3,7 +3,7 @@ title: "stripeWebhook"
 description: "Verify and translate one Stripe webhook into paykit's provider-neutral event."
 ---
 
-> **Source:** [`packages/paykit-stripe/src/Webhooks.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/Webhooks.ts#L78)
+> **Source:** [`packages/paykit-stripe/src/Webhooks.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/Webhooks.ts#L80)
 > **Kind:** Primitive
 
 Verify and translate one Stripe webhook into paykit's provider-neutral event.

@@ -33,8 +33,9 @@ const home = (provider: string) =>
  * mounts no Api — it is a checkout and a delivery, and `Paykit.world`'s tenant
  * bindings are what those two routes reach.
  *
- * The product id and meter name came from the deploy's `PolarBilling` output
- * through the Worker environment, so this file never repeats a vendor id.
+ * The product id, meter name and webhook signing secret came from the deploy's
+ * `PolarBilling` output through the Worker environment, so this file never
+ * repeats a vendor id and no one sets the secret by hand.
  */
 const handle = (request: Request, env: PolarEnv) => {
   const provider = providerOf(env);

@@ -8,10 +8,12 @@ import * as Redacted from "effect/Redacted";
 import { billingCatalog, polarTiers } from "./src/catalog.ts";
 
 /**
- * The stack: `PolarBilling` creates the products the catalog states and returns
- * the provider `BillingStack` validates, so the tier prices are declared once.
- * The Worker then receives the product and meter ids from `billing.sold`
- * through its environment; nothing in `src/PolarWorker.ts` names a vendor id.
+ * The stack: `PolarBilling` creates the products the catalog states and
+ * reconciles the webhook endpoint Polar delivers to, then returns the provider
+ * `BillingStack` validates, so the tier prices are declared once. The Worker
+ * receives the product and meter ids and the endpoint's signing secret from
+ * `billing` through its environment; nothing in `src/PolarWorker.ts` names a
+ * vendor id, and no one sets `POLAR_WEBHOOK_SECRET` by hand.
  *
  * The token reaches both the resource providers and the runtime. The stack is
  * always pinned to Polar's sandbox, so a production token cannot create
@@ -22,7 +24,6 @@ import { billingCatalog, polarTiers } from "./src/catalog.ts";
  * exists, exactly as the live Polar suite reads its token.
  */
 const accessToken = Redacted.make(process.env.POLAR_ACCESS_TOKEN ?? "");
-const webhookSecret = Redacted.make(process.env.POLAR_WEBHOOK_SECRET ?? "");
 
 const providers = Layer.mergeAll(Cloudflare.providers(), Paykit.providers()).pipe(
   Layer.provideMerge(polarProviders({ accessToken, server: "sandbox" })),
@@ -40,7 +41,6 @@ const PolarExample = Alchemy.Stack(
       server: "sandbox",
       origin: "https://app.example.com",
       tiers: polarTiers,
-      webhookSecret,
     });
 
     const recorded = yield* Paykit.BillingStack("Billing", {
@@ -52,7 +52,9 @@ const PolarExample = Alchemy.Stack(
       main: "./src/PolarWorker.ts",
       env: {
         POLAR_ACCESS_TOKEN: accessToken,
-        POLAR_WEBHOOK_SECRET: webhookSecret,
+        // Minted by the endpoint `PolarBilling` created; the Worker verifies
+        // deliveries with this, so the deploy never reads it from the shell.
+        POLAR_WEBHOOK_SECRET: billing.webhookEndpoint.secret,
         POLAR_PRODUCT_PRO: billing.sold.products.pro,
         POLAR_MESSAGES_METER: billing.sold.meters.messages,
       },

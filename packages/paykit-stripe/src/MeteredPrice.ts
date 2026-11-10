@@ -91,7 +91,7 @@ export interface MeteredPriceProps {
 }
 
 export type MeteredPrice = Resource<
-  "Paykit.Stripe.MeteredPrice",
+  "Stripe.MeteredPrice",
   MeteredPriceProps,
   {
     id: string;
@@ -118,10 +118,18 @@ export type MeteredPrice = Resource<
  * transfers the key onto it, because Stripe prices are immutable and an
  * invoice may still reference the old one.
  *
+ * The resource declares `retain`: a stack destroy drops Alchemy's state row and
+ * leaves the price in place. `StripePrices` still pipes
+ * `RemovalPolicy.retain` at the call site, and a call site that asks for
+ * `destroy` deactivates the price (`active: false`), because Stripe cannot
+ * delete a price an invoice references.
+ *
  * @resource
  * @product Product
  */
-export const MeteredPrice = Resource<MeteredPrice>("Paykit.Stripe.MeteredPrice");
+export const MeteredPrice = Resource<MeteredPrice>("Stripe.MeteredPrice", {
+  defaultRemovalPolicy: "retain",
+});
 
 const toPricing = (price: StripePrice): Pricing | null => {
   if (price.billing_scheme === "tiered") {
@@ -264,7 +272,7 @@ const desiredMetadata = Effect.fn(function* (id: string) {
 });
 
 export class MeteredPriceLookupKeyNotTransferred extends Data.TaggedError(
-  "Paykit.Stripe.MeteredPriceLookupKeyNotTransferred",
+  "Stripe.MeteredPriceLookupKeyNotTransferred",
 )<{ readonly id: string; readonly lookupKey: string }> {}
 
 const ensureLookupKey = Effect.fn(function* (price: StripePrice, lookupKey: string) {

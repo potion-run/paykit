@@ -39,7 +39,8 @@ const sold = yield* PolarPrices("Prices", { tiers: { pro: { ...proPrice, amount:
 ## Retiring a tier
 
 ```typescript
-// `RemovalPolicy.retain` skips deletion: the product stays in Polar for the
+// The resource declares `retain`, and `PolarPrices` still pipes
+// `RemovalPolicy.retain` explicitly: the product stays in Polar for the
 // invoices that reference it, and only Alchemy's state row goes away.
 yield* PolarPrices("Prices", { tiers: {} });
 ```

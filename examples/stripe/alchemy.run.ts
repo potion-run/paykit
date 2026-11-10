@@ -9,16 +9,18 @@ import * as Layer from "effect/Layer";
 import { billingCatalog, stripeTiers } from "./src/catalog.ts";
 
 /**
- * The stack: `StripeBilling` creates the products, prices and meters the
- * catalog states and returns the provider `BillingStack` validates, so the
- * tier prices are declared once. The Worker receives the lookup keys and meter
- * name from `billing.sold` through its environment; nothing in
- * `src/StripeWorker.ts` names a vendor id.
+ * The stack: `StripeBilling` creates the products, prices, meters and webhook
+ * endpoint the catalog states and returns the provider `BillingStack` validates,
+ * so the tier prices are declared once. The Worker receives the lookup keys and
+ * meter name from `billing.sold`, and the signing secret the endpoint minted,
+ * through its environment; nothing in `src/StripeWorker.ts` names a vendor id.
  *
  * `STRIPE_API_KEY` reaches both halves: `Stripe.providers()` reconciles the
  * vendor objects with it, and the runtime provider here checks out and verifies
- * deliveries with it. `STRIPE_WEBHOOK_SECRET` is the endpoint's signing secret,
- * so the Worker verifies Stripe's own signature.
+ * deliveries with it. `STRIPE_WEBHOOK_SECRET` is the secret `StripeBilling`
+ * minted when it created the endpoint at `https://app.example.com/webhooks/stripe`,
+ * so the Worker verifies Stripe's own signature without a copy of the secret in
+ * configuration.
  */
 const StripeExample = Alchemy.Stack(
   "PaykitStripeExample",
@@ -30,7 +32,6 @@ const StripeExample = Alchemy.Stack(
   },
   Effect.gen(function* () {
     const secretKey = yield* Config.Redacted("STRIPE_API_KEY");
-    const webhookSecret = yield* Config.Redacted("STRIPE_WEBHOOK_SECRET");
 
     // The Stripe resources are declared here, so the stack's provider
     // collection is provided to the call that creates them.
@@ -38,7 +39,6 @@ const StripeExample = Alchemy.Stack(
       secretKey,
       origin: "https://app.example.com",
       tiers: stripeTiers,
-      webhookSecret,
     }).pipe(Effect.provide(Stripe.providers()));
 
     const recorded = yield* Paykit.BillingStack("Billing", {
@@ -50,7 +50,7 @@ const StripeExample = Alchemy.Stack(
       main: "./src/StripeWorker.ts",
       env: {
         STRIPE_SECRET_KEY: secretKey,
-        STRIPE_WEBHOOK_SECRET: webhookSecret,
+        STRIPE_WEBHOOK_SECRET: billing.webhookEndpoint.secret,
         STRIPE_PRICE_PRO: billing.sold.prices.pro,
         STRIPE_MESSAGES_PRICE: billing.sold.usage.pro.messages,
         STRIPE_MESSAGES_METER: billing.sold.meters.messages,

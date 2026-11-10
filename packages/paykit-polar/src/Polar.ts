@@ -10,6 +10,7 @@ import {
   type UsageLine,
   unitPriceKey,
 } from "@potion.run/paykit";
+import type * as Output from "alchemy/Output";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -126,8 +127,15 @@ export interface PolarProps {
   /**
    * The webhook endpoint's signing secret. With it, the provider carries the
    * decoder, so a deployment wires the tier mapping and the secret once.
+   *
+   * An `Output` is the deploy's form: `PolarBilling` has the endpoint's secret
+   * attribute before the endpoint exists, so the decoder reads it when a
+   * delivery needs it. A Worker builds its provider from the environment and
+   * passes a plain `Redacted`.
    */
-  readonly webhookSecret?: Redacted.Redacted<string>;
+  readonly webhookSecret?:
+    | Redacted.Redacted<string>
+    | Output.Output<Redacted.Redacted<string>, never>;
   /** How old a signed delivery may be. Polar's spec recommends five minutes. */
   readonly webhookToleranceSeconds?: number;
   /** Where a completed checkout returns to. Defaults to `/welcome`. */

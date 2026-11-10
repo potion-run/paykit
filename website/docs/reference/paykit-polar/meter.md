@@ -15,6 +15,11 @@ stage-qualified name, `paykit:<stage>:meter:<feature>`. A restored state
 reconciles to the same meter instead of creating a second one, and a meter
 with no ownership metadata is never adopted.
 
+The resource declares `retain`: a stack destroy drops Alchemy's state row and
+leaves the meter in place for the prices that reference it. `PolarPrices`
+still pipes `RemovalPolicy.retain` explicitly, and a call site that asks for
+`destroy` archives the meter rather than deleting it.
+
 ## Declaring a meter
 
 ```typescript

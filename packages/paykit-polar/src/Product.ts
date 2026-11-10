@@ -153,7 +153,8 @@ export type Product = Resource<
  * ### Retiring a tier
  * **Example:** A tier leaves the catalog
  * ```typescript
- * // `RemovalPolicy.retain` skips deletion: the product stays in Polar for the
+ * // The resource declares `retain`, and `PolarPrices` still pipes
+ * // `RemovalPolicy.retain` explicitly: the product stays in Polar for the
  * // invoices that reference it, and only Alchemy's state row goes away.
  * yield* PolarPrices("Prices", { tiers: {} });
  * ```
@@ -161,7 +162,9 @@ export type Product = Resource<
  * @resource
  * @product Product
  */
-export const Product = Resource<Product>("Polar.Product");
+export const Product = Resource<Product>("Polar.Product", {
+  defaultRemovalPolicy: "retain",
+});
 
 type VendorProduct = Polar.Product;
 
@@ -459,8 +462,9 @@ const desiredMetadata = Effect.fn(function* (id: string, tier: string) {
 export const ProductProvider = () =>
   Provider.succeed(Product, {
     stables: ["id", "createdAt"],
-    // A product is financial history; `PolarPrices` declares every one with
-    // `RemovalPolicy.retain`, and nuke must not try to delete one either.
+    // A product is financial history. The resource declares `retain` and
+    // `PolarPrices` still pipes `RemovalPolicy.retain` explicitly, so nuke
+    // must not try to delete one either.
     nuke: { skip: true },
 
     diff: Effect.fn(function* ({ news, output }) {

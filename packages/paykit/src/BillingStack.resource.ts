@@ -1,7 +1,6 @@
 import * as Provider from "alchemy/Provider";
 import { Resource } from "alchemy/Resource";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { catalog, Catalog, type CatalogError } from "./Catalog.ts";
 import {
@@ -115,13 +114,22 @@ export type BillingStackShape = Resource<
 >;
 
 /**
- * The deploy-time billing stack. It validates the catalog and every provider
- * mapping and records the result in state.
+ * The deploy-time billing stack: it records the validated catalog, the provider
+ * descriptors and the store kind, retains on removal, and versions that state
+ * shape with `BILLING_STACK_VERSION`.
  *
- * The default removal policy is `retain`: Alchemy drops the recorded state
- * without calling the provider's (no-op) delete. The event log lives in the
- * store, not in this resource, so destroying the stack never cancels a
- * subscription, refunds a charge or deletes a customer.
+ * Reconcile re-validates the catalog and every provider mapping, so a deploy
+ * whose catalog no longer validates fails with a tagged error instead of
+ * recording half a stack. The attrs carry the catalog, the tier ids a console
+ * can list, the provider descriptors and the store kind.
+ *
+ * Removal is `retain`: Alchemy drops the recorded state without calling the
+ * provider's (no-op) delete. The event log lives in the store, not in this
+ * resource, so destroying the stack never cancels a subscription, refunds a
+ * charge or deletes a customer.
+ *
+ * @resource
+ * @product Billing
  */
 export const BillingStack = Resource<BillingStackShape>("Paykit.BillingStack", {
   defaultRemovalPolicy: "retain",
@@ -233,11 +241,3 @@ export const BillingStackProvider = () =>
     read: ({ fqn, output }) => readBillingStack(fqn, output),
     delete: () => Effect.void,
   });
-
-/**
- * Every Alchemy provider this package owns, as one Layer, so a stack declares
- * `Paykit.providers()` beside `Cloudflare.providers()`.
- *
- * @layer
- */
-export const providers = () => Layer.mergeAll(BillingStackProvider());
