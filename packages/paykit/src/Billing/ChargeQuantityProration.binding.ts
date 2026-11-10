@@ -10,7 +10,7 @@ import {
   PaymentsRouter,
   PaymentDeclined,
   ProviderCapabilityMissing,
-  providerFor,
+  resolveProvider,
 } from "../Payments.ts";
 import {
   RecordQuantityProrationInvoice,
@@ -144,7 +144,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
 
       const chosen = Option.match(router, {
         onNone: () => null,
-        onSome: (set) => providerFor(set, state.refs),
+        onSome: (set) => resolveProvider(set, state.refs),
       });
 
       const commandId = `${account}:${request.prorationId}`;
@@ -179,7 +179,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
 
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
-            provider: chosen?.name ?? "none",
+            provider: chosen?.provider.name ?? "none",
             op: "createInvoice",
           });
         }
@@ -213,7 +213,7 @@ export const chargeQuantityProrationOperation = Effect.fn("Paykit.ChargeQuantity
         } as const;
       });
 
-      return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
+      return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.context);
     });
   },
 );

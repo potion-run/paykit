@@ -1,9 +1,10 @@
 import * as Domain from "@alchemy.run/domain";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import { UnitPrice } from "./Allowance.ts";
 import type { Pricing } from "./Pricing.ts";
 import { TierKind, type Price } from "./Tier.ts";
@@ -274,6 +275,13 @@ export type MoneyProviderKind = typeof MoneyProviderKind.Type;
 export type PaymentsLayer = ReturnType<typeof Payments.toLayer<never, never>>;
 
 /**
+ * One provider's `Payments` port, built into a context. A world builds each
+ * provider's layer once, so a command provides the context it resolved instead
+ * of building a layer per call.
+ */
+export type PaymentsContext = Context.Context<Layer.Success<PaymentsLayer>>;
+
+/**
  * What `Paykit.<Provider>()` returns: a name, a kind, its ops, its webhook and
  * the adapter.
  *
@@ -339,6 +347,11 @@ export interface ProviderSet {
   readonly byName: ReadonlyMap<string, MoneyProvider>;
   /** The provider a purchase starts on while the account holds no refs. */
   readonly fallback: MoneyProvider | null;
+  /**
+   * Each provider's services, built once when the set was built. Keyed by
+   * `name`, so a resolved provider always has one.
+   */
+  readonly contexts: ReadonlyMap<string, PaymentsContext>;
 }
 
 /**
@@ -350,19 +363,50 @@ export class PaymentsRouter extends Context.Service<PaymentsRouter, ProviderSet>
   "paykit/PaymentsRouter",
 ) {}
 
+/**
+ * The set, with every provider's services built once, in the caller's scope.
+ *
+ * An `Effect` because building a provider's layer acquires whatever that layer
+ * acquires. The world builds this once, so a provider's client lives as long as
+ * the world does — for a Worker that builds its world per request, that is the
+ * request; for a process that builds it once, the process.
+ *
+ * ### Building a set
+ * **Example:** Every provider a deployment runs
+ * ```ts
+ * const set = yield* providerSet([Stripe({ ... }), Polar({ ... })]);
+ * const chosen = resolveProvider(set, refs);
+ * ```
+ *
+ * @primitive
+ */
+export const providerSet = (
+  providers: ReadonlyArray<MoneyProvider>,
+): Effect.Effect<ProviderSet, never, Scope.Scope> =>
+  Effect.gen(function* () {
+    const contexts = new Map<string, PaymentsContext>();
+
+    for (const provider of providers) {
+      contexts.set(provider.name, yield* Layer.build(provider.payments));
+    }
+
+    return {
+      all: providers,
+      byName: new Map(providers.map((provider) => [provider.name, provider])),
+      fallback: providers[0] ?? null,
+      contexts,
+    };
+  });
+
 /** One layer holding every provider a deployment runs, first one preferred. */
 export const paymentsRouter = (
   ...providers: ReadonlyArray<MoneyProvider>
 ): Layer.Layer<PaymentsRouter> =>
-  Layer.succeed(PaymentsRouter, {
-    all: providers,
-    byName: new Map(providers.map((provider) => [provider.name, provider])),
-    fallback: providers[0] ?? null,
-  });
+  Layer.unwrap(Effect.map(providerSet(providers), (set) => Layer.succeed(PaymentsRouter, set)));
 
 /**
  * The provider that serves an account: the one its `refs` name, else the
- * fallback. Pure, so a binding resolves and then provides exactly one layer.
+ * fallback. Pure, so a binding resolves and then provides exactly one context.
  */
 export const providerFor = (
   set: ProviderSet,
@@ -375,4 +419,47 @@ export const providerFor = (
   }
 
   return set.fallback;
+};
+
+/** A provider and the services its world built for it, ready to provide to one call. */
+export interface ResolvedProvider {
+  readonly provider: MoneyProvider;
+  readonly context: PaymentsContext;
+}
+
+/**
+ * The provider that serves an account, with the context its world built.
+ *
+ * A binding resolves once per call and then provides `context` — never
+ * `provider.payments` — so a deployment with several providers builds each one
+ * at startup instead of rebuilding a layer on every money operation.
+ *
+ * ### Providing the provider that serves one account
+ * **Example:** Resolve, then provide the built context
+ * ```ts
+ * const chosen = resolveProvider(yield* PaymentsRouter, standing.refs);
+ *
+ * if (chosen === null) return yield* new ProviderCapabilityMissing({ provider: "none", op: "createInvoice" });
+ *
+ * yield* Effect.provide(invoice(chosen.provider), chosen.context);
+ * ```
+ *
+ * @primitive
+ */
+export const resolveProvider = (
+  set: ProviderSet,
+  refs: Readonly<Record<string, unknown>>,
+): ResolvedProvider | null => {
+  const provider = providerFor(set, refs);
+
+  if (provider === null) return null;
+
+  // A set built by hand — rather than by `paymentsRouter` or `providerSet` —
+  // has no build to resolve. Answering `null` refuses the operation the way a
+  // world with no provider does, instead of providing an empty context.
+  const context = set.contexts.get(provider.name);
+
+  if (context === undefined) return null;
+
+  return { provider, context };
 };

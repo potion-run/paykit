@@ -3,7 +3,7 @@ title: "dunning"
 description: "Turn on a dunning retry ladder."
 ---
 
-> **Source:** [`packages/paykit/src/Subscription/Dunning.policy.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Subscription/Dunning.policy.ts#L40)
+> **Source:** [`packages/paykit/src/Subscription/Dunning.policy.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Subscription/Dunning.policy.ts#L45)
 > **Kind:** Layer
 
 Turn on a dunning retry ladder. Without this layer the policy still owns

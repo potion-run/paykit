@@ -3,7 +3,7 @@ title: "world"
 description: "One deployment graph, built from the parts a host chooses."
 ---
 
-> **Source:** [`packages/paykit/src/World.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/World.ts#L184)
+> **Source:** [`packages/paykit/src/World.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/World.ts#L201)
 > **Kind:** Primitive
 
 One deployment graph, built from the parts a host chooses.
@@ -25,10 +25,11 @@ that cannot decode it is a defect the host handles once, at its boundary,
 instead of an `Effect.runSync` that throws at module load.
 
 The store is provided both to the handlers and outward, because `List` reads
-the projection directly rather than through a view. A single provider's
-`Payments` layer is merged too, so a route beside the world can call it
-without rebuilding the choice; with two providers the router is the only
-answer, because merging both would shadow one by merge order.
+the projection directly rather than through a view. A single provider's built
+services are merged too — the same context a command resolves, not a second
+build — so a route beside the world can call `Payments`; with two providers
+the router is the only answer, because merging both would shadow one by merge
+order.
 
 A tier's `topUp` line is catalog data, but the policy that acts on it is the
 deployment's: `autoTopUp` installs it and names the pack a line without one

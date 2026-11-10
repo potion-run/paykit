@@ -3,7 +3,7 @@ title: "BillingInProcess"
 description: "Every paykit binding, implemented in the process that hosts the model."
 ---
 
-> **Source:** [`packages/paykit/src/Billing/BillingInProcess.layer.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Billing/BillingInProcess.layer.ts#L1207)
+> **Source:** [`packages/paykit/src/Billing/BillingInProcess.layer.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Billing/BillingInProcess.layer.ts#L1211)
 > **Kind:** Layer · **Product:** Usage · **Provides:** `Paykit.TrackUsage`
 
 Every paykit binding, implemented in the process that hosts the model.
@@ -19,7 +19,11 @@ changes.
 ## Providing the tenant surface
 
 ```typescript
-const World = Layer.mergeAll(BillingInProcess, catalogLayer(Catalog), provider.payments);
+const World = Layer.mergeAll(
+  BillingInProcess,
+  catalogLayer(Catalog),
+  paymentsRouter(provider),
+);
 
 fetch: Effect.gen(function* () {
   const trackUsage = yield* Paykit.TrackUsage(account);

@@ -17,6 +17,7 @@ export default defineMeta({
     "make",
     "outbound",
     "paykit",
+    "payments",
     "plan-version-of",
     "providers",
     "resolve-polar-product-id",

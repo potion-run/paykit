@@ -17,7 +17,7 @@ import { feature } from "./Feature.ts";
 import { handler, moneyRoutes } from "./Handler.ts";
 import { httpStatus } from "./HttpStatus.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
-import { paymentsRouter } from "./Payments.ts";
+import { paymentsRouter, providerSet, resolveProvider } from "./Payments.ts";
 import { PaymentsManual } from "./PaymentsManual.ts";
 import { PaymentsMemory } from "./PaymentsMemory.ts";
 import { PaymentsPolar } from "./PaymentsPolar.ts";
@@ -221,4 +221,6 @@ export const Paykit = {
   Stripe: PaymentsStripe,
   PaymentsPolar,
   paymentsRouter,
+  providerSet,
+  resolveProvider,
 } as const;

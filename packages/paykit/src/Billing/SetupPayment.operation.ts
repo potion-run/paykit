@@ -1,6 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 
 /** What `SetupPayment` opens. */
@@ -14,7 +19,8 @@ export interface SetupPaymentInput {
  * Open the provider's page where a customer adds a payment method.
  *
  * The page belongs to the provider the account already pays through, so the
- * standing picks it and only that provider's layer is provided for the call.
+ * standing picks it and only that provider's built context is provided for the
+ * call.
  */
 export const setupPaymentOperation = Effect.fn("Paykit.SetupPayment")(function* () {
   const subscription = yield* Subscription;
@@ -25,7 +31,7 @@ export const setupPaymentOperation = Effect.fn("Paykit.SetupPayment")(function* 
 
     const chosen = Option.match(router, {
       onNone: () => null,
-      onSome: (set) => providerFor(set, standing.refs),
+      onSome: (set) => resolveProvider(set, standing.refs),
     });
 
     const attempt = Effect.gen(function* () {
@@ -33,7 +39,7 @@ export const setupPaymentOperation = Effect.fn("Paykit.SetupPayment")(function* 
 
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
-          provider: chosen?.name ?? "none",
+          provider: chosen?.provider.name ?? "none",
           op: "setupPayment",
         });
       }
@@ -44,6 +50,6 @@ export const setupPaymentOperation = Effect.fn("Paykit.SetupPayment")(function* 
       });
     });
 
-    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.context);
   });
 });

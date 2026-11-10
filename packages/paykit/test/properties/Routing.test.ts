@@ -20,6 +20,9 @@ const setOf = (names: ReadonlyArray<string>): ProviderSet => {
     all,
     byName: new Map(all.map((provider) => [provider.name, provider])),
     fallback: all[0] ?? null,
+    // Routing reads `byName` and `fallback` only; `resolveProvider` is what
+    // needs a built context, and it has its own test.
+    contexts: new Map(),
   };
 };
 
