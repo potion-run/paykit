@@ -27,6 +27,7 @@ import {
   planInGroup,
   planOrder,
   primaryPlan,
+  withoutStalePhases,
   type PlanPhase,
   type PlanRow,
   PlanSchedule,
@@ -799,9 +800,9 @@ export const topUpTermsOf = (state: SubscribedState): TopUpTerms | undefined =>
 /** The schedule the account will move through, in start order. */
 export const scheduleOf = (state: SubscribedState): PlanSchedule => state.schedule ?? [];
 
-/** The phases due at or before an instant, in start order. */
+/** The phases due at or before an instant, in start order, that the held generation has not outrun. */
 export const duePhasesOf = (state: SubscribedState, at: DateTime.Utc): ReadonlyArray<PlanPhase> =>
-  duePhases(state.schedule, at.epochMilliseconds);
+  duePhases(withoutStalePhases(state.plans, state.schedule), at.epochMilliseconds);
 
 /** The next phase of one group, or `undefined` when the group has none. */
 export const pendingPlanOf = (

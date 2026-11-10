@@ -9,7 +9,6 @@ import { BillingControls, CustomerDetails, EntityId, EntityStatus } from "../Cus
 import { Proration } from "../Proration.ts";
 import { Interval, Price, TopUpTerms } from "../Tier.ts";
 import {
-  type PlanPhase,
   PlanRow,
   PlanSchedule,
   Plans,
@@ -17,6 +16,7 @@ import {
   withoutGroup,
   withoutGroupPhases,
   withoutPhase,
+  withoutStalePhases,
   withPhase,
   withPlan,
 } from "./PlanSet.ts";
@@ -516,10 +516,14 @@ export class BillingState extends Domain.View("BillingState", {
         ),
       );
 
-      const schedule =
+      const withoutMoved = withoutPhase(view.schedule, event.tier);
+
+      const schedule = withoutStalePhases(
+        plans,
         event.supersedesSchedule === true
-          ? view.schedule.filter((phase: PlanPhase) => phase.group !== (event.group ?? "default"))
-          : withoutPhase(view.schedule, event.tier);
+          ? withoutGroupPhases(withoutMoved, event.group ?? "default")
+          : withoutMoved,
+      );
 
       const sold = primaryPlan(plans);
       const pendingTier = pendingViewOf(schedule);
@@ -775,7 +779,10 @@ export class BillingState extends Domain.View("BillingState", {
                 cancellations: {},
                 ...(event.cancelAtPeriodEndAfter ? {} : { plans: {} }),
               }
-            : { cancellations: {} }),
+            : {
+                schedule: withoutStalePhases(view.plans, view.schedule),
+                cancellations: {},
+              }),
           periodStart: event.nextPeriodStart,
           periodEnd: event.nextPeriodEnd,
           ...(event.credits === undefined ? {} : { credits: event.credits }),

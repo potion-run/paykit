@@ -231,6 +231,20 @@ export const withoutGroupPhases = (
 ): PlanSchedule => (schedule ?? []).filter((phase) => phase.group !== group);
 
 /**
+ * Whether a pending phase names an older generation than the plan set holds
+ * for that plan. Applying it would record the older terms over the newer row,
+ * so it is no longer due (ADR 0047 §5).
+ */
+export const phaseIsStale = (plans: Plans | undefined, phase: PlanPhase): boolean =>
+  (plans?.[phase.planId]?.version ?? 0) > phase.version;
+
+/** Drop every phase the standing's held generation of its plan has outrun. */
+export const withoutStalePhases = (
+  plans: Plans | undefined,
+  schedule: PlanSchedule | undefined,
+): PlanSchedule => (schedule ?? []).filter((phase) => !phaseIsStale(plans, phase));
+
+/**
  * The phases due at or before an instant, in order. A boundary applies them
  * before it resets the counters, so the next period starts on the plan it
  * lands on.

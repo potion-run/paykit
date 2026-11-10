@@ -5,10 +5,10 @@ import { type Catalog, planOf } from "./Catalog.ts";
 import { catalogMismatchOf } from "./CatalogGuard.ts";
 import { CatalogService } from "./CatalogService.ts";
 import { PaymentCapability, PaymentsProvider, PaymentsRouter, providerFor } from "./Payments.ts";
-import { DEFAULT_PLAN_GROUP } from "./Subscription/PlanSet.ts";
+import { DEFAULT_PLAN_GROUP, planOrder } from "./Subscription/PlanSet.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
-import { planIdOf, planRowsOf } from "./Subscription/Subscription.state.ts";
+import { entityRecordsOf, planIdOf, planRowsOf } from "./Subscription/Subscription.state.ts";
 
 /**
  * A priced tier is in force but the account carries no vendor reference for
@@ -129,6 +129,9 @@ const sellsAnything = (provider: VerifyOptions["provider"]): boolean =>
  * reference, a vendor reference with no standing, a sold tier no provider can
  * charge. Pure, so `doctor` and a test can call it without a store.
  *
+ * Every active plan row is judged for generation drift, including each
+ * entity's own plan set.
+ *
  * This is the account-level drift check. It catches a checkout that was
  * started and abandoned, which is the drift a deploy can still fix. Vendor
  * state that disagrees with ours needs a provider read, which is a future
@@ -151,11 +154,9 @@ export const verifyState = (
   const sold = planIdOf(state);
   const tier = sold === "" ? null : planOf(catalog, sold);
 
-  if (tier === null) return [];
-
   const mismatches: Array<VerifyMismatch> = [];
 
-  if (tier.price !== undefined) {
+  if (tier !== null && tier.price !== undefined) {
     if (provider !== null && refs[provider.name] === undefined) {
       mismatches.push(new MissingProviderRef({ account, tier: tier.id, provider: providerName }));
     }
@@ -169,8 +170,14 @@ export const verifyState = (
 
   // Every active plan carries the catalog generation it was sold at. An older
   // one is drift the operator can migrate; a newer one means this deploy is
-  // serving state it cannot judge (ADR 0047).
-  for (const row of planRowsOf(state)) {
+  // serving state it cannot judge (ADR 0047). An entity holds its own plan set,
+  // so its rows are judged beside the customer's.
+  const rows = [
+    ...planRowsOf(state),
+    ...entityRecordsOf(state).flatMap((record) => planOrder(record.plans)),
+  ];
+
+  for (const row of rows) {
     const sold = planOf(catalog, row.planId);
 
     // A plan the catalog removed leaves its standing alone: there is no
