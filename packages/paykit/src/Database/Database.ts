@@ -1,46 +1,23 @@
-import type { Input, RuntimeContext } from "alchemy";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
-import type { MigrationApplyError } from "../Migrations/index.ts";
 import type { SqlDialect, SqlExecutor } from "../Store/Sql.ts";
-
-/**
- * Deploy-time migration support for one target: the identity a deploy records
- * and the connection it applies files through.
- *
- * The connection is two-stage, mirroring Alchemy's own resource doctrine. The
- * OUTER effect runs while the stack is evaluated, so the resource Outputs it
- * yields — a database id, a connection-string attribute — become dependency
- * captures that resolve at apply time. The INNER effect runs at apply, opens
- * the connection on the deploy's scope, and yields the executor the migration
- * runs against. No I/O in the outer half, ever.
- */
-export interface DatabaseMigrate {
-  /**
-   * Non-secret identity of the target database, part of the migration Action's
-   * input so a replaced database re-runs the migration even when the schema is
-   * unchanged. It is persisted to Alchemy state, so it must never contain a
-   * connection string — a digest of one is what a layer supplies.
-   */
-  readonly identity: Input<Record<string, unknown>>;
-  /** Two-stage connection: capture at deploy, connect at apply. */
-  readonly connect: Effect.Effect<
-    Effect.Effect<SqlExecutor, MigrationApplyError, Scope.Scope>,
-    never,
-    RuntimeContext
-  >;
-}
 
 /**
  * The database a deployment writes its billing model to.
  *
  * It is the same seam Alchemy's `BetterAuth.Database` is, for the same reason:
- * the model never learns which platform answered. `runtime` is the executor a
- * request uses (memoized on the execution scope, so a pool closes when the
- * event settles); `migrate` is the deploy's own connection, absent when the
- * target cannot migrate (Memory) or when another resource owns the schema
- * (Cloudflare D1 applies its `migrations` directory).
+ * the model never learns which platform answered. The service describes only
+ * the runtime plane — a dialect, the schema, and an executor acquired on the
+ * scope of whoever is running. Deploy-time migration support is a separate
+ * service, `Paykit.DatabaseMigrate`, so a host that cannot migrate (a Node
+ * process that owns its own schema) provides this one and nothing else.
+ *
+ * `executor` is acquired once per execution and released with that execution's
+ * scope. A Worker scopes it to the request, because its sockets are pinned to
+ * the request that owns them; a Node host provides a longer-lived scope and
+ * keeps one pool for the process. The port does not name which: the scope the
+ * caller provides is the lifetime.
  *
  * ### Providing a target
  * **Example:** SQLite for a test, Postgres for the deploy
@@ -51,7 +28,7 @@ export interface DatabaseMigrate {
  *
  * Effect.gen(function* () {
  *   const database = yield* Paykit.Database;
- *   const applied = yield* Paykit.sync(yield* database.runtime);
+ *   const applied = yield* Paykit.sync(yield* database.executor);
  * }).pipe(Effect.provide(Store));
  * ```
  *
@@ -64,12 +41,11 @@ export interface DatabaseService {
   readonly schema?: string;
   /**
    * The executor one execution uses — a connection or binding acquired on the
-   * execution's scope. Never acquire it at module scope: a Worker's sockets are
-   * pinned to the request that owns them.
+   * execution's scope and released when it closes. A Worker scopes it to the
+   * request; a Node process scopes it to the process. Never acquire it at
+   * module scope: a Worker's sockets belong to one request.
    */
-  readonly runtime: Effect.Effect<SqlExecutor, never, RuntimeContext | Scope.Scope>;
-  /** Deploy-time migration support. Absent means this target cannot migrate. */
-  readonly migrate?: DatabaseMigrate;
+  readonly executor: Effect.Effect<SqlExecutor, never, Scope.Scope>;
 }
 
 /**

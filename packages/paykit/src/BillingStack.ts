@@ -5,7 +5,7 @@ import type { BillingStore } from "./BillingStack.resource.ts";
 import type { BillingStackShape } from "./BillingStack.resource.ts";
 import { catalog, type Catalog, type CatalogInput } from "./Catalog.ts";
 import { Database } from "./Database/Database.ts";
-import { registerDatabaseMigration } from "./Database/Migrate.ts";
+import { DatabaseMigrate, registerDatabaseMigration } from "./Database/Migrate.ts";
 import type { MoneyProvider } from "./Payments.ts";
 import {
   MemoryStore,
@@ -134,11 +134,14 @@ export const BillingStack = Effect.fn("Paykit.BillingStack")(function* (
 
   // A `Paykit.Database` layer in context is what turns the declaration into a
   // migration. Absent — a test, a memory host — the call records the catalog and
-  // does no database work.
+  // does no database work. `DatabaseMigrate` is the deploy plane: a layer that
+  // cannot migrate simply does not provide it.
   const database = yield* Effect.serviceOption(Database);
 
   if (Option.isSome(database)) {
-    const effect: unknown = registerDatabaseMigration(database.value, id, {
+    const support = Option.getOrUndefined(yield* Effect.serviceOption(DatabaseMigrate));
+
+    const effect: unknown = registerDatabaseMigration(database.value, support, id, {
       ...(props.migrate === undefined ? {} : { migrate: props.migrate }),
       ...(props.schema === undefined ? {} : { schema: props.schema }),
     });

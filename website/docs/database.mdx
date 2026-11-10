@@ -9,32 +9,41 @@ paykit keeps its event log, receipts, state and read models in SQL. The database
 model asks for an executor, and a deployment chooses the target. Nothing in the model imports a
 driver, `check()` still answers from one local read, and a Worker never runs a migration.
 
-## One port, two obligations
+## One port, two planes
 
-`Paykit.Database` is the port. A target supplies one `DatabaseService`:
+`Paykit.Database` is the runtime port. A target supplies one `DatabaseService`:
 
 ```ts
 interface DatabaseService {
   dialect: "sqlite" | "postgres" | "mysql";
   schema?: string; // the Postgres schema, when the target has one
-  runtime: Effect<SqlExecutor, never, RuntimeContext | Scope.Scope>; // per execution
-  migrate?: {
-    // absent when the target cannot migrate
-    identity: Input<Record<string, unknown>>; // non-secret identity of the target
-    connect: Effect<Effect<SqlExecutor, MigrationApplyError, Scope.Scope>, never, RuntimeContext>;
-  };
+  executor: Effect<SqlExecutor, never, Scope.Scope>; // acquired on the caller's scope
 }
 ```
 
-`runtime` is opened per execution and closed when the event settles, which is the only pooling
-shape workerd allows. `migrate.connect` is a separate obligation because a migration needs one
-dedicated session: the registry's bookkeeping queries are unqualified, so Postgres scopes
-`search_path` around them, and a pooled connection would spread the statements across sessions.
+`executor` is acquired on the scope of whoever is running and released when it closes. A Worker
+scopes it to the request, which is the only pooling shape workerd allows; a Node host scopes it to
+the process and keeps one pool. The port does not name which, so it needs no `RuntimeContext` and no
+platform type: a Node process, a test and a Worker share the same service.
+
+`Paykit.DatabaseMigrate` is the deploy plane, and only a target that can migrate provides it:
+
+```ts
+interface DatabaseMigrateService {
+  identity: Input<Record<string, unknown>>; // non-secret identity of the target
+  connect: Effect<Effect<SqlExecutor, MigrationApplyError, Scope.Scope>, never, RuntimeContext>;
+}
+```
+
+`connect` is a separate obligation because a migration needs one dedicated session: the registry's
+bookkeeping queries are unqualified, so Postgres scopes `search_path` around them, and a pooled
+connection would spread the statements across sessions. It is also two-stage: the outer effect runs
+while the stack is evaluated, the inner one opens the connection at apply.
 
 The two connections are also separate because they exist in different places. A Hyperdrive
 connection string is only valid inside the Worker, so the deploy cannot use it; migrations take the
-origin URL, or the target has no `migrate` at all. `identity` is the non-secret identity of the
-target — a URL digest on Postgres, a filename on SQLite — and never the URL itself, because it is
+origin URL, or the target has no `DatabaseMigrate` at all. `identity` is the non-secret identity of
+the target — a URL digest on Postgres, a filename on SQLite — and never the URL itself, because it is
 persisted in the migration Action's input. `schema` names the Postgres schema (`billing` by default;
 `public` is never touched) and is ignored by SQLite.
 
@@ -96,7 +105,7 @@ transaction belongs on Postgres.
 **Postgres** is the target for a durable deployment. In a Worker it is reached through Hyperdrive,
 which pools the connections workerd would otherwise open per request; a test or a long-lived
 service uses `pg` directly. When the runtime and the deploy use different credentials — the usual
-Hyperdrive arrangement — `migrate.connect` names the origin connection and `runtime` keeps the
+Hyperdrive arrangement — `migrate.connect` names the origin connection and `executor` keeps the
 binding. Neon, Aurora and a plain connection string are the same two obligations with a different
 driver.
 

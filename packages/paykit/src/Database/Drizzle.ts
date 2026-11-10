@@ -3,6 +3,7 @@ import * as Layer from "effect/Layer";
 import { pgPoolExecutor, type PgPoolLike } from "../Store/PostgresDriver.ts";
 import { DEFAULT_SCHEMA } from "../Store/Tables.ts";
 import { Database, type DatabaseService } from "./Database.ts";
+import { DatabaseMigrate, type DatabaseMigrateService } from "./Migrate.ts";
 
 /** What the layer needs from a Drizzle database: the client it already holds. */
 export interface DrizzleLike {
@@ -73,9 +74,8 @@ const isPool = (value: unknown): value is PgPoolLike =>
 export const Drizzle = <R = never>(
   db: DrizzleLike | Effect.Effect<DrizzleLike, never, R>,
   options: DrizzleOptions = {},
-) =>
-  Layer.effect(
-    Database,
+): Layer.Layer<Database, never, R> =>
+  Layer.unwrap(
     Effect.gen(function* () {
       const drizzle = Effect.isEffect(db) ? yield* db : db;
       const client = drizzle.$client;
@@ -93,18 +93,20 @@ export const Drizzle = <R = never>(
       const sql = pgPoolExecutor(client);
       const schema = options.schema ?? DEFAULT_SCHEMA;
 
-      return {
+      const database = Layer.succeed(Database, {
         dialect: "postgres",
         schema,
-        runtime: Effect.succeed(sql),
-        ...(options.migrate === false
-          ? {}
-          : {
-              migrate: {
-                identity: options.identity ?? { dialect: "postgres", schema },
-                connect: Effect.succeed(Effect.succeed(sql)),
-              },
-            }),
-      } satisfies DatabaseService;
+        executor: Effect.succeed(sql),
+      } satisfies DatabaseService);
+
+      const migrate =
+        options.migrate === false
+          ? Layer.empty
+          : Layer.succeed(DatabaseMigrate, {
+              identity: options.identity ?? { dialect: "postgres", schema },
+              connect: Effect.succeed(Effect.succeed(sql)),
+            } satisfies DatabaseMigrateService);
+
+      return Layer.merge(database, migrate);
     }),
   );

@@ -26,7 +26,7 @@ describe("the Drizzle example", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const database = yield* Paykit.Database;
-        const sql = yield* database.runtime;
+        const sql = yield* database.executor;
         const port = asyncOf(sql);
 
         // A scratch database, so the case starts from the shipped files.

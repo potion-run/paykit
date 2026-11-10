@@ -77,6 +77,15 @@ and the three paykit paths without the rest of the surface.
 pnpm --filter @potion.run/example-memory test
 ```
 
+[`examples/node`](./examples/node) is the same model on a Node process: `serve(handler.fetch)` over
+Alchemy's `NodeHttpServer`, no Worker and no deploy resource. The handler and the world are the
+Worker's; only the `HttpServer` implementation changes. Run it with `pnpm --filter
+@potion.run/example-node start`.
+
+```sh
+pnpm --filter @potion.run/example-node test
+```
+
 [`examples/polar`](./examples/polar) and [`examples/stripe`](./examples/stripe) are the same loop
 sold through a vendor. `PolarBilling` / `StripeBilling` create the product, price, meter and metered
 price the catalog states, then hand the ids or lookup keys to the Worker through the environment.

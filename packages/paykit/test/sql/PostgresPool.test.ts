@@ -6,8 +6,10 @@
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import { Database } from "../../src/Database/Database.ts";
 import { Drizzle } from "../../src/Database/Drizzle.ts";
+import { DatabaseMigrate } from "../../src/Database/Migrate.ts";
 import { pgPoolExecutor } from "../../src/Store/PostgresDriver.ts";
 import type { PgClientLike, PgPoolLike } from "../../src/Store/PostgresDriver.ts";
 import { asyncOf } from "../../src/Store/Sql.ts";
@@ -111,11 +113,12 @@ describe("the Drizzle layer", () => {
 
     return Effect.gen(function* () {
       const database = yield* Database;
+      const migrate = Option.getOrUndefined(yield* Effect.serviceOption(DatabaseMigrate));
 
       expect(database.dialect).toBe("postgres");
       expect(database.schema).toBe("billing");
-      expect(database.migrate?.identity).toEqual({ dialect: "postgres", schema: "billing" });
-      expect(Effect.isEffect(database.runtime)).toBe(true);
+      expect(migrate?.identity).toEqual({ dialect: "postgres", schema: "billing" });
+      expect(Effect.isEffect(database.executor)).toBe(true);
     }).pipe(Effect.provide(Drizzle({ $client: pool })));
   });
 
@@ -123,9 +126,7 @@ describe("the Drizzle layer", () => {
     const { pool } = fakePool();
 
     return Effect.gen(function* () {
-      const database = yield* Database;
-
-      expect(database.migrate).toBeUndefined();
+      expect(Option.isNone(yield* Effect.serviceOption(DatabaseMigrate))).toBe(true);
     }).pipe(Effect.provide(Drizzle({ $client: pool }, { migrate: false })));
   });
 
