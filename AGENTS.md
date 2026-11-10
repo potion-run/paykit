@@ -144,10 +144,11 @@ rewrites data it cannot read or silently serves half a read model.
 - **`provider.version` is the resource's own generation.** Alchemy persists it beside the state,
   so the engine can tell two generations of the same resource apart. Bump it in the same change
   that changes what state means, and keep it equal to the shape version in the attributes.
-- **Read accepts older, refuses newer.** An older record is upgraded by the next reconcile; a
-  record from a newer build is a typed refusal, because an older build must never move that state
-  back to an older layout. Alchemy's `DomainVersionTooNew` (`cloudflare/src/Domain/Version.ts`)
-  is the same rule for Domain layouts.
+- **Read, diff and reconcile accept older, refuse newer.** An older record is upgraded by the next
+  reconcile; a record from a newer build is a typed refusal, because an older build must never move
+  that state back to an older layout. `read` alone is not enough: it runs on a cold start or an
+  interrupted create, so `diff` and `reconcile` refuse the same record on a normal deploy. Alchemy's
+  `DomainVersionTooNew` (`cloudflare/src/Domain/Version.ts`) is the same rule for Domain layouts.
 - **A version bump forces the reconcile.** The engine only calls `reconcile` for an `update`; when
   props did not change it would otherwise be a no-op. The provider's `diff` returns
   `{ action: "update" }` whenever the recorded shape is older, so the new record is written.

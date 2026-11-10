@@ -147,7 +147,7 @@ describe("the BillingStack resource", () => {
     expect(recorded.success.version).toBe(BILLING_STACK_VERSION);
   });
 
-  it("upgrades state written by an older shape, and refuses a newer one", () => {
+  it("read upgrades state written by an older shape, and refuses a newer one", () => {
     const recorded = run(reconcileBillingStack(props));
 
     if (recorded._tag !== "Success") return;
@@ -174,17 +174,60 @@ describe("the BillingStack resource", () => {
     expect(future.failure.expected).toBe(BILLING_STACK_VERSION);
   });
 
-  it("forces an update when the recorded shape is older", () => {
+  it("reconcile refuses a shape written by a newer build, and upgrades an older one", () => {
     const recorded = run(reconcileBillingStack(props));
 
     if (recorded._tag !== "Success") return;
     const { version: _version, ...legacy } = recorded.success;
-    expect(diffBillingStack(legacy as unknown as BillingStackAttrs)).toEqual({
-      action: "update",
-    });
-    // The current shape diffs to the engine's default, so an unchanged deploy
-    // stays a no-op.
-    expect(diffBillingStack(recorded.success)).toBeUndefined();
+    const older = run(reconcileBillingStack(props, legacy as unknown as BillingStackAttrs));
+    expect(older._tag).toBe("Success");
+
+    if (older._tag === "Success") expect(older.success).toEqual(recorded.success);
+
+    const future = run(
+      reconcileBillingStack(props, {
+        ...recorded.success,
+        version: BILLING_STACK_VERSION + 1,
+      }),
+    );
+
+    expect(future._tag).toBe("Failure");
+
+    if (future._tag !== "Failure") return;
+    expect(future.failure).toBeInstanceOf(BillingStackStateTooNew);
+
+    if (future.failure._tag !== "BillingStackStateTooNew") return;
+    expect(future.failure.found).toBe(BILLING_STACK_VERSION + 1);
+    expect(future.failure.expected).toBe(BILLING_STACK_VERSION);
+  });
+
+  it("diff refuses a shape written by a newer build, upgrades an older one, and no-ops the current one", () => {
+    const recorded = run(reconcileBillingStack(props));
+
+    if (recorded._tag !== "Success") return;
+    const { version: _version, ...legacy } = recorded.success;
+    const older = run(diffBillingStack(legacy as unknown as BillingStackAttrs));
+    expect(older._tag).toBe("Success");
+
+    if (older._tag === "Success") expect(older.success).toEqual({ action: "update" });
+
+    const current = run(diffBillingStack(recorded.success));
+    expect(current._tag).toBe("Success");
+
+    if (current._tag === "Success") expect(current.success).toBeUndefined();
+
+    const future = run(
+      diffBillingStack({ ...recorded.success, version: BILLING_STACK_VERSION + 1 }),
+    );
+
+    expect(future._tag).toBe("Failure");
+
+    if (future._tag !== "Failure") return;
+    expect(future.failure).toBeInstanceOf(BillingStackStateTooNew);
+
+    if (future.failure._tag !== "BillingStackStateTooNew") return;
+    expect(future.failure.found).toBe(BILLING_STACK_VERSION + 1);
+    expect(future.failure.expected).toBe(BILLING_STACK_VERSION);
   });
 
   it("keeps the stack when it is removed", () => {

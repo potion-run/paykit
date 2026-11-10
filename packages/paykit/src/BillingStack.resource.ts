@@ -34,10 +34,11 @@ export type BillingStackRecord = typeof BillingStackRecord.Type;
  * The shape of what a stack records. Bump it whenever `BillingStackAttrs`
  * changes.
  *
- * A read accepts every older shape: the next reconcile rewrites the record in
- * the current one, which is how Alchemy upgrades resource state in place. A
- * read of a *newer* shape is a typed refusal, because an older build must
- * never move state it does not understand back to an older layout.
+ * A read, diff or reconcile accepts every older shape: the next reconcile
+ * rewrites the record in the current one, which is how Alchemy upgrades
+ * resource state in place. A record from a *newer* shape is a typed refusal,
+ * because an older build must never move state it does not understand back to
+ * an older layout.
  *
  * State written before the field existed has no `version` and is version `0`.
  */
@@ -59,7 +60,7 @@ export const billingStackVersionOf = (output: { readonly version?: number } | un
   output?.version ?? 0;
 
 export const BillingStackAttrs = Schema.Struct({
-  /** Absent on state written before the field existed; `read` treats that as 0. */
+  /** Absent on state written before the field existed; the version policy treats that as 0. */
   version: Schema.optionalKey(Schema.Int),
   catalog: Catalog,
   tiers: Schema.Array(Schema.String),
@@ -68,6 +69,16 @@ export const BillingStackAttrs = Schema.Struct({
 });
 
 export type BillingStackAttrs = typeof BillingStackAttrs.Type;
+
+const refuseBillingStackDowngrade = (
+  output: BillingStackAttrs | undefined,
+): Effect.Effect<void, BillingStackStateTooNew> => {
+  const found = billingStackVersionOf(output);
+
+  return found > BILLING_STACK_VERSION
+    ? Effect.fail(new BillingStackStateTooNew({ found, expected: BILLING_STACK_VERSION }))
+    : Effect.void;
+};
 
 export type BillingStackShape = Resource<
   "Paykit.BillingStack",
@@ -91,16 +102,23 @@ export const BillingStack = Resource<BillingStackShape>("Paykit.BillingStack", {
  * nothing produces the same attributes byte for byte and Alchemy diffs it to
  * a no-op.
  *
+ * State from an older shape is rewritten in the current one. State from a
+ * newer shape is a refusal: a normal deploy must not overwrite what a newer
+ * build recorded.
+ *
  * A catalog that does not validate fails the deploy with its tagged error
  * rather than recording half a stack.
  */
 export const reconcileBillingStack = (
   props: BillingStackRecord | undefined,
+  output?: BillingStackAttrs,
 ): Effect.Effect<
   BillingStackAttrs,
-  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate
+  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate | BillingStackStateTooNew
 > =>
   Effect.gen(function* () {
+    yield* refuseBillingStackDowngrade(output);
+
     // A reconcile without props is a delete, and delete never reaches here.
     if (props === undefined) return yield* Effect.die("BillingStack reconciles with props");
     const parsed = yield* catalog(props.catalog);
@@ -133,38 +151,33 @@ export const readBillingStack = (
   output === undefined
     ? Effect.succeed(undefined)
     : Effect.gen(function* () {
-        // Read off the record rather than the type: state written before the
-        // field existed still has to be judged, not trusted.
-        const found = billingStackVersionOf(output);
-
-        if (found > BILLING_STACK_VERSION) {
-          return yield* new BillingStackStateTooNew({
-            found,
-            expected: BILLING_STACK_VERSION,
-          });
-        }
+        yield* refuseBillingStackDowngrade(output);
 
         return output;
       });
 
 /**
- * Force an update when the recorded shape is older than this build. A deploy
- * whose props did not change is otherwise a no-op, so the next reconcile would
- * never rewrite the record in the current shape.
- *
- * Pure, so the version policy is testable without building a provider Layer.
+ * Force an update when the recorded shape is older than this build, and refuse
+ * a shape a newer build wrote. A deploy whose props did not change is
+ * otherwise a no-op, so the next reconcile would never rewrite the record in
+ * the current shape.
  */
 export const diffBillingStack = (
   output: BillingStackAttrs | undefined,
-): { readonly action: "update" } | undefined =>
-  output !== undefined && billingStackVersionOf(output) < BILLING_STACK_VERSION
-    ? { action: "update" }
-    : undefined;
+): Effect.Effect<{ readonly action: "update" } | undefined, BillingStackStateTooNew> =>
+  Effect.gen(function* () {
+    yield* refuseBillingStackDowngrade(output);
+
+    return output !== undefined && billingStackVersionOf(output) < BILLING_STACK_VERSION
+      ? { action: "update" as const }
+      : undefined;
+  });
 
 /**
- * The Alchemy provider for `BillingStack`. Reconcile validates; read trusts
- * state; delete touches nothing, because the event log is application data and
- * cancelling a live subscription from a destroy is a support incident.
+ * The Alchemy provider for `BillingStack`. Diff and reconcile judge the
+ * recorded shape; delete touches nothing, because the event log is application
+ * data and cancelling a live subscription from a destroy is a support
+ * incident.
  *
  * `nuke: { singleton: true }` says exactly that: a stack is always-present
  * configuration with no cloud object, so `alchemy unsafe nuke` must not report
@@ -177,8 +190,8 @@ export const BillingStackProvider = () =>
     // generations of the same resource apart. It moves with the attrs.
     version: BILLING_STACK_VERSION,
     nuke: { singleton: true },
-    diff: ({ output }) => Effect.succeed(diffBillingStack(output)),
-    reconcile: ({ news }) => reconcileBillingStack(news),
+    diff: ({ output }) => diffBillingStack(output),
+    reconcile: ({ news, output }) => reconcileBillingStack(news, output),
     read: ({ output }) => readBillingStack(output),
     delete: () => Effect.void,
   });
