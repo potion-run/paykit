@@ -9,6 +9,27 @@ export { distilledPolarClient, POLAR_BASE_URL, polarBaseUrl } from "./PolarClien
 
 export type { PolarClientConfig } from "./PolarClient.ts";
 
+// The deploy's token: `POLAR_API_KEY` in the environment, otherwise the
+// selected `ALCHEMY_PROFILE`.
+export {
+  PolarAuth,
+  POLAR_API_BASE_URL_ENV,
+  POLAR_API_KEY_ENV,
+  POLAR_AUTH_PROVIDER_NAME,
+} from "./AuthProvider.ts";
+
+export type { PolarAuthConfig, PolarResolvedCredentials } from "./AuthProvider.ts";
+
+export {
+  Credentials,
+  CredentialsFromEnv,
+  DEFAULT_API_BASE_URL,
+  fromApiKey,
+  fromAuthProvider,
+} from "./Credentials.ts";
+
+export type { CredentialsConfig } from "./Credentials.ts";
+
 export {
   PolarPrices,
   declaredProductNames,

@@ -18,11 +18,10 @@ import { PolarBilling, polarProviders } from "@potion.run/paykit-polar";
 import * as Layer from "effect/Layer";
 
 const providers = Layer.mergeAll(Cloudflare.providers(), Paykit.providers()).pipe(
-  Layer.provideMerge(polarProviders({ accessToken, server: "sandbox" })),
+  Layer.provideMerge(polarProviders({ server: "sandbox" })),
 );
 
 const billing = yield* PolarBilling("PolarBilling", {
-  accessToken: Redacted.value(accessToken),
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: polarTiers,
@@ -34,11 +33,17 @@ const recorded = yield* Paykit.BillingStack("Billing", {
 });
 ```
 
+The deploy's token comes from `POLAR_API_KEY`, or from the profile
+`ALCHEMY_PROFILE` selects (`alchemy profile edit --provider Polar`). Nothing is
+copied into the stack, and `server: "sandbox"` pins the base URL so a
+production token cannot create production objects.
+
 `polarTiers` repeats the catalog's prices in the shape Polar sells them:
 `{ pro: { price: proPrice, usage: { messages: messagePrice } } }`.
 
 `billing.sold` carries the ids: `sold.products.pro` and `sold.meters.messages`.
-Bind them into the Worker's environment.
+`billing.accessToken` is the token the deploy resolved; bind it with the ids
+into the Worker's environment as `POLAR_API_KEY`.
 
 `billing.webhookEndpoint` is the endpoint the deploy created: `resource` is the
 vendor object, and `secret` is the signing key Polar minted at create. Bind the
@@ -48,7 +53,10 @@ endpoint's state is the only copy:
 ```ts title="alchemy.run.ts"
 const worker = yield* Cloudflare.Worker("Worker", {
   main: "./src/Worker.ts",
-  env: { POLAR_WEBHOOK_SECRET: billing.webhookEndpoint.secret },
+  env: {
+    POLAR_API_KEY: billing.accessToken,
+    POLAR_WEBHOOK_SECRET: billing.webhookEndpoint.secret,
+  },
 });
 ```
 
@@ -62,7 +70,7 @@ import { Polar } from "@potion.run/paykit-polar";
 import * as Redacted from "effect/Redacted";
 
 export const provider = Polar({
-  accessToken: env.POLAR_ACCESS_TOKEN,
+  accessToken: env.POLAR_API_KEY,
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: {

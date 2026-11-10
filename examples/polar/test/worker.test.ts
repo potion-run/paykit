@@ -8,7 +8,7 @@ import Worker from "../src/PolarWorker.ts";
  * called, so nothing reaches Polar's API. The ids only have to be present.
  */
 const env: PolarEnv = {
-  POLAR_ACCESS_TOKEN: "polar_sandbox_test",
+  POLAR_API_KEY: "polar_sandbox_test",
   POLAR_WEBHOOK_SECRET: "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw",
   POLAR_PRODUCT_PRO: "prod_test",
   POLAR_MESSAGES_METER: "meter_test",

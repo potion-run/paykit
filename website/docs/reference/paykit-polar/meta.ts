@@ -5,8 +5,10 @@ export default defineMeta({
   icon: "package",
   pages: [
     "index",
+    "from-auth-provider",
     "meter",
     "polar",
+    "polar-auth",
     "polar-billing",
     "polar-prices",
     "polar-providers",

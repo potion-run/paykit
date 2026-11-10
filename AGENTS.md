@@ -379,7 +379,7 @@ build. Run `pnpm docs:reference` after changing a tagged JSDoc block, so the
 reference under `website/docs/reference` reflects the source.
 
 `.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
-carry a live case that skips without `STRIPE_API_KEY` / `POLAR_ACCESS_TOKEN`, so `check.yml` stays
+carry a live case that skips without `STRIPE_API_KEY` / `POLAR_API_KEY`, so `check.yml` stays
 green with no secrets; the manual workflow is where those cases actually run, and it fails rather than
 skips when a secret is missing. Keep the two apart: the cases mutate a real test account, and a secret
 must not sit in the path of a pull request from a fork.

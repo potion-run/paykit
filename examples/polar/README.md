@@ -9,17 +9,20 @@ webhookSecret })` from those values, so the catalog and the vendor mapping are
 stated once.
 
 ```sh
-POLAR_ACCESS_TOKEN=polar_sandbox_… \
+POLAR_API_KEY=polar_sandbox_… \
   pnpm --filter @potion.run/example-polar deploy
 ```
 
-The stack is pinned to `server: "sandbox"`. It prints the product id and meter
-name it created, and the Worker receives the same outputs as bindings. The
-webhook secret is minted by the endpoint the deploy creates, so there is no
-`POLAR_WEBHOOK_SECRET` to set: a hand-managed endpoint is still possible by
-passing `webhookSecret` to `PolarBilling` yourself. `origin` is the app's public
-origin — the endpoint is created at `origin + /webhooks/polar`, so point it at
-the deployment that actually serves the route.
+The deploy resolves `POLAR_API_KEY` from the environment, or from the selected
+`alchemy profile` (`alchemy profile edit --provider Polar`). The stack is pinned
+to `server: "sandbox"`, so a production token cannot create production objects.
+It prints the product id and meter name it created, and the Worker receives the
+same outputs as bindings. The webhook secret is minted by the endpoint the
+deploy creates, so there is no `POLAR_WEBHOOK_SECRET` to set: a hand-managed
+endpoint is still possible by passing `webhookSecret` to `PolarBilling`
+yourself. `origin` is the app's public origin — the endpoint is created at
+`origin + /webhooks/polar`, so point it at the deployment that actually serves
+the route.
 
 | File | What it declares |
 | --- | --- |

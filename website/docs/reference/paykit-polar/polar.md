@@ -24,7 +24,7 @@ own users and release train to justify the same maintenance.
 
 ```typescript
 const polar = Polar({
-  accessToken: yield* Config.redacted("POLAR_ACCESS_TOKEN"),
+  accessToken: yield* Config.string("POLAR_API_KEY"),
   origin: "https://app.example.com",
   tiers: { pro: { price: proPrice, productId: "prod_123" } },
 });

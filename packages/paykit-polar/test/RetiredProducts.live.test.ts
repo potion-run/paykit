@@ -16,19 +16,19 @@ import { RetiredProducts } from "../src/RetiredProducts.ts";
  * deleting it.
  *
  * It needs a real Polar sandbox token, so it is gated: without
- * `POLAR_ACCESS_TOKEN` the case is skipped, and CI stays green with no vendor
+ * `POLAR_API_KEY` the case is skipped, and CI stays green with no vendor
  * account. It runs from the manual `live.yml` workflow, which fails rather than
  * skips when the secret is missing. The token is always sent to the sandbox,
  * never production.
  *
  * ```sh
- * POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
+ * POLAR_API_KEY=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
  * ```
  *
  * `process.env` at module scope is the one place the Effect rule does not reach:
  * a skip gate runs before any Effect exists.
  */
-const accessToken = process.env.POLAR_ACCESS_TOKEN;
+const accessToken = process.env.POLAR_API_KEY;
 const hasToken = accessToken !== undefined && accessToken !== "";
 
 /**
@@ -48,10 +48,7 @@ const hasToken = accessToken !== undefined && accessToken !== "";
  */
 const { test } = Test.make({
   stage: `${Test.defaultStage()}_arc`,
-  providers: polarProviders({
-    accessToken: Redacted.make(accessToken ?? ""),
-    server: "sandbox",
-  }),
+  providers: polarProviders({ server: "sandbox" }),
 });
 
 /** Out-of-band reads, provided the way the vendor package provides them. */

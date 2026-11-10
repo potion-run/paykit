@@ -558,7 +558,6 @@ test.provider("joins provisioning and the provider into one call", (stack) =>
 
     const billing = yield* stack.deploy(
       PolarBilling("Billing", {
-        accessToken: "polar_fake",
         origin: "https://app.example.com",
         tiers: { pro: proPrice },
         client: unusedClient,
@@ -570,6 +569,8 @@ test.provider("joins provisioning and the provider into one call", (stack) =>
     expect(polar.products.size).toBe(1);
     expect(billing.prices).toEqual({ pro: proPrice });
     expect(billing.capabilities.has("checkout")).toBe(true);
+    // The token came from the Credentials layer, not a prop.
+    expect(Redacted.value(billing.accessToken)).toBe("polar_fake");
 
     // With no supplied secret the deploy owns the endpoint: it is created at
     // the app's origin, subscribes to the decoded events, and its secret is

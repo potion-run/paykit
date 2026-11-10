@@ -336,7 +336,7 @@ export const polarBindings = (
  * **Example:** A merchant of record behind the catalog
  * ```typescript
  * const polar = Polar({
- *   accessToken: yield* Config.redacted("POLAR_ACCESS_TOKEN"),
+ *   accessToken: yield* Config.string("POLAR_API_KEY"),
  *   origin: "https://app.example.com",
  *   tiers: { pro: { price: proPrice, productId: "prod_123" } },
  * });

@@ -10,14 +10,13 @@ pnpm add @potion.run/paykit @potion.run/paykit-polar alchemy effect
 
 ```ts
 import { Paykit } from "@potion.run/paykit";
-import { PolarBilling } from "@potion.run/paykit-polar";
+import { PolarBilling, polarProviders } from "@potion.run/paykit-polar";
 import * as Redacted from "effect/Redacted";
 
 // The deploy: create the products, meters and prices the catalog states, and
-// the webhook endpoint Polar delivers to. The resources are declared here, so
-// the stack's provider collection is provided to the call that creates them.
+// the webhook endpoint Polar delivers to. `polarProviders({ server })` resolves
+// POLAR_API_KEY or the selected profile, so no token is written here.
 const polar = yield* PolarBilling("Polar", {
-  accessToken: Redacted.make(process.env.POLAR_ACCESS_TOKEN ?? ""),
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: {
@@ -26,7 +25,7 @@ const polar = yield* PolarBilling("Polar", {
       usage: { messages: { amount: 2, currency: "usd" } },
     },
   },
-}).pipe(Effect.provide(polarProviders({ accessToken })));
+}).pipe(Effect.provide(polarProviders({ server: "sandbox" })));
 
 yield* Paykit.BillingStack("Billing", {
   catalog: { features: [messages], tiers: [free, pro] },
@@ -39,12 +38,15 @@ yield* Paykit.BillingStack("Billing", {
 // state is the only copy, and nothing is set by hand:
 const worker = yield* Cloudflare.Worker("Worker", {
   main: "./src/Worker.ts",
-  env: { POLAR_WEBHOOK_SECRET: polar.webhookEndpoint.secret },
+  env: {
+    POLAR_API_KEY: polar.accessToken,
+    POLAR_WEBHOOK_SECRET: polar.webhookEndpoint.secret,
+  },
 });
 
 // The runtime: build the provider from the outputs the Worker received.
 const runtime = Polar({
-  accessToken: env.POLAR_ACCESS_TOKEN,
+  accessToken: env.POLAR_API_KEY,
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: { pro: { price: proPrice, productId: env.POLAR_PRODUCT_PRO } },
@@ -55,6 +57,9 @@ const runtime = Polar({
 
 A deployment that already owns an endpoint — a shared API, a different host, a secret in a vault —
 passes `webhookSecret` instead, and `PolarBilling` creates nothing.
+
+`polar.accessToken` is the token the deploy resolved; `polar.webhookEndpoint.secret` is the
+endpoint's secret and `polar.sold` the ids. Bind all three into the Worker's environment.
 
 [`examples/polar`](https://github.com/potion-run/paykit/tree/main/examples/polar) is the whole loop: the deploy, the
 Worker's `GET /checkout?tier=pro`, `POST /webhooks/polar`, and a test with a fake

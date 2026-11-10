@@ -24,12 +24,12 @@ import {
  * reports them, the secret surviving an in-place move, and `destroy` deleting
  * the endpoint.
  *
- * It needs a real sandbox token, so it is gated: without `POLAR_ACCESS_TOKEN`
+ * It needs a real sandbox token, so it is gated: without `POLAR_API_KEY`
  * the case is skipped, and CI stays green with no vendor account. The token is
  * always sent to the sandbox, never production. Run it with a sandbox token:
  *
  * ```sh
- * POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
+ * POLAR_API_KEY=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
  * ```
  *
  * The endpoint is `destroy`, not retained, so a run leaves nothing behind.
@@ -37,14 +37,11 @@ import {
  * `process.env` at module scope is the one place the Effect rule does not
  * reach: a skip gate runs before any Effect exists.
  */
-const accessToken = process.env.POLAR_ACCESS_TOKEN;
+const accessToken = process.env.POLAR_API_KEY;
 const hasToken = accessToken !== undefined && accessToken !== "";
 
 const { test } = Test.make({
-  providers: polarProviders({
-    accessToken: Redacted.make(accessToken ?? ""),
-    server: "sandbox",
-  }),
+  providers: polarProviders({ server: "sandbox" }),
 });
 
 /** Out-of-band reads, provided the way the vendor package provides them. */
