@@ -363,9 +363,10 @@ leaves out.
 
 ## Gates
 
-Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`,
-`pnpm spec`, `pnpm build`. None of the gates before `pnpm build` compile `lib/`; that build and
-`node scripts/smoke-artifact.mjs` are what prove a published artifact loads.
+Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`,
+`pnpm migrations:check`, `pnpm test`, `pnpm spec`, `pnpm build`. None of the gates before
+`pnpm build` compile `lib/`; that build and `node scripts/smoke-artifact.mjs` are what prove a
+published artifact loads.
 
 `.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
 carry a live case that skips without `STRIPE_API_KEY` / `POLAR_ACCESS_TOKEN`, so `check.yml` stays

@@ -307,6 +307,9 @@ importers:
       '@oxlint/plugins':
         specifier: 'catalog:'
         version: 1.91.0
+      '@potion.run/paykit':
+        specifier: workspace:*
+        version: link:packages/paykit
       '@types/bun':
         specifier: 'catalog:'
         version: 1.4.4
