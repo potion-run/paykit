@@ -3,7 +3,7 @@ title: "Meter"
 description: "A Polar meter that sums one feature's billable units."
 ---
 
-> **Source:** [`packages/paykit-polar/src/Meter.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Meter.ts#L76)
+> **Source:** [`packages/paykit-polar/src/Meter.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Meter.ts#L78)
 > **Kind:** Resource · **Product:** Meter
 
 A Polar meter that sums one feature's billable units. Polar attaches a meter
