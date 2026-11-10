@@ -115,13 +115,20 @@ export type AdminIntent = typeof AdminIntent.Type;
 const wrap = (message: typeof BillingAdmin.Message.Type) =>
   Message.ReceivedAdminResult({ message });
 
-const positiveInt = (value: string): Result.Result<number, string> => {
+const positiveInt = (
+  value: string,
+  unit = "amount in minor units",
+): Result.Result<number, string> => {
   const parsed = Number(value);
 
   return Number.isSafeInteger(parsed) && parsed > 0
     ? Result.succeed(parsed)
-    : Result.fail("Enter a positive whole amount in minor units.");
+    : Result.fail(`Enter a positive whole ${unit}.`);
 };
+
+/** A credit count: credits are units, not money, so the form says so. */
+const positiveCredits = (value: string): Result.Result<number, string> =>
+  positiveInt(value, "number of credits");
 
 const nonEmpty = (value: string, label: string): Result.Result<string, string> =>
   value.trim() === "" ? Result.fail(`Enter a ${label}.`) : Result.succeed(value.trim());
@@ -134,14 +141,14 @@ const dateTime = (value: string, label: string): Result.Result<DateTime.Utc, str
     : Result.succeed(DateTime.fromDateUnsafe(parsed));
 };
 
-const selectTier = (value: string): Result.Result<string, string> => nonEmpty(value, "tier");
+const selectTier = (value: string): Result.Result<string, string> => nonEmpty(value, "plan");
 
 /** An optional note: absent and blank are the same thing, so the field can stay empty. */
 /** A blank field is "none"; anything else has to be a positive whole amount. */
 const optionalCredits = (value: string | undefined): Result.Result<number | undefined, string> => {
   const text = optionalText(value);
 
-  return text === undefined ? Result.succeed(undefined) : positiveInt(text);
+  return text === undefined ? Result.succeed(undefined) : positiveInt(text, "number of credits");
 };
 
 const optionalText = (value: string | undefined): string | undefined => {
@@ -154,9 +161,9 @@ const operatorActionTable = (table: { readonly [K in AdminAction]: ActionSpec<K>
 
 export const OperatorActions = operatorActionTable({
   GrantCredits: {
-    fields: [{ name: "amount", label: "Amount (minor units)", control: "number" }],
+    fields: [{ name: "amount", label: "Credits", control: "number" }],
     parse: (values) =>
-      Result.map(positiveInt(values.amount ?? ""), (amount) => ({
+      Result.map(positiveCredits(values.amount ?? ""), (amount) => ({
         kind: "GrantCredits",
         amount,
       })),
@@ -184,7 +191,7 @@ export const OperatorActions = operatorActionTable({
       ),
   },
   EnterGrace: {
-    fields: [{ name: "graceUntil", label: "Grace deadline", control: "datetime" }],
+    fields: [{ name: "graceUntil", label: "Access ends", control: "datetime" }],
     parse: (values) =>
       Result.map(dateTime(values.graceUntil ?? "", "grace deadline"), (graceUntil) => ({
         kind: "EnterGrace",
@@ -227,7 +234,7 @@ export const OperatorActions = operatorActionTable({
   RecordPaymentFailure: {
     fields: [
       { name: "reason", label: "Reason", control: "text" },
-      { name: "graceUntil", label: "Grace deadline", control: "datetime" },
+      { name: "graceUntil", label: "Access ends", control: "datetime" },
     ],
     parse: (values) =>
       Result.flatMap(nonEmpty(values.reason ?? "", "reason"), (reason) =>
@@ -278,7 +285,7 @@ export const OperatorActions = operatorActionTable({
       Command.mapMessage(BillingAdmin.WithdrawTierChange({ target, input: {}, commandId }), wrap),
   },
   ChangeTier: {
-    fields: [{ name: "tier", label: "New tier", control: "tier" }],
+    fields: [{ name: "tier", label: "New plan", control: "tier" }],
     parse: (values) =>
       Result.map(selectTier(values.tier ?? ""), (tier) => ({ kind: "ChangeTier", tier })),
   },
@@ -353,7 +360,7 @@ export const OperatorActions = operatorActionTable({
       ),
   },
   ScheduleTierChange: {
-    fields: [{ name: "tier", label: "New tier", control: "tier" }],
+    fields: [{ name: "tier", label: "New plan", control: "tier" }],
     parse: (values) =>
       Result.map(selectTier(values.tier ?? ""), (tier) => ({ kind: "ScheduleTierChange", tier })),
     send: ({ target, intent, commandId, catalog, currency }) => {

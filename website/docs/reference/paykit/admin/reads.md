@@ -3,7 +3,8 @@ title: "Reads"
 description: "Exports `AdminReads`, `makeAdminReads`, `AdminReadsClient`."
 ---
 
-> **Source:** [`packages/paykit/src/Admin/Reads.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Admin/Reads.ts#L370)
+
+> **Source:** [`packages/paykit/src/Admin/Reads.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Admin/Reads.ts#L458)
 
 ## AdminReads
 

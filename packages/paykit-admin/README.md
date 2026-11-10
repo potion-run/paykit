@@ -15,32 +15,35 @@ command id.
 | `@potion.run/paykit-admin/DevTools` | The event table, tab list, `DevToolsState` schema and seed helpers behind the floating **Paykit dev tools** panel |
 | `@potion.run/paykit-admin/styles.css` | Optional default styles, scoped to `.pk-admin` |
 
-The console covers the account list, the standing and allowance panels, the
-period's priced usage, the full hold history, the billing timeline folded from
-the event feed, and a log-style account event feed with a volume strip. Two
-read-only pages list the deploy's `Plans` and `Features` from the catalog the
-console already holds.
+The console covers the customer list, the customer header, the plan and
+usage/limits panels, the period's priced usage, the billing timeline folded
+from the event feed, and a log-style event feed with a volume strip. Holds,
+provider IDs and raw events sit in the Details or Developer disclosure, so the
+first screen answers who the customer is, what they are on and what needs
+attention. Two read-only pages list the deploy's `Plans` and `Features` from
+the catalog the console already holds.
 
 The overview page reads a cross-account aggregate through
-`AdminReads.overview`. It shows MRR, ARR, at-risk and trial-pipeline revenue,
-accounts by plan and status, a 10% monthly growth scenario, and the accounts
-on the loaded page that need attention. The account overview also shows the
-facts an operator checks after a payment failure or a tier change: the
-scheduled tier terms, the last proration and its invoice, the dunning count,
-the trial and grace deadlines, and the vendor refs attached by each provider.
-The allowance table carries the reset timestamp, rollover amount, credit
-rates, limits and current access, not just the count.
+`AdminReads.overview`. It shows estimated MRR at list price, in-grace and
+trial-pipeline revenue, and a server-wide attention list with the reason each
+customer is on it. The estimate is a catalog price, not booked revenue: add-ons,
+custom plans and discounts are not priced by this read. The customer page also
+shows the facts an operator checks after a payment failure or a plan change:
+the scheduled plan terms, the last mid-cycle charge and its invoice, the failed
+payment count, the trial and access deadlines, and the provider IDs attached by
+each provider under Details. The usage table carries the reset timestamp,
+rollover amount, credit rates, limits and current access, not just the count.
 
 The account page offers these actions: `GrantCredits`, `ExtendTrial`,
 `ChangeTier`, `ScheduleTierChange`, `WithdrawTierChange`, `EnterGrace`,
 `RecordPayment`, `RecordPaymentFailure`, `Recover`, `Expire`,
 `ScheduleCancellation`, `Resume` and `Refund`.
 
-Two panels ask questions instead of writing: **Ask the model** runs `Preview` —
-the same `decide` a write runs — and shows the events it would record or the
-rejection that stops it; **Verify** judges the standing against the deploy's
-catalog and provider. Neither allocates a command id, because neither is a
-write.
+Two developer tools ask questions instead of writing, under the Developer
+disclosure: **Preview change** runs `Preview` — the same `decide` a write runs —
+and shows the events it would record or the rejection that stops it; **Check
+sync** judges the standing against the deploy's catalog and provider. Neither
+allocates a command id, because neither is a write.
 
 `ChangeTier` is a two-step quote/apply: the server computes the proration with
 its own clock, the operator confirms that amount, and the server applies only
@@ -58,8 +61,11 @@ asking the ceiling for headroom the first attempt spent. Provide
 `AdminRefundClient` beside the other resources, and serve `AdminConsoleServer`
 from the Worker that holds `Paykit.Refund`.
 
-The console shows account ids and billing state only. paykit stores no customer
-records, so there is no name, email or profile to show.
+The console renders the customer record the account page already reads:
+`BillingStateView.customer` carries the name and email a `CreateCustomer`
+recorded (ADR 0045). The console never stores or invents an identity, and the
+list stays id-based until `BillingReadRow` carries identity, so a row shows its
+account id even when its page shows a name.
 
 ## Where you are lives in the URL
 
@@ -72,7 +78,7 @@ button all land on the same view:
 | `/?standing=grace&tier=pro` | The list, filtered |
 | `/?after=acct_50` | The next page, by the cursor the previous one returned |
 | `/accounts/:account` | One account, with the list's filters and page preserved |
-| `/overview` | Cross-account revenue, mix and projection |
+| `/overview` | Cross-account revenue and attention |
 | `/plans` | The deploy's tiers, read only |
 | `/features` | The deploy's features, read only |
 
@@ -106,17 +112,17 @@ list as live.
 - **The account panel** is live: `Entitlements`, `BillingState` and
   `AccountEvents` are watches, so only the list needs the label.
 
-**Holds** are the entities the allowance table folds into `reserved` counts,
-so they come from the aggregate through `AdminReads.holds`, once when the
-account opens and again when the event feed says a hold moved
-(`UsageReserved`, `UsageSettled`, `UsageReleased`). The panel shows open,
-settled and released holds, with the rate, credits and both timestamps, and
-says when it was read.
+**Holds** are the entities the usage table folds into `reserved` counts, so
+they come from the aggregate through `AdminReads.holds`, once when the account
+opens and again when the event feed says a hold moved (`UsageReserved`,
+`UsageSettled`, `UsageReleased`). Under Details, the panel shows open, settled
+and released holds, with the rate, credits and both timestamps, and says when
+it was read.
 
 **Provider refs** are read through `AdminReads.providerRefs`, once when the
-account opens and again when the feed reports `ProviderRefAttached`. They are
-the vendor's customer, subscription and checkout ids, grouped by provider, and
-are read-only like the rest of the console.
+account opens and again when the feed reports `ProviderRefAttached`, and shown
+under Details. They are the vendor's customer, subscription and checkout ids,
+grouped by provider, and are read-only like the rest of the console.
 
 ## Seed the first paint
 

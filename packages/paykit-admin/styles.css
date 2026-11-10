@@ -438,6 +438,46 @@
     font-size: 1.25rem;
   }
 
+  .pk-detail-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.625rem;
+  }
+
+  .pk-detail-title-row h1 {
+    font-family: var(--pk-font-sans);
+    font-size: 1.5rem;
+  }
+
+  .pk-customer-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    margin: 0.35rem 0 0;
+    color: var(--pk-muted-foreground);
+    font-size: 0.8125rem;
+  }
+
+  .pk-customer-id {
+    font-family: var(--pk-font-mono);
+    font-size: 0.75rem;
+  }
+
+  .pk-status-pill {
+    height: auto;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .pk-status-reason {
+    max-width: 72ch;
+    margin: 0.4rem 0 0;
+    color: var(--pk-muted-foreground);
+    font-size: 0.8125rem;
+  }
+
   .pk-button-icon {
     width: 0.875rem;
     height: 0.875rem;
@@ -482,6 +522,10 @@
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
+  }
+
+  .pk-stats-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   .pk-stat {
@@ -1720,6 +1764,140 @@
     border-color: color-mix(in oklch, var(--pk-success) 24%, transparent);
     background: color-mix(in oklch, var(--pk-success) 8%, transparent);
     color: var(--pk-success);
+  }
+
+  .pk-payment-banner {
+    border-left-width: 3px;
+  }
+
+  .pk-payment-banner .pk-alert-title {
+    font-weight: 600;
+  }
+
+  .pk-payment-banner .pk-alert-description {
+    color: var(--pk-foreground);
+  }
+
+  /* ── Disclosures, usage cells and compact facts ──────────────────────── */
+
+  .pk-disclosure {
+    border: 1px solid var(--pk-border);
+    border-radius: var(--pk-radius-lg);
+    background: var(--pk-card);
+  }
+
+  .pk-disclosure-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.2rem 0.75rem;
+    padding: 0.875rem 1rem;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .pk-disclosure-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .pk-disclosure-summary::after {
+    margin-left: auto;
+    color: var(--pk-muted-foreground);
+    content: "▾";
+    font-size: 0.75rem;
+    transition: transform 120ms ease;
+  }
+
+  .pk-disclosure[open] > .pk-disclosure-summary::after {
+    transform: rotate(180deg);
+  }
+
+  .pk-disclosure[open] > .pk-disclosure-summary {
+    border-bottom: 1px solid var(--pk-border);
+  }
+
+  .pk-disclosure-title {
+    color: var(--pk-foreground);
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+
+  .pk-disclosure-description {
+    color: var(--pk-muted-foreground);
+    font-size: 0.75rem;
+  }
+
+  .pk-disclosure-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem 1rem;
+  }
+
+  .pk-more-actions {
+    flex: 1 1 100%;
+    border: 0;
+    background: transparent;
+  }
+
+  .pk-more-actions .pk-disclosure-summary {
+    padding: 0.3rem 0;
+    color: var(--pk-primary);
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  .pk-more-actions .pk-disclosure-body {
+    padding: 0.35rem 0 0;
+  }
+
+  .pk-more-actions[open] > .pk-disclosure-summary {
+    border-bottom: 0;
+  }
+
+  .pk-plan-cell,
+  .pk-usage-cell {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+  }
+
+  .pk-usage-value {
+    font-weight: 500;
+  }
+
+  .pk-usage-feature {
+    color: var(--pk-muted-foreground);
+    font-size: 0.6875rem;
+  }
+
+  .pk-reason-cell {
+    white-space: normal;
+  }
+
+  .pk-raw-detail {
+    margin-top: 0.5rem;
+  }
+
+  .pk-raw-detail summary {
+    cursor: pointer;
+    color: var(--pk-muted-foreground);
+    font-size: 0.75rem;
+  }
+
+  .pk-raw-detail pre {
+    max-width: 100%;
+    margin: 0.4rem 0 0;
+    padding: 0.5rem 0.625rem;
+    overflow-x: auto;
+    border: 1px solid var(--pk-border);
+    border-radius: var(--pk-radius-sm);
+    font-family: var(--pk-font-mono);
+    font-size: 0.6875rem;
+  }
+
+  .pk-failure-copy p {
+    margin: 0;
   }
 
   /* ── Empty ────────────────────────────────────────────────────────────── */

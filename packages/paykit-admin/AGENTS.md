@@ -84,8 +84,26 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - **No generic schema forms.** Command payloads carry `allowances`, `price` and
   `proration` that an operator must never type. The catalog is the source for
   tier data; the server decides the rest.
-- **No customer records.** The console shows account ids. A host that wants a
-  name or email joins its own directory; paykit must not start storing one.
+- **The console renders the customer record, and never invents one.**
+  `BillingStateView.customer` carries the name and email a `CreateCustomer`
+  recorded (ADR 0045); the console renders that field and stores no identity of
+  its own. The list stays id-based until `BillingReadRow` carries identity.
+- **Credits are counts, not money.** `BillingStateView.credits` is a pool of
+  credits. Render it with a unit (`formatCredits`), never with `formatMoney`; a
+  pool of 4,820 credits is not $48.20. The same rule applies to the
+  `GrantCredits` form, whose amount is a credit count.
+- **One status for the operator.** `status`, `standing` and
+  `cancelAtPeriodEnd` are separate machines. Collapse them into one pill and a
+  sentence that says why: past due, suspended, canceling, trial or active.
+  Keep the raw `data-paykit-status` and `data-paykit-standing` hooks for tests;
+  do not render the raw words as a second badge.
+- **The overview's attention list is server-wide.** Render
+  `BillingOverview.attention` / `attentionCount`; never filter the loaded list
+  page and call it the deployment. The list is a page, the overview is the
+  cross-account read.
+- **The first screen is the operator's five questions.** Identity, plan, status,
+  usage and the next action stay above the fold. Holds, provider IDs, raw
+  events, preview and verify belong in a disclosure or the Developer section.
 
 ## UI rules
 

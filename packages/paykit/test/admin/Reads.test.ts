@@ -106,6 +106,49 @@ describe("the admin read port", () => {
     }).pipe(run),
   );
 
+  it.live("surfaces every account that needs attention", () =>
+    Effect.gen(function* () {
+      const store = yield* BillingReadStore;
+      yield* store.upsert(row("acct_blocked", { status: "expired", standing: "blocked" }));
+      yield* store.upsert(
+        row("acct_past_due", { status: "grace", standing: "grace", dunningAttempts: 2 }),
+      );
+      yield* store.upsert(row("acct_canceling", { status: "active", cancelAtPeriodEnd: true }));
+      yield* store.upsert(
+        row("acct_at_limit", {
+          features: {
+            messages: {
+              included: 100,
+              used: 100,
+              reserved: 0,
+              remaining: 0,
+              carried: 0,
+              allowed: false,
+              overage: "block",
+              resets: "month",
+              resetsAt: at,
+            },
+          },
+        }),
+      );
+      yield* store.upsert(row("acct_healthy"));
+
+      const reads = yield* AdminReads;
+      const overview = yield* reads.overview();
+
+      expect(overview.attentionCount).toBe(3);
+      expect(overview.attention?.map((entry) => entry.account)).toEqual([
+        "acct_past_due",
+        "acct_canceling",
+        "acct_at_limit",
+      ]);
+      expect(overview.attention?.[0]?.reasons).toEqual(["past_due"]);
+      expect(overview.attention?.[0]?.dunningAttempts).toBe(2);
+      expect(overview.attention?.[1]?.reasons).toEqual(["canceling"]);
+      expect(overview.attention?.[2]?.reasons).toEqual(["usage_limit_reached"]);
+    }).pipe(run),
+  );
+
   it.live("returns an accepted preview as wire data", () =>
     Effect.gen(function* () {
       yield* subscribeToPro;

@@ -22,6 +22,24 @@ export const formatMoney = (amount: number, currency: string | undefined): strin
     : formatter.format(amount / 10 ** digits);
 };
 
+/**
+ * A count with its unit, localized. Credits, messages and seats are counts,
+ * never money: a pool of 4,820 credits is not $48.20.
+ */
+export const formatCount = (value: number, unit: string): string =>
+  `${value.toLocaleString("en")} ${unit}`;
+
+/** A credit balance, with the unit spoken: "4,820 credits". */
+export const formatCredits = (value: number): string =>
+  formatCount(value, value === 1 ? "credit" : "credits");
+
+/** A billing date without a time, which is the unit an operator says out loud. */
+export const formatDate = (value: DateTime.Utc): string =>
+  DateTime.toDate(value).toLocaleDateString("en", { dateStyle: "medium" });
+
+export const formatOptionalDate = (value: DateTime.Utc | undefined): string =>
+  value === undefined ? "—" : formatDate(value);
+
 /** An absolute timestamp, in the operator's locale. */
 export const formatDateTime = (value: DateTime.Utc): string =>
   DateTime.toDate(value).toLocaleString("en", {

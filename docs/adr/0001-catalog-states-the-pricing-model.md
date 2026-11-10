@@ -53,9 +53,10 @@ becomes the reconcile's own refusal.
 Every field added to the catalog must be answerable from the read model alone, because the
 entitlement plane's whole claim is one local read.
 
-**4. The refusals hold.** No customer records. No runtime catalog mutation. No per-account
-entity balances or second subscription. Expressiveness is added in the catalog, never by
-relaxing these three.
+**4. The refusals hold.** The catalog carries no customer records. No runtime catalog
+mutation. No per-account entity balances or second subscription. Expressiveness is added in the
+catalog, never by relaxing these three. The customer record itself is separate tenant state
+written by its own command, not a catalog field (ADR 0045).
 
 ### Slice 1 — shapes the catalog cannot express yet
 
@@ -123,4 +124,4 @@ Not part of this record; each gets its own.
 
 A buyer who needs pricing that cannot be expressed as catalog data plus a pure rule — a
 negotiated per-account contract, say. That pushes toward storing per-account terms, which is
-customer records by another name, and would be a different product rather than a field here.
+a per-account catalog by another name, and would be a different product rather than a field here.

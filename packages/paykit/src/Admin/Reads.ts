@@ -182,7 +182,26 @@ export const StandingCount = Schema.Struct({ standing: Standing, count: Schema.I
 
 export type StandingCount = typeof StandingCount.Type;
 
-/** A cross-account read for the dashboard: counts by dimension and MRR by currency. */
+/** Why an account needs an operator's attention, from the read model alone. */
+export const AttentionReason = Schema.Literals(["past_due", "canceling", "usage_limit_reached"]);
+
+export type AttentionReason = typeof AttentionReason.Type;
+
+/** One account the dashboard should surface first, with every reason it qualifies. */
+export const AttentionRow = Schema.Struct({
+  account: Schema.String,
+  tier: Schema.String,
+  status: SubscriptionStatus,
+  standing: Standing,
+  periodEnd: Schema.DateTimeUtc,
+  /** Failed payments recorded on this standing, shown beside the reason. */
+  dunningAttempts: Schema.Int,
+  reasons: Schema.Array(AttentionReason),
+});
+
+export type AttentionRow = typeof AttentionRow.Type;
+
+/** A cross-account read for the dashboard: counts, revenue and the attention page. */
 export const BillingOverview = Schema.Struct({
   asOf: Schema.DateTimeUtc,
   accounts: Schema.Int,
@@ -190,9 +209,53 @@ export const BillingOverview = Schema.Struct({
   byStanding: Schema.Array(StandingCount),
   byTier: Schema.Array(TierCount),
   revenue: Schema.Array(RevenueSummary),
+  /** The first page of accounts that need attention, newest reason first. */
+  attention: Schema.optionalKey(Schema.Array(AttentionRow)),
+  /** How many accounts have at least one attention reason, not just the page. */
+  attentionCount: Schema.optionalKey(Schema.Int),
 });
 
 export type BillingOverview = typeof BillingOverview.Type;
+
+const ATTENTION_ORDER: ReadonlyArray<AttentionReason> = [
+  "past_due",
+  "canceling",
+  "usage_limit_reached",
+];
+
+const ATTENTION_PAGE = 20;
+
+const attentionReasonsOf = (row: BillingReadRow): ReadonlyArray<AttentionReason> => {
+  const reasons: Array<AttentionReason> = [];
+
+  // A canceled or expired standing is history, not a customer who needs help.
+  if (row.status === "canceled" || row.status === "expired") return reasons;
+
+  if (row.status === "grace") reasons.push("past_due");
+
+  if (row.cancelAtPeriodEnd) reasons.push("canceling");
+
+  if (Object.values(row.features).some((feature) => feature.allowed === false))
+    reasons.push("usage_limit_reached");
+
+  return reasons;
+};
+
+const attentionOf = (row: BillingReadRow): AttentionRow | null => {
+  const reasons = attentionReasonsOf(row);
+
+  if (reasons.length === 0) return null;
+
+  return {
+    account: row.account,
+    tier: row.tier,
+    status: row.status,
+    standing: row.standing,
+    periodEnd: row.periodEnd,
+    dunningAttempts: row.dunningAttempts,
+    reasons,
+  };
+};
 
 const STATUS_ORDER: ReadonlyArray<SubscriptionStatus> = [
   "trialing",
@@ -269,6 +332,19 @@ const overviewOf = (
     revenue.set(currency, entry);
   }
 
+  const attention = rows
+    .flatMap((row) => {
+      const entry = attentionOf(row);
+
+      return entry === null ? [] : [entry];
+    })
+    .toSorted((left, right) => {
+      const leftRank = ATTENTION_ORDER.indexOf(left.reasons[0] ?? "usage_limit_reached");
+      const rightRank = ATTENTION_ORDER.indexOf(right.reasons[0] ?? "usage_limit_reached");
+
+      return leftRank - rightRank || left.account.localeCompare(right.account);
+    });
+
   return BillingOverview.make({
     asOf,
     accounts,
@@ -288,6 +364,8 @@ const overviewOf = (
         churned: value.churned,
       }))
       .toSorted((left, right) => left.currency.localeCompare(right.currency)),
+    attention: attention.slice(0, ATTENTION_PAGE),
+    attentionCount: attention.length,
   });
 };
 

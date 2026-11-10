@@ -173,5 +173,6 @@ exists.
   the command runs; a view's `validate` checks the key again.
 - **A dev guard is named as one.** `Insecure*` is the name, `"insecure headers"` is the source, and
   no production example uses it.
-- **No customer records.** The actor is an id, not a name, an email or a profile. The identity
-  provider owns those.
+- **No actor directory.** The actor is an id, not a name, an email or a profile; the identity
+  provider owns those. A customer's name and email are billing state, recorded by `CreateCustomer`
+  ([ADR 0045](../adr/0045-a-customer-is-created-before-it-buys.md)), not fields on the actor.
