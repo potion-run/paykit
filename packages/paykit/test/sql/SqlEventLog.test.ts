@@ -173,6 +173,33 @@ describe("SqlEventLog", () => {
     }),
   );
 
+  it.effect("filters pending deliveries by instance in the query", () =>
+    Effect.gen(function* () {
+      const { log } = yield* store;
+      yield* append(log, { account: "a", commandId: "a_1" });
+      yield* append(log, { account: "b", commandId: "b_1" });
+      yield* append(log, { aggregate: "Other", account: "a", commandId: "other_1" });
+
+      // The account alone spans every aggregate, so a drain of one instance
+      // names both — and the condition is the query, not a JS pass over a page.
+      expect(
+        (yield* log.pendingDeliveries(10, { account: "a" })).map((row) => row.account),
+      ).toEqual(["a", "a"]);
+      expect(
+        (yield* log.pendingDeliveries(10, { aggregate: "Subscription" })).map((row) => row.account),
+      ).toEqual(["a", "b"]);
+      expect(
+        (yield* log.pendingDeliveries(10, { aggregate: "Subscription", account: "a" })).map(
+          (row) => row.aggregate,
+        ),
+      ).toEqual(["Subscription"]);
+
+      // A filter nobody matches is empty, not the whole backlog.
+      expect(yield* log.pendingDeliveries(10, { account: "nobody" })).toEqual([]);
+      expect(yield* log.pendingDeliveries(10, { aggregate: "Other", account: "b" })).toEqual([]);
+    }),
+  );
+
   it.effect("schedules commands durably and reports the ones due", () =>
     Effect.gen(function* () {
       const { log } = yield* store;

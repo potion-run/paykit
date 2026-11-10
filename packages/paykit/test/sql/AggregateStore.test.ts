@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import { migrate } from "../../src/Migrations/index.ts";
+import type { SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlAggregateStore } from "../../src/Store/SqlAggregateStore.ts";
 import { SqlEventLog } from "../../src/Store/SqlEventLog.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
@@ -69,6 +70,48 @@ const poolKit = (arrivals: Ref.Ref<number>, gate: Deferred.Deferred<void>) => ({
 /** Bind the stand-in kernel the way a hosted model would. */
 const bind = (store: unknown, kit: unknown): void => {
   (store as { bind: (bound: unknown) => void }).bind(kit);
+};
+
+/**
+ * A kit that records every delivery it is handed and routes one per command,
+ * so a test can see the outbox drain reach its target.
+ */
+const recordingKit = (delivered: Ref.Ref<ReadonlyArray<unknown>>) => ({
+  name: "Recording",
+  handle: (input: { readonly id: string; readonly version: number; readonly commandId: string }) =>
+    Effect.succeed({
+      _tag: "Accepted" as const,
+      state: { handled: input.commandId },
+      version: input.version + 1,
+      events: [
+        {
+          event: { _tag: "Handled", commandId: input.commandId },
+          envelope: { id: input.id, seq: input.version + 1, at: 1, commandId: input.commandId },
+        },
+      ],
+      reply: { ok: true },
+      deliveries: [{ target: { kind: "view", name: "Entitlements" }, key: input.id }],
+    }),
+  deliver: (delivery: unknown) => Ref.update(delivered, (seen) => [...seen, delivery]),
+});
+
+/**
+ * Put `count` undelivered deliveries for another aggregate and account at the
+ * front of the outbox. They hold every place in a global page, which is what
+ * used to leave an instance's own delivery undrained.
+ */
+const seedForeignBacklog = (sql: SqlExecutor, count: number): void => {
+  for (let index = 0; index < count; index += 1) {
+    sql.run(
+      "INSERT INTO billing_outbox (aggregate, account, event_seq, delivery) VALUES (?, ?, ?, ?)",
+      [
+        "Other",
+        "acct_backlog",
+        index + 1,
+        JSON.stringify({ target: { kind: "view", name: "Entitlements" }, key: "acct_backlog" }),
+      ],
+    );
+  }
 };
 
 /**
@@ -253,6 +296,38 @@ describe("the SQL aggregate store", () => {
       expect(state.version).toBe(0);
       expect(state.state).toBeNull();
       expect(yield* store.events!(account)).toEqual([]);
+    }),
+  );
+
+  it.effect("drains its own instance past a full page of another account's backlog", () =>
+    Effect.gen(function* () {
+      const { sql, log } = yield* world;
+
+      // 150 deliveries another aggregate committed first: every place in an
+      // unfiltered page belongs to it, so a drain that reads one never reaches
+      // this instance's row.
+      seedForeignBacklog(sql, 150);
+
+      const delivered = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const store = yield* storeOver(log);
+      bind(store, recordingKit(delivered));
+
+      const result = yield* store.send(
+        account,
+        { amount: 1 } as never,
+        { commandId: "spend-after-backlog", context: {} } as never,
+      );
+
+      expect(result._tag).toBe("Accepted");
+      // The delivery this commit staged reached the kit …
+      expect(yield* Ref.get(delivered)).toEqual([
+        { target: { kind: "view", name: "Entitlements" }, key: account },
+      ]);
+      // … its own outbox is empty …
+      expect(yield* log.pendingDeliveries(500, { aggregate: "Subscription", account })).toEqual([]);
+      // … and the other account's backlog is untouched.
+      expect((yield* log.pendingDeliveries(500)).length).toBe(150);
+      expect((yield* log.pendingDeliveries(500, { aggregate: "Other" })).length).toBe(150);
     }),
   );
 

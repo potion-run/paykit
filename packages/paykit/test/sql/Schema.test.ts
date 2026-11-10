@@ -46,11 +46,16 @@ const quotedScopes = scopes.filter((scope) => scope.dialect !== "mysql");
  * committed `.sql` file: the registry keys applied history by these bytes, so a
  * change here is a rewritten history, and it fails in this test rather than on
  * a deploy.
+ *
+ * The baseline moved once, before the first release, when
+ * `billing_outbox_account_pending` was added: the library has never been
+ * published, so there is no applied history to rewrite and the pin is the new
+ * value. A later edit still fails here.
  */
 const baselineHashes: ReadonlyArray<readonly [SqlDialect, string]> = [
-  ["sqlite", "f629c9465bee994a52ef1d841b92d406346f5f70bcb952d6360cccbb13315bec"],
-  ["postgres", "5928d4790dde9b83ea8c5e309c877646803454e3135f11587a0973ac1441f3c5"],
-  ["mysql", "9aa84d64355a35fee180b731cddf2b5a9da7eac9ebd14fdf4c2d177e28182cd5"],
+  ["sqlite", "a3bba57f7ba7fb8fb0f72f7a11ab9957c3e2e75147a972efee9a631c84f1b22d"],
+  ["postgres", "c857fedac783121ae37a3d20000cd961af5d0504e4a854002788a8aba2b1bf4d"],
+  ["mysql", "1099dee8159bb408de2b9b1e00dbb9628877581e551a043a435a64e0065d9b68"],
 ];
 
 const renderedOf = (schema: SchemaDefinition, scope: Scope): ReadonlyArray<string> =>

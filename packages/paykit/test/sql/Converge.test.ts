@@ -22,6 +22,8 @@ describe("convergence", () => {
       expect(first.created.length).toBeGreaterThan(10);
       expect(first.columns).toEqual([]);
       expect(first.extra).toEqual([]);
+      expect(first.indexes).toContain("billing_outbox_pending");
+      expect(first.indexes).toContain("billing_outbox_account_pending");
       expect(columnsOf(sql, "billing_event")).toContain("event");
 
       // Idempotent: a converged target needs no DDL.
@@ -42,6 +44,7 @@ describe("convergence", () => {
       expect(result.columns).toEqual([]);
       expect(result.extra).toEqual([]);
       expect(result.indexes).toContain("billing_outbox_pending");
+      expect(result.indexes).toContain("billing_outbox_account_pending");
     }),
   );
 
