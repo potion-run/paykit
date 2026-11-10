@@ -9,6 +9,7 @@ import { DEFAULT_PLAN_GROUP, planOrder } from "./Subscription/PlanSet.ts";
 import { Subscription } from "./Subscription/Subscription.aggregate.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
 import { entityRecordsOf, planIdOf, planRowsOf } from "./Subscription/Subscription.state.ts";
+import { INITIAL_PLAN_VERSION } from "./Tier.ts";
 
 /**
  * A priced tier is in force but the account carries no vendor reference for
@@ -185,7 +186,7 @@ export const verifyState = (
     // ADR 0003 refuses.
     if (sold === null) continue;
 
-    const catalogVersion = sold.version ?? 1;
+    const catalogVersion = sold.version ?? INITIAL_PLAN_VERSION;
 
     if (row.version !== catalogVersion) {
       mismatches.push(

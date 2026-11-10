@@ -105,6 +105,11 @@ module plans {
   pure def isVersionMove(current: Generation, target: Generation): bool =
     target.plan == current.plan and target.version != current.version
 
+  // A version only moves forward. Asking for the plan already held at an older
+  // generation is the backwards move `PlanVersionStale` refuses (ADR 0047 §5).
+  pure def isStaleVersion(current: Generation, target: Generation): bool =
+    target.plan == current.plan and isDowngrade(current, target)
+
   pure def hasPending(change: Change): bool =
     match change {
       | NoChange => false
@@ -127,13 +132,15 @@ module plans {
 
   // A new plan is activated; a more expensive one is immediate; a cheaper one
   // (or a newer generation at the same price) is scheduled unless the caller
-  // asks for it now; the same generation is a no-op.
+  // asks for it now; the same generation is a no-op. An older generation of the
+  // plan already held is refused, so `attach` is disabled for it.
   //
   // The request cannot turn an upgrade into a scheduled change: that would let a
   // caller keep a cheap plan after asking for an expensive one.
   pure def attachMode(state: State, target: Generation, immediate: bool): AttachMode =
     if (state.phase != Active) Activate
     else if (sameGeneration(held(state), target)) Noop
+    else if (isStaleVersion(held(state), target)) Noop
     else if (isUpgrade(held(state), target)) Upgrade
     else if (immediate) Upgrade
     else Schedule

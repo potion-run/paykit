@@ -7,7 +7,7 @@ import type { CreditRateCards } from "./Feature.ts";
 import { prorate, type Proration } from "./Proration.ts";
 import type { SubscriptionState } from "./Subscription/Subscription.state.ts";
 import { currencyOf, priceOf } from "./Subscription/Subscription.state.ts";
-import type { CreditsExpire, Price, TopUpTerms } from "./Tier.ts";
+import { INITIAL_PLAN_VERSION, type CreditsExpire, type Price, type TopUpTerms } from "./Tier.ts";
 
 /**
  * One join from a tier id to the input a command carries.
@@ -129,7 +129,7 @@ export const withGrants = <A extends TierGrantInput>(
 /** The catalog fields every tier command shares, in one shape. */
 const grantOf = (tierId: string, terms: PlanTerms): TierGrantInput => ({
   tier: tierId,
-  ...(terms.version === 1 ? {} : { version: terms.version }),
+  ...(terms.version === INITIAL_PLAN_VERSION ? {} : { version: terms.version }),
   allowances: terms.allowances,
   credits: terms.credits,
   creditsExpire: terms.creditsExpire,

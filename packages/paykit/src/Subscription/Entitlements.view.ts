@@ -19,6 +19,7 @@ import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
 import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
+import { INITIAL_PLAN_VERSION } from "../Tier.ts";
 import { capacityOf, type JudgedFeature } from "./Allowance.verdict.ts";
 import {
   Plans,
@@ -614,7 +615,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       return withAccount(writeScope(debited, event.to, event.toAfter, targetRow), context);
     },
     TrialStarted: (view, event, context): EntitlementsState => {
-      const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
+      const plans = { [event.tier]: planRowOf(event, event.version ?? INITIAL_PLAN_VERSION) };
       // A lifetime grant carried from the previous standing is a source of its
       // own: the state adds its units to the new plan's count, so the rows have
       // to add the same units rather than report the plan alone.
@@ -666,7 +667,7 @@ export class Entitlements extends Domain.View("Entitlements", {
       );
     },
     SubscriptionActivated: (view, event, context): EntitlementsState => {
-      const plans = { [event.tier]: planRowOf(event, event.version ?? 1) };
+      const plans = { [event.tier]: planRowOf(event, event.version ?? INITIAL_PLAN_VERSION) };
       const remaining = { ...event.remaining };
 
       for (const [feature, value] of Object.entries(view.features)) {
@@ -722,7 +723,10 @@ export class Entitlements extends Domain.View("Entitlements", {
 
         if (entity === undefined) return withAccount(view, context);
 
-        const plans = withPlan(entity.plans, planRowOf(event, event.versionAfter ?? 1));
+        const plans = withPlan(
+          entity.plans,
+          planRowOf(event, event.versionAfter ?? INITIAL_PLAN_VERSION),
+        );
 
         const updated = withEntityFeatures(
           view,
@@ -763,7 +767,11 @@ export class Entitlements extends Domain.View("Entitlements", {
       // A new tier change replaces what the old one owed and the invoice that
       // settled it; carrying either forward would report stale money.
       const { proration: _previous, prorationInvoice: _invoiced, ...rest } = view;
-      const plans = withPlan(view.plans, planRowOf(event, event.versionAfter ?? 1));
+
+      const plans = withPlan(
+        view.plans,
+        planRowOf(event, event.versionAfter ?? INITIAL_PLAN_VERSION),
+      );
 
       return withAccount(
         syncEntityBilled({
