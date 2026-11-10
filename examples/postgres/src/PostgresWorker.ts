@@ -1,6 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as SQL from "@alchemy.run/sql/Postgres";
 import { Paykit, postgresExecutor } from "@potion.run/paykit";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { Provider } from "./billing.config.ts";
 import { BillingHyperdrive } from "./Hyperdrive.ts";
@@ -39,7 +40,8 @@ export default class PostgresWorker extends Cloudflare.Worker<PostgresWorker>()(
     return {
       fetch: Effect.gen(function* () {
         const client = yield* SQL.Postgres({ url: hyperdrive.connectionString });
-        const { world } = billingOnPostgres(postgresExecutor(client));
+        const now = yield* Clock.currentTimeMillis;
+        const { world } = billingOnPostgres(postgresExecutor(client), { now: () => now });
 
         const handler = yield* Paykit.handler({
           provider: Provider,

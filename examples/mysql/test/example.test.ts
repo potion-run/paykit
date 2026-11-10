@@ -48,7 +48,7 @@ describe("the MySQL example", () => {
       expect(migrated.applied).toEqual(["0001_init"]);
       expect(migrated.created).toEqual([]);
 
-      const { world } = billingOnMysql(sql);
+      const { world } = billingOnMysql(sql, { now: () => 1_700_000_000_000 });
 
       yield* Effect.gen(function* () {
         const subscribe = yield* Paykit.Subscribe(account.id);

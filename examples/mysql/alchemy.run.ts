@@ -16,7 +16,7 @@ import { billing } from "./src/billing.config.ts";
  * value recorded in state.
  *
  * The model itself is hosted by whichever process runs it — a Bun service, a
- * Lambda, or a Worker through Hyperdrive — with `billingOnMysql(mysqlExecutor(client))`.
+ * Lambda, or a Worker through Hyperdrive — with `billingOnMysql(mysqlExecutor(client), { now })`.
  */
 const MySQLExample = Alchemy.Stack(
   "PaykitMySQLExample",

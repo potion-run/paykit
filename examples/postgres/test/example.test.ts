@@ -47,7 +47,9 @@ describe("the Postgres example", () => {
       expect(migrated.created).toEqual([]);
       expect(migrated.columns).toEqual([]);
 
-      const { world } = billingOnPostgres(postgresExecutor(client));
+      const { world } = billingOnPostgres(postgresExecutor(client), {
+        now: () => 1_700_000_000_000,
+      });
 
       yield* Effect.gen(function* () {
         const subscribe = yield* Paykit.Subscribe(account.id);

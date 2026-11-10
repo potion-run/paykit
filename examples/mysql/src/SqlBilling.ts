@@ -42,9 +42,9 @@ export interface BillingOnMySQL {
  */
 export const billingOnMysql = (
   sql: SqlExecutor,
-  options: { readonly now?: () => number } = {},
+  options: { readonly now: () => number },
 ): BillingOnMySQL => {
-  const now = options.now ?? (() => Date.now());
+  const now = options.now;
   const log = SqlEventLog(sql, { now });
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50 });
 

@@ -42,9 +42,9 @@ export interface BillingOnPostgres {
  */
 export const billingOnPostgres = (
   sql: SqlExecutor,
-  options: { readonly now?: () => number; readonly schema?: string } = {},
+  options: { readonly now: () => number; readonly schema?: string },
 ): BillingOnPostgres => {
-  const now = options.now ?? (() => Date.now());
+  const now = options.now;
   const schema = options.schema ?? "billing";
   const log = SqlEventLog(sql, { now, schema });
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50, schema });

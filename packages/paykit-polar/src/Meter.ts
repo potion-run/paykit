@@ -299,8 +299,9 @@ export const MeterProvider = () =>
       return attrsOf(updated);
     }),
 
-    // Retention, not deletion. Archiving a meter a retained price references is
-    // its own decision; `PolarPrices` retains the meter like the product.
+    // Retention, not deletion: a destroy archives the meter, so a price that
+    // still references it keeps a stable meter. `PolarPrices` retains it like
+    // the product and leaves the archive to the same sweep.
     delete: Effect.fn(function* ({ output }) {
       const existing = yield* getById(output.id);
 

@@ -88,7 +88,7 @@ describe("the example on a SQL database", () => {
   it.live("serves the tenant Api from rows, not from memory", () =>
     Effect.gen(function* () {
       const database = migrated();
-      const { world } = billingOnSql(d1Over(database));
+      const { world } = billingOnSql(d1Over(database), { now: () => 1_700_000_000_000 });
 
       const subscribed = yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
@@ -122,7 +122,7 @@ describe("the example on a SQL database", () => {
 
   it.live("records usage and answers the next check from the same row", () =>
     Effect.gen(function* () {
-      const { world } = billingOnSql(d1Over(migrated()));
+      const { world } = billingOnSql(d1Over(migrated()), { now: () => 1_700_000_000_000 });
       yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
         yield* tenant.Subscribe(account.id, freeInput, asAccount);
@@ -144,7 +144,7 @@ describe("the example on a SQL database", () => {
 
   it.live("pages the read model through SQL, not through the whole table", () =>
     Effect.gen(function* () {
-      const { world } = billingOnSql(d1Over(migrated()));
+      const { world } = billingOnSql(d1Over(migrated()), { now: () => 1_700_000_000_000 });
       yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
         const receipt = yield* tenant.Subscribe(account.id, freeInput, asAccount);
@@ -162,7 +162,7 @@ describe("the example on a SQL database", () => {
 
   it.live("a guard refusal is the Api's, not the store's", () =>
     Effect.gen(function* () {
-      const { world } = billingOnSql(d1Over(migrated()));
+      const { world } = billingOnSql(d1Over(migrated()), { now: () => 1_700_000_000_000 });
 
       const refused = yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;

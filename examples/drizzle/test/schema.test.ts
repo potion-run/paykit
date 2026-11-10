@@ -56,7 +56,11 @@ describe("the Drizzle example schema", () => {
   it.live("uses a non-default schema in the event log and the platform", () =>
     Effect.gen(function* () {
       const { executor, statements } = recording();
-      const { log, world } = billingOnPostgres(executor, { schema: "paykit_test" });
+
+      const { log, world } = billingOnPostgres(executor, {
+        now: () => 1_700_000_000_000,
+        schema: "paykit_test",
+      });
 
       yield* log.events("Subscription", "acct_schema");
 
