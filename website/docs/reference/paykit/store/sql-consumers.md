@@ -3,7 +3,7 @@ title: "SqlConsumers"
 description: "Exports `SqlViewStore`, `SqlPolicyStore`, `SqlStreamStore`."
 ---
 
-> **Source:** [`packages/paykit/src/Store/SqlConsumers.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlConsumers.ts#L83)
+> **Source:** [`packages/paykit/src/Store/SqlConsumers.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlConsumers.ts#L94)
 
 ## SqlViewStore
 
