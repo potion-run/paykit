@@ -25,6 +25,13 @@ export interface SqlAggregateStoreOptions {
   readonly now: () => number;
   /** How often a live read polls the log for a commit it has not seen yet. */
   readonly pollMillis?: number;
+  /**
+   * Reads one instance's version without decoding its state. `SqlPlatform`
+   * supplies it so `changes` can skip an unchanged instance without reading
+   * the whole state row on every tick; without it the version comes from the
+   * full state row.
+   */
+  readonly versionOf?: (id: string) => Effect.Effect<number, SqlError>;
 }
 
 const DEFAULT_POLL = 250;
@@ -104,6 +111,14 @@ export const SqlAggregateStore = (
           ? { state: null, version: 0 }
           : { state: parse(row.state) as never, version: Number(row.version) },
       );
+
+    /** The version alone: the cheap read `changes` makes every tick. */
+    const versionOf = (id: string): Effect.Effect<number, SqlError> =>
+      options.versionOf === undefined
+        ? Effect.map(log.state(aggregate, id), (row) =>
+            row === undefined ? 0 : Number(row.version),
+          )
+        : options.versionOf(id);
 
     /**
      * Deliver what this instance has in the outbox, in order, then mark each
@@ -310,16 +325,30 @@ export const SqlAggregateStore = (
         ).pipe(Effect.orDie)) as AggregateStore["events"],
 
       // A poll is the correct mechanism here: another process may commit, so
-      // there is nothing in this one to notify a subscriber. `changesWith`
-      // drops an unchanged read, so a subscriber sees only commits.
-      changes: (id) =>
-        Stream.tick(Duration.millis(pollMillis)).pipe(
+      // there is nothing in this one to notify a subscriber. The version alone
+      // is read first, so an unchanged instance costs one narrow row instead of
+      // decoding the whole state every tick; the full state is read only when
+      // it moved, and `seen` drops the read that raced a newer commit (its
+      // version is emitted once, not again on the next tick).
+      changes: (id) => {
+        let seen = 0;
+
+        return Stream.tick(Duration.millis(pollMillis)).pipe(
+          Stream.mapEffect(() => versionOf(id)),
+          Stream.changesWith((left, right) => left === right),
+          Stream.filter((version) => version > 0),
           Stream.mapEffect(() => read(id)),
-          Stream.changesWith((left, right) => left.version === right.version),
-          Stream.filter((entry) => entry.version > 0),
+          Stream.filter((entry) => {
+            if (entry.version <= seen) return false;
+            seen = entry.version;
+
+            return true;
+          }),
+          // SAFETY: the entry is the stored state the kernel's schema decodes; `AggregateStore` widens its value to JSON at this boundary.
           Stream.map((entry) => entry as never),
           Stream.orDie,
-        ),
+        );
+      },
 
       tail: ((id: string, after: number) => {
         let seen = after;

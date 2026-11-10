@@ -96,6 +96,8 @@ export const SqlPlatform = (
   const scope = { dialect: executor.dialect, schema: options.schema };
   const viewEntryTable = tableName(BILLING_TABLES.viewEntry, scope);
   const backfillTable = tableName(BILLING_TABLES.backfill, scope);
+  const outboxTable = tableName(BILLING_TABLES.outbox, scope);
+  const stateTable = tableName(BILLING_TABLES.state, scope);
 
   // One model owns one database: the tables are keyed by entity name, not by
   // model, so a second model would share its aggregate's rows with the first.
@@ -111,24 +113,22 @@ export const SqlPlatform = (
   let planOf: (target: string) => Plan | undefined = () => undefined;
 
   /** A source row in the shape `AggregateKit.history` reads from the log. */
-  // SAFETY: the outbox row's delivery is JSON written by this platform; the consumer's schema owns the value.
+  // SAFETY: a stored event is JSON written by this platform; the consumer's schema owns the value.
   const storedEvents = (source: string, id: string) =>
     Effect.flatMap(log.events(source, id), (rows) =>
-      Effect.forEach(
-        rows,
-        (row) =>
-          Effect.sync(() => ({
-            event: JSON.parse(row.event) as unknown,
-            envelope: {
-              id,
-              stream: `${source}/${id}`,
-              seq: row.seq,
-              at: row.at,
-              commandId: row.commandId,
-              correlationId: row.commandId,
-            },
-          })),
-        { concurrency: 1 },
+      // One step for the page: the decode is pure, so a row is not a fiber.
+      Effect.sync(() =>
+        rows.map((row) => ({
+          event: JSON.parse(row.event) as unknown,
+          envelope: {
+            id,
+            stream: `${source}/${id}`,
+            seq: row.seq,
+            at: row.at,
+            commandId: row.commandId,
+            correlationId: row.commandId,
+          },
+        })),
       ),
     );
 
@@ -179,26 +179,34 @@ export const SqlPlatform = (
       return [...new Set(accounts.flat())].sort();
     });
 
-  /** Route every stored row of one source through a consumer's own code. */
-  const sourceDeliveries = (
+  /** The keys (source instances) a backfill source has, in a stable order. */
+  const sourceKeys = (source: string): Effect.Effect<ReadonlyArray<string>, SqlError> =>
+    Effect.suspend(() => {
+      if (aggregateNames.has(source)) return log.accounts(source);
+
+      if (viewKits.has(source)) return viewKeys(source);
+
+      return Effect.die(`backfill source ${source} is not hosted by this model`);
+    });
+
+  /**
+   * The deliveries one source instance routes into `key`. An aggregate source
+   * reads the instance named `key`; a view source reads that key's entries
+   * (filling it first when it is self-filling). One instance's history, never a
+   * source's whole log.
+   */
+  const keyDeliveries = (
     target: string,
     source: string,
+    key: string,
     kit: ViewKit | ProjectionKit,
   ): Effect.Effect<ReadonlyArray<Delivery>, SqlError> =>
     Effect.gen(function* () {
       if (aggregateNames.has(source)) {
-        const ids = yield* log.accounts(source);
+        const rows = yield* storedEvents(source, key);
+        const history = yield* kit.history(target, source, key, rows);
 
-        const routed = yield* Effect.forEach(
-          ids,
-          (id) =>
-            Effect.flatMap(storedEvents(source, id), (rows) =>
-              kit.history(target, source, id, rows),
-            ),
-          { concurrency: 1 },
-        );
-
-        return routed.flatMap((rows) => rows.flatMap((row) => row.deliveries));
+        return history.flatMap((row) => row.deliveries);
       }
 
       const view = viewKits.get(source);
@@ -213,23 +221,52 @@ export const SqlPlatform = (
         return yield* Effect.die(`backfill source ${source} has no store`);
       }
 
-      const keys = yield* viewKeys(source);
-      const routed: Array<Delivery> = [];
+      // A self-filling source (a rebuilt-in-place view) fills its key before
+      // it answers; without this read the rows a consumer needs would not
+      // exist yet.
+      yield* store.read(key);
+      const rows = yield* viewEntries(source, key, view.generation);
 
-      for (const key of keys) {
-        // A self-filling source (a rebuilt-in-place view) fills its key before
-        // it answers; without this read the rows a consumer needs would not
-        // exist yet.
-        yield* store.read(key);
-        const rows = yield* viewEntries(source, key, view.generation);
+      if (rows.length === 0) return [];
 
-        if (rows.length === 0) continue;
-        const history = yield* kit.history(target, source, key, rows);
-        routed.push(...history.flatMap((row) => row.deliveries));
+      const history = yield* kit.history(target, source, key, rows);
+
+      return history.flatMap((row) => row.deliveries);
+    }).pipe(Effect.orDie);
+
+  /** `(at, source, seq)`: the order a consumer folds history in. */
+  const byEventOrder = (left: Delivery, right: Delivery): number =>
+    left.envelope.at - right.envelope.at ||
+    (left.source < right.source ? -1 : left.source > right.source ? 1 : 0) ||
+    left.seq - right.seq;
+
+  /**
+   * Every delivery a consumer's sources route, in the global order, gathered
+   * into one array. A projection reads across keys, so this order is part of
+   * its fold: a projection's backfill holds its sources' history.
+   */
+  const sourceDeliveries = (
+    target: string,
+    sources: ReadonlyArray<string>,
+    kit: ViewKit | ProjectionKit,
+  ): Effect.Effect<Array<Delivery>, SqlError> =>
+    Effect.gen(function* () {
+      const deliveries: Array<Delivery> = [];
+
+      for (const source of sources) {
+        const keys = yield* sourceKeys(source);
+
+        for (const key of keys) {
+          for (const delivery of yield* keyDeliveries(target, source, key, kit)) {
+            deliveries.push(delivery);
+          }
+        }
       }
 
-      return routed;
-    }).pipe(Effect.orDie);
+      deliveries.sort(byEventOrder);
+
+      return deliveries;
+    });
 
   /** Replay one consumer's sources into its store, in event order. */
   const backfill = (target: string, plan: Plan) =>
@@ -242,22 +279,45 @@ export const SqlPlatform = (
       }
 
       const sources = plan.sources ?? [];
-      const deliveries: Array<Delivery> = [];
 
-      for (const source of sources) {
-        deliveries.push(...(yield* sourceDeliveries(target, source, kit)));
+      if (kind === "view" && plan.singleSource) {
+        // A view keyed by its aggregate folds one key independently: every
+        // delivery it can receive belongs to that key, so the global
+        // `(at, source, seq)` sort restricted to the key is the same order as
+        // sorting only the key's deliveries. Folding key by key therefore
+        // reproduces the global fold while holding one key's history.
+        const store = viewStores.get(name)!;
+        const keys = new Set<string>();
+
+        for (const source of sources) {
+          for (const key of yield* sourceKeys(source)) keys.add(key);
+        }
+
+        for (const key of [...keys].sort()) {
+          const batch: Array<Delivery> = [];
+
+          for (const source of sources) {
+            for (const delivery of yield* keyDeliveries(target, source, key, kit)) {
+              batch.push(delivery);
+            }
+          }
+
+          if (batch.length === 0) continue;
+          batch.sort(byEventOrder);
+          yield* store.receive(key, batch);
+        }
+
+        return;
       }
 
-      deliveries.sort(
-        (left, right) =>
-          left.envelope.at - right.envelope.at ||
-          (left.source < right.source ? -1 : left.source > right.source ? 1 : 0) ||
-          left.seq - right.seq,
-      );
+      const deliveries = yield* sourceDeliveries(target, sources, kit);
 
       if (deliveries.length === 0) return;
 
       if (kind === "view") {
+        // A view whose keys merge several sources has no per-key index to read
+        // one key's deliveries from; it keeps the global order, and its
+        // backfill is bounded by its sources' history rather than one key's.
         const store = viewStores.get(name)!;
         const grouped = new Map<string, Array<Delivery>>();
 
@@ -273,6 +333,9 @@ export const SqlPlatform = (
         return;
       }
 
+      // A projection reads across keys, so its `(at, source, seq)` order is
+      // part of the fold. Its backfill holds its sources' history; a view's is
+      // bounded by one key.
       const store = projectionStores.get(name)!;
       yield* Effect.forEach(deliveries, (delivery) => store.receive(delivery), {
         concurrency: 1,
@@ -280,23 +343,68 @@ export const SqlPlatform = (
       });
     });
 
-  /** Deliver every committed outbox row still waiting, for any aggregate. */
-  const drainPending = Effect.gen(function* () {
-    while (true) {
-      const pending = yield* log.pendingDeliveries(100);
+  /**
+   * Deliver every waiting row of every hosted aggregate. The page is filtered
+   * by aggregate, so an aggregate this host does not know never fills it and
+   * never blocks the rows it does know; every page strictly shrinks the rows
+   * left for that aggregate.
+   */
+  const drainHosted = Effect.gen(function* () {
+    const page = 100;
 
-      if (pending.length === 0) return;
+    for (const aggregate of aggregateKits.keys()) {
+      while (true) {
+        const pending = yield* log.pendingDeliveries(page, { aggregate });
 
-      for (const row of pending) {
-        const kit = aggregateKits.get(row.aggregate);
+        if (pending.length === 0) break;
 
-        if (kit === undefined) {
-          return yield* Effect.die(`outbox row for ${row.aggregate}, which is not hosted`);
+        for (const row of pending) {
+          const kit = aggregateKits.get(row.aggregate);
+
+          if (kit === undefined) {
+            return yield* Effect.die(`outbox row for ${row.aggregate}, which is not hosted`);
+          }
+
+          // SAFETY: the outbox row's delivery is JSON written by this platform; the consumer's schema owns the value.
+          yield* kit.deliver(JSON.parse(row.delivery) as Delivery);
+          yield* log.markDelivered(row.seq);
         }
+      }
+    }
+  });
 
-        // SAFETY: the outbox row's delivery is JSON written by this platform; the consumer's schema owns the value.
-        yield* kit.deliver(JSON.parse(row.delivery) as Delivery);
-        yield* log.markDelivered(row.seq);
+  /** The unhosted row a deploy cannot deliver, with what is still waiting. */
+  const failUnhosted = (aggregate: string) =>
+    Effect.gen(function* () {
+      const counted = yield* sql.get<{ remaining: number | string }>(
+        `SELECT COUNT(*) AS remaining FROM ${outboxTable} WHERE delivered_at IS NULL`,
+      );
+
+      const remaining = Number(counted?.remaining ?? 0);
+
+      return yield* Effect.die(
+        `outbox holds ${remaining} undelivered row(s); the first is for ${aggregate}, which this model does not host`,
+      );
+    });
+
+  /**
+   * Deliver every committed outbox row still waiting, retrying while a
+   * concurrent writer commits for a hosted aggregate after that aggregate's
+   * turn in a pass. The bound keeps a writer that commits forever from spinning
+   * the deploy; after it, those rows are left to the writers' own drains.
+   */
+  const drainPending = Effect.gen(function* () {
+    const page = 100;
+
+    for (let pass = 0; pass < aggregateKits.size + 8; pass += 1) {
+      yield* drainHosted;
+
+      const first = (yield* log.pendingDeliveries(page))[0];
+
+      if (first === undefined) return;
+
+      if (!aggregateKits.has(first.aggregate)) {
+        return yield* failUnhosted(first.aggregate);
       }
     }
   }).pipe(Effect.orDie);
@@ -307,6 +415,16 @@ export const SqlPlatform = (
         SqlAggregateStore(log, {
           aggregate: aggregate.aggregateName,
           now: options.now,
+          // The version column alone, so `changes` does not read and re-parse
+          // the whole state on every poll of an unchanged instance.
+          versionOf: (id: string) =>
+            Effect.map(
+              sql.get<{ version: number | string }>(
+                `SELECT version FROM ${stateTable} WHERE aggregate = ? AND account = ?`,
+                [aggregate.aggregateName, id],
+              ),
+              (row) => (row === undefined ? 0 : Number(row.version)),
+            ),
           ...(options.pollMillis === undefined ? {} : { pollMillis: options.pollMillis }),
         }),
         (store: BindableAggregateStore) => {
@@ -376,10 +494,11 @@ export const SqlPlatform = (
         // history, or it would replay an empty source and record itself as
         // complete.
         const order: Array<string> = [];
+        const ordered = new Set<string>();
         const visiting = new Set<string>();
 
         const visit = (target: string) => {
-          if (order.includes(target) || visiting.has(target)) return;
+          if (ordered.has(target) || visiting.has(target)) return;
           visiting.add(target);
 
           for (const source of plansOfTarget(target)?.sources ?? []) {
@@ -389,6 +508,7 @@ export const SqlPlatform = (
           }
 
           visiting.delete(target);
+          ordered.add(target);
           order.push(target);
         };
 
