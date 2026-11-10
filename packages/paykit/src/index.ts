@@ -1226,11 +1226,20 @@ export {
   MoneyProviderKind,
   paymentsRouter,
   providerFor,
+  providerSet,
+  resolveProvider,
 } from "./Payments.ts";
 
 export type { ProviderSet } from "./Payments.ts";
 
-export type { PaymentError, PaymentsService, MoneyProvider, UnitPriceMap } from "./Payments.ts";
+export type {
+  PaymentError,
+  PaymentsContext,
+  PaymentsService,
+  MoneyProvider,
+  ResolvedProvider,
+  UnitPriceMap,
+} from "./Payments.ts";
 
 export { UsageLine } from "./Payments.ts";
 

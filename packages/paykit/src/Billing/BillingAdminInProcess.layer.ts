@@ -2,7 +2,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { asSystem } from "../Auth/Actor.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
 import { CreditExceedsBalance } from "../Subscription/ConsumeCredits.command.ts";
 import { EnterGrace as EnterGraceCommand } from "../Subscription/EnterGrace.command.ts";
@@ -310,7 +315,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
 
           const chosen = Option.match(router, {
             onNone: () => null,
-            onSome: (set) => providerFor(set, state.refs),
+            onSome: (set) => resolveProvider(set, state.refs),
           });
 
           const attempt = Effect.gen(function* () {
@@ -318,7 +323,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
 
             if (Option.isNone(payments)) {
               return yield* new ProviderCapabilityMissing({
-                provider: chosen?.name ?? "none",
+                provider: chosen?.provider.name ?? "none",
                 op: "refund",
               });
             }
@@ -360,7 +365,7 @@ export const BillingAdminInProcess = Layer.mergeAll(
           });
 
           return yield* bound(toRefundError)(
-            chosen === null ? attempt : Effect.provide(attempt, chosen.payments),
+            chosen === null ? attempt : Effect.provide(attempt, chosen.context),
           );
         });
       });

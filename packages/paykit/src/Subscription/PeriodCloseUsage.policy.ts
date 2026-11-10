@@ -7,7 +7,7 @@ import {
   PaymentsRouter,
   ProviderCapabilityMissing,
   type UsageLine,
-  providerFor,
+  resolveProvider,
 } from "../Payments.ts";
 import { PeriodClosed } from "./ClosePeriod.command.ts";
 import { Entitlements, type EntitlementsState } from "./Entitlements.view.ts";
@@ -78,7 +78,7 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
       if (Object.keys(standing.refs).length === 0) return;
 
       if (router === null) return;
-      const chosen = providerFor(router, standing.refs);
+      const chosen = resolveProvider(router, standing.refs);
 
       if (chosen === null) return;
 
@@ -89,7 +89,7 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
 
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
-            provider: chosen.name,
+            provider: chosen.provider.name,
             op: "reportUsage",
           });
         }
@@ -105,7 +105,7 @@ export const PeriodCloseUsageLive = PeriodCloseUsage.toLayer(
 
       // The account's own provider, not every provider in the router: a second
       // one must never receive the same usage.
-      yield* Effect.provide(attempt, chosen.payments).pipe(Effect.orDie);
+      yield* Effect.provide(attempt, chosen.context).pipe(Effect.orDie);
     });
   }),
 );

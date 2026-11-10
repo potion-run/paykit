@@ -1,6 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
 
 /** What `Portal` opens. */
@@ -23,7 +28,7 @@ export const portalOperation = Effect.fn("Paykit.Portal")(function* () {
 
     const chosen = Option.match(router, {
       onNone: () => null,
-      onSome: (set) => providerFor(set, standing.refs),
+      onSome: (set) => resolveProvider(set, standing.refs),
     });
 
     const attempt = Effect.gen(function* () {
@@ -31,7 +36,7 @@ export const portalOperation = Effect.fn("Paykit.Portal")(function* () {
 
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
-          provider: chosen?.name ?? "none",
+          provider: chosen?.provider.name ?? "none",
           op: "createPortal",
         });
       }
@@ -39,6 +44,6 @@ export const portalOperation = Effect.fn("Paykit.Portal")(function* () {
       return yield* Option.getOrThrow(payments).createPortal({ account: input.account });
     });
 
-    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.context);
   });
 });

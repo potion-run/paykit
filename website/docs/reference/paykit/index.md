@@ -40,6 +40,7 @@ Billing and entitlement for Alchemy.
 - [make](/reference/paykit/make): Billing as Effect atoms: the tenant bindings, shaped for a client.
 - [Outbound](/reference/paykit/outbound): The outbound edge as a port: the endpoints to notify and the transport that sends a signed request.
 - [Paykit](/reference/paykit/paykit): The four export groups as one namespace, so the docs' Paykit.feature(...) and the flat named exports are the same functions.
+- [Payments](/reference/paykit/payments): Exports `providerSet`, `resolveProvider`.
 - [planVersionOf](/reference/paykit/plan-version-of): The generation of a plan's terms the catalog currently sells, or null when the catalog has no such plan.
 - [providers](/reference/paykit/providers): Every Alchemy provider this package owns, as one Layer, so a stack declares Paykit.providers() beside Cloudflare.providers().
 - [resolvePolarProductId](/reference/paykit/resolve-polar-product-id): Resolve a tier's product handle to the id Polar's API expects.

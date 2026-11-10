@@ -11,7 +11,7 @@ import type { Catalog, CatalogInput } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { catalogLayer } from "./CatalogService.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
-import { type MoneyProvider, paymentsRouter } from "./Payments.ts";
+import { type MoneyProvider, PaymentsRouter, providerSet } from "./Payments.ts";
 import { validateBilling } from "./Stack.ts";
 import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
 
@@ -93,93 +93,110 @@ const providersOf = (input: PaykitWorldOptions["providers"]): ReadonlyArray<Mone
 const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
   parsed: Catalog,
   options: PaykitWorldOptions<R, P, B>,
-) => {
-  const catalog = catalogLayer(parsed);
-  const reads = options.readStore ?? MemoryBillingReadStore;
-  const platform = options.platform ?? Domain.InMemory;
-  const providers = providersOf(options.providers);
-  const router = paymentsRouter(...providers);
-  const guards = options.guards === undefined ? [] : [options.guards];
-  const payments = options.payments === undefined ? [] : [options.payments];
+) =>
+  // Scoped because the provider set builds each provider's `Payments` layer
+  // once, here: its finalizers belong to the world, not to a single command.
+  Layer.unwrap(
+    Effect.gen(function* () {
+      const catalog = catalogLayer(parsed);
+      const reads = options.readStore ?? MemoryBillingReadStore;
+      const platform = options.platform ?? Domain.InMemory;
+      const providers = providersOf(options.providers);
+      const set = yield* providerSet(providers);
+      const router = Layer.succeed(PaymentsRouter, set);
+      const guards = options.guards === undefined ? [] : [options.guards];
+      const payments = options.payments === undefined ? [] : [options.payments];
 
-  const middleware = Layer.mergeAll(
-    CatalogGuardLive.pipe(Layer.provideMerge(catalog)),
-    router,
-    ...guards,
-    ...payments,
+      const middleware = Layer.mergeAll(
+        CatalogGuardLive.pipe(Layer.provideMerge(catalog)),
+        router,
+        ...guards,
+        ...payments,
+      );
+
+      // A tier's top-up line is catalog data, but the policy that acts on it is
+      // a deployment's choice: without this layer a crossing records nothing and
+      // the line is inert. The pack is resolved once, here, so a crossing never
+      // reads the catalog.
+      const refill =
+        options.autoTopUp === undefined
+          ? undefined
+          : autoTopUp({
+              catalog: parsed,
+              pack: options.autoTopUp.pack,
+              ...(options.autoTopUp.cooldown === undefined
+                ? {}
+                : { cooldown: options.autoTopUp.cooldown }),
+            }).pipe(Layer.orDie);
+
+      // The close-time usage policy resolves the account's provider from this
+      // router; without it a postpaid close is local-only.
+      const handlers = PaykitHandlers.pipe(Layer.provide(reads), Layer.provideMerge(router));
+
+      const model = PaykitModel.layer(
+        refill === undefined ? handlers : handlers.pipe(Layer.provide(refill)),
+      ).pipe(
+        Layer.provideMerge(reads),
+        Layer.provide(platform),
+        Layer.provideMerge(middleware),
+        Layer.provideMerge(catalog),
+      );
+
+      const bindings = options.bindings ?? "tenant";
+
+      const tenant =
+        bindings === "tenant" || bindings === "both"
+          ? [
+              BillingInProcess.pipe(
+                Layer.provide(model),
+                Layer.provide(router),
+                Layer.provide(catalog),
+              ),
+            ]
+          : [];
+
+      const admin =
+        bindings === "admin" || bindings === "both"
+          ? [
+              BillingAdminInProcess.pipe(
+                Layer.provide(model),
+                // The refund resolves the account's provider when the layer is
+                // built, exactly as `BillingInProcess` does for its money verbs.
+                Layer.provide(router),
+                Layer.provide(catalog),
+              ),
+            ]
+          : [];
+
+      const only = providers.length === 1 ? providers[0] : undefined;
+
+      // The single provider's services, built once above. A route beside the
+      // world reads the same context a command resolves, so there is no second
+      // build and no second client.
+      const solePayments =
+        only === undefined
+          ? []
+          : [
+              // SAFETY: `providerSet` built a context for every provider it
+              // registered, and `only` is one of them.
+              Layer.succeedContext(set.contexts.get(only.name)!),
+            ];
+
+      // The common half — the model, the catalog, the router and the host's
+      // services — is what every surface sees. The cast is the one place the
+      // runtime `bindings` choice narrows the type: a `"tenant"` world does not
+      // build the operator layer, so the union the merge would infer is wider
+      // than what exists.
+      const base = Layer.mergeAll(model, catalog, router, ...guards, ...payments, ...solePayments);
+
+      // SAFETY: the merge provides exactly the services the layer union names.
+      return Layer.mergeAll(base, ...tenant, ...admin) as Layer.Layer<
+        Layer.Success<typeof base> | BindingServices<B>,
+        never,
+        R
+      >;
+    }),
   );
-
-  // A tier's top-up line is catalog data, but the policy that acts on it is a
-  // deployment's choice: without this layer a crossing records nothing and the
-  // line is inert. The pack is resolved once, here, so a crossing never reads
-  // the catalog.
-  const refill =
-    options.autoTopUp === undefined
-      ? undefined
-      : autoTopUp({
-          catalog: parsed,
-          pack: options.autoTopUp.pack,
-          ...(options.autoTopUp.cooldown === undefined
-            ? {}
-            : { cooldown: options.autoTopUp.cooldown }),
-        }).pipe(Layer.orDie);
-
-  // The close-time usage policy resolves the account's provider from this
-  // router; without it a postpaid close is local-only.
-  const handlers = PaykitHandlers.pipe(Layer.provide(reads), Layer.provideMerge(router));
-
-  const model = PaykitModel.layer(
-    refill === undefined ? handlers : handlers.pipe(Layer.provide(refill)),
-  ).pipe(
-    Layer.provideMerge(reads),
-    Layer.provide(platform),
-    Layer.provideMerge(middleware),
-    Layer.provideMerge(catalog),
-  );
-
-  const bindings = options.bindings ?? "tenant";
-
-  const tenant =
-    bindings === "tenant" || bindings === "both"
-      ? [BillingInProcess.pipe(Layer.provide(model), Layer.provide(router), Layer.provide(catalog))]
-      : [];
-
-  const admin =
-    bindings === "admin" || bindings === "both"
-      ? [
-          BillingAdminInProcess.pipe(
-            Layer.provide(model),
-            // The refund resolves the account's provider when the layer is
-            // built, exactly as `BillingInProcess` does for its money verbs.
-            Layer.provide(router),
-            Layer.provide(catalog),
-          ),
-        ]
-      : [];
-
-  const only = providers.length === 1 ? providers[0] : undefined;
-
-  // The common half — the model, the catalog, the router and the host's
-  // services — is what every surface sees. The cast is the one place the
-  // runtime `bindings` choice narrows the type: a `"tenant"` world does not
-  // build the operator layer, so the union the merge would infer is wider than
-  // what exists.
-  const base = Layer.mergeAll(
-    model,
-    catalog,
-    router,
-    ...guards,
-    ...payments,
-    ...(only === undefined ? [] : [only.payments]),
-  );
-
-  // SAFETY: the merge provides exactly the services the layer union names.
-  return Layer.mergeAll(base, ...tenant, ...admin) as Layer.Layer<
-    Layer.Success<typeof base> | BindingServices<B>,
-    never,
-    R
-  >;
-};
 
 /**
  * One deployment graph, built from the parts a host chooses.
@@ -201,10 +218,11 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
  * instead of an `Effect.runSync` that throws at module load.
  *
  * The store is provided both to the handlers and outward, because `List` reads
- * the projection directly rather than through a view. A single provider's
- * `Payments` layer is merged too, so a route beside the world can call it
- * without rebuilding the choice; with two providers the router is the only
- * answer, because merging both would shadow one by merge order.
+ * the projection directly rather than through a view. A single provider's built
+ * services are merged too — the same context a command resolves, not a second
+ * build — so a route beside the world can call `Payments`; with two providers
+ * the router is the only answer, because merging both would shadow one by merge
+ * order.
  *
  * A tier's `topUp` line is catalog data, but the policy that acts on it is the
  * deployment's: `autoTopUp` installs it and names the pack a line without one

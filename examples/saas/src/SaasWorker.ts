@@ -128,7 +128,9 @@ const serve = () => ({
     const database = yield* Paykit.Database;
     const now = yield* Clock.currentTimeMillis;
     const billing = billingOn(yield* database.runtime, { now: () => now });
-    const world = Layer.mergeAll(billing.world, Provider.payments);
+    // The world already carries the deployment's one provider — the same
+    // context a command resolves — so its layer is not merged again here.
+    const world = billing.world;
 
     return yield* handle().pipe(Effect.provide(world), Effect.orDie);
   }).pipe(Effect.provide(Layer.mergeAll(D1(BillingDatabase), Cloudflare.D1.QueryDatabaseBinding))),

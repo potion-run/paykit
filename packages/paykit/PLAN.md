@@ -467,7 +467,8 @@ Four rules keep the port from re-forming around whichever provider shipped first
 
 A billing stack runs one or more providers: `paymentsRouter(...)` holds them in preference order, `refs`
 stays keyed by provider, and a binding resolves the account's own provider before the fallback and
-provides only that provider's layer. Two providers sharing a name are refused
+provides only that provider's built context — each provider's layer is built once, when the world
+builds, so a command never rebuilds one. Two providers sharing a name are refused
 (`ProviderDuplicate`), because `refs` could not tell them apart.
 
 ### The vendor package

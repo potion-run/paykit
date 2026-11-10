@@ -8,7 +8,12 @@ import { balanceOfScope, emptyBalance } from "../Balance.ts";
 import { CatalogService } from "../CatalogService.ts";
 import { evaluateCheck } from "../Check.ts";
 import { CUSTOMER_SCOPE, EntityId, entityScope } from "../Customer.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { ArchiveEntity as ArchiveEntityCommand } from "../Subscription/ArchiveEntity.command.ts";
 import { AttachEntity as AttachEntityCommand } from "../Subscription/AttachEntity.command.ts";
 import { BillingState } from "../Subscription/BillingState.view.ts";
@@ -218,21 +223,21 @@ const BillingCore = Layer.mergeAll(
           const state = yield* subscription.state(ref);
 
           if (state._tag === "Subscribed" && router !== null) {
-            const chosen = providerFor(router, state.refs);
+            const chosen = resolveProvider(router, state.refs);
 
             const vendorSubscription =
-              chosen === null ? undefined : state.refs[chosen.name]?.subscription;
+              chosen === null ? undefined : state.refs[chosen.provider.name]?.subscription;
 
             const allowance = allowancesOf(state)[request.feature];
 
             if (chosen !== null && vendorSubscription !== undefined && allowance !== undefined) {
-              if (chosen.capabilities.has("quantity")) {
+              if (chosen.provider.capabilities.has("quantity")) {
                 const attempt = Effect.gen(function* () {
                   const payments = yield* Effect.serviceOption(Payments);
 
                   if (Option.isNone(payments)) {
                     return yield* new ProviderCapabilityMissing({
-                      provider: chosen.name,
+                      provider: chosen.provider.name,
                       op: "setQuantity",
                     });
                   }
@@ -269,7 +274,7 @@ const BillingCore = Layer.mergeAll(
                   }
                 });
 
-                yield* chosen === null ? attempt : Effect.provide(attempt, chosen.payments);
+                yield* chosen === null ? attempt : Effect.provide(attempt, chosen.context);
               }
             }
           }
@@ -1217,7 +1222,11 @@ const BillingCore = Layer.mergeAll(
  * ### Providing the tenant surface
  * **Example:** A Worker that hosts the model
  * ```typescript
- * const World = Layer.mergeAll(BillingInProcess, catalogLayer(Catalog), provider.payments);
+ * const World = Layer.mergeAll(
+ *   BillingInProcess,
+ *   catalogLayer(Catalog),
+ *   paymentsRouter(provider),
+ * );
  *
  * fetch: Effect.gen(function* () {
  *   const trackUsage = yield* Paykit.TrackUsage(account);

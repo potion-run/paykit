@@ -7,7 +7,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { DunningRetry, DunningRetryDue } from "./DunningRetry.command.ts";
 import { GraceEntered } from "./EnterGrace.command.ts";
 import { GraceElapsed } from "./GraceElapsed.command.ts";
@@ -156,11 +161,14 @@ export const DunningLive = Dunning.toLayer(
 
         if (standing.dunningAttempts + 1 !== event.attempt) return;
 
-        const chosen = providerFor(router, standing.refs);
+        const chosen = resolveProvider(router, standing.refs);
 
-        if (chosen === null || !chosen.capabilities.has("charge")) {
+        if (chosen === null || !chosen.provider.capabilities.has("charge")) {
           return yield* Effect.die(
-            new ProviderCapabilityMissing({ provider: chosen?.name ?? "none", op: "charge" }),
+            new ProviderCapabilityMissing({
+              provider: chosen?.provider.name ?? "none",
+              op: "charge",
+            }),
           );
         }
 
@@ -173,7 +181,7 @@ export const DunningLive = Dunning.toLayer(
             currency: event.currency,
             commandId: dunningChargeCommandId(key.id, event.startedAt, event.attempt),
           });
-        }).pipe(Effect.provide(chosen.payments));
+        }).pipe(Effect.provide(chosen.context));
 
         yield* charge.pipe(
           Effect.flatMap(() =>

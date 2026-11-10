@@ -11,7 +11,7 @@ import {
   PaymentsRouter,
   ProviderCapabilityMissing,
   type PaymentsService,
-  providerFor,
+  resolveProvider,
 } from "../Payments.ts";
 import { AlreadySubscribed } from "../Subscription/AlreadySubscribed.rejection.ts";
 import { AttachProviderRef } from "../Subscription/AttachProviderRef.command.ts";
@@ -226,11 +226,11 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
     // that runs. Buying one never creates a second standing.
 
     // The standing says which provider this account already belongs to; a new
-    // account starts on the router's fallback. One provider's layer is provided
-    // for this call, because two providers are two services.
+    // account starts on the router's fallback. One provider's context is
+    // provided for this call, because two providers are two services.
     const chosen = Option.match(router, {
       onNone: () => null,
-      onSome: (set) => providerFor(set, standing.refs),
+      onSome: (set) => resolveProvider(set, standing.refs),
     });
 
     const attempt = Effect.gen(function* () {
@@ -239,13 +239,13 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
 
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
-          provider: chosen?.name ?? "none",
+          provider: chosen?.provider.name ?? "none",
           op: "createCheckout",
         });
       }
 
       const service = Option.getOrThrow(payments);
-      const providerName = chosen?.name ?? Option.getOrNull(provider)?.name ?? "provider";
+      const providerName = chosen?.provider.name ?? Option.getOrNull(provider)?.name ?? "provider";
 
       const purchase = yield* purchasePath(
         service,
@@ -298,6 +298,6 @@ export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
       return purchase as SubscribeResult;
     });
 
-    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.context);
   });
 });

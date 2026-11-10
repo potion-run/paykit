@@ -3,7 +3,7 @@ title: "BillingAdminInProcess"
 description: "Every operator binding, implemented in the process that hosts the model."
 ---
 
-> **Source:** [`packages/paykit/src/Billing/BillingAdminInProcess.layer.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Billing/BillingAdminInProcess.layer.ts#L47)
+> **Source:** [`packages/paykit/src/Billing/BillingAdminInProcess.layer.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Billing/BillingAdminInProcess.layer.ts#L52)
 > **Kind:** Layer · **Product:** Console · **Provides:** `Paykit.GrantCredits`
 
 Every operator binding, implemented in the process that hosts the model.

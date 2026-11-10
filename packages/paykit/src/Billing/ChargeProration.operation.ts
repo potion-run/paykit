@@ -2,7 +2,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import { NoProrationDue } from "../Subscription/RecordProrationInvoice.command.ts";
 import { RecordProrationInvoice } from "../Subscription/RecordProrationInvoice.command.ts";
 import { Subscription } from "../Subscription/Subscription.aggregate.ts";
@@ -86,7 +91,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
     // The invoice is collected by the provider the standing already belongs to.
     const chosen = Option.match(router, {
       onNone: () => null,
-      onSome: (set) => providerFor(set, state.refs),
+      onSome: (set) => resolveProvider(set, state.refs),
     });
 
     const attempt = Effect.gen(function* () {
@@ -94,7 +99,7 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
 
       if (Option.isNone(payments)) {
         return yield* new ProviderCapabilityMissing({
-          provider: chosen?.name ?? "none",
+          provider: chosen?.provider.name ?? "none",
           op: "createInvoice",
         });
       }
@@ -129,6 +134,6 @@ export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(func
       } as const satisfies ChargeProrationResult;
     });
 
-    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.payments);
+    return chosen === null ? yield* attempt : yield* Effect.provide(attempt, chosen.context);
   });
 });

@@ -10,7 +10,12 @@ import * as Schema from "effect/Schema";
 import { asSystem } from "../Auth/Actor.ts";
 import { creditRatesOf, planOf, type Catalog } from "../Catalog.ts";
 import type { CreditRateCards } from "../Feature.ts";
-import { Payments, PaymentsRouter, ProviderCapabilityMissing, providerFor } from "../Payments.ts";
+import {
+  Payments,
+  PaymentsRouter,
+  ProviderCapabilityMissing,
+  resolveProvider,
+} from "../Payments.ts";
 import type { Price, TopUpTerms } from "../Tier.ts";
 import { CreditsConsumed } from "./ConsumeCredits.command.ts";
 import { PurchaseCredits } from "./PurchaseCredits.command.ts";
@@ -375,14 +380,14 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       // scheduled change moves it at the boundary with the line and the pack.
       const cooldown = topUpCooldownFor(config, line);
 
-      const chosen = providerFor(router, standing.refs);
-      const canCharge = chosen !== null && chosen.capabilities.has("charge");
-      const canInvoice = chosen !== null && chosen.capabilities.has("invoice");
+      const chosen = resolveProvider(router, standing.refs);
+      const canCharge = chosen !== null && chosen.provider.capabilities.has("charge");
+      const canInvoice = chosen !== null && chosen.provider.capabilities.has("invoice");
 
       if (chosen === null || (!canCharge && !canInvoice)) {
         return yield* Effect.die(
           new ProviderCapabilityMissing({
-            provider: chosen?.name ?? "none",
+            provider: chosen?.provider.name ?? "none",
             op: "createInvoice",
           }),
         );
@@ -412,7 +417,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
 
         if (Option.isNone(payments)) {
           return yield* new ProviderCapabilityMissing({
-            provider: chosen.name,
+            provider: chosen.provider.name,
             op: "createInvoice",
           });
         }
@@ -443,7 +448,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
                   ? invoice
                   : Effect.fail(
                       new ProviderCapabilityMissing({
-                        provider: chosen.name,
+                        provider: chosen.provider.name,
                         op: "createInvoice",
                       }),
                     ),
@@ -478,7 +483,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
       //
       // The account's own provider, never every provider in the router: a
       // second one must not invoice the same crossing.
-      const outcome = yield* Effect.provide(purchase, chosen.payments).pipe(Effect.result);
+      const outcome = yield* Effect.provide(purchase, chosen.context).pipe(Effect.result);
 
       if (Result.isFailure(outcome)) {
         yield* asSystem(
@@ -487,7 +492,7 @@ export const AutoTopUpLive = AutoTopUp.toLayer(
             new RecordTopUpFailure({
               tier: pack.tier,
               price: pack.price,
-              provider: chosen.name,
+              provider: chosen.provider.name,
               reason: failureTag(outcome.failure),
             }),
             { commandId: topUpFailureCommandId(key.id, envelope.seq) },

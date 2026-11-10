@@ -3,7 +3,7 @@ title: "autoTopUp"
 description: "The auto top-up policy's configuration."
 ---
 
-> **Source:** [`packages/paykit/src/Subscription/AutoTopUp.policy.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Subscription/AutoTopUp.policy.ts#L95)
+> **Source:** [`packages/paykit/src/Subscription/AutoTopUp.policy.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Subscription/AutoTopUp.policy.ts#L100)
 > **Kind:** Layer
 
 The auto top-up policy's configuration. The pack is catalog data by id; the
