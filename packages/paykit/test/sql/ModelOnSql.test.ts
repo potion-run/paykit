@@ -77,6 +77,25 @@ const wipeConsumers = (sql: SqlExecutor) =>
     DELETE FROM billing_rm_backfill;
   `);
 
+/**
+ * Seed `count` undelivered outbox rows for another account. They are older
+ * than anything this account commits next, so they fill every place in an
+ * unfiltered page — the backlog an instance-scoped drain must never read.
+ */
+const seedForeignBacklog = (sql: SqlExecutor, count: number): void => {
+  for (let index = 0; index < count; index += 1) {
+    sql.run(
+      "INSERT INTO billing_outbox (aggregate, account, event_seq, delivery) VALUES (?, ?, ?, ?)",
+      [
+        "Subscription",
+        "acct_backlog",
+        index + 1,
+        JSON.stringify({ target: { kind: "view", name: "Entitlements" }, key: "acct_backlog" }),
+      ],
+    );
+  }
+};
+
 describe("the model hosted on SQL", () => {
   it.live("writes the command's events, state and receipt to one database", () =>
     Effect.gen(function* () {
@@ -232,6 +251,54 @@ describe("the model hosted on SQL", () => {
         remaining: 70,
         allowed: true,
       });
+    }),
+  );
+
+  it.live("a healthy account's write drains in-process behind another account's backlog", () =>
+    Effect.gen(function* () {
+      const { platform, log, sql } = yield* world;
+
+      const view = yield* Effect.gen(function* () {
+        const subscription = yield* Subscription;
+        const entitlements = yield* Entitlements;
+
+        const subscribed = yield* subscription.send(
+          account,
+          new Subscribe({
+            credits: 0,
+            creditsExpire: "period",
+            rates: {},
+            tier: "free",
+            allowances: free,
+          }),
+          { commandId: "subscribe-1" } as never,
+        );
+
+        yield* entitlements.query(account, { atLeast: subscribed });
+
+        // 150 deliveries another account committed first: an unfiltered page is
+        // entirely theirs, so this account's next commit cannot be found by it.
+        seedForeignBacklog(sql, 150);
+
+        const tracked = yield* subscription.send(
+          account,
+          new TrackUsage({ feature: "messages", amount: 5 }),
+          { commandId: "track-1" } as never,
+        );
+
+        // 2 s, not the 10 s consistency timeout: before the fix this fails here,
+        // naming the drain instead of waiting out the read.
+        return yield* entitlements
+          .query(account, { atLeast: tracked })
+          .pipe(Effect.timeout("2 seconds"));
+      }).pipe(Effect.provide(hosted(platform)));
+
+      expect(Option.getOrNull(view)?.features.messages?.used).toBe(5);
+      // This account's own outbox is empty; the backlog it never read is not.
+      expect(
+        yield* log.pendingDeliveries(500, { aggregate: "Subscription", account: account.id }),
+      ).toEqual([]);
+      expect((yield* log.pendingDeliveries(500, { account: "acct_backlog" })).length).toBe(150);
     }),
   );
 

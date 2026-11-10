@@ -29,6 +29,9 @@ export interface SqlAggregateStoreOptions {
 
 const DEFAULT_POLL = 250;
 
+/** How many of one instance's pending deliveries a drain holds at a time. */
+const PAGE = 100;
+
 /**
  * How many times one `send` re-reads and re-decides after another writer moved
  * the instance first. A winner commits a handful of rows, so contention on one
@@ -102,26 +105,36 @@ export const SqlAggregateStore = (
           : { state: parse(row.state) as never, version: Number(row.version) },
       );
 
-    /** Deliver what this aggregate has in the outbox, in order, then mark it done. */
+    /**
+     * Deliver what this instance has in the outbox, in order, then mark each
+     * row done. The page is filtered in the query by aggregate and account, so
+     * another account's backlog cannot fill it; an instance's own backlog may
+     * span pages, and `seq ASC` keeps the order across them.
+     */
     const drain = (id: string) =>
       Effect.gen(function* () {
         const bound = kit;
 
         if (bound === undefined) return;
-        const waiting = yield* log.pendingDeliveries();
-        const pending = waiting.filter((row) => row.aggregate === aggregate && row.account === id);
 
-        if (pending.length === 0) return;
-        // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
-        yield* Effect.forEach(
-          pending,
-          (row) =>
-            Effect.sync(() => JSON.parse(row.delivery) as Delivery).pipe(
-              Effect.flatMap((delivery) => bound.deliver(delivery as never)),
-              Effect.andThen(log.markDelivered(row.seq)),
-            ),
-          { discard: true },
-        );
+        while (true) {
+          const waiting = yield* log.pendingDeliveries(PAGE, { aggregate, account: id });
+
+          if (waiting.length === 0) return;
+
+          // Each row is marked delivered as it is delivered, so every page is
+          // strictly smaller and the loop ends on an empty one.
+          // SAFETY: the row's text is decoded by the aggregate's schema; the kernel's generics are erased at this store boundary.
+          yield* Effect.forEach(
+            waiting,
+            (row) =>
+              Effect.sync(() => JSON.parse(row.delivery) as Delivery).pipe(
+                Effect.flatMap((delivery) => bound.deliver(delivery as never)),
+                Effect.andThen(log.markDelivered(row.seq)),
+              ),
+            { discard: true },
+          );
+        }
       });
 
     // Bound when the model builds this aggregate's store. The kernel never

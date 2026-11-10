@@ -245,6 +245,18 @@ export const BILLING_SCHEMA_V1: SchemaDefinition = {
       { name: "delivered_at", type: "millis" },
     ]),
     index("billing_outbox_pending", BILLING_TABLES.outbox, ["delivered_at", "seq"]),
+    // Serves the drain of one aggregate instance: the outbox query filters by
+    // aggregate and account before `seq`, so it never reads another account's
+    // backlog. It belongs to the first release, not to convergence, because
+    // MySQL renders a column an index covers as `VARCHAR(191)`; a `TEXT`
+    // column created by `CREATE TABLE` cannot later become keyed, and
+    // convergence never alters a column.
+    index("billing_outbox_account_pending", BILLING_TABLES.outbox, [
+      "aggregate",
+      "account",
+      "delivered_at",
+      "seq",
+    ]),
     table(
       BILLING_TABLES.schedule,
       [

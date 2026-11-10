@@ -294,11 +294,32 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         (rows) => rows.map((row) => row.account),
       ),
 
-    pendingDeliveries: (limit = 100) =>
-      Effect.map(
+    /**
+     * One page of undelivered outbox rows, oldest first. The filter is part of
+     * the query, not a caller's JS pass: a caller draining one instance must
+     * not read every other account's backlog to find its own rows.
+     */
+    pendingDeliveries: (
+      limit = 100,
+      filter?: { readonly aggregate?: string; readonly account?: string },
+    ) => {
+      const where = ["delivered_at IS NULL"];
+      const params: Array<SqlValue> = [];
+
+      if (filter?.aggregate !== undefined) {
+        where.push("aggregate = ?");
+        params.push(filter.aggregate);
+      }
+
+      if (filter?.account !== undefined) {
+        where.push("account = ?");
+        params.push(filter.account);
+      }
+
+      return Effect.map(
         sql.query<PendingDelivery>(
-          `SELECT seq, aggregate, account, event_seq AS eventSeq, delivery FROM ${outbox} WHERE delivered_at IS NULL ORDER BY seq ASC LIMIT ?`,
-          [limit],
+          `SELECT seq, aggregate, account, event_seq AS eventSeq, delivery FROM ${outbox} WHERE ${where.join(" AND ")} ORDER BY seq ASC LIMIT ?`,
+          [...params, limit],
         ),
         (rows) =>
           rows.map((row) => ({
@@ -306,7 +327,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
             seq: numberFrom(row.seq),
             eventSeq: numberFrom(row.eventSeq),
           })),
-      ),
+      );
+    },
 
     markDelivered: (seq: number) =>
       sql.write(`UPDATE ${outbox} SET delivered_at = ? WHERE seq = ?`, [options.now(), seq]),

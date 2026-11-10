@@ -56,6 +56,24 @@ describe("the MySQL dialect", () => {
     expect(init!.sql).not.toContain("CREATE INDEX IF NOT EXISTS");
   });
 
+  it("indexes the outbox by instance on keyed columns in the first release", () => {
+    const [init] = migrationFiles({ dialect: "mysql" });
+
+    const outbox = init!.statements.find((statement) =>
+      statement.startsWith("CREATE TABLE IF NOT EXISTS `billing_outbox`"),
+    );
+
+    // The one-instance drain filters by aggregate and account, so the index
+    // makes both keyed columns and MySQL renders them `VARCHAR(191)`. A `TEXT`
+    // column here is exactly what the index statement below is refused for, so
+    // both have to come from the first `CREATE TABLE`, not from convergence.
+    expect(outbox).toContain("`aggregate` VARCHAR(191) NOT NULL");
+    expect(outbox).toContain("`account` VARCHAR(191) NOT NULL");
+    expect(init!.sql).toContain(
+      "CREATE INDEX `billing_outbox_account_pending` ON `billing_outbox` (`aggregate`, `account`, `delivered_at`, `seq`)",
+    );
+  });
+
   it("renders the dry run for MySQL without a schema statement", () => {
     const dry = migrateDryRun({ dialect: "mysql" });
 
