@@ -31,8 +31,8 @@ export const refill = { pack: credits100k.id } as const;
  *
  * `store` is the deploy-time record, not the Worker's runtime store: the
  * database is the D1 resource beside this file, and `billingOn` hosts the model
- * on it. The SQL test uses the same function, which is why this file can keep
- * `MemoryStore` without making the Worker in-memory.
+ * on it. It records `D1Store`, so a later deploy can see the ledger's store
+ * kind even though the binding is a runtime value.
  *
  * `satisfies` keeps the declaration's own types: `providers` stays a one-element
  * tuple whose element is `Provider`, not a widened `MoneyProvider[]`.
@@ -40,5 +40,5 @@ export const refill = { pack: credits100k.id } as const;
 export const billing = {
   catalog: saasCatalog,
   providers: [Provider],
-  store: Paykit.MemoryStore(),
+  store: Paykit.D1Store(),
 } satisfies BillingStackProps;

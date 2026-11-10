@@ -81,7 +81,7 @@ describe("the example on a SQL database", () => {
   it.live("a project, its grant and a metered turn are rows, not memory", () =>
     Effect.gen(function* () {
       const database = migrated();
-      const { world } = billingOnSql(d1Over(database));
+      const { world } = billingOnSql(d1Over(database), { now: () => 1_700_000_000_000 });
 
       yield* Effect.gen(function* () {
         yield* activate(pro);

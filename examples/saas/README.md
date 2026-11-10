@@ -34,7 +34,7 @@ pnpm --filter @potion.run/example-saas dev    # alchemy dev
 | `src/Billing.layer.ts` | That declaration as the world, on `Domain.InMemory`. |
 | `src/Workspace.ts` | The project verbs: create, grant, transfer, occupy, add the add-on, archive. |
 | `src/Agent.ts` | The metered turn, and the customer's guardrails in product words. |
-| `src/SqlBilling.ts` | The same model on SQL: `billingOn(d1)` is what the Worker and the SQL test both call. |
+| `src/SqlBilling.ts` | The same model on SQL: `billingOn(d1, { now })` is what the Worker and the SQL test both call. |
 | `src/BillingDatabase.ts` | The D1 database, with the generated migration file. |
 | `src/SaasWorker.ts` | `/api`, `/plans`, `/checkout`, `/webhooks` and the product's own `/ask`. |
 | `alchemy.run.ts` | `Paykit.BillingStack` validates the catalog and records it; the Worker is released beside it. |

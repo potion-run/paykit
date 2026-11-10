@@ -3,8 +3,7 @@ import { billing, refill } from "./billing.config.ts";
 
 /**
  * The world the Worker and the tests both serve: the model, the catalog, the
- * provider router and the tenant bindings, on `Domain.InMemory` and
- * `MemoryStore`.
+ * provider router and the tenant bindings, on `Domain.InMemory`.
  *
  * The only thing a deployment changes is the platform and the store —
  * `billingOnSql` in `src/SqlBilling.ts` is the same world on D1. The guards are

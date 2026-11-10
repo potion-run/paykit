@@ -2,6 +2,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
 import { Paykit } from "@potion.run/paykit";
 import { D1 } from "@potion.run/paykit/Database/D1";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Headers from "effect/http/Headers";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -125,7 +126,8 @@ const handle = () =>
 const serve = () => ({
   fetch: Effect.gen(function* () {
     const database = yield* Paykit.Database;
-    const billing = billingOn(yield* database.runtime);
+    const now = yield* Clock.currentTimeMillis;
+    const billing = billingOn(yield* database.runtime, { now: () => now });
     const world = Layer.mergeAll(billing.world, Provider.payments);
 
     return yield* handle().pipe(Effect.provide(world), Effect.orDie);

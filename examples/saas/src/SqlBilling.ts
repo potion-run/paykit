@@ -50,9 +50,9 @@ export interface BillingOnSql {
  */
 export const billingOn = (
   sql: SqlExecutor,
-  options: { readonly now?: () => number } = {},
+  options: { readonly now: () => number },
 ): BillingOnSql => {
-  const now = options.now ?? (() => Date.now());
+  const now = options.now;
   const log = SqlEventLog(sql, { now });
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50 });
 
@@ -64,7 +64,5 @@ export const billingOn = (
  * Worker reads the executor from `Paykit.Database` instead, so the platform
  * binding is resolved once, in the port.
  */
-export const billingOnSql = (
-  d1: D1Like,
-  options: { readonly now?: () => number } = {},
-): BillingOnSql => billingOn(d1Executor(d1), options);
+export const billingOnSql = (d1: D1Like, options: { readonly now: () => number }): BillingOnSql =>
+  billingOn(d1Executor(d1), options);
