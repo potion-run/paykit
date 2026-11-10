@@ -300,6 +300,9 @@ catalogs:
       specifier: ^8.3.1
       version: 8.3.5
 
+patchedDependencies:
+  '@distilled.cloud/polar@1.0.0-rc.18': 9d0251d81a420578682629350b3ba4f526751cc442f225c27c36d62fad9ecc5f
+
 importers:
 
   .:
@@ -828,7 +831,7 @@ importers:
         version: 1.0.0-rc.18(effect@4.1.2)
       '@distilled.cloud/polar':
         specifier: 'catalog:'
-        version: 1.0.0-rc.18(effect@4.1.2)
+        version: 1.0.0-rc.18(patch_hash=9d0251d81a420578682629350b3ba4f526751cc442f225c27c36d62fad9ecc5f)(effect@4.1.2)
       '@potion.run/paykit':
         specifier: workspace:*
         version: link:../paykit
@@ -7672,7 +7675,7 @@ snapshots:
       '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
       effect: 4.1.2
 
-  '@distilled.cloud/polar@1.0.0-rc.18(effect@4.1.2)':
+  '@distilled.cloud/polar@1.0.0-rc.18(patch_hash=9d0251d81a420578682629350b3ba4f526751cc442f225c27c36d62fad9ecc5f)(effect@4.1.2)':
     dependencies:
       '@distilled.cloud/core': 1.0.0-rc.18(effect@4.1.2)
       effect: 4.1.2

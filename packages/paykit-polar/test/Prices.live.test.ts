@@ -73,13 +73,24 @@ const isFixedPrice = (price: VendorPrice): price is VendorPrice & FixedPrice =>
 const fixedPriceOf = (product: DistilledPolar.Product): FixedPrice | undefined =>
   product.prices.filter(isFixedPrice).find((price) => !price.is_archived);
 
+/**
+ * The newest product with `name`, across every page. A replacement adds a
+ * generation with the same name, and the suite leaves generations behind, so a
+ * single page would eventually miss the product the deploy just created.
+ */
 const byName = Effect.fn(function* (name: string) {
-  const listed = yield* DistilledPolar.productsList({ limit: 100 });
+  const matches: Array<DistilledPolar.Product> = [];
 
-  return listed.items
-    .filter((product) => product.name === name)
-    .sort((left, right) => right.created_at.localeCompare(left.created_at))
-    .at(0);
+  for (let page = 1; page <= 100; page++) {
+    const listed = yield* DistilledPolar.productsList({ limit: 100, page });
+    matches.push(...listed.items.filter((product) => product.name === name));
+
+    const lastPage = listed.pagination.max_page;
+
+    if (lastPage === undefined || page >= lastPage || listed.items.length === 0) break;
+  }
+
+  return matches.sort((left, right) => right.created_at.localeCompare(left.created_at)).at(0);
 });
 
 const productNamed = (name: string) => byName(name).pipe(Effect.provide(live));
@@ -143,14 +154,19 @@ test.provider.skipIf(!hasToken)(
 
       const previous = yield* readProduct(productId);
       expect(previous.id).toBe(productId);
+      expect(previous.is_archived).toBe(false);
       expect(fixedPriceOf(previous)?.price_amount).toBe(1900);
 
-      // A tier that leaves the catalog is retained the same way.
+      // A tier that leaves the catalog is retained the same way: the product
+      // stays in Polar, unarchived, for the orders that reference it. The sweep
+      // (`RetiredProducts`) is a separate write.
       yield* stack.deploy(PolarPrices("PricesBase", { tiers: {} }));
       const retired = yield* readProduct(productId);
       expect(retired.id).toBe(productId);
+      expect(retired.is_archived).toBe(false);
       const alsoRetired = yield* readProduct(second.products.pro);
       expect(alsoRetired.id).toBe(second.products.pro);
+      expect(alsoRetired.is_archived).toBe(false);
     }),
 );
 
@@ -216,6 +232,45 @@ test.provider.skipIf(!hasToken)(
       });
       expect(meter?.metadata.paykit_feature).toBe("requests");
     }),
+);
+
+test.provider.skipIf(!hasToken)("creates a per-seat price on the product", (stack) =>
+  Effect.gen(function* () {
+    yield* stack.destroy();
+
+    const seatPrice = { amount: 1_500, currency: "usd" };
+
+    const sold = yield* stack.deploy(
+      PolarPrices("PricesSeat", {
+        tiers: { seated: { price: proPrice, seats: { seats: seatPrice } } },
+      }),
+    );
+
+    const product = yield* readProduct(sold.products.seated);
+
+    const seat = product.prices.find((price) => "seat_tiers" in price) as
+      | {
+          readonly amount_type: string;
+          readonly price_currency: string;
+          readonly is_archived: boolean;
+          readonly price_per_seat: number;
+          readonly seat_tiers: {
+            readonly seat_tier_type: string;
+            readonly tiers: ReadonlyArray<{ readonly price_per_seat: number }>;
+          };
+        }
+      | undefined;
+
+    // A seat is a licensed quantity: the product carries one seat range,
+    // starting at seat one, and the subscription's seat count is what bills.
+    expect(seat?.amount_type).toBe("seat_based");
+    expect(seat?.seat_tiers.seat_tier_type).toBe("volume");
+    expect(seat?.price_currency).toBe("usd");
+    expect(seat?.is_archived).toBe(false);
+    expect(seat?.price_per_seat).toBe(1_500);
+    expect(seat?.seat_tiers.tiers[0]?.price_per_seat).toBe(1_500);
+    expect(sold.seats.seated.seats).toEqual(seatPrice);
+  }),
 );
 
 test.provider.skipIf(!hasToken)(

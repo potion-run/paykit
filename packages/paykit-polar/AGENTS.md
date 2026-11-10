@@ -6,6 +6,13 @@ as, and the Polar-shaped pieces it needs to do that. Over `@distilled.cloud/pola
 Resource-provider patterns (lifecycle, Reconciler doctrine, ownership, tests) live in the root
 [AGENTS.md](../../AGENTS.md#resource-providers).
 
+`@distilled.cloud/polar@1.0.0-rc.18` types a seat-based price at its pre-`seat_tiers` shape, and
+the sandbox has already moved to `seat_tiers` with `min_seats`/`price_per_seat`. The generated
+request body is untyped on the wire, so `patches/@distilled.cloud__polar@1.0.0-rc.18.patch` is a
+type-only correction to the two declarations. Remove it when a catalog bump lands an SDK that
+already names the current field; the live seat case in `test/Prices.live.test.ts` is the check that
+the wire shape still matches.
+
 **This is a paykit package, not a general Alchemy provider.** It imports `@potion.run/paykit`,
 because its whole job is to be the shortest path from a catalog to a working Polar merchant of
 record. That is a deliberate maintenance choice: a general provider would need its own users, docs,
@@ -98,8 +105,10 @@ them. Each product id is an Alchemy `Output<string>`: `PolarBilling` keeps it as
 and a deployment that provisions separately hands it to the Worker's environment and builds
 `Polar({ tiers })` there with the resolved id, plus `meters` for the close. A product carries its
 fixed price and every metered price; a package is a `metered_unit` price with its per-unit
-decimal, a ladder is a `metered_tiers` price, and a changed metered price is a new product
-generation. Three
+decimal, a ladder is a `metered_tiers` price, a seat is a `seat_based` price whose one range
+starts at seat one, and a changed metered or seat price is a new product generation. Polar caps a
+product name at 64 characters and `encodeVendorPart` expands non-alphanumerics (`_` becomes
+`_5f_`), so the stage and tier have to fit that budget together. Three
 rules come with it, from [ADR 0003](../paykit/docs/adr/0003-the-deploy-provisions-the-vendor.md):
 
 - **A product is never deleted.** A tier that leaves the catalog is retained: `RemovalPolicy.retain`

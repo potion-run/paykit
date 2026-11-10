@@ -25,8 +25,8 @@ import { RetiredProducts } from "../src/RetiredProducts.ts";
  * POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
  * ```
  *
- * `process.env` at module scope is the one place the Effect rule does not
- * reach: a skip gate runs before any Effect exists.
+ * `process.env` at module scope is the one place the Effect rule does not reach:
+ * a skip gate runs before any Effect exists.
  */
 const accessToken = process.env.POLAR_ACCESS_TOKEN;
 const hasToken = accessToken !== undefined && accessToken !== "";
@@ -34,12 +34,20 @@ const hasToken = accessToken !== undefined && accessToken !== "";
 /**
  * This case runs in **its own stage**, which is what makes its sweep safe: the
  * sweep archives every sellable product of its stage that its catalog does not
- * declare, so sharing a stage with `Prices.live.test.ts` would have it archive
- * that file's tiers — and a product another file created between the two sweeps
- * would make the second one non-empty and the idempotence assertion flaky.
+ * declare, and `alchemy-test` runs files concurrently. Sharing the default
+ * stage with `Prices.live.test.ts` would have it archive that file's tiers —
+ * and a product another file created between the two sweeps would make the
+ * second one non-empty and the idempotence assertion flaky. Deriving it from
+ * `defaultStage` keeps the `test_$USER` prefix, so two developers (and CI) do
+ * not share a sweep.
+ *
+ * The suffix is short because Polar caps a product name at 64 characters, and
+ * `paykit` encodes every non-alphanumeric character in the stage (`_` becomes
+ * `_5f_`). A worktree stage is already long; `_retired` would push the
+ * `retiring` tier over the cap and Polar answers `RequestValidationError`.
  */
 const { test } = Test.make({
-  stage: `${process.env.ALCHEMY_TEST_STAGE ?? "test_runner"}_retired`,
+  stage: `${Test.defaultStage()}_arc`,
   providers: polarProviders({
     accessToken: Redacted.make(accessToken ?? ""),
     server: "sandbox",
@@ -70,9 +78,9 @@ test.provider.skipIf(!hasToken)(
   "archives the product of a tier that left the catalog, and keeps it readable",
   (stack) =>
     Effect.gen(function* () {
-      // Start from nothing: a previous run's retained products must not be
-      // mistaken for this run's. The stage in the name is what keeps the sweep
-      // out of the products a previous run left behind.
+      // Clear this test's state. The provider's products are retained by
+      // design, so a previous run's generations are adopted by their identity,
+      // not mistaken for this run's.
       yield* stack.destroy();
 
       const sold = yield* stack.deploy(
@@ -113,5 +121,37 @@ test.provider.skipIf(!hasToken)(
       // changes nothing archives nothing.
       const again = yield* stack.deploy(RetiredProducts("Retired", { tiers: { kept: keptPrice } }));
       expect(again.archived).toEqual([]);
+
+      // A replacement is a new product with the same name. The old generation
+      // is retained and still sellable, and the sweep matches on the declared
+      // name, so while the tier is sold it archives nothing.
+      const replaced = yield* stack.deploy(
+        PolarPrices("Prices", { tiers: { kept: { ...keptPrice, amount: 2_400 } } }),
+      );
+
+      const currentKeptId = replaced.products.kept;
+      expect(currentKeptId).not.toBe(keptProductId);
+
+      const superseded = yield* readProduct(keptProductId);
+      expect(superseded.is_archived).toBe(false);
+
+      const declared = yield* stack.deploy(
+        RetiredProducts("Retired", { tiers: { kept: { ...keptPrice, amount: 2_400 } } }),
+      );
+
+      expect(declared.archived).toEqual([]);
+
+      // When the tier leaves, every generation shares the name the sweep
+      // matches, so both are archived — not just the one the catalog last sold.
+      yield* stack.deploy(PolarPrices("Prices", { tiers: {} }));
+
+      const emptied = yield* stack.deploy(RetiredProducts("Retired", { tiers: {} }));
+      expect(emptied.archived).toContain(currentKeptId);
+      expect(emptied.archived).toContain(keptProductId);
+
+      const currentAfter = yield* readProduct(currentKeptId);
+      expect(currentAfter.is_archived).toBe(true);
+      const supersededAfter = yield* readProduct(keptProductId);
+      expect(supersededAfter.is_archived).toBe(true);
     }),
 );
