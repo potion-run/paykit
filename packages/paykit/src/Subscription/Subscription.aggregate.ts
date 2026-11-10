@@ -2,7 +2,7 @@ import * as Domain from "@alchemy.run/domain";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { isFlagGrant, isQuantityGrant, pricingOf } from "../Allowance.ts";
+import { type Allowance, isFlagGrant, isQuantityGrant, pricingOf } from "../Allowance.ts";
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
@@ -223,6 +223,7 @@ import {
   entityRecordsOf,
   pooledOf,
   pooledRemainingOf,
+  poolSpentOf,
   scopeStateOf,
   grantsWithout,
   holdOf,
@@ -734,13 +735,19 @@ const judgedOf = (
     readonly remaining?: number | null;
     readonly carried?: number;
     readonly reserved?: number;
+    /** The allowance to judge with, when the source is not the scope's own. */
+    readonly allowance?: Allowance;
+    /** The count this source has already spent this window. */
+    readonly used?: number;
+    /** Money already billed, when the counter belongs to the customer. */
+    readonly billed?: number;
   } = {},
 ): JudgedFeature => {
-  const allowance = allowancesOf(state)[feature];
+  const allowance = over.allowance ?? allowancesOf(state)[feature];
   const rates = ratesOf(state)[feature];
   const included = allowance?.included ?? null;
   const remaining = over.remaining === undefined ? availableOf(state, feature) : over.remaining;
-  const used = usedOf(state, feature);
+  const used = over.used ?? usedOf(state, feature);
 
   // A credit-priced feature shares one pool: its `reserved` is the credits
   // every open hold kept out, not the units held on this feature. An entity
@@ -767,7 +774,7 @@ const judgedOf = (
     ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
     ...(pricingOf(allowance ?? {}) === null ? {} : { pricing: pricingOf(allowance ?? {})! }),
     ...(spendLimit === null ? {} : { spendLimit }),
-    billed: billedOf(state, feature),
+    billed: over.billed ?? billedOf(state, feature),
     used,
     reserved,
     remaining,
@@ -1772,31 +1779,79 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       // What the scope may spend: its own sources, plus the pooled row when the
       // customer's item is shared. The pool is one number, so the judgement and
       // the event read the same figure (ADR 0040 §3–4).
-      const own = remainingOf(scoped, command.feature);
+      const ownRemaining = remainingOf(scoped, command.feature);
       const pool = command.entity === undefined ? null : pooledRemainingOf(state, command.feature);
+
+      const pooled =
+        command.entity === undefined ? undefined : allowancesOf(state)[command.feature];
+
+      const drawsPool = command.entity !== undefined && pool !== null && pooled !== undefined;
+      const customerOnPool = command.entity === undefined && allowance?.pooled === true;
 
       const shared =
         command.entity === undefined || pool === null
           ? undefined
-          : own === null
+          : ownRemaining === null
             ? null
-            : own + pool;
+            : ownRemaining + pool;
 
-      const verdict = capacityOf({
+      // A scope spends what it owns before the shared pool, so one request is
+      // two judgements: its own units against its own allowance, and the rest
+      // against the pooled item's terms. The pool's `used` is its own counter,
+      // not the scope's, because the pool's included amount is one window
+      // (ADR 0040 §3). A customer drawing a pooled item is the pool's half
+      // alone.
+      const fromOwn =
+        drawsPool && ownRemaining !== null
+          ? Math.min(command.amount, Math.max(0, ownRemaining))
+          : command.amount;
+
+      const fromPool = drawsPool ? command.amount - fromOwn : 0;
+      const poolUsed = poolSpentOf(state, command.feature);
+
+      const ownVerdict = capacityOf({
         standing: standingOf(state.status),
         feature: judgedOf(scoped, command.feature, {
-          ...(shared === undefined ? {} : { remaining: shared }),
+          ...(customerOnPool
+            ? { used: poolUsed }
+            : drawsPool
+              ? { remaining: ownRemaining, billed: billedOf(state, command.feature) }
+              : shared === undefined
+                ? {}
+                : { remaining: shared }),
           ...(command.entity === undefined ? {} : { carried: 0, reserved: 0 }),
         }),
         ask: {
-          amount: command.amount,
+          amount: fromOwn,
           ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
           ...(command.properties === undefined ? {} : { properties: command.properties }),
         },
       });
 
-      if (verdict._tag === "Standing") {
-        return new StandingBlocksUsage({ standing: verdict.standing, status: state.status });
+      const poolVerdict =
+        drawsPool && fromPool > 0
+          ? capacityOf({
+              standing: standingOf(state.status),
+              feature: judgedOf(state, command.feature, {
+                remaining: pool,
+                used: poolUsed,
+                carried: 0,
+                reserved: 0,
+              }),
+              ask: {
+                amount: fromPool,
+                ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
+                ...(command.properties === undefined ? {} : { properties: command.properties }),
+              },
+            })
+          : null;
+
+      if (ownVerdict._tag === "Standing") {
+        return new StandingBlocksUsage({ standing: ownVerdict.standing, status: state.status });
+      }
+
+      if (poolVerdict?._tag === "Standing") {
+        return new StandingBlocksUsage({ standing: poolVerdict.standing, status: state.status });
       }
 
       if (command.amount <= 0) return [];
@@ -1805,9 +1860,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return [];
       }
 
-      const refusal = usageRefusalOf(verdict, state, command.feature, command.amount);
+      const ownRefusal = usageRefusalOf(ownVerdict, state, command.feature, fromOwn);
 
-      if (refusal !== null) return refusal;
+      if (ownRefusal !== null) return ownRefusal;
+
+      const poolRefusal =
+        poolVerdict === null ? null : usageRefusalOf(poolVerdict, state, command.feature, fromPool);
+
+      if (poolRefusal !== null) return poolRefusal;
 
       // A credit-priced feature spends the account's one pool: the event carries
       // the cost and the balance after it, so the pool is a fold of the log.
@@ -1838,25 +1898,41 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       // A counted or priced feature: the scope spends its own sources first and
       // draws the pooled source for the rest, so an entity's own remaining and
-      // the shared pool move by different amounts in one event.
+      // the shared pool move by different amounts in one event. Each part bills
+      // against the terms of the source it spends, with that source's own spent
+      // count.
       const used = usedOf(scoped, command.feature);
-      const remaining = remainingOf(scoped, command.feature);
-      const drawsPool = command.entity !== undefined && pool !== null;
-
-      const fromOwn =
-        drawsPool && remaining !== null
-          ? Math.min(command.amount, Math.max(0, remaining))
-          : command.amount;
-
-      const fromPool = command.amount - fromOwn;
+      const billed = billedOf(state, command.feature);
 
       const grants = drawsPool
         ? grantsForSpend(scoped, command.feature, fromOwn)
         : grantsForSpend(scoped, command.feature, command.amount);
 
+      const ownAmount = drawsPool ? fromOwn : command.amount;
+      const ownUsed = customerOnPool ? poolUsed : used;
       const pricing = pricingOf(allowance ?? {});
-      const charge = chargeOf(pricing, allowance?.included ?? null, used, command.amount);
-      const billed = billedOf(state, command.feature);
+      const included = allowance?.included ?? null;
+      const ownCharge = chargeOf(pricing, included, ownUsed, ownAmount);
+      const ownPriced = pricedOf(pricing, included, ownUsed, ownAmount);
+
+      const poolPricing = drawsPool ? pricingOf(pooled ?? {}) : null;
+      const poolIncluded = drawsPool ? (pooled?.included ?? null) : null;
+      const poolCharge = drawsPool ? chargeOf(poolPricing, poolIncluded, poolUsed, fromPool) : 0;
+      const poolPriced = drawsPool ? pricedOf(poolPricing, poolIncluded, poolUsed, fromPool) : [];
+
+      const charge = ownCharge + poolCharge;
+      const priced = [...ownPriced, ...poolPriced];
+
+      const billable =
+        billableUnitsOf(included, ownUsed, ownAmount) +
+        (drawsPool ? billableUnitsOf(poolIncluded, poolUsed, fromPool) : 0);
+
+      // A sole unit price is what the one-rate shorthand says; with two
+      // allowances in play the lines are the only lossless form.
+      const sole = drawsPool || pricing === null ? null : soleUnitPriceOf(pricing);
+
+      const poolDrawn = drawsPool ? fromPool : customerOnPool ? command.amount : 0;
+      const money = pricing !== null || poolPricing !== null;
 
       return [
         new UsageRecorded({
@@ -1866,25 +1942,25 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           cost: 0,
           creditsAfter: state.credits,
           usedAfter: used + command.amount,
-          remainingAfter: remainingAfterSpending(remaining, fromOwn),
+          remainingAfter: remainingAfterSpending(
+            ownRemaining,
+            drawsPool ? fromOwn : command.amount,
+          ),
           ...(command.entity === undefined ? {} : { entity: command.entity }),
-          ...(fromPool <= 0 || pool === null ? {} : { poolAfter: pool - fromPool }),
-          ...(pricing === null
-            ? {}
-            : {
+          ...(drawsPool && fromPool > 0 ? { poolAfter: pool! - fromPool } : {}),
+          ...(poolDrawn <= 0 ? {} : { poolDrawn }),
+          ...(money
+            ? {
                 charge,
                 billedAfter: billed + charge,
                 // The lines this event was priced at, and the part of it past
-                // the free grant. Captured here because `used` is the only
-                // place the running total lives: the close never has to work
-                // out which units the grant covered.
-                ...(soleUnitPriceOf(pricing) === null
-                  ? {
-                      priced: pricedOf(pricing, allowance?.included ?? null, used, command.amount),
-                    }
-                  : { unitPrice: soleUnitPriceOf(pricing)! }),
-                billable: billableUnitsOf(allowance?.included ?? null, used, command.amount),
-              }),
+                // the free grant. Captured here because the source's spent
+                // count is the only place the running total lives: the close
+                // never has to work out which units the grant covered.
+                ...(sole === null ? (priced.length === 0 ? {} : { priced }) : { unitPrice: sole }),
+                billable,
+              }
+            : {}),
           ...(Object.keys(grants).length === 0 ? {} : { grantsUsed: grants }),
           ...(command.dedupeKey === undefined ? {} : { dedupeKey: command.dedupeKey }),
         }),
@@ -3473,7 +3549,8 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         topUpAttempts: 0,
         // New plan features come from the event. A feature the new plan drops
         // stays only if it still holds a grant — a lifetime grant is not the
-        // plan's to remove (ADR 0037).
+        // plan's to remove (ADR 0037). A feature whose pool the move
+        // re-establishes starts its spent count over.
         remaining: {
           ...Object.fromEntries(
             Object.entries(state.remaining).filter(
@@ -3483,6 +3560,11 @@ export class Subscription extends Domain.Aggregate("Subscription", {
           ),
           ...event.remaining,
         },
+        poolSpent: Object.fromEntries(
+          Object.entries(state.poolSpent ?? {}).filter(
+            ([feature]) => event.remaining[feature] === undefined,
+          ),
+        ),
         credits: event.credits,
         prepaidCredits: event.prepaidCredits ?? 0,
         ...(event.appliedPhaseAt === undefined ? {} : { lastPhaseAppliedAt: event.appliedPhaseAt }),
@@ -3524,13 +3606,22 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         return {
           ...scoped,
           // Money and the shared pool stay the customer's: a scope's spend folds
-          // into the billed total, and a pool draw moves the one pooled source.
+          // into the billed total, and a pool draw moves the one pooled source
+          // and its spent count.
           ...(event.billedAfter === undefined
             ? {}
             : { billed: { ...state.billed, [event.feature]: event.billedAfter } }),
           ...(event.poolAfter === undefined
             ? {}
             : { remaining: { ...state.remaining, [event.feature]: event.poolAfter } }),
+          ...(event.poolDrawn === undefined
+            ? {}
+            : {
+                poolSpent: {
+                  ...state.poolSpent,
+                  [event.feature]: (state.poolSpent?.[event.feature] ?? 0) + event.poolDrawn,
+                },
+              }),
           dedupeKeys:
             event.dedupeKey === undefined
               ? state.dedupeKeys
@@ -3548,6 +3639,14 @@ export class Subscription extends Domain.Aggregate("Subscription", {
               ? {}
               : { billed: { ...state.billed, [event.feature]: event.billedAfter } }),
             remaining: { ...state.remaining, [event.feature]: event.remainingAfter },
+            ...(event.poolDrawn === undefined
+              ? {}
+              : {
+                  poolSpent: {
+                    ...state.poolSpent,
+                    [event.feature]: (state.poolSpent?.[event.feature] ?? 0) + event.poolDrawn,
+                  },
+                }),
             ...(event.grantsUsed === undefined
               ? {}
               : { grants: grantsAfterSpend(state.grants, event.grantsUsed) }),
@@ -3958,6 +4057,7 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ...state,
         usage: { ...state.usage, [event.feature]: 0 },
         billed: { ...state.billed, [event.feature]: 0 },
+        poolSpent: { ...state.poolSpent, [event.feature]: 0 },
         remaining: { ...state.remaining, [event.feature]: event.remaining },
         ...(event.resetAt === null
           ? {}
@@ -4102,6 +4202,9 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         ),
         billed: Object.fromEntries(
           Object.entries(state.billed ?? {}).filter(([feature]) => kept[feature] === true),
+        ),
+        poolSpent: Object.fromEntries(
+          Object.entries(state.poolSpent ?? {}).filter(([feature]) => kept[feature] === true),
         ),
         holds: Object.fromEntries(
           Object.entries(state.holds).filter(([, hold]) => kept[hold.feature] === true),

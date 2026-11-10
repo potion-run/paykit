@@ -1,4 +1,5 @@
 import * as Domain from "@alchemy.run/domain";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { Admin, Session } from "./Auth/Guards.ts";
@@ -11,6 +12,7 @@ import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { catalogLayer } from "./CatalogService.ts";
 import { PaykitHandlers, PaykitModel } from "./Paykit.model.ts";
 import { type MoneyProvider, paymentsRouter } from "./Payments.ts";
+import { autoTopUp } from "./Subscription/AutoTopUp.policy.ts";
 
 /** The binding surfaces a world can serve. */
 export type PaykitBindings = "tenant" | "admin" | "both" | "none";
@@ -67,6 +69,21 @@ export interface PaykitWorldOptions<
    * serves the operator surface as well asks for `"both"`.
    */
   readonly bindings?: B;
+  /**
+   * Install the auto top-up policy. A tier's `topUp` line states when to refill
+   * and which pack to buy, but the pack is a catalog id and a deployment has to
+   * say which one its policy resolves when the tier names none. Omitted, a
+   * crossing records nothing: a tier that states a line still never refills.
+   *
+   * The tier's own `pack` and `cooldown` win over these; this is the fallback a
+   * line without them uses, and the budget for every line that states neither.
+   */
+  readonly autoTopUp?: {
+    /** The `kind: "one_off"` pack a tier buys when its line names none. */
+    readonly pack: string;
+    /** The shortest time between two policy-opened purchases, for every tier. */
+    readonly cooldown?: Duration.Duration;
+  };
 }
 
 const providersOf = (input: PaykitWorldOptions["providers"]): ReadonlyArray<MoneyProvider> =>
@@ -91,10 +108,27 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
     ...payments,
   );
 
+  // A tier's top-up line is catalog data, but the policy that acts on it is a
+  // deployment's choice: without this layer a crossing records nothing and the
+  // line is inert. The pack is resolved once, here, so a crossing never reads
+  // the catalog.
+  const refill =
+    options.autoTopUp === undefined
+      ? undefined
+      : autoTopUp({
+          catalog: parsed,
+          pack: options.autoTopUp.pack,
+          ...(options.autoTopUp.cooldown === undefined
+            ? {}
+            : { cooldown: options.autoTopUp.cooldown }),
+        }).pipe(Layer.orDie);
+
+  // The close-time usage policy resolves the account's provider from this
+  // router; without it a postpaid close is local-only.
+  const handlers = PaykitHandlers.pipe(Layer.provide(reads), Layer.provideMerge(router));
+
   const model = PaykitModel.layer(
-    // The close-time usage policy resolves the account's provider from this
-    // router; without it a postpaid close is local-only.
-    PaykitHandlers.pipe(Layer.provide(reads), Layer.provideMerge(router)),
+    refill === undefined ? handlers : handlers.pipe(Layer.provide(refill)),
   ).pipe(
     Layer.provideMerge(reads),
     Layer.provide(platform),
@@ -165,6 +199,10 @@ const buildWorld = <R = never, P = never, B extends PaykitBindings = "tenant">(
  * `Payments` layer is merged too, so a route beside the world can call it
  * without rebuilding the choice; with two providers the router is the only
  * answer, because merging both would shadow one by merge order.
+ *
+ * A tier's `topUp` line is catalog data, but the policy that acts on it is the
+ * deployment's: `autoTopUp` installs it and names the pack a line without one
+ * buys. Omitted, a crossing records nothing and the line is inert.
  *
  * ### A Worker's world
  * **Example:** The model, the catalog, the guards and both binding surfaces

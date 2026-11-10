@@ -460,3 +460,95 @@ describe("the catalog surface", () => {
     expect(typeof feature).toBe("function");
   });
 });
+
+describe("a pooled item that bills", () => {
+  /** One customer, one pooled item that bills its overage at two cents a unit. */
+  const billedPool = (overrides: Partial<SubscribedState> = {}): SubscribedState =>
+    subscribed({
+      plans: planSet(
+        planRow("pro", {
+          allowances: {
+            messages: allowance(messages, {
+              included: 100,
+              overage: "bill",
+              cap: 10_000,
+              unitPrice: { amount: 2, currency: "usd" },
+              pooled: true,
+            }),
+          },
+        }),
+      ),
+      remaining: { messages: 100 },
+      ...overrides,
+    });
+
+  it("prices a child scope's draw with the pool's terms, not the scope's", () => {
+    const traced = scenario(billedPool());
+    traced.step(new AttachEntity({ entityId: entA, name: "A" }));
+
+    const result = traced.step(new TrackUsage({ feature: "messages", amount: 150, entity: entA }));
+
+    const event =
+      result._tag === "Accepted"
+        ? (result.events.find((entry) => entry._tag === "UsageRecorded") as
+            | {
+                readonly charge?: number;
+                readonly billable?: number;
+                readonly poolAfter?: number;
+                readonly poolDrawn?: number;
+              }
+            | undefined)
+        : undefined;
+
+    // The scope has no source of its own, so all 150 units are the pool's: 50
+    // of them are past its included 100 and bill two cents each.
+    expect(event?.charge).toBe(100);
+    expect(event?.billable).toBe(50);
+    expect(event?.poolDrawn).toBe(150);
+    expect(event?.poolAfter).toBe(-50);
+
+    // The pool's own counter and the customer's bill are both foldable now.
+    expect(traced.state._tag === "Subscribed" && traced.state.poolSpent?.messages).toBe(150);
+    expect(traced.state._tag === "Subscribed" && traced.state.billed?.messages).toBe(100);
+  });
+
+  it("starts the pool's spent count over at the boundary", () => {
+    const traced = scenario(billedPool());
+    traced.step(new AttachEntity({ entityId: entA, name: "A" }));
+    traced.step(new TrackUsage({ feature: "messages", amount: 150, entity: entA }));
+    traced.step(new ClosePeriod({ periodEnd: monthLater }), monthLater);
+
+    const result = traced.step(new TrackUsage({ feature: "messages", amount: 50, entity: entA }));
+
+    const event =
+      result._tag === "Accepted"
+        ? (result.events.find((entry) => entry._tag === "UsageRecorded") as
+            | { readonly charge?: number; readonly poolAfter?: number }
+            | undefined)
+        : undefined;
+
+    // The new window includes 100 again, so the first 50 bill nothing and the
+    // counter measures this window's draw only.
+    expect(event?.charge).toBe(0);
+    expect(event?.poolAfter).toBe(50);
+    expect(traced.state._tag === "Subscribed" && traced.state.poolSpent?.messages).toBe(50);
+  });
+
+  it("refuses a child scope's draw at the customer's ceiling", () => {
+    const traced = scenario(
+      billedPool({ billingControls: { spendLimits: [{ featureId: "messages", amount: 100 }] } }),
+    );
+
+    traced.step(new AttachEntity({ entityId: entA, name: "A" }));
+    traced.step(new TrackUsage({ feature: "messages", amount: 150, entity: entA }));
+
+    const refused = traced.step(
+      new TrackUsage({ feature: "messages", amount: 10, entity: entA }),
+    ) as { readonly _tag: string; readonly rejection?: { readonly _tag: string } };
+
+    // The ceiling is the customer's, and it judged the pool's spend from a
+    // child scope, which is the only scope the turn runs in.
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("SpendLimitExceeded");
+  });
+});

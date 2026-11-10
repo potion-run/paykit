@@ -139,10 +139,13 @@ reversal and proration-invoice identity rules. `pnpm spec` simulates every invar
 witnesses on every push; `pnpm spec:test` runs nine scenario modules; `scripts/spec-mutants.ts`
 kills 77 mutants across the nine, so no invariant can survive as a tautology;
 `scripts/spec-coverage.ts` holds all 49 commands against the nine action tables, so a command
-lands modelled or with a written reason. Three spend-path findings are still recorded rather than
+lands modelled or with a written reason. Two spend-path findings are still recorded rather than
 fixed: a credit-priced feature's stored `remaining` is stale after
-`ConsumeCredits` (nothing observable reads it), the pool has no counter for a direct consume, and
-`used` is per-period so the pool's law needs its own `spent`. The lifecycle audit's twelve findings
+`ConsumeCredits` (nothing observable reads it), and `used` is per-period so a source's own law needs
+its own `spent`. The pool's counter is in: `SubscribedState.poolSpent` folds
+`UsageRecorded.poolDrawn`, and a pooled item that bills is judged — and charged — from the child
+scope that spends it, against the pool's terms ([ADR
+0050](./adr/0050-a-pooled-draw-is-judged-by-the-pools-terms.md)). The lifecycle audit's twelve findings
 are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md). F4, F5 and F7 are fixed by later
 ADRs; F1, F2, F3, F6, F8, F10, F11 and F12 are implemented in code (proration identity and
 `charged`, a single owner per quantity key, a fresh refill budget on `PlanChanged`, terminal windows

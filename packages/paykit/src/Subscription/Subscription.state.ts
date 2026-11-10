@@ -486,6 +486,14 @@ export const SubscribedState = Schema.TaggedStruct("Subscribed", {
   billed: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
   remaining: Remaining,
   /**
+   * Units drawn from the customer's pooled source for a feature this window,
+   * every scope's draws included. `remaining` says how much of the pool is
+   * left; this says how much of its included amount is gone, which is what a
+   * pool that bills overage is charged against (ADR 0040 §3). Reset with
+   * `remaining` on a close or a plan move; absent on state written before it.
+   */
+  poolSpent: Schema.optionalKey(Schema.Record(Schema.String, Schema.Int)),
+  /**
    * The next boundary of every allowance that does not follow the standing's
    * period. Absent means the feature resets at `period.end` (or never).
    */
@@ -751,6 +759,25 @@ export const pooledRemainingOf = (state: SubscribedState, feature: string): numb
   const remaining = recordedCount(state.remaining, feature);
 
   return remaining !== undefined ? remaining : includedRemainingOf(allowance);
+};
+
+/**
+ * The units drawn from the customer's pooled source for a feature this window,
+ * or what an older record's `remaining` implies. A feature the customer does
+ * not pool is `0`; a record written before the counter existed falls back to
+ * the difference between the pool's own grant and what it has left, which is
+ * the same number whenever no carry is in the window.
+ */
+export const poolSpentOf = (state: SubscribedState, feature: string): number => {
+  const recorded = state.poolSpent?.[feature];
+
+  if (recorded !== undefined) return recorded;
+  const allowance = allowancesOf(state)[feature];
+  const remaining = pooledRemainingOf(state, feature);
+
+  return allowance?.pooled === true && typeof allowance.included === "number" && remaining !== null
+    ? Math.max(0, allowance.included - remaining)
+    : 0;
 };
 
 /** Every feature a scope holds a count for, pooled items included. */

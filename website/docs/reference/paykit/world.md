@@ -3,7 +3,7 @@ title: "world"
 description: "One deployment graph, built from the parts a host chooses."
 ---
 
-> **Source:** [`packages/paykit/src/World.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/World.ts#L149)
+> **Source:** [`packages/paykit/src/World.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/World.ts#L183)
 > **Kind:** Primitive
 
 One deployment graph, built from the parts a host chooses.
@@ -24,6 +24,10 @@ the projection directly rather than through a view. A single provider's
 `Payments` layer is merged too, so a route beside the world can call it
 without rebuilding the choice; with two providers the router is the only
 answer, because merging both would shadow one by merge order.
+
+A tier's `topUp` line is catalog data, but the policy that acts on it is the
+deployment's: `autoTopUp` installs it and names the pack a line without one
+buys. Omitted, a crossing records nothing and the line is inert.
 
 ## A Worker's world
 

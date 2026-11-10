@@ -317,6 +317,11 @@ A pooled source is one number owned by the parent. The model keeps a per-scope `
 which is the row `Balance.breakdown` shows an entity: the invariant is that every attached scope's
 view is the same pool, so a scope that kept a private copy fails. An archived entity's view is zero.
 
+The model also keeps `pooledSpent`, so the pool's included amount is charged against what every
+scope drew, not against the one that happens to be spending. A pooled draw is judged by the pool's
+terms from the child scope, and the code folds `UsageRecorded.poolDrawn` into
+`SubscribedState.poolSpent` (ADR 0050).
+
 What the slice deliberately leaves out:
 
 - **Occupancy.** A seat's `purchased`/`occupied` is `windows.qnt`; `EntityHasOccupancy` is an ADR

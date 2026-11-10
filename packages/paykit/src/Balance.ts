@@ -539,11 +539,28 @@ export const balanceOfEntity = (
           scope,
         });
 
-  if (pooled === null) return own;
+  // The money plane is the customer's: a scope with no row of its own still
+  // reports the ceiling and its headroom, because the ceiling is judged from
+  // the customer's billed total (ADR 0038, 0040 §4).
+  const customer = state.features[featureId];
+
+  const spendLimit =
+    customer?.spendLimit === undefined
+      ? undefined
+      : {
+          amount: customer.spendLimit,
+          remaining: Math.max(0, customer.spendLimit - (customer.billed ?? 0)),
+        };
+
+  if (pooled === null) {
+    return spendLimit === undefined ? own : { ...own, spendLimit };
+  }
+
   const poolRemaining = pooled.remaining ?? 0;
 
   return {
     ...own,
+    ...(spendLimit === undefined ? {} : { spendLimit }),
     granted: own.granted === null ? null : own.granted + (pooled.granted ?? 0),
     remaining: own.remaining === null ? null : own.remaining + poolRemaining,
     breakdown: [...own.breakdown, pooled],

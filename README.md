@@ -54,6 +54,17 @@ const balances = yield* Paykit.Balances(account);
 yield* balances.get({ featureId: "messages" });
 ```
 
+[`examples/saas`](./examples/saas) is the product rather than one axis: an organization signs up,
+opens projects, gives one its own allowance, moves units between projects, stacks an add-on, sets an
+overage ceiling and a usage alert, and answers a conversation with a model — every turn records usage
+and spends credits from the same account. The billing account is the org; a project is an entity
+scope under it, with its own sources before the org's shared pool. It runs on D1 with a keyless
+provider, so the whole flow is a test.
+
+```sh
+pnpm --filter @potion.run/example-saas test
+```
+
 [`examples/billing`](./examples/billing) is the full Worker: D1 for the event log and the read
 models, the API (`/api`), the console (`/admin`), MCP (`/mcp`), the two money routes, and a typed
 `Tenant` API over the catalog declarations. `/checkout?tier=pro` asks the provider for a path to pay,

@@ -311,8 +311,9 @@ const withEntityFeature = (
 
 /**
  * The money plane is the customer's, so every scope's row carries the same
- * `billed` and `priced`: `check()` for an entity reads the total `decide`
- * judges its money ceiling with. A reset clears them together too.
+ * `billed`, `priced` and `spendLimit`: `check()` for an entity reads the total
+ * and the ceiling `decide` judges its money against. A reset clears them
+ * together too.
  */
 const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
   if (view.entities === undefined) return view;
@@ -330,13 +331,20 @@ const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
 
               if (customer === undefined) return [feature, row];
 
-              const { billed: _previousBilled, priced: _previousPriced, ...rest } = row;
+              const {
+                billed: _previousBilled,
+                priced: _previousPriced,
+                spendLimit: _previousLimit,
+                ...rest
+              } = row;
+
               const billed = customer.billed ?? 0;
 
               const synced: FeatureEntitlement = {
                 ...rest,
                 ...(customer.billed === undefined ? {} : { billed: customer.billed }),
                 ...(customer.priced === undefined ? {} : { priced: customer.priced }),
+                ...(customer.spendLimit === undefined ? {} : { spendLimit: customer.spendLimit }),
               };
 
               return [
@@ -351,6 +359,44 @@ const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
         },
       ]),
     ),
+  };
+};
+
+/**
+ * Fold one usage event's charge onto the customer's row. Money is the
+ * customer's: a scope's charge raises one `billed` total and the `allowed` the
+ * row reports, whether the scope had a row of its own or drew the pool alone.
+ */
+const withCustomerCharge = (
+  view: EntitlementsState,
+  event: {
+    readonly feature: string;
+    readonly billedAfter?: number;
+    readonly priced?: ReadonlyArray<PricedLine>;
+    readonly unitPrice?: UnitPrice;
+    readonly billable?: number;
+  },
+): EntitlementsState => {
+  const customer = view.features[event.feature];
+
+  if (customer === undefined || event.billedAfter === undefined) return view;
+  const lines = linesOfEvent(event);
+
+  return {
+    ...view,
+    features: {
+      ...view.features,
+      [event.feature]: {
+        ...customer,
+        billed: event.billedAfter,
+        ...(lines.length === 0
+          ? {}
+          : {
+              priced: lines.reduce((fold, line) => pricedAfter(fold, line), customer.priced),
+            }),
+        allowed: allowsOne(view.standing, judgedOf(customer, { billed: event.billedAfter })),
+      },
+    },
   };
 };
 
@@ -817,13 +863,16 @@ export class Entitlements extends Domain.View("Entitlements", {
           feature === undefined ? undefined : grantsAfterUsage(feature.grants, event.grantsUsed);
 
         // A scope with no row of its own can still draw the shared pool: the
-        // event then moves the customer's one row and only that.
+        // event then moves the customer's one row, its charge and its pool.
         if (feature === undefined) {
           return withAccount(
             syncEntityBilled(
-              event.poolAfter === undefined
-                ? view
-                : withPoolRow(view, event.feature, event.poolAfter),
+              withCustomerCharge(
+                event.poolAfter === undefined
+                  ? view
+                  : withPoolRow(view, event.feature, event.poolAfter),
+                event,
+              ),
             ),
             context,
           );
@@ -867,39 +916,7 @@ export class Entitlements extends Domain.View("Entitlements", {
         // The money plane is the customer's: a scoped charge raises `billed`
         // there, so the customer's row carries the new total even though the
         // units were the scope's own.
-        const customer = pooled.features[event.feature];
-
-        if (customer === undefined || event.billedAfter === undefined) {
-          return withAccount(syncEntityBilled(pooled), context);
-        }
-
-        const lines = linesOfEvent(event);
-
-        return withAccount(
-          syncEntityBilled({
-            ...pooled,
-            features: {
-              ...pooled.features,
-              [event.feature]: {
-                ...customer,
-                billed: event.billedAfter,
-                ...(lines.length === 0
-                  ? {}
-                  : {
-                      priced: lines.reduce(
-                        (fold, line) => pricedAfter(fold, line),
-                        customer.priced,
-                      ),
-                    }),
-                allowed: allowsOne(
-                  pooled.standing,
-                  judgedOf(customer, { billed: event.billedAfter }),
-                ),
-              },
-            },
-          }),
-          context,
-        );
+        return withAccount(syncEntityBilled(withCustomerCharge(pooled, event)), context);
       }
 
       const feature = view.features[event.feature];
@@ -1677,7 +1694,8 @@ export class Entitlements extends Domain.View("Entitlements", {
     // read-model projection sees the whole log.
     TopUpCooldownCleared: (view, _event, context): EntitlementsState => withAccount(view, context),
     // A control changes what a spend is judged against, not a count: each row's
-    // `allowed` is rebuilt so a console and `decide` keep agreeing on it.
+    // `allowed` is rebuilt, on the customer and on every entity scope, so a
+    // console, a scoped `check` and `decide` keep agreeing on one ceiling.
     BillingControlsSet: (view, event, context): EntitlementsState => {
       const { billingControls: _previous, ...rest } = view;
 
@@ -1693,6 +1711,24 @@ export class Entitlements extends Domain.View("Entitlements", {
               withSpendLimit(view.standing, feature, value, event.billingControls),
             ]),
           ),
+          ...(view.entities === undefined
+            ? {}
+            : {
+                entities: Object.fromEntries(
+                  Object.entries(view.entities).map(([id, entity]) => [
+                    id,
+                    {
+                      ...entity,
+                      features: Object.fromEntries(
+                        Object.entries(entity.features).map(([feature, value]) => [
+                          feature,
+                          withSpendLimit(view.standing, feature, value, event.billingControls),
+                        ]),
+                      ),
+                    },
+                  ]),
+                ),
+              }),
         },
         context,
       );
