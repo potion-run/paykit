@@ -135,6 +135,12 @@ export class UsageRecorded extends Domain.Event("UsageRecorded", {
   entity: Schema.optionalKey(EntityId),
   /** The pooled source's remaining after this event, when the scope drew it. */
   poolAfter: Schema.optionalKey(Schema.Int),
+  /**
+   * The units this event drew from the pooled source, when it drew any. It is
+   * the pool's own spent count, which the pool's included amount is charged
+   * against; `remaining` alone cannot tell a draw from a reset.
+   */
+  poolDrawn: Schema.optionalKey(Schema.Int),
 }) {}
 
 /**

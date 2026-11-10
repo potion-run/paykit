@@ -108,10 +108,11 @@ conversation and the credit spend instead of recording a second of each. A turn
 that cannot afford the model never records the conversation first.
 
 The `/ask` route always names a project, so a typo cannot silently bill the
-organization. A turn with no project is the organization's own scope, and that is
-where a plan's billed overage is judged today: a project sees the shared pool as
-one count, so a shared pool that bills overage is judged from the org, not the
-child scope. `test/agent.test.ts` drives that path in process.
+organization. A turn with no project is the organization's own scope, and the
+same judgement runs there: a project spends its own sources, then the shared
+pool, and the pool's units are judged against the pool's terms — its included
+amount, its price and the customer's ceiling. The project is the scope the turn
+runs in, so `test/agent.test.ts` proves the ceiling refuses there.
 
 ## Projects are scopes, not customers
 

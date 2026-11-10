@@ -87,22 +87,26 @@ describe("one metered turn", () => {
       yield* activate(pro);
       yield* setGuardrails(account.id, { monthlyCeiling: 100 });
 
+      const workspace = yield* Workspace(account.id);
+      const docs = yield* workspace.create(project("proj_docs"), "Docs");
       const { answer } = yield* answering;
 
-      // Fifty conversations past the included 2,000 bill the whole $1.00
-      // ceiling: two cents each, in minor units. A turn without a project is
-      // the organization's own scope, where the plan's billed overage is judged.
+      // One project draws 2,050 from the shared pool: 50 past the included
+      // 2,000 bill the whole $1.00 ceiling, two cents each. The draw is judged
+      // against the pool's terms, not the project's empty plan.
       const track = yield* Paykit.TrackUsage(account.id);
       yield* track({
         featureId: conversations.id,
+        entityId: docs.id,
         value: 2_050,
         idempotencyKey: "fill-the-ceiling",
       });
 
-      const before = yield* entitlementsOf;
+      const before = yield* workspace.conversations(docs.id);
+      expect(before.spendLimit).toEqual({ amount: 100, remaining: 0 });
 
       const refused = yield* Effect.flip(
-        answer(account.id, { model: "default", requestId: "turn-over" }),
+        answer(account.id, { project: docs.id, model: "default", requestId: "turn-over" }),
       );
 
       expect(refused._tag).toBe("AgentRefused");
@@ -110,11 +114,9 @@ describe("one metered turn", () => {
 
       // The refusal recorded nothing: the work did not happen, so neither did
       // the usage fact and the credit spend.
-      const after = yield* entitlementsOf;
-      expect(after?.features[conversations.id]?.used).toBe(
-        before?.features[conversations.id]?.used,
-      );
-      expect(after?.credits).toBe(before?.credits);
+      const after = yield* workspace.conversations(docs.id);
+      expect(after.usage).toBe(before.usage);
+      expect((yield* entitlementsOf)?.credits).toBe(5_000);
     }).pipe(Effect.provide(SaasLive)),
   );
 
