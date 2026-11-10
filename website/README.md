@@ -27,15 +27,26 @@ pnpm run doctor  # diagnose config and content problems
 
 ```
 website/
-├─ blume.config.ts   # site metadata, logo, GitHub links, deployment
-├─ docs/             # the authored pages; the folder is the sidebar
+├─ blume.config.ts   # site metadata, theme, redirects, deployment
+├─ docs/             # the authored pages; a folder is a sidebar section
+│  ├─ index.mdx      # the hub
+│  ├─ what-is-paykit.mdx
+│  ├─ getting-started.mdx
+│  ├─ concepts/      # pricing models, features, plans, subscriptions, balances, credits
+│  ├─ runtime/       # check, track usage, holds, commands
+│  ├─ providers/     # overview, manual, stripe, polar
+│  ├─ hosting/       # database, auth
+│  └─ reference/     # packages
 └─ alchemy.run.ts    # the Cloudflare static-site stack
 ```
 
 Navigation is the file tree: `docs/index.mdx` is the landing page and every
-other page joins the sidebar automatically. A page's frontmatter `title`
-labels it; `sidebar.order` places it. Add a `meta.ts` beside the pages only
-when filesystem order is not enough.
+other page joins the sidebar automatically. Each section's `meta.ts` sets the
+group title, icon and page order. A page's frontmatter `title` labels it, and
+`sidebar.order` places a root page.
+
+New pages follow the page shapes in [AGENT.md](./AGENT.md), and a moved page
+needs a redirect in `blume.config.ts`.
 
 ## Repo integration
 

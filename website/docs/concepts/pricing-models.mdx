@@ -1,0 +1,73 @@
+---
+title: Pricing models
+description: What you can sell, and the declaration that states it.
+---
+
+Every pricing model is configuration. Pick the one that matches what you sell,
+declare it in the catalog, and the deploy validates it.
+
+| What you sell | Declare it with | Details |
+| --- | --- | --- |
+| A free tier | A plan with no `price` | [Plans](/concepts/plans#the-price) |
+| A flat subscription | `price: { amount, currency, interval }` | [Plans](/concepts/plans#the-price) |
+| An included allowance | `planItem(messages, { included: 100 })` | [Plans](/concepts/plans#what-a-plan-grants) |
+| Paid overage | `overage: "bill"` and a `unitPrice` | [Plans](/concepts/plans#what-a-plan-grants) |
+| Graduated or volume bands | `pricing: pricing({ kind, bands })` | [Plans](/concepts/plans#charge-bands) |
+| Credits | `feature({ creditRates })` and `plan({ credits })` | [Credits](/concepts/credits) |
+| Seats or other quantities | `kind: "non_consumable"` and `SetQuantity` | [Features](/concepts/features#pick-the-kind) |
+| One-off credit packs | `kind: "one_off"` and `credits` | [Credits](/concepts/credits#expiry-and-one-off-packs) |
+| Rollovers | `carryOver` on a plan item | [Plans](/concepts/plans#roll-over-what-the-month-did-not-spend) |
+| Add-ons | `addOn: true` on a plan | [Plans](/concepts/plans#variants-add-ons-and-groups) |
+| A trial | `trial: { days }` on a plan | [Plans](/concepts/plans#offer-a-trial) |
+| Spend limits and usage alerts | `Customers.update({ billingControls })` | [Balances](/concepts/balances#set-a-spend-limit-and-an-alert) |
+| Auto top-ups | `topUp` on a plan | [Credits](/concepts/credits#refill-before-the-pool-runs-out) |
+
+Most catalogs combine a few of these. A typical product sells a free plan with
+an allowance, a paid plan with more of it and a paid overage, and a one-off pack
+for customers who run out.
+
+## Charge bands
+
+A plan item can price billable units with graduated or volume bands. Graduated
+charges each band's rate for the units inside it. Volume charges every unit at
+the rate of the band the total lands in.
+
+```ts title="src/catalog.ts"
+import { Paykit, pricing } from "@potion.run/paykit";
+
+export const pro = Paykit.plan({
+  id: "pro",
+  price: { amount: 1_900, currency: "usd", interval: "month" },
+  grants: [
+    Paykit.planItem(messages, {
+      included: 1_000,
+      overage: "bill",
+      pricing: pricing({
+        kind: "graduated",
+        currency: "usd",
+        bands: [
+          { upTo: 10_000, amount: 2, currency: "usd" },
+          { upTo: "inf", amount: 1, currency: "usd" },
+        ],
+      }),
+    }),
+  ],
+});
+```
+
+The last band must be `upTo: "inf"`. Each event records the difference the new
+price makes, so the invoice is a sum of events and not a re-run of the formula
+against the final count.
+
+## What is not in the catalog
+
+Some billing behavior belongs to the customer or the deployment, not to a plan.
+
+- A customer's spend limit and usage alerts live on the customer, so support can
+  change them without a deploy. See
+  [Balances](/concepts/balances#set-a-spend-limit-and-an-alert).
+- An enterprise contract that differs from every plan is a
+  [custom plan](https://github.com/potion-run/paykit/blob/main/docs/BILLING-SURFACE.md),
+  not a second pricing model.
+- Tax, the card form and the invoice are the provider's. See
+  [Providers](/providers).

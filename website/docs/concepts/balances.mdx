@@ -1,0 +1,110 @@
+---
+title: Balances
+description: What an account has of one feature, where it came from, and the controls a customer sets over it.
+---
+
+A **balance** is what an account can spend of one feature, and where each part
+came from. `check()` returns one, and `track()` returns the balance after the
+spend, so a caller never rebuilds it from the entitlement view.
+
+```ts
+const balances = yield* Paykit.Balances(account);
+const balance = yield* balances.get({ featureId: "messages" });
+
+balance.remaining; // 1_940
+balance.usage; // 60 this period
+```
+
+## What a balance holds
+
+| Field | What it reports |
+| --- | --- |
+| `granted` | What the sources granted in total |
+| `remaining` | What is spendable now. `null` means there is no count |
+| `usage` | Units consumed this period. For a quantity, the occupied count |
+| `unlimited` | Whether the allowance has no end |
+| `overageAllowed` | Whether a spend past the grant is permitted |
+| `nextResetAt` | When the allowance returns to its grant |
+| `breakdown` | One row per source |
+| `purchased`, `occupied` | The bought and in-use counts, for a quantity |
+| `spendLimit` | The customer's money ceiling and the headroom left under it |
+
+## Where the number came from
+
+`breakdown` is the answer to "why is it that number". Each source says what it
+granted, what is left, when it resets and, for a plan item, which plan granted
+it.
+
+```ts
+for (const source of balance.breakdown) {
+  source.kind; // "plan", "addon", "one_off", "rollover" or "grant"
+  source.remaining;
+  source.resetAt;
+}
+```
+
+A plan item is a source with the plan's lifetime. A purchase is a source that
+never expires with the plan. A rollover is its own source with its own boundary,
+which is how a carried amount stays readable after the period that produced it.
+
+## Quantities are bought, not spent
+
+A non-consumable feature has a purchased count and an occupied count. A seat plan
+grants five seats, and the account sets how many of them are in use:
+
+```ts
+yield* balances.update({ featureId: "seats", usage: 3 });
+```
+
+The balance reports `purchased`, `occupied` and their difference. The difference
+may be negative when more seats are occupied than bought, which is a state to
+show and not a refusal to hide.
+
+## Grant capacity outside a plan
+
+`create` adds a standalone grant. It is a source of its own, so it shows in
+`breakdown` beside the plan's grant:
+
+```ts
+yield* balances.create({
+  featureId: "messages",
+  grantedBalance: 500,
+  reset: { interval: "one_off" },
+  idempotencyKey: `grant:${requestId}`,
+});
+```
+
+The grant is a lifetime source by default. An `expiresAt` gives it a deadline,
+and the `idempotencyKey` makes a retry the same grant.
+
+## Set a spend limit and an alert
+
+A customer can state controls over its own plan. They live on the customer, not
+in the catalog, so changing one needs no deploy.
+
+```ts
+const customers = yield* Paykit.Customers(account);
+
+yield* customers.update({
+  billingControls: {
+    spendLimits: [{ featureId: "messages", amount: 5_000 }],
+    usageAlerts: [{ featureId: "messages", at: 1_500 }],
+  },
+});
+```
+
+A spend limit is money in minor units for one period. A spend past it is refused
+with `SpendLimitExceeded`, and the subscription stays usable. An alert is a
+threshold that records `UsageAlertFired` and refuses nothing.
+
+## Finish a lock
+
+`finalize` closes a hold opened by a locked check or by `Paykit.Hold`. `commit`
+bills what ran, and `release` returns all of it.
+
+```ts
+yield* balances.finalize({ lockId, action: "commit", overrideValue: unitsUsed });
+```
+
+See [Check](/runtime/check) for placing the lock, and [Holds](/runtime/holds)
+for a hold that spans several calls.

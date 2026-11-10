@@ -1,0 +1,95 @@
+---
+title: Stripe
+description: Sell the catalog through Stripe Checkout, with prices and meters the deploy creates.
+---
+
+Stripe hosts the payment page, calculates tax, sends invoices and retries a
+failed payment. Paykit creates the products, prices and meter the catalog states,
+then records what Stripe collects.
+
+## Deploy the vendor objects
+
+`StripeBilling` creates a product per sold plan, a price per price the catalog
+states, and a meter per metered feature. It returns the provider the billing
+stack validates, plus the ids the Worker needs:
+
+```ts title="alchemy.run.ts"
+import * as Stripe from "@alchemy.run/stripe";
+import { StripeBilling } from "@potion.run/paykit-stripe";
+import * as Layer from "effect/Layer";
+
+const providers = Layer.mergeAll(Cloudflare.providers(), Paykit.providers()).pipe(
+  Layer.provideMerge(Stripe.providers()),
+);
+
+const billing = yield* StripeBilling("StripeBilling", {
+  secretKey,
+  origin: "https://app.example.com",
+  tiers: stripeTiers,
+  webhookSecret,
+}).pipe(Effect.provide(Stripe.providers()));
+
+const recorded = yield* Paykit.BillingStack("Billing", {
+  catalog: billingCatalog,
+  providers: [billing],
+});
+```
+
+`stripeTiers` repeats the catalog's prices in the shape Stripe sells them:
+`{ pro: { price: proPrice, usage: { messages: messagePrice } } }`. The deploy
+copies each price onto the object it creates, so the model and the invoice agree.
+
+`billing.sold` carries the ids: `sold.prices.pro`, `sold.usage.pro.messages` and
+`sold.meters.messages`. Bind them into the Worker's environment.
+
+## Build the runtime provider
+
+The Worker resolves the lookup keys and the meter name from its environment. A
+lookup key is stable, but it carries the stage, so the Worker reads the deploy's
+output instead of rebuilding the convention:
+
+```ts title="src/billing.ts"
+import { Stripe } from "@potion.run/paykit-stripe";
+import * as Redacted from "effect/Redacted";
+
+export const provider = Stripe({
+  secretKey: Redacted.make(env.STRIPE_SECRET_KEY),
+  origin: "https://app.example.com",
+  tiers: {
+    pro: {
+      price: proPrice,
+      lookupKey: env.STRIPE_PRICE_PRO,
+      usage: {
+        messages: { unitPrice: messagePrice, lookupKey: env.STRIPE_MESSAGES_PRICE },
+      },
+    },
+  },
+  meters: { messages: env.STRIPE_MESSAGES_METER },
+  webhookSecret: Redacted.make(env.STRIPE_WEBHOOK_SECRET),
+});
+```
+
+The provider needs the secret key at runtime. The billing stack takes the same
+key from the same environment variable, so one value drives the deploy and the
+Worker.
+
+## Deliveries
+
+Point a Stripe webhook endpoint at the deployment's `/webhooks` path. A delivery
+is verified with `STRIPE_WEBHOOK_SECRET` and decoded by the provider, then
+applied as a command. An account becomes active on the delivery, not on the
+redirect from checkout.
+
+`client` is for a test only. A deployment omits it, and Stripe builds its own
+client from the secret key.
+
+## What the catalog needs
+
+A metered feature billed in arrears needs a `unitPrice` on the plan item, because
+Stripe bills the meter. A plan item without a price is counted or blocked, never
+sent to the meter.
+
+See [Credits](/concepts/credits) if the plan grants a pool instead, and
+[the Stripe example](https://github.com/potion-run/paykit/tree/main/examples/stripe)
+for the whole loop: a deploy, a checkout, a signed delivery and a test that needs
+no Stripe account.

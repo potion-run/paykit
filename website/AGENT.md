@@ -39,6 +39,46 @@ is the sidebar, so there is no navigation file to keep in step.
 - Icons are kebab-case [Lucide](https://lucide.dev) names, never Phosphor or
   FontAwesome.
 
+### Page shapes
+
+The site follows the Alchemy docs' shapes. Pick one before writing, and do not
+mix two on one page:
+
+- **Hub** (`docs/index.mdx`): what the product is, a link to What is Paykit?, a
+  quick example, where to start, and one card per section. It states the
+  product, not the model.
+- **What is** (`what-is-paykit.mdx`): one `##` per concept, in the order a
+  newcomer meets them, each with the smallest snippet and a link to its
+  chapter. It ends by mapping the concepts to types.
+- **Concept chapter** (`catalog/plans.mdx`, `entitlement/check.mdx`): what the
+  thing is in a paragraph, one `##` per capability with a snippet, then what it
+  refuses, then links onward.
+- **Provider page** (`providers/stripe.mdx`): what the vendor owns, the deploy
+  half, the runtime half, deliveries, and the example to run.
+- **Task guide** (`billing-page.mdx`): a job the reader has, as numbered
+  sections. Each section shows the call, says what the customer sees, and ends.
+  No teaching, no background.
+
+Sections are ordered by reader concern: Concepts, Runtime, Providers, Hosting,
+Reference. The folder is the group and `meta.ts` sets its title, icon
+and page order. Root pages list above the groups, so `sidebar.order` on a root
+page and on a group share one namespace: keep root pages at 0-9 and groups at
+10 and up.
+
+### Writing rules
+
+These came from review:
+
+- Open on the subject, never on the page. No "this page explains".
+- One thought per sentence. Put the condition before the step.
+- Code first. A section that names a resource or command shows its snippet.
+- Title a code block with its file when it is a whole file.
+- Every symbol in prose exists in `packages/`. Check a claim about behavior
+  against the source or the ADR before writing it.
+- End a page with the links that go deeper.
+- When you move a page, add a redirect in `blume.config.ts` and update the
+  links that pointed at it.
+
 ## Commands
 
 | What | Command |

@@ -1,0 +1,92 @@
+---
+title: Features
+description: What a plan meters or grants, and how a feature states its kind and its credit rate.
+---
+
+A **feature** is the thing a plan gives an account. It is also the unit every
+read and write names, so the catalog states it once and everything else refers
+to it.
+
+```ts title="src/catalog.ts"
+import { Paykit } from "@potion.run/paykit";
+
+export const messages = Paykit.feature({ id: "messages", name: "Messages" });
+```
+
+`id` is what a command sends, so treat it as a public name. `name` is the label
+a pricing page or the console shows.
+
+## Pick the kind
+
+The kind decides which verbs accept the feature, and the compiler carries it into
+a typed client:
+
+| Kind | What the account holds | Used by |
+| --- | --- | --- |
+| `metered` (default) | Units that are spent down | A plan item, `TrackUsage`, `Hold` |
+| `non_consumable` | A quantity that is bought and occupied | `SetQuantity` and `SetUsage` |
+| `flag` | An on/off capability with no count | `grant()`, answered by `check()` |
+
+```ts title="src/catalog.ts"
+export const seats = Paykit.feature({
+  id: "seats",
+  name: "Seats",
+  kind: "non_consumable",
+});
+
+export const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
+```
+
+A flag has nothing to spend down. It cannot carry an allowance, credit rates or a
+rate card, and `track` refuses it. Grant it from a plan with `Paykit.grant(sso)`.
+
+A quantity is bought, not spent. A seat has a purchased count and an occupied
+count, and the two are different facts. Set them with `SetQuantity` and
+`SetUsage`.
+
+See [Plans and prices](/concepts/plans) for how a plan grants each kind.
+
+## Price a unit in credits
+
+A feature can be priced in credits instead of a plain count. The simple form
+names a rate per dimension:
+
+```ts title="src/catalog.ts"
+export const ai = Paykit.feature({
+  id: "ai",
+  name: "AI",
+  creditRates: { default: 1, "gpt-large": 10 },
+});
+```
+
+`default` prices an event with no dimension. A named dimension prices an event
+whose `dimension` matches. A credit-priced feature draws on the plan's credit
+pool, so it cannot also carry an allowance.
+
+A **rate card** covers the rest: property rules and multipliers.
+
+```ts title="src/catalog.ts"
+export const render = Paykit.feature({
+  id: "render",
+  name: "Render",
+  rateCard: Paykit.rateCard({
+    default: 1,
+    rules: [{ match: { size: "large" }, credits: 16 }],
+    multipliers: [{ match: { lifecycle: "spot" }, factor: 0.3 }],
+  }),
+});
+```
+
+The first matching rule wins. Every matching multiplier applies, so the final
+rate is `rate × all factors + all adds`, clamped at zero. A rule with an empty
+match is the fallback after `default`.
+
+See [Credits](/concepts/credits) for the pool, expiry and one-off packs.
+
+## What the deploy checks
+
+`Paykit.BillingStack` validates the catalog before it provisions anything, and
+it fails with a typed error that names the feature. A flag that carries credit
+rates or a rate card fails. A credit-priced feature that also carries an
+allowance fails. A tier that grants a feature the catalog never declared fails.
+A rate that is not a positive integer fails to decode.

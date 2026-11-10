@@ -1,0 +1,147 @@
+---
+title: Build a billing page
+description: Show the plans, the current plan, usage and the price of a change, then collect it.
+sidebar:
+  order: 3
+---
+
+A billing page answers four questions for a customer: what can I buy, what am I
+on, how much have I used, and what does a change cost? Paykit supplies a read for
+each one, and the same catalog your deploy validated.
+
+## Read the plans for sale
+
+The browser reads the catalog the deploy recorded. It is validated on arrival, so
+a pricing page cannot show a price the deployment does not sell.
+
+```ts title="src/pricing.ts"
+import { CatalogService, PaykitCatalogClient } from "@potion.run/paykit";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
+
+const LiveCatalog = PaykitCatalogClient("/api/billing/catalog").pipe(
+  Layer.provide(FetchHttpClient.layer),
+);
+
+export const Plans = Effect.gen(function* () {
+  const catalog = yield* CatalogService;
+
+  return catalog.tiers;
+}).pipe(Effect.provide(LiveCatalog));
+```
+
+Render `tier.name`, `tier.price` and the plan's `grants`. A plan with no `price`
+is the free tier.
+
+## Show the plan the customer holds
+
+`Customers.get()` returns the plans on the account, their status, and any plan
+scheduled to replace them.
+
+```ts
+const customers = yield* Paykit.Customers(account);
+const customer = yield* customers.get();
+
+customer.plans;
+// [{ planId: "pro", version: 1, status: "active", scheduledPlanId: "scale" }]
+customer.billingControls?.spendLimits;
+```
+
+A `status` of `trialing`, `active`, `grace`, `canceled` or `expired` is the same
+value a [check](/runtime/check) uses, so the badge and the gate agree.
+
+## Show usage
+
+A balance is what the plan granted, what the account used, and what is left. Draw
+a meter from `granted` and `remaining`, and use `nextResetAt` for the reset line.
+
+```ts
+const balances = yield* Paykit.Balances(account);
+const { balances: all } = yield* balances.list();
+
+for (const balance of all) {
+  balance.featureId; // "messages"
+  balance.granted; // 2_000
+  balance.remaining; // 1_240
+  balance.nextResetAt; // when it returns to 2_000
+}
+```
+
+`remaining` is `null` for an unlimited item, which the page should show as
+unlimited instead of a full bar.
+
+## Quote a change before charging
+
+`Preview` runs the same decision a command would, and records nothing. Show the
+answer first, then ask the customer to confirm.
+
+```ts
+const preview = yield* Paykit.Preview(account);
+const quote = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
+
+if (quote._tag === "accepted" && quote.proration !== undefined) {
+  quote.proration.due; // minor units. Negative means the account is owed.
+}
+```
+
+A refusal comes back as `_tag: "rejected"` with the reason, not as a failure, so
+the page can explain why the plan cannot move.
+
+## Make the change
+
+`ChangeTier` records the move and the proration. The provider collects the money
+in a separate call, so a failed charge does not undo the plan change.
+
+```ts
+const changeTier = yield* Paykit.ChangeTier(account);
+const moved = yield* changeTier({ tier: "scale", dedupeKey: requestId });
+
+if ((moved.proration?.due ?? 0) > 0) {
+  const charge = yield* Paykit.ChargeProration(account);
+  yield* charge();
+}
+```
+
+The `dedupeKey` makes a retried click one move. A downgrade's credit is recorded
+on the standing. Paykit does not pay money out for it.
+
+## Sell a plan the account does not hold
+
+For a first purchase or a change of plan, `Subscribe` walks the provider's
+purchase path and tells you where to send the customer.
+
+```ts
+const subscribe = yield* Paykit.Subscribe(account);
+const result = yield* subscribe({ tier: "pro" });
+
+if ("url" in result) redirect(result.url); // hosted checkout
+if ("invoiceId" in result) showInvoice(result.invoiceId);
+if ("activated" in result) reload(); // a free plan, active now
+```
+
+The plan activates when the provider confirms the payment, not when the customer
+leaves the checkout page.
+
+## Send them to the provider for card and invoices
+
+The card form, the invoices and the cancellation flow belong to the provider.
+`Portal` returns its hosted page:
+
+```ts
+const portal = yield* Paykit.Portal(account);
+const { url } = yield* portal();
+```
+
+A provider without a portal refuses with `ProviderCapabilityMissing`. `Manual`
+is one, so a page using an invoiced provider needs its own route for invoices
+instead of a portal button.
+
+## What the page does not do
+
+It does not compute a price. The catalog owns prices, the model owns proration,
+and the page renders their answers. If the page multiplies a price by a quantity,
+it will disagree with the invoice.
+
+See [Check](/runtime/check) for the gate behind the page, and
+[Providers](/providers) for the capabilities each provider declares.

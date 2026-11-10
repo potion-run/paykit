@@ -1,60 +1,118 @@
 ---
 title: Paykit
-description: Billing and entitlement for Alchemy, on Effect.
+description: Billing and entitlements for your product, declared in TypeScript and deployed with your stack.
 sidebar:
+  label: Overview
   order: 0
 ---
 
-Paykit is billing and entitlement for [Alchemy](https://alchemy.run), on
-[Effect](https://effect.website). You declare a catalog beside your stack, the
-library keeps each account's **standing**, and `check()` answers from local
-state in one read.
+Paykit is a billing library for TypeScript products. You declare your features,
+plans and prices in one file beside your stack. Paykit creates the payment
+provider's products and prices at deploy, keeps each account's balances in your
+database, and gives your handlers two calls: check and track.
 
-The provider owns the money plane. Paykit never decides an entitlement by
-calling a payment provider.
+It runs inside your deployment. A check is a local read, so a slow payment
+provider cannot block your product, and you do not run a second service to bill.
 
-## What it gives you
+**New to Paykit?** Start with [What is Paykit?](/what-is-paykit).
 
-- A catalog is a validated declaration: features, plans, plan items, prices and
-  credit rates.
-- A standing is the truth for one account: status, period, credits, usage,
-  holds and the events that produced them.
-- `check()` is local: it reads a row your stack already has and never calls a
-  provider.
-- Commands are the only writes, and every command carries a command id.
-- The event log is the source of truth. Counters, balances and read models are
-  folds of it.
+## A quick example
 
-## Start here
+Declare a free plan and a paid one:
 
-<Steps>
-  <Step title="Install">
-    ```sh
-    pnpm add @potion.run/paykit alchemy effect
-    ```
-  </Step>
-  <Step title="Declare a catalog">
-    ```ts
-    import { Paykit } from "@potion.run/paykit";
+```ts title="src/catalog.ts"
+import { Paykit } from "@potion.run/paykit";
 
-    const messages = Paykit.feature({ id: "messages", name: "Messages" });
-    const pro = Paykit.plan({
-      id: "pro",
-      price: { amount: 1900, currency: "usd", interval: "month" },
-      grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
-    });
-    ```
-  </Step>
-  <Step title="Read the standing">
-    ```ts
-    const check = yield* Paykit.Check(account);
-    const answer = yield* check({ featureId: "messages" });
-    ```
-  </Step>
-</Steps>
+export const messages = Paykit.feature({ id: "messages", name: "Messages" });
 
-Go to the [quickstart](/quickstart/) for the full loop, or the [packages](/packages/)
-for the provider packages and the ops console.
+export const free = Paykit.plan({
+  id: "free",
+  name: "Free",
+  grants: [Paykit.planItem(messages, { included: 100 })],
+});
+
+export const pro = Paykit.plan({
+  id: "pro",
+  name: "Pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
+});
+
+export const catalog = { features: [messages], tiers: [free, pro] };
+```
+
+The deploy validates the catalog and records it in stack state:
+
+```ts title="alchemy.run.ts"
+import { Paykit } from "@potion.run/paykit";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import { catalog } from "./src/catalog.ts";
+
+const billing = {
+  catalog,
+  providers: [Paykit.Manual()],
+  store: Paykit.MemoryStore(),
+};
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Paykit.providers(), state: Alchemy.localState() },
+  Effect.gen(function* () {
+    const recorded = yield* Paykit.BillingStack("Billing", billing);
+
+    return { tiers: recorded.tiers };
+  }),
+);
+```
+
+A request checks before the work and tracks after it:
+
+```ts
+const check = yield* Paykit.Check(account);
+const { allowed } = yield* check({ featureId: "messages" });
+
+if (!allowed) return refuse();
+
+// do the work
+
+const track = yield* Paykit.TrackUsage(account);
+yield* track({ featureId: "messages", value: 1, idempotencyKey: requestId });
+```
+
+## Where to start
+
+**Want to build?** [Getting started](/getting-started) takes a catalog through
+deploy, a subscription, a check and a track. Then
+[Build a billing page](/billing-page) shows the customer their usage and the
+upgrade price.
+
+**Looking for a pricing model?** [Pricing models](/concepts/pricing-models) maps
+what you sell to the declaration: free plans, usage-based overage, credits,
+seats, packs, trials, add-ons and spend limits.
+
+## The docs
+
+<CardGroup cols={2}>
+  <Card title="Concepts" href="/concepts/pricing-models" icon="shapes">
+    Pricing models, features, plans, subscriptions, balances and credits.
+  </Card>
+  <Card title="Runtime" href="/runtime/check" icon="terminal">
+    The check, the track, holds and commands your handlers call.
+  </Card>
+  <Card title="Build a billing page" href="/billing-page" icon="credit-card">
+    The pricing table, usage meter, upgrade quote and provider portal.
+  </Card>
+  <Card title="Providers" href="/providers" icon="plug">
+    Stripe, Polar, or an invoice, and the webhooks that confirm a payment.
+  </Card>
+  <Card title="Hosting" href="/hosting/database" icon="server">
+    The billing database, its migrations, and the session in front of it.
+  </Card>
+  <Card title="Reference" href="/reference/packages" icon="book-open">
+    The four packages, what each one owns, and the examples.
+  </Card>
+</CardGroup>
 
 :::tip[The design of record]
 The decisions behind this model live in the

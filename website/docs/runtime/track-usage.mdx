@@ -1,0 +1,80 @@
+---
+title: Track usage
+description: Record what the work consumed, make a retry the same fact, and read the refusal when there is no room.
+---
+
+`TrackUsage` records one usage fact against a metered feature. It is the write
+that follows a [check](/runtime/check), and it answers the balance the account
+has left.
+
+```ts
+const track = yield* Paykit.TrackUsage(account);
+
+const result = yield* track({
+  featureId: "messages",
+  value: 1,
+  idempotencyKey: requestId,
+});
+
+result.balance.remaining; // 1_999
+```
+
+## The request
+
+| Field | What it records |
+| --- | --- |
+| `featureId` | The feature the work was measured in |
+| `value` | How many units it used |
+| `idempotencyKey` | The retry key, which is also the command id |
+| `dimension` | Which rate prices it, for a credit-priced feature |
+| `properties` | The event's properties, which a rate card's rules match |
+| `entityId` | The entity scope that spent the units. Absent means the customer |
+
+The account is not a field. `Paykit.TrackUsage(account)` already fixed it.
+
+## Only a metered feature is tracked
+
+A `flag` has no count and a `non_consumable` feature is held, not spent. A track
+against either fails with `FeatureNotMetered`. Set a quantity instead:
+
+```ts
+const setQuantity = yield* Paykit.SetQuantity(account);
+yield* setQuantity({ feature: "seats", quantity: 10, dedupeKey: `seats:${requestId}` });
+
+const setUsage = yield* Paykit.SetUsage(account);
+yield* setUsage({ featureId: "seats", usage: 7 });
+```
+
+A quantity is bought and occupied. Occupancy is a fact to record, not a spend to
+bill, so `SetUsage` is the write that changes it. A retry of an unchanged
+occupancy records nothing.
+
+## What it refuses
+
+A refusal is a typed error, and the log is unchanged:
+
+| Refusal | When |
+| --- | --- |
+| `AllowanceExceeded` | The allowance is spent and its overage is `block` |
+| `CreditExceeded` | A credit-priced feature needs more than the pool holds |
+| `SpendCapExceeded` | The period reached the plan item's unit `cap` |
+| `MoneyCapExceeded` | The period reached the plan item's `moneyCap` |
+| `SpendLimitExceeded` | The customer's own `spendLimits` ceiling is reached |
+| `StandingBlocksUsage` | The subscription is `blocked` |
+| `FeatureNotMetered` | The feature is a flag or a quantity |
+| `EntityArchived` | The entity scope was archived |
+
+An alert is not a refusal. Reaching a `usageAlerts` threshold records
+`UsageAlertFired` and lets the spend through.
+
+## The money it records
+
+The usage event carries what the use costs. A plan item with `overage: "bill"`
+prices each unit past `included` with its `unitPrice` or its `pricing` bands, and
+a credit-priced feature records the credits the rate card charged.
+
+Because the price is on the event, a later catalog change does not rewrite the
+bill. Reprinting a period replays the same events and gets the same money.
+
+See [Credits](/concepts/credits) for dimensions and rate cards, and
+[Holds](/runtime/holds) for work whose cost is not known until it finishes.

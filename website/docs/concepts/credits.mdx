@@ -1,0 +1,142 @@
+---
+title: Credits
+description: One pool per account, priced per dimension, and what spends it.
+---
+
+Credits are numbers on an account, not on a feature. A plan grants one **pool**,
+and every credit-priced feature spends from that pool. The rate card decides how
+many credits one unit costs.
+
+```ts title="src/catalog.ts"
+import { Paykit } from "@potion.run/paykit";
+import { messages } from "./features.ts";
+
+export const scale = Paykit.plan({
+  id: "scale",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  credits: 50_000,
+  grants: [Paykit.planItem(messages, { included: "unlimited" })],
+});
+```
+
+## What spends the pool
+
+A feature with `creditRates` or a `rateCard` is priced in credits. It cannot also
+have an allowance, because the pool is its count. `check()` reports the pool as
+`balance.remaining` for that feature.
+
+```ts
+const check = yield* Paykit.Check(account);
+const answer = yield* check({ featureId: "ai", dimension: "gpt-large", requiredBalance: 10 });
+
+answer.balance.remaining; // the pool itself, for a credit-priced feature
+```
+
+A command that names a credit-priced feature without a `dimension` uses the
+card's `default` rate.
+
+## Make one unit cost more on some events
+
+The simple card names a rate per dimension:
+
+```ts
+const ai = Paykit.feature({
+  id: "ai",
+  name: "AI",
+  creditRates: { default: 1, "gpt-large": 10 },
+});
+```
+
+A full card prices on the event's properties instead:
+
+```ts
+const render = Paykit.feature({
+  id: "render",
+  name: "Render",
+  rateCard: Paykit.rateCard({
+    default: 1,
+    rules: [
+      { match: { size: "large" }, credits: 16 },
+      { match: { size: "small" }, credits: 2 },
+    ],
+    multipliers: [{ match: { lifecycle: "spot" }, factor: 0.3 }],
+  }),
+});
+```
+
+The first matching rule wins. After it, every matching multiplier applies: the
+final rate is `rate × all factors + all adds`, clamped at zero. A rule with an
+empty match is the fallback after `default`.
+
+The caller supplies the properties on the command:
+
+```ts
+const track = yield* Paykit.TrackUsage(account);
+yield* track({
+  featureId: "render",
+  value: 1,
+  properties: { size: "large", lifecycle: "spot" },
+  idempotencyKey: requestId,
+});
+// The large rule prices it at 16 credits, and the spot multiplier prices it at 30%.
+```
+
+## Expiry and one-off packs
+
+A subscription's credits expire at the period close by default. Set
+`creditsExpire: "never"` to keep them. A one-off pack's credits never expire.
+
+```ts
+export const pack = Paykit.plan({
+  id: "credits_100k",
+  kind: "one_off",
+  price: { amount: 4_900, currency: "usd", interval: "month" },
+  credits: 100_000,
+  grants: [],
+});
+```
+
+A purchase of a one-off pack adds credits and starts no period. Each purchase
+adds its credits to the pool.
+
+## Refill before the pool runs out
+
+A plan can state an auto top-up line. It is one sentence: refill below a
+threshold, from a named pack, no more often than the cooldown, and retry a
+failure a bounded number of times.
+
+```ts
+import { Duration } from "effect";
+
+export const scale = Paykit.plan({
+  id: "scale",
+  price: { amount: 9_900, currency: "usd", interval: "month" },
+  credits: 50_000,
+  topUp: {
+    threshold: 5_000,
+    cooldown: Duration.minutes(60),
+    pack: "credits_100k",
+    retry: { attempts: 3, every: Duration.hours(6) },
+  },
+  grants: [],
+});
+```
+
+The crossing is a purchase on the provider, so the refill is a real charge. The
+policy and its retry budget live in the model, so a deploy cannot refill an
+enterprise pool from a free plan's pack.
+
+## Spend credits directly
+
+If your work is not metered by a feature, spend from the pool directly:
+
+```ts
+const consume = yield* Paykit.ConsumeCredits(account);
+const { balance } = yield* consume({ amount: 25, dedupeKey: requestId });
+```
+
+`ConsumeCredits` refuses a spend past the pool with `CreditExceedsBalance`, and a
+second call with the same `dedupeKey` is the same spend.
+
+See [Check](/runtime/check) for the pool in the reply, and
+[Balances](/concepts/balances) for the sources a balance is built from.

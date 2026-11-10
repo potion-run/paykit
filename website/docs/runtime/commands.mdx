@@ -1,0 +1,92 @@
+---
+title: Commands
+description: Every write is a named command with an id, and the log records it once.
+---
+
+Nothing changes a balance directly. A write is a **command**: `TrackUsage`,
+`Hold`, `SettleHold`, `GrantBalance`, `ChangeTier`, `Refund`. Each command
+carries an id, appends its events, and answers the state its caller should see
+next.
+
+```ts
+const track = yield* Paykit.TrackUsage(account);
+yield* track({ featureId: "messages", value: 1, idempotencyKey: requestId });
+```
+
+`Paykit.TrackUsage(account)` binds the account and returns the verb. The verb
+takes the rest, and the request has no `account` field, so a call site cannot
+name a second account.
+
+## An id makes a retry the same command
+
+Every command request carries the key: `idempotencyKey` on a tracked usage,
+`dedupeKey` on a hold or a credit spend. The key is also the command id, so a
+transport that redelivers the call records one fact and not two.
+
+Order the key by the work, not by the attempt. A request id, a turn id or a
+purchase id is a stable key. A timestamp is not.
+
+The reply is the command's own result, not a second read. `TrackUsage` answers
+the balance after the spend, and `SettleHold` answers the units it billed and the
+units it returned, so the number is the same over every transport.
+
+## The event log is the write record
+
+A command appends events to `billing_event`. The subscription, balances,
+receipts and read models are folds of that log, so a number that cannot be
+reproduced by replaying events is a bug.
+
+A command carries the money it recorded. Prices live on the events, so a catalog
+change never rewrites what an account was sold at.
+
+## One model, several surfaces
+
+`Paykit.handler` mounts the built-in surfaces at paths a deployment can move:
+
+| Surface | Default | What answers there |
+| --- | --- | --- |
+| Tenant API | `/api` | The account's own reads and commands |
+| Operator API | `/admin` | Grants, refunds, grace and expiry |
+| Checkout | `/checkout` | The provider's path to pay a plan |
+| Webhooks | `/webhooks` | One route per provider delivery |
+| Plan operations | `/plans` | Attach, update and preview |
+| Commands | `/api/commands` | The command RPCs `Atom` calls |
+
+```ts title="src/worker.ts"
+const handler = yield* Paykit.handler({
+  provider: Provider,
+  accountOf: (request) => Paykit.accountFromHeaders(request.headers),
+  surfaces: "tenant",
+  mount: { tenant: "/api", checkout: "/pay", webhooks: "/hooks" },
+});
+
+return { fetch: handler.fetch };
+```
+
+The handler builds no world. Provide one, as
+[Getting started](/getting-started) does. `surfaces: "tenant"` serves the tenant
+API only, so a process that should not expose operator commands cannot.
+
+## The same commands over HTTP, MCP and a CLI
+
+The tenant API is a domain API: it has one command list, and HTTP, MCP and a CLI
+derive from it. There is no second tool list to keep in step. `BillingApiLayer`
+resolves the command bindings, and a client that has only a URL calls the same
+commands through the RPC surface.
+
+## Who may run one
+
+A guard compares the command's target with the session's account. The resolver
+answers who is calling, and the guard refuses a command that names another
+account with `Forbidden`. A missing session is `Unauthenticated`.
+
+See [Auth](/hosting/auth) for the resolver and the two guards.
+
+## A command that cannot finish
+
+A refusal is a typed error on the command, not a broken response. `TrackUsage`
+answers `AllowanceExceeded`, `SpendLimitExceeded` or `StandingBlocksUsage` before
+it writes anything. The caller maps the error to a status, and the log is
+unchanged.
+
+See [Track usage](/runtime/track-usage) for the refusals each command can answer.

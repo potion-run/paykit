@@ -1,0 +1,95 @@
+---
+title: Holds
+description: Reserve capacity before the work runs, then settle what it used or release the rest.
+---
+
+A hold reserves units for work that has not finished. It is a real deduction
+while it is open, so a second caller cannot spend the same units, and it is
+addressed by an id so the work can settle or release it later.
+
+```ts
+const hold = yield* Paykit.Hold(account);
+
+const reservation = yield* hold({
+  feature: "messages",
+  amount: 100,
+  dedupeKey: turnId,
+});
+
+reservation.holdId; // also the id a settle names
+reservation.remaining; // what is left while the hold is open
+```
+
+## The request
+
+| Field | What it reserves |
+| --- | --- |
+| `feature` | The metered feature the work will consume |
+| `amount` | How many units to reserve |
+| `dedupeKey` | The retry key. It is also the command id and the default hold id |
+| `holdId` | An id, when the caller must know it before the call |
+| `expiresAt` | When the hold stops reserving capacity. Defaults to fifteen minutes |
+| `dimension`, `properties` | What prices the units, for a credit-priced feature |
+
+A retry with the same `dedupeKey` holds the same entity, so a timeout and a
+second attempt cannot reserve twice.
+
+## Settle what ran
+
+A settle turns the hold into usage. It bills what the work consumed and returns
+the rest in the same command:
+
+```ts
+const settle = yield* Paykit.SettleHold(account);
+
+const result = yield* settle({
+  holdId: reservation.holdId,
+  amount: 80,
+  dedupeKey: `${turnId}:settle`,
+});
+
+result.billed; // 80
+result.released; // 20
+```
+
+Omit `amount` to bill the whole hold. Settling a hold that is already settled
+records nothing, so a retry bills once. Settling a released or expired hold is a
+typed refusal: `HoldSettled`, `HoldExpired` or `HoldUnknown`.
+
+## Release without billing
+
+A release returns the whole hold. Use it when the work failed, was cancelled, or
+never ran:
+
+```ts
+const release = yield* Paykit.ReleaseHold(account);
+
+yield* release({ holdId: reservation.holdId, dedupeKey: `${turnId}:release` });
+```
+
+A release after `expiresAt` still returns the units. A late release is a
+cleanup, not a charge.
+
+## Which one to use
+
+A [locked check](/runtime/check) places a hold and answers in one call, so
+use it when a single request decides and finishes the work. Use `Hold` directly
+when the work spans several calls, or when its cost is not known before it
+starts.
+
+Both address the reservation the same way: a locked check's `lockId` is a hold
+id, and `Paykit.Balances(account).finalize` settles or releases it.
+
+## What a hold refuses
+
+A hold is refused in the same transaction that would place it, so a refusal
+writes nothing:
+
+- `HoldExceeded` when the allowance has no room for the reserved units
+- `SpendCapExceeded` or `MoneyCapExceeded` when the period's ceiling is reached
+- `SpendLimitExceeded` when the customer's own ceiling is reached
+- `StandingBlocksUsage` when the subscription is blocked
+- `FeatureNotMetered` when the feature is a flag or a quantity
+
+See [Check](/runtime/check) for the read, and [Balances](/concepts/balances)
+for finalizing a lock.

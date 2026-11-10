@@ -1,8 +1,6 @@
 ---
 title: Database
 description: One port for billing storage, and a schema the deploy converges.
-sidebar:
-  order: 4
 ---
 
 paykit keeps its event log, receipts, state and read models in SQL. The database is a port: the
@@ -197,4 +195,4 @@ The decisions are [ADR 0049](https://github.com/potion-run/paykit/blob/main/docs
 for the port and the convergence, and [ADR 0003](https://github.com/potion-run/paykit/blob/main/docs/adr/0003-the-deploy-provisions-the-vendor.md)
 for why a deploy retains what a bill references.
 
-See [Auth](/auth/) for the session side, including what a deployment must preserve across deploys.
+See [Auth](/hosting/auth/) for the session side, including what a deployment must preserve across deploys.

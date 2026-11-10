@@ -1,0 +1,94 @@
+---
+title: Check
+description: The read that answers whether an account may do the work, from local state in one call.
+---
+
+`check()` is the read a request makes before it does work. It answers whether
+the account may do it, what it has left, and whether the subscription may be
+used at all. It reads local state and never calls a provider.
+
+```ts
+const check = yield* Paykit.Check(account);
+const answer = yield* check({ featureId: "messages" });
+
+answer.allowed; // true
+answer.balance; // what is left, with its sources
+answer.standing; // "good"
+```
+
+`Paykit.Check(account)` binds the account once and returns the verb. The verb
+takes the rest, so a call site cannot ask about a second account.
+
+## The request
+
+| Field | What it asks |
+| --- | --- |
+| `featureId` | The feature the work needs |
+| `requiredBalance` | How much the work will consume. Defaults to 1 |
+| `dimension` | Which rate prices it, for a credit-priced feature |
+| `properties` | The event's properties, which a rate card's rules and multipliers match |
+| `entityId` | An entity scope. Absent means the customer |
+| `lock` | Reserve `requiredBalance` when the answer is allowed |
+| `idempotencyKey` | The retry key, and the hold id when `lock` is set |
+
+## What the answer means
+
+`allowed` is the whole judgement. It is false when the account has no
+subscription, when the subscription is blocked, or when the allowance has no
+room left. `balance` explains the number, and `standing` is the coarse state:
+`good`, `grace` or `blocked`.
+
+A plain check for the customer does not fail on a refusal. It answers
+`allowed: false`, and the caller decides what to tell the user. Only a guard
+failure refuses it outright.
+
+## Lock capacity for work in flight
+
+A check that reserves its units stops a second caller from spending them between
+the read and the work. Set `lock: true` and pass an id:
+
+```ts
+const answer = yield* check({
+  featureId: "messages",
+  requiredBalance: 1,
+  lock: true,
+  idempotencyKey: turnId,
+});
+
+answer.lockId; // the hold this check placed
+```
+
+A lock is a hold, so the id is required. Asking for one without an
+`idempotencyKey` fails with `CheckLockKeyMissing`, and a locked check can answer
+a hold's refusals as well as its own.
+
+Finish the lock with the balances verb: `commit` bills what ran, and `release`
+returns all of it.
+
+```ts
+const balances = yield* Paykit.Balances(account);
+
+yield* balances.finalize({
+  lockId: answer.lockId,
+  action: "commit",
+  overrideValue: unitsUsed,
+});
+```
+
+For a hold that lives longer than one check, use [Holds](/runtime/holds) directly.
+
+## Read through the right transport
+
+A Worker answers a check from its own read model. A service that must ask another
+service provides a `CheckTransport`, and the judgement is the same function, so
+both paths answer the same way. `CheckReadModel` is the layer that reads locally.
+
+## Where the answer comes from
+
+The check reads the `Entitlements` row your deployment already folded from the
+account's events. A past spend, a rollover, a hold and a customer's spend limit
+are all in the row before the check runs. Nothing is recomputed from the catalog
+at read time.
+
+See [Balances](/concepts/balances) for the full balance shape, and
+[Track usage](/runtime/track-usage) for the write that follows a check.

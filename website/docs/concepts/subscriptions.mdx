@@ -1,0 +1,121 @@
+---
+title: Subscriptions
+description: The plans an account holds, the period they run for, and the states between a trial and a cancellation.
+---
+
+An account holds one subscription. It records the plans the account bought, the
+period they are paid for, and a status that says whether the account may still
+use the product.
+
+The subscription is a fold of the account's events. Nothing edits it in place:
+a change is a command that appends an event, and the next read shows the result.
+
+## The status
+
+| Status | What it means | May use the product |
+| --- | --- | --- |
+| `trialing` | The account is inside a trial period | Yes |
+| `active` | Paid and current | Yes |
+| `grace` | A payment failed, and service continues while the provider retries | Yes |
+| `canceled` | The subscription ended at its boundary | No |
+| `expired` | Grace ran out, or an operator ended the subscription | No |
+| `none` | The account has never subscribed | No |
+
+`grace` is the deliberate exception. A failed card should not switch off a
+product the customer is already using, so the account stays in `grace` while the
+provider retries, and a [check](/runtime/check) still answers yes. When the grace
+deadline passes, the subscription moves to `expired`.
+
+The status answers one question and the balance answers another. A check returns
+both: the coarse `standing` (`good`, `grace` or `blocked`) and the allowance as
+`balance`.
+
+## The plan set
+
+A subscription holds a set of plans, not one plan. Each plan belongs to a
+**group**, and a move replaces the plan in its group. A plan with `addOn: true`
+stacks beside every group instead of replacing anything.
+
+This is how an account holds Pro and an add-on at the same time, or a base plan
+and an enterprise plan in another group, without a second subscription.
+
+A plan with `isDefault: true` is what the account falls back to when a move or a
+cancellation leaves its group empty.
+
+## The period
+
+A subscription runs for a period with a `start`, an `end` and an `anchorTz`. The
+anchor decides where the month boundary falls, so an account that signed up at
+09:00 in Berlin renews at 09:00 in Berlin.
+
+Monthly and annual allowances reset at the period boundary. An allowance with a
+shorter `resets` interval, such as a daily one, runs its own window and does not
+wait for the period.
+
+## Move, upgrade, and downgrade
+
+`Subscribe` is the first purchase. `ChangeTier` moves a plan that already
+exists. Both compute what the move costs for the rest of the period, and
+`Preview` shows that number before anyone confirms.
+
+```ts
+const preview = yield* Paykit.Preview(account);
+const quote = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
+
+if (quote._tag === "accepted") {
+  quote.proration?.due; // minor units. Negative means the account is owed.
+}
+```
+
+`ChangeTier` records the move and the proration, and the provider collects the
+money in a separate call. A downgrade's credit is recorded on the subscription
+and not paid out automatically.
+
+```ts
+const changeTier = yield* Paykit.ChangeTier(account);
+const moved = yield* changeTier({ tier: "scale", dedupeKey: requestId });
+
+if ((moved.proration?.due ?? 0) > 0) {
+  yield* (yield* Paykit.ChargeProration(account))();
+}
+```
+
+The plan's `version` is the generation the account bought. A deploy that changes
+the plan's terms bumps the version, and the existing subscription keeps the old
+one, so a catalog change never reprices history. Moving the account to the new
+terms is an ordinary plan change.
+
+## Schedule a change or a cancellation
+
+A change does not have to happen now. `ScheduleTierChange` records a phase that
+applies at a future instant, and `ScheduleCancellation` ends a group at its
+boundary. `Resume` withdraws a pending cancellation before it fires.
+
+```ts
+const schedule = yield* Paykit.ScheduleCancellation(account);
+yield* schedule({ group: "default", dedupeKey: requestId });
+```
+
+The phases live on the subscription in order. Scheduling a phase also schedules
+the command that applies it, so the move does not wait for the next request.
+
+## Trials
+
+A trial is a status, not a plan. `StartTrial` opens a trial period for a plan,
+and the account keeps the plan's allowances while `status` is `trialing`. An
+account gets one trial ever, and a second attempt is refused with
+`TrialAlreadyUsed`.
+
+A plan can offer a trial with `trial: { days, cardRequired, onEnd }`. When the
+trial ends, `bill` starts the paid period and `revert` returns the account to the
+plan it held before.
+
+## What reads it
+
+- [Check](/runtime/check) returns the status as `standing`.
+- [Balances](/concepts/balances) reset at the period boundary.
+- `Paykit.List()` pages every account in a status, which is how a console finds
+  the accounts in grace.
+
+See [Plans and prices](/concepts/plans) for what a plan grants, and
+[Build a billing page](/billing-page) for the customer's side of a plan change.

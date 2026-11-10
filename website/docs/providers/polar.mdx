@@ -1,0 +1,84 @@
+---
+title: Polar
+description: Sell the catalog through Polar as merchant of record, with products and meters the deploy creates.
+---
+
+Polar sells as merchant of record: it calculates and collects tax, hosts the
+checkout and keeps the subscription. Paykit creates the products and meters the
+catalog states and records what Polar collects.
+
+## Deploy the vendor objects
+
+`PolarBilling` creates a product per sold plan and a meter per metered feature.
+It returns the provider the billing stack validates, plus the ids the Worker
+needs:
+
+```ts title="alchemy.run.ts"
+import { PolarBilling, polarProviders } from "@potion.run/paykit-polar";
+import * as Layer from "effect/Layer";
+
+const providers = Layer.mergeAll(Cloudflare.providers(), Paykit.providers()).pipe(
+  Layer.provideMerge(polarProviders({ accessToken, server: "sandbox" })),
+);
+
+const billing = yield* PolarBilling("PolarBilling", {
+  accessToken: Redacted.value(accessToken),
+  server: "sandbox",
+  origin: "https://app.example.com",
+  tiers: polarTiers,
+  webhookSecret,
+});
+
+const recorded = yield* Paykit.BillingStack("Billing", {
+  catalog: billingCatalog,
+  providers: [billing],
+});
+```
+
+`polarTiers` repeats the catalog's prices in the shape Polar sells them:
+`{ pro: { price: proPrice, usage: { messages: messagePrice } } }`.
+
+`billing.sold` carries the ids: `sold.products.pro` and `sold.meters.messages`.
+Bind them into the Worker's environment.
+
+## Build the runtime provider
+
+The runtime provider takes the product id and the meter name from the
+environment:
+
+```ts title="src/billing.ts"
+import { Polar } from "@potion.run/paykit-polar";
+import * as Redacted from "effect/Redacted";
+
+export const provider = Polar({
+  accessToken: env.POLAR_ACCESS_TOKEN,
+  server: "sandbox",
+  origin: "https://app.example.com",
+  tiers: {
+    pro: {
+      price: proPrice,
+      productId: env.POLAR_PRODUCT_PRO,
+      usage: { messages: messagePrice },
+    },
+  },
+  meters: { messages: env.POLAR_MESSAGES_METER },
+  webhookSecret: Redacted.make(env.POLAR_WEBHOOK_SECRET),
+});
+```
+
+The example pins `server: "sandbox"`, so a production token cannot create
+production objects from it. A live deployment states its own server.
+
+## Deliveries
+
+Point a Polar webhook endpoint at `/webhooks/polar`. A delivery is verified with
+`POLAR_WEBHOOK_SECRET`, decoded by the provider, and applied as a command. The
+account becomes active on the delivery, not on the redirect from checkout.
+
+`client` is for a test only. A deployment omits it, and Polar builds its own
+client from the token.
+
+See [Credits](/concepts/credits) for a plan that grants a pool, and
+[the Polar example](https://github.com/potion-run/paykit/tree/main/examples/polar)
+for the whole loop: a deploy, a checkout, a signed delivery and a test that needs
+no Polar account.

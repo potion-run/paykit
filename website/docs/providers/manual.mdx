@@ -1,0 +1,56 @@
+---
+title: Manual
+description: A provider that sells by invoice, so a deploy needs no key.
+---
+
+`Manual` is the provider with no vendor behind it. It opens an invoice and
+records a refund, and it declares no checkout, no portal and no card rail. A
+deployment uses it to prove the loop before a payment account exists.
+
+```ts title="src/billing.config.ts"
+import { Paykit } from "@potion.run/paykit";
+
+export const Provider = Paykit.Manual();
+
+export const billing = {
+  catalog,
+  providers: [Provider],
+  store: Paykit.MemoryStore(),
+} satisfies BillingStackProps;
+```
+
+## What it supports
+
+| Capability | Manual |
+| --- | --- |
+| `invoice` | Yes. A checkout asks for one and gets an invoice id |
+| `refund` | Yes. A refund is recorded and answers its own id |
+| `checkout` | No. Asking for one fails with `ProviderCapabilityMissing` |
+| `portal` | No |
+| `setup` | No. There is no card rail to add a method to |
+| `charge` | No. An invoice has a transfer behind it, not a card |
+| `usage` | No. There is no vendor meter to report to |
+| `quantity` | No. A seat change stays a local proration |
+
+A refusal by capability is deliberate. The alternative would be a page that
+cannot take a card, or a charge that quietly does nothing.
+
+## What the deploy does
+
+`Paykit.BillingStack` validates the catalog and records it. With `Manual` there
+is no vendor object to create, so the deploy provisions nothing beyond stack
+state.
+
+The invoice id is inferred from a transfer, and the same command id answers the
+same invoice, so a retried checkout is one invoice and not two.
+
+## When to move on
+
+Keep `Manual` for tests, for a first deploy and for invoiced customers. When you
+need hosted checkout, tax and retries, swap the provider array for
+[Stripe](/providers/stripe) or [Polar](/providers/polar). The catalog does not
+change.
+
+See [Providers](/providers) for the port and the capabilities, and
+[the memory example](https://github.com/potion-run/paykit/tree/main/examples/memory)
+for this provider as a runnable Worker.

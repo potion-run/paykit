@@ -1,0 +1,178 @@
+---
+title: Plans and prices
+description: A purchasable bundle, the price it sells at, the allowance it grants, and the terms a move replaces.
+---
+
+A **plan** is a purchasable bundle: one price, a set of grants, and the terms
+around them. An account holds one plan per group, so a move replaces the plan it
+leaves behind. See [Subscriptions](/concepts/subscriptions).
+
+```ts title="src/catalog.ts"
+import { Paykit } from "@potion.run/paykit";
+import { messages } from "./features.ts";
+
+export const pro = Paykit.plan({
+  id: "pro",
+  name: "Pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
+});
+```
+
+## The price
+
+Money is integer minor units plus a currency. `1900` is $19.00, and no exchange
+rate is applied: a catalog that sells in EUR states each amount.
+
+`interval` is `month` or `annual`. It sets the billing period, which is also the
+period every allowance without its own `resets` follows.
+
+A plan with no `price` is free. It grants its allowance and takes no payment.
+
+## What a plan grants
+
+One `planItem` states what a plan gives of one feature, and what happens past
+it. Only `included` is required:
+
+```ts
+Paykit.planItem(messages, { included: 100 }); // blocks past 100
+Paykit.planItem(messages, { included: 2_000, overage: "bill" }); // bills past 2,000
+Paykit.planItem(messages, { included: "unlimited" }); // never runs out
+```
+
+| Field | What it states |
+| --- | --- |
+| `included` | The count in the feature's own unit, or `"unlimited"` |
+| `overage` | `block`, `bill` or `allow` past `included`. Defaults to `block`, or `allow` when unlimited |
+| `resets` | When the allowance returns to `included`. Defaults to `month` |
+| `resetEvery` | How many reset intervals between boundaries, for example four hours |
+| `cap` | The most a period may bill past `included`, so `included + cap` is the ceiling |
+| `carryOver` | Whether unspent units move into the next window |
+| `carryCap` | The most one window may carry. Defaults to `included` |
+| `unitPrice` | What one billed unit costs, when the overage is priced |
+| `moneyCap` | The most money this feature may bill in one window |
+| `prorate` | How a quantity change is billed: `immediate` or `period_end` |
+
+## Charge bands
+
+Past the included amount, a plan item can price each unit with one rate, with
+graduated bands, or with volume bands. Graduated charges each band's rate for the
+units inside it. Volume charges every unit at the rate of the band the total
+lands in.
+
+```ts
+import { Paykit, pricing } from "@potion.run/paykit";
+
+Paykit.planItem(messages, {
+  included: 1_000,
+  overage: "bill",
+  pricing: pricing({
+    kind: "volume",
+    currency: "usd",
+    bands: [
+      { upTo: 10_000, amount: 2, currency: "usd" },
+      { upTo: "inf", amount: 1, currency: "usd" },
+    ],
+  }),
+});
+```
+
+The last band must be `upTo: "inf"`. Every billed event records the difference
+the new total makes, so the invoice is the sum of the events.
+
+## Roll over what the month did not spend
+
+A rollover keeps the unspent part of an allowance, at most one window's worth by
+default. `check()` reports the carried units as part of `remaining`.
+
+```ts
+Paykit.planItem(messages, {
+  included: 2_000,
+  overage: "bill",
+  carryOver: true,
+  carryCap: 2_000,
+});
+```
+
+A rollover is its own balance source, so a balance's `breakdown` shows what came
+from the plan and what carried in.
+
+## Offer a trial
+
+A plan can offer a trial when an account subscribes to it. The plan's interval
+sets the length unless `days` states one.
+
+```ts
+export const pro = Paykit.plan({
+  id: "pro",
+  price: { amount: 1_900, currency: "usd", interval: "month" },
+  trial: { days: 14, cardRequired: false, onEnd: "bill" },
+  grants: [Paykit.planItem(messages, { included: 2_000 })],
+});
+```
+
+`onEnd` decides what happens when the trial ends. `bill` starts the paid period,
+and `revert` returns the account to the plan it held before. A trial is offered
+once per account.
+
+## Variants, add-ons and groups
+
+A plan can be a named alternative of another. The catalog resolves the variant
+into a full plan, so the runtime never sees a partial one:
+
+```ts
+export const proAnnual = Paykit.plan({
+  id: "pro_annual",
+  variantOf: "pro",
+  customize: {
+    price: { amount: 19_000, currency: "usd", interval: "annual" },
+  },
+});
+```
+
+A plan's `group` is the set of plans a move replaces within. A plan with
+`addOn: true` stacks beside the group's plan instead of replacing it. A plan with
+`isDefault: true` is what an account gets when it has none, and a cancellation
+re-grants its terms.
+
+A plan that sets `custom: true` lets a customer hold bespoke allowances under it.
+A plan that sets `version: 2` states a new generation of its terms. A deploy
+never reprices history: moving the account onto the new terms is an ordinary
+move, and there is no automatic migration.
+
+## One-off packs
+
+A plan with `kind: "one_off"` sells credits once and never starts a period. It
+grants no allowance.
+
+```ts
+export const credits100k = Paykit.plan({
+  id: "credits_100k",
+  kind: "one_off",
+  price: { amount: 4_900, currency: "usd", interval: "month" },
+  credits: 100_000,
+  grants: [],
+});
+```
+
+A one-off pack cannot state a top-up line or a grant. A subscription's credits
+expire at the period close by default. Set `creditsExpire: "never"` for a
+lifetime grant.
+
+See [Credits](/concepts/credits).
+
+## What the deploy checks
+
+The catalog rejects a contradiction before it provisions anything:
+
+- a `cap`, `unitPrice` or `moneyCap` without `overage: "bill"`
+- `carryCap` without `carryOver`, or a rollover on an allowance that never
+  resets
+- `resetEvery` on `resets: "never"`
+- a variant of an unknown plan, or a cycle of variants
+- a grant on a one-off pack, or a one-off pack with no price
+- `isDefault` on an add-on
+- a plan whose grants are empty
+
+Each is a typed error that names the plan and the field, so the failure arrives
+at deploy with a line to fix.

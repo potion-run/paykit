@@ -1,0 +1,67 @@
+---
+title: Providers
+description: The Payments port, the capabilities a provider declares, and what the deploy validates.
+sidebar:
+  label: How providers work
+---
+
+A **provider** is the part of the system that moves money. It implements the
+`Payments` port: it opens a purchase path, takes the payment, and answers a
+refund. Paykit records the result and decides no entitlement from it.
+
+```ts title="src/billing.config.ts"
+import { Paykit } from "@potion.run/paykit";
+
+export const Provider = Paykit.Manual();
+```
+
+`providers` is an array on the billing stack. The stack validates each mapping
+against the catalog at deploy, so a plan with no path to pay fails there rather
+than at a customer's checkout.
+
+## The required surface and the declared capabilities
+
+Every provider can sell and refund. The rest is optional, and a provider
+declares what it supports: `checkout`, `invoice`, `charge`, `refund`, `portal`,
+`usage`, `setup` and `quantity`.
+
+Asking a provider for a capability it does not declare fails with
+`ProviderCapabilityMissing`. It never silently does nothing.
+
+That is why `Manual` can serve a test and a real invoice. It declares `invoice`
+and `refund`, so asking it for a hosted checkout is a typed refusal rather than
+a page that cannot take a card.
+
+## What each provider package owns
+
+| Package | Deploy | Runtime |
+| --- | --- | --- |
+| `@potion.run/paykit` | `Manual`, `Memory`, the port | The `Payments` service a world provides |
+| `@potion.run/paykit-stripe` | `StripeBilling`: products, prices, meters | `Stripe`: checkout, portal, refunds, webhooks |
+| `@potion.run/paykit-polar` | `PolarBilling`: products, meters | `Polar`: checkout, customer session, webhooks |
+
+The deploy half creates the vendor objects the catalog states and returns their
+ids or lookup keys. The runtime half reads those ids from the Worker's
+environment, so the catalog carries no vendor id and the vendor mapping is
+stated once.
+
+## What the deploy checks
+
+`Paykit.BillingStack` runs `validateProviderMappings` before it records
+anything:
+
+- every plan with a price has a provider mapping, or `NoPurchasePath` fails
+- two providers cannot claim the same plan, which is `ProviderDuplicate`
+- the provider's price must match the catalog's, which is `CatalogPriceMismatch`
+
+## Pick one
+
+- [Manual](/providers/manual) sells by invoice. It needs no key, which makes it
+  the provider for tests and a first deploy.
+- [Stripe](/providers/stripe) hosts checkout and the billing portal, calculates
+  tax and retries failed payments.
+- [Polar](/providers/polar) sells the same catalog as merchant of record, so it
+  calculates and collects tax for you.
+
+The same catalog runs on all three. Moving from `Manual` to `Stripe` changes the
+provider array and the environment, not the catalog.

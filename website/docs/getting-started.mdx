@@ -1,0 +1,205 @@
+---
+sidebar:
+  order: 2
+title: Getting started
+description: Install Paykit, declare two plans, deploy them, subscribe an account, and record usage.
+---
+
+This walkthrough builds two plans, a subscription and the check and track loop on
+the in-memory store. It needs no database and no provider key, and it ends with a
+Worker that answers a check from local state.
+
+## Prerequisites
+
+- [Node.js](https://nodejs.org) 24.11.1+ or [Bun](https://bun.sh)
+- An Alchemy project. [Getting started with Alchemy](https://alchemy.run/getting-started)
+  creates one.
+
+## Install
+
+```package-install
+npm i @potion.run/paykit alchemy effect
+```
+
+## Declare your pricing
+
+A feature is what a plan meters. A plan grants an allowance of it, and a price
+makes the plan sellable. This file is the whole declaration:
+
+```ts title="src/catalog.ts"
+import { Paykit } from "@potion.run/paykit";
+
+export const messages = Paykit.feature({ id: "messages", name: "Messages" });
+
+export const free = Paykit.plan({
+  id: "free",
+  name: "Free",
+  grants: [Paykit.planItem(messages, { included: 100 })],
+});
+
+export const pro = Paykit.plan({
+  id: "pro",
+  name: "Pro",
+  price: { amount: 1900, currency: "usd", interval: "month" },
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
+});
+
+export const catalog = { features: [messages], tiers: [free, pro] };
+```
+
+Money is in minor units: `1900` is $19.00. See
+[Plans and prices](/concepts/plans) for resets, rollover, caps and variants.
+
+## Declare the billing stack
+
+One object names the catalog, the providers and the store. The deploy, the
+Worker and the tests all read it:
+
+```ts title="src/billing.config.ts"
+import { Paykit, type BillingStackProps } from "@potion.run/paykit";
+import { catalog } from "./catalog.ts";
+
+export const Provider = Paykit.Manual();
+
+export const billing = {
+  catalog,
+  providers: [Provider],
+  store: Paykit.MemoryStore(),
+} satisfies BillingStackProps;
+```
+
+`Manual` sells through an invoice, so the walkthrough needs no provider key.
+`MemoryStore` keeps the balances in the process, which suits a quickstart and
+does not survive a restart. [Database](/hosting/database) swaps in D1, Postgres
+or MySQL.
+
+## Deploy it
+
+`Paykit.BillingStack` validates the catalog and records it in stack state:
+
+```ts title="alchemy.run.ts"
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import { Paykit } from "@potion.run/paykit";
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { billing } from "./src/billing.config.ts";
+import Api from "./src/worker.ts";
+
+export default Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Layer.mergeAll(Cloudflare.providers(), Paykit.providers()),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const recorded = yield* Paykit.BillingStack("Billing", billing);
+    const api = yield* Api;
+
+    return { url: api.url.as<string>(), tiers: recorded.tiers };
+  }),
+);
+```
+
+```sh
+alchemy deploy
+```
+
+Alchemy shows a plan for the `Billing` resource and the Worker, then applies it.
+A catalog with a plan that grants an undeclared feature stops the deploy here.
+
+## Serve the calls
+
+`Paykit.world` builds the runtime from the same declaration. Add the guards your
+deployment uses. The development guards read an actor from headers and are named
+to warn you:
+
+```ts title="src/billing.ts"
+import { InsecureDevGuards, Paykit } from "@potion.run/paykit";
+import { billing } from "./billing.config.ts";
+
+export const Billing = Paykit.world({ ...billing, guards: InsecureDevGuards });
+```
+
+`Paykit.handler` mounts the tenant API, the operator API, the checkout path and
+the webhook path. The Worker returns the handler's own fetch:
+
+```ts title="src/worker.ts"
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import { Paykit } from "@potion.run/paykit";
+import * as Effect from "effect/Effect";
+import { billing, Provider } from "./billing.config.ts";
+import { Billing } from "./billing.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const handler = yield* Paykit.handler({
+      provider: Provider,
+      accountOf: (request) => Paykit.accountFromHeaders(request.headers),
+      surfaces: "tenant",
+    });
+
+    return { fetch: handler.fetch };
+  }).pipe(Effect.provide(Billing), Effect.orDie),
+) {}
+```
+
+## Subscribe an account
+
+An account with no subscription is refused with an empty balance. Subscribe it to
+the free plan. A free plan activates immediately and answers `{ activated: true }`:
+
+```ts
+const subscribe = yield* Paykit.Subscribe(account);
+const result = yield* subscribe({ tier: "free" });
+
+result; // { activated: true }
+```
+
+A priced plan returns a checkout URL or an invoice id instead, and activates when
+the provider confirms the payment. [Build a billing page](/billing-page) shows the
+whole purchase path.
+
+## Check, then track
+
+With the subscription active, the same check answers from the free plan's
+allowance:
+
+```ts
+const check = yield* Paykit.Check(account);
+const { allowed, balance } = yield* check({ featureId: "messages" });
+
+allowed; // true
+balance.remaining; // 100
+```
+
+Record what the work consumed. The key makes a retry the same fact, not a second
+charge:
+
+```ts
+const track = yield* Paykit.TrackUsage(account);
+const after = yield* track({
+  featureId: "messages",
+  value: 1,
+  idempotencyKey: requestId,
+});
+
+after.balance.remaining; // 99
+```
+
+That is the loop: declare, deploy, subscribe, check, track. The same calls run on
+D1 or Postgres, and the same catalog sells through Stripe or Polar.
+
+## Where next
+
+- [What is Paykit?](/what-is-paykit) explains the model behind this walkthrough.
+- [Build a billing page](/billing-page) adds the plan list, usage meter and
+  upgrade quote.
+- [Track usage](/runtime/track-usage) covers dimensions, refusals and retries.
+- [Check](/runtime/check) covers locking and the full reply.
+- [Stripe](/providers/stripe) and [Polar](/providers/polar) sell the same catalog
+  through a vendor.
+- [The memory example](https://github.com/potion-run/paykit/tree/main/examples/memory)
+  is this walkthrough as a runnable repo.
