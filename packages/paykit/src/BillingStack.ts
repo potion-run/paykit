@@ -95,8 +95,12 @@ const storeKindOf = (store: Store): BillingStore => {
  *
  * It validates the catalog, refuses a provider price that disagrees with it,
  * refuses two providers that share a name, and refuses a priced tier nothing
- * can sell. Then it records the result in `Paykit.BillingStack` state — the
- * event log is application data, so the resource is retained on destroy.
+ * can sell. Then it records the result in `Paykit.BillingStack` state.
+ *
+ * The resource defaults to `retain`: destroying it drops the recorded state
+ * without calling the provider's (no-op) delete. The event log lives in the
+ * store, not in this resource, so teardown never cancels a subscription,
+ * refunds a charge or deletes a customer.
  *
  * The props take `MoneyProvider` values because that is what a deployment has.
  * The resource records `ProviderDescriptor`s because state is JSON: a

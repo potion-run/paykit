@@ -5,7 +5,11 @@ import * as Exit from "effect/Exit";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { allowance } from "../src/Allowance.ts";
-import { BillingStack, BillingStackAttrs } from "../src/BillingStack.resource.ts";
+import {
+  BILLING_STACK_VERSION,
+  BillingStack,
+  BillingStackAttrs,
+} from "../src/BillingStack.resource.ts";
 import { catalog } from "../src/Catalog.ts";
 import { feature, messages } from "../src/Feature.ts";
 import { PaymentsManual } from "../src/PaymentsManual.ts";
@@ -768,6 +772,7 @@ describe("Stack", () => {
     expect(BillingStack.Aliases).toBe(undefined);
 
     const attrs = Schema.encodeSync(BillingStackAttrs)({
+      version: BILLING_STACK_VERSION,
       catalog: proCatalog,
       tiers: ["pro"],
       providers: [{ name: "memory", kind: "memory", webhook: false, capabilities: ["checkout"] }],

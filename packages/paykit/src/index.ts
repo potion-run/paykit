@@ -210,13 +210,12 @@ export {
   BillingStackAttrs,
   BillingStackProvider,
   BillingStackRecord,
-  BillingStackStateTooNew,
+  BillingStackVersionTooNew,
   diffBillingStack,
   BillingStore,
   providers,
   readBillingStack,
   reconcileBillingStack,
-  billingStackVersionOf,
 } from "./BillingStack.resource.ts";
 
 // The resource's shape, so a stack's inferred output is nameable from here. A
