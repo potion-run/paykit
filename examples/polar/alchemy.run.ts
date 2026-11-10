@@ -4,7 +4,6 @@ import { PolarBilling, polarProviders } from "@potion.run/paykit-polar";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Redacted from "effect/Redacted";
 import { billingCatalog, polarTiers } from "./src/catalog.ts";
 
 /**
@@ -15,18 +14,14 @@ import { billingCatalog, polarTiers } from "./src/catalog.ts";
  * `billing` through its environment; nothing in `src/PolarWorker.ts` names a
  * vendor id, and no one sets `POLAR_WEBHOOK_SECRET` by hand.
  *
- * The token reaches both the resource providers and the runtime. The stack is
+ * The deploy's token is resolved by the Alchemy AuthProvider: `POLAR_API_KEY`
+ * from the environment, otherwise the selected `ALCHEMY_PROFILE`. The stack is
  * always pinned to Polar's sandbox, so a production token cannot create
- * production objects from this example.
- *
- * `process.env` at module scope is the one place the Effect rule does not
- * reach: the provider layer is built before the stack's `ConfigProvider`
- * exists, exactly as the live Polar suite reads its token.
+ * production objects from this example. The Worker still receives the token in
+ * its own environment, because a Worker has no profile store.
  */
-const accessToken = Redacted.make(process.env.POLAR_ACCESS_TOKEN ?? "");
-
 const providers = Layer.mergeAll(Cloudflare.providers(), Paykit.providers()).pipe(
-  Layer.provideMerge(polarProviders({ accessToken, server: "sandbox" })),
+  Layer.provideMerge(polarProviders({ server: "sandbox" })),
 );
 
 const PolarExample = Alchemy.Stack(
@@ -37,7 +32,6 @@ const PolarExample = Alchemy.Stack(
   },
   Effect.gen(function* () {
     const billing = yield* PolarBilling("PolarBilling", {
-      accessToken: Redacted.value(accessToken),
       server: "sandbox",
       origin: "https://app.example.com",
       tiers: polarTiers,
@@ -51,7 +45,7 @@ const PolarExample = Alchemy.Stack(
     const worker = yield* Cloudflare.Worker("PolarWorker", {
       main: "./src/PolarWorker.ts",
       env: {
-        POLAR_ACCESS_TOKEN: accessToken,
+        POLAR_API_KEY: billing.accessToken,
         // Minted by the endpoint `PolarBilling` created; the Worker verifies
         // deliveries with this, so the deploy never reads it from the shell.
         POLAR_WEBHOOK_SECRET: billing.webhookEndpoint.secret,

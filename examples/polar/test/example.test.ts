@@ -9,7 +9,7 @@ const account = "acct_polar_example";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
 
 const env: PolarEnv = {
-  POLAR_ACCESS_TOKEN: "polar_test",
+  POLAR_API_KEY: "polar_test",
   POLAR_WEBHOOK_SECRET: secret,
   POLAR_PRODUCT_PRO: "prod_example",
   POLAR_MESSAGES_METER: "paykit_test_messages",

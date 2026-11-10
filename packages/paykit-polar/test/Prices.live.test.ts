@@ -18,12 +18,12 @@ import { polarProviders } from "../src/Providers.ts";
  * the sandbox verified out of band through distilled.
  *
  * It needs a real Polar sandbox token, so it is gated: without
- * `POLAR_ACCESS_TOKEN` the case is skipped, and CI stays green with no vendor
+ * `POLAR_API_KEY` the case is skipped, and CI stays green with no vendor
  * account. The token is always sent to the sandbox, never production. Run it
  * with a sandbox token:
  *
  * ```sh
- * POLAR_ACCESS_TOKEN=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
+ * POLAR_API_KEY=polar_sandbox_… pnpm --filter @potion.run/paykit-polar test
  * ```
  *
  * `process.env` at module scope is the one place the Effect rule does not
@@ -39,14 +39,11 @@ import { polarProviders } from "../src/Providers.ts";
  * orphans what it created for the same reason: the stack name changes, the
  * vendor name does not.
  */
-const accessToken = process.env.POLAR_ACCESS_TOKEN;
+const accessToken = process.env.POLAR_API_KEY;
 const hasToken = accessToken !== undefined && accessToken !== "";
 
 const { test } = Test.make({
-  providers: polarProviders({
-    accessToken: Redacted.make(accessToken ?? ""),
-    server: "sandbox",
-  }),
+  providers: polarProviders({ server: "sandbox" }),
 });
 
 /** Out-of-band reads, provided the way the vendor package provides them. */
@@ -281,7 +278,6 @@ test.provider.skipIf(!hasToken)(
 
       const billing = yield* stack.deploy(
         PolarBilling("BillingJoined", {
-          accessToken: accessToken ?? "",
           server: "sandbox",
           origin: "https://app.example.com",
           tiers: { joined: proPrice },

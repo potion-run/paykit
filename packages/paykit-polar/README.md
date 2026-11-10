@@ -14,8 +14,9 @@ import { PolarBilling } from "@potion.run/paykit-polar";
 import * as Redacted from "effect/Redacted";
 
 // The deploy: create the products, meters and prices the catalog states.
+// `polarProviders({ server })` resolves POLAR_API_KEY or the selected profile
+// and supplies the Credentials layer this call uses; no token is written here.
 const polar = yield* PolarBilling("Polar", {
-  accessToken: Redacted.make(process.env.POLAR_ACCESS_TOKEN ?? ""),
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: {
@@ -24,7 +25,6 @@ const polar = yield* PolarBilling("Polar", {
       usage: { messages: { amount: 2, currency: "usd" } },
     },
   },
-  webhookSecret: Redacted.make(process.env.POLAR_WEBHOOK_SECRET ?? ""),
 });
 
 yield* Paykit.BillingStack("Billing", {
@@ -34,7 +34,7 @@ yield* Paykit.BillingStack("Billing", {
 
 // The runtime: build the provider from the outputs the Worker received.
 const runtime = Polar({
-  accessToken: env.POLAR_ACCESS_TOKEN,
+  accessToken: env.POLAR_API_KEY,
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: { pro: { price: proPrice, productId: env.POLAR_PRODUCT_PRO } },
@@ -42,6 +42,10 @@ const runtime = Polar({
   webhookSecret: Redacted.make(env.POLAR_WEBHOOK_SECRET),
 });
 ```
+
+`polar.accessToken` is the token the deploy resolved; `polar.webhookEndpoint.secret`
+is the endpoint's secret and `polar.sold` the ids. Bind all three into the
+Worker's environment.
 
 [`examples/polar`](../../examples/polar) is the whole loop: the deploy, the
 Worker's `GET /checkout?tier=pro`, `POST /webhooks/polar`, and a test with a fake

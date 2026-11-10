@@ -38,7 +38,7 @@ const sold = yield* PolarPrices("Prices", {
 });
 
 const polar = Polar({
-  accessToken: Config.redacted("POLAR_ACCESS_TOKEN"),
+  accessToken: env.POLAR_API_KEY,
   server: "production",           // or "sandbox"
   origin: "https://app.example.com",
   tiers: {
@@ -54,10 +54,12 @@ const polar = Polar({
 
 | Export | What it is |
 | --- | --- |
-| `PolarBilling(id, props)` | provisioning and the provider in one call; returns the `MoneyProvider` plus the products it created |
+| `PolarBilling(id, props)` | provisioning and the provider in one call; returns the `MoneyProvider`, the products it created and the resolved `accessToken` |
 | `Polar(props)` | the whole thing: a `Provider<"merchant_of_record">` for `Paykit.BillingStack` |
 | `PolarTier` | where a tier lives in Polar, and the price the catalog states |
-| `PolarProps` | token, server, origin and the tier mapping |
+| `PolarProps` | server, origin and the tier mapping; a Worker passes the token |
+| `PolarAuth` | the Alchemy `AuthProvider`: `POLAR_API_KEY`, or the selected profile |
+| `fromAuthProvider()` | the deploy's `Credentials` layer (`PolarCredentials` is not a second name) |
 | `PolarClient` | the Polar calls, as an interface a test stands in for |
 | `PolarClient.createSetupSession` | the customer session where a customer adds a method, without a purchase |
 | `distilledPolarClient` | `@distilled.cloud/polar` behind those three calls |
@@ -70,18 +72,22 @@ const polar = Polar({
 | `productNamePrefixOf(stage)` | `paykit:<stage>:`, the prefix a stage's sweep is scoped to |
 | `Product` | the `Polar.Product` resource a stack reconciles |
 | `Meter` | the `Polar.Meter` resource a metered price counts through |
-| `polarProviders({ accessToken, server })` | the provider layer a stack mounts so `PolarPrices` can run |
+| `polarProviders({ server })` | the provider layer a stack mounts so `PolarPrices` can run |
 | `polarWebhook(props)` | verifies and translates a Polar webhook into paykit's `WebhookEvent` |
 | `PolarProps.webhookSecret` | given it, the provider carries `webhook.decode` itself |
 | `PolarWebhookError` | a delivery did not come from Polar, or did not come recently |
 
-`Polar()` builds the distilled client from `accessToken` + `server` when no
-`client` is given, so a deployment wires nothing: `server: "sandbox"` points at
-sandbox, and a production token cannot be sent to it by accident.
+`Polar()` builds the distilled client from `accessToken` when one is given,
+otherwise from the Alchemy AuthProvider (`POLAR_API_KEY`, or the profile
+`ALCHEMY_PROFILE` selects). A Worker passes the token from its environment;
+the deploy omits it and lets the provider resolve it. `server: "sandbox"`
+points at sandbox, and a production token cannot be sent to it by accident.
 
-`PolarBilling(id, { accessToken, origin, tiers })` is the common deployment: it
+`PolarBilling(id, { origin, tiers })` is the common deployment: it
 yields `PolarPrices` and `Polar`, with the tier map stated once as catalog prices.
-A Polar product id is an `Output<string>` because Polar mints it, so the provider
+When `accessToken` is omitted, it resolves the token from the `Credentials`
+layer `polarProviders()` supplies, and returns it as `accessToken` for the
+Worker's environment. A Polar product id is an `Output<string>` because Polar mints it, so the provider
 keeps the handle and resolves it when a checkout or a webhook needs the id.
 `PolarPrices` and `Polar` stay for a deployment that provisions and configures
 separately, and `Polar({ tiers })` with written product ids stays the runtime
@@ -100,7 +106,7 @@ decodes the payload and answers the `WebhookEvent` `handleWebhook` already knows
 
 `PolarPrices` yields one `Polar.Product` per priced tier and one `Polar.Meter` per billable feature,
 then returns `SoldPrices`: the product id per tier and the meter event name per feature. Mount
-`polarProviders({ accessToken, server })` beside the other providers so the stack can reconcile
+`polarProviders({ server })` beside the other providers so the stack can reconcile
 them. Each product id is an Alchemy `Output<string>`: `PolarBilling` keeps it as a deferred handle,
 and a deployment that provisions separately hands it to the Worker's environment and builds
 `Polar({ tiers })` there with the resolved id, plus `meters` for the close. A product carries its

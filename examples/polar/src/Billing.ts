@@ -10,7 +10,7 @@ import { billingCatalog, messagePrice, proPrice } from "./catalog.ts";
  * that deploy's outputs too.
  */
 export interface PolarEnv {
-  readonly POLAR_ACCESS_TOKEN: string;
+  readonly POLAR_API_KEY: string;
   readonly POLAR_WEBHOOK_SECRET: string;
   readonly POLAR_PRODUCT_PRO: string;
   readonly POLAR_MESSAGES_METER: string;
@@ -29,7 +29,7 @@ export const providerOf = (
   client?: PolarClient,
 ): MoneyProvider<"merchant_of_record"> =>
   Polar({
-    accessToken: env.POLAR_ACCESS_TOKEN,
+    accessToken: env.POLAR_API_KEY,
     server: "sandbox",
     origin: "https://app.example.com",
     tiers: {

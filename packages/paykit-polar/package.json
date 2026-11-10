@@ -16,7 +16,8 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./Contributions": "./src/Contributions.ts"
   },
   "publishConfig": {
     "exports": {
@@ -26,7 +27,12 @@
         "worker": "./src/index.ts",
         "default": "./lib/index.js"
       },
-      "./package.json": "./package.json"
+      "./package.json": "./package.json",
+      "./Contributions": {
+        "types": "./lib/Contributions.d.ts",
+        "bun": "./src/Contributions.ts",
+        "default": "./lib/Contributions.js"
+      }
     },
     "access": "public"
   },
@@ -55,5 +61,10 @@
     "@potion.run/paykit": "workspace:*",
     "alchemy": "catalog:",
     "effect": "catalog:"
+  },
+  "alchemy": {
+    "contributes": [
+      "@potion.run/paykit-polar/Contributions"
+    ]
   }
 }

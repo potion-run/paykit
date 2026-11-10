@@ -514,7 +514,7 @@ case should not report green having done nothing.
 ```sh
 # The same thing locally, against the same kind of account.
 STRIPE_API_KEY=sk_test_… pnpm --filter @potion.run/paykit-stripe test
-POLAR_ACCESS_TOKEN=… pnpm --filter @potion.run/paykit-polar test
+POLAR_API_KEY=… pnpm --filter @potion.run/paykit-polar test
 ```
 
 Expect them to create and retire prices/products in those test accounts; both start with

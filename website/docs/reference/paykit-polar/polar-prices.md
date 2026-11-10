@@ -39,7 +39,7 @@ const sold = yield* PolarPrices("Prices", {
 });
 
 const polar = Polar({
-  accessToken: yield* Config.redacted("POLAR_ACCESS_TOKEN"),
+  accessToken: env.POLAR_API_KEY,
   origin: "https://app.example.com",
   tiers: {
     pro: {

@@ -12,11 +12,14 @@ Polar for paykit: a merchant of record in one call.
 | Import | Source |
 | --- | --- |
 | `@potion.run/paykit-polar` | [`src/index.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/index.ts) |
+| `@potion.run/paykit-polar/Contributions` | [`src/Contributions.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Contributions.ts) |
 
 ## Modules
 
+- [fromAuthProvider](/reference/paykit-polar/from-auth-provider): Build a Polar Credentials layer that resolves credentials via the Alchemy AuthProvider using the configured profile (defaults to default, overridable with the ALCHEMY_PROFILE env/config value).
 - [Meter](/reference/paykit-polar/meter): A Polar meter that sums one feature's billable units.
 - [Polar](/reference/paykit-polar/polar): Polar as a merchant of record, ready for Paykit.BillingStack.
+- [PolarAuth](/reference/paykit-polar/polar-auth): Layer that registers the Polar {@link AuthProvider} into the {@link AuthProviders} registry.
 - [PolarBilling](/reference/paykit-polar/polar-billing): Polar provisioning and the Polar provider in one call.
 - [PolarPrices](/reference/paykit-polar/polar-prices): The Polar products a tier is sold through, reconciled from the catalog.
 - [polarProviders](/reference/paykit-polar/polar-providers): Register the Polar provider a stack needs to reconcile PolarPrices.
