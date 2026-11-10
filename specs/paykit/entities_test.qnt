@@ -142,6 +142,97 @@ module entities_test {
       .expect(spendOnlyFromOwnOrPooled)
       .expect(entitiesInvariant)
 
+  // A split draw is one charge: own units and pooled units both leave one
+  // request, and the whole request is what the ceiling judges.
+  run splitDrawFitsOneCeilingTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachPlan(EntityA, false))
+      .then(attachPlan(Parent, true))
+      .then(setCap(12))
+      .then(spend(EntityA, 5))
+      .expect(state.billed == 10)
+      .expect(state.spentPlan.get(EntityA) == 4)
+      .expect(state.poolDrawn.get(EntityA) == 1)
+      .expect(state.pooled == 5)
+      .expect(billedNeverExceedsCap)
+      .expect(entitiesInvariant)
+
+  // Each part of a split draw would fit the ceiling alone, but the combined
+  // charge does not, so the request is disabled.
+  run splitDrawPastOneCeilingIsRefusedTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachPlan(EntityA, false))
+      .then(attachPlan(Parent, true))
+      .then(setCap(8))
+      .then(spend(EntityA, 5).fail())
+
+  // Billed money is one total across scopes, so a second scope is judged
+  // against what the first one billed.
+  run billedAccumulatesAcrossScopesTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachEntity(EntityB))
+      .then(attachPlan(EntityA, false))
+      .then(attachPlan(EntityB, false))
+      .then(setCap(10))
+      .then(spend(EntityA, 2))
+      .expect(state.billed == 4)
+      .then(spend(EntityB, 2))
+      .expect(state.billed == 8)
+      .expect(billedNeverExceedsCap)
+      .then(spend(EntityB, 2).fail())
+
+  // A close resets the period's bill, not the customer's ceiling.
+  run closeResetsBilledNotCapTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachPlan(EntityA, false))
+      .then(attachPlan(Parent, true))
+      .then(setCap(8))
+      .then(spend(EntityA, 3))
+      .expect(state.billed == 6)
+      .then(5.reps(_ => tick))
+      .then(closePeriod)
+      .expect(state.billed == 0)
+      .expect(state.hasCap)
+      .expect(state.cap == 8)
+      .expect(billedNeverExceedsCap)
+      .expect(entitiesInvariant)
+      .then(spend(EntityA, 5).fail())
+
+  // A ceiling lowered under money already billed stops new spend and leaves
+  // the bill alone.
+  run loweredCapStopsNewSpendWithoutUnbillingTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachPlan(EntityA, false))
+      .then(attachPlan(Parent, true))
+      .then(setCap(10))
+      .then(spend(EntityA, 3))
+      .expect(state.billed == 6)
+      .then(setCap(4))
+      .expect(state.cap == 4)
+      .expect(state.capLoweredBelowBill)
+      .expect(state.billed == 6)
+      .expect(billedNeverExceedsCap)
+      .expect(entitiesInvariant)
+      .then(spend(EntityA, 1).fail())
+
+  // Clearing the ceiling lets the next spend through.
+  run clearCapAllowsSpendTest =
+    init
+      .then(attachEntity(EntityA))
+      .then(attachPlan(EntityA, false))
+      .then(setCap(0))
+      .then(clearCap)
+      .then(spend(EntityA, 1))
+      .expect(state.billed == 2)
+      .expect(not(state.hasCap))
+      .expect(billedNeverExceedsCap)
+      .expect(entitiesInvariant)
+
   // A close before the boundary is disabled.
   run closeBeforeBoundaryFailsTest =
     init

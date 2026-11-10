@@ -297,6 +297,7 @@ so a plan-class transfer has the same deadline on both ends; per-scope reset int
 | `attachPlan` | `Subscribe` / the entity branch of attach | `PlanChanged` |
 | `grant` | `GrantBalance` | `BalanceGranted` |
 | `spend` | `TrackUsage` | `UsageRecorded` |
+| `setCap`, `clearCap` | `SetBillingControls` | `BillingControlsSet` |
 | `transfer` | `TransferBalance` | `BalanceTransferred` |
 | `closePeriod` | `ClosePeriod` | `UsageReset` / `PlanItemReset` |
 | `tick` | the platform clock | — |
@@ -312,6 +313,7 @@ so a plan-class transfer has the same deadline on both ends; per-scope reset int
 | `archivedEntityHoldsNothing` | an archived entity has no plan, no grant and no pooled row | 0040 |
 | `spendOnlyFromOwnOrPooled` | a scope reaches the shared pool only after its own sources are empty; it has no third source | 0037, 0040 |
 | `noSpendAfterArchive` | nothing leaves an archived scope | 0040 |
+| `billedNeverExceedsCap` | a period's billed money never passes the feature's ceiling, unless the ceiling was lowered under money already billed | 0038, 0050 |
 
 A pooled source is one number owned by the parent. The model keeps a per-scope `poolView` beside it,
 which is the row `Balance.breakdown` shows an entity: the invariant is that every attached scope's
@@ -321,6 +323,13 @@ The model also keeps `pooledSpent`, so the pool's included amount is charged aga
 scope drew, not against the one that happens to be spending. A pooled draw is judged by the pool's
 terms from the child scope, and the code folds `UsageRecorded.poolDrawn` into
 `SubscribedState.poolSpent` (ADR 0050).
+
+The ceiling scenarios pin the whole-request money rule. `splitDrawFitsOneCeilingTest` and
+`splitDrawPastOneCeilingIsRefusedTest` judge one split draw once, not part by part;
+`billedAccumulatesAcrossScopesTest` keeps one billed total across scopes;
+`closeResetsBilledNotCapTest` resets the bill and leaves the cap; and
+`loweredCapStopsNewSpendWithoutUnbillingTest` refuses new spend without changing the bill.
+`clearCapAllowsSpendTest` is the opt-out that lets a spend through again.
 
 What the slice deliberately leaves out:
 
@@ -364,9 +373,9 @@ charge into a payout (ADR 0042).
 
 ## The mutants
 
-`pnpm spec:mutants` kills 77 mutants across the nine models: 17 for the spend path, 4 for the
+`pnpm spec:mutants` kills 78 mutants across the nine models: 17 for the spend path, 4 for the
 standing, 6 for the windows, 5 for the plan operations, 13 for the plan set and its schedules, 7 for
-the balance ledger, 9 for the entities, 10 for the money protocol and 6 for customer controls. Each
+the balance ledger, 10 for the entities, 10 for the money protocol and 6 for customer controls. Each
 mutant is a textual replacement and the gate fails when an invariant **survives** it. The new
 models' mutants are the same discipline as the original: an invariant with nothing behind it is a
 claim, not a check.

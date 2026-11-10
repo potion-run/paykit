@@ -153,7 +153,10 @@ const SPEC_COVERAGE = {
   },
   SetQuantity: { windows: ["setQuantity"], money: ["setQuantity"] },
   SetUsage: { windows: ["setUsage"] },
-  SetBillingControls: { controls: ["setControls", "clearControls"] },
+  SetBillingControls: {
+    controls: ["setControls", "clearControls"],
+    entities: ["setCap", "clearCap"],
+  },
   PurchaseCredits: {
     standing: ["buyTopUp"],
     windows: ["buyTopUp"],

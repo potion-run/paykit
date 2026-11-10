@@ -14,6 +14,7 @@
 //   attachPlan        ↔ Subscribe.command.ts, and the entity branch of attach
 //   grant             ↔ GrantBalance.command.ts
 //   spend             ↔ TrackUsage.command.ts
+//   setCap, clearCap  ↔ SetBillingControls.command.ts
 //   transfer          ↔ Transfer (planned, ADR 0040)
 //   closePeriod       ↔ ClosePeriod.command.ts
 //   tick              ↔ the platform clock
@@ -67,6 +68,16 @@ module entities {
     pooledExpired: int,
     poolView: Scope -> int,
     poolDrawn: Scope -> int,
+    // The customer's money ceiling for this feature. `hasCap` is separate
+    // because a ceiling of zero is a real control, not the absence of one.
+    hasCap: bool,
+    cap: int,
+    // What this period has billed. One request is one charge, so a split draw
+    // bills once.
+    billed: int,
+    // Whether `setCap` put the ceiling under money already billed. A ceiling
+    // stops new spend; it never unbills history.
+    capLoweredBelowBill: bool,
     // The last spend's order: whether it reached the pool, and what of its own
     // sources was left when it did.
     lastSpendUsedPool: bool,
@@ -99,6 +110,9 @@ module entities {
   pure val POOLED_GRANT: int = 6
   pure val GRANT_SIZE: int = 3
   pure val FOREIGN_BALANCE: int = 5
+  pure val PRICE: int = 2
+
+  pure def chargeOf(units: int): int = units * PRICE
 
   pure def owns(scope: Scope): bool = scope != Foreign
 
@@ -200,6 +214,7 @@ module entities {
       spentGrant: if (fromGrant > 0) s.spentGrant.set(scope, s.spentGrant.get(scope) + fromGrant) else s.spentGrant,
       poolDrawn: if (fromPool > 0) s.poolDrawn.set(scope, s.poolDrawn.get(scope) + fromPool) else s.poolDrawn,
       pooledSpent: s.pooledSpent + fromPool,
+      billed: s.billed + chargeOf(amount),
       lastSpendUsedPool: fromPool > 0,
       lastSpendOwnAfter: ownAfter,
       spends: s.spends + 1,
@@ -252,6 +267,8 @@ module entities {
       expired: expiredPlans,
       plan: resetPlans,
       planIssued: issuedPlans,
+      billed: 0,
+      capLoweredBelowBill: false,
       now: s.periodEnd,
       periodEnd: s.periodEnd + PERIOD_LENGTH,
       closes: s.closes + 1,
@@ -331,6 +348,12 @@ module entities {
       state.status.get(scope) != Archived
         or drawnOf(state, scope) == state.spentAtArchive.get(scope))
 
+  // The ceiling is a ceiling: a period's billed money never passes it, unless
+  // the customer lowered the ceiling under money already billed. A ceiling
+  // stops new spend; it never unbills history.
+  val billedNeverExceedsCap: bool =
+    not(state.hasCap) or state.billed <= state.cap or state.capLoweredBelowBill
+
   val entitiesInvariant: bool = and {
     scopedConservation,
     lifetimeConserved,
@@ -341,6 +364,7 @@ module entities {
     archivedEntityHoldsNothing,
     spendOnlyFromOwnOrPooled,
     noSpendAfterArchive,
+    billedNeverExceedsCap,
   }
 
   // ── actions ────────────────────────────────────────────────────────────────
@@ -372,11 +396,26 @@ module entities {
     state' = applyGrant(state, scope),
   }
 
+  action setCap(value: int): bool = all {
+    value >= 0,
+    state' = {
+      ...state,
+      hasCap: true,
+      cap: value,
+      capLoweredBelowBill: value < state.billed,
+    },
+  }
+
+  action clearCap: bool = all {
+    state' = { ...state, hasCap: false },
+  }
+
   action spend(scope: Scope, amount: int): bool = all {
     owns(scope),
     attached(state, scope),
     amount > 0,
     amount <= ownOf(state, scope) + state.pooled,
+    not(state.hasCap) or state.billed + chargeOf(amount) <= state.cap,
     state' = applySpend(state, scope, amount),
   }
 
@@ -409,11 +448,14 @@ module entities {
     nondet entity = ENTITIES.oneOf()
     nondet amount = 1.to(6).oneOf()
     nondet pooled = Set(false, true).oneOf()
+    nondet cap = 0.to(12).oneOf()
     any {
       attachEntity(entity),
       archiveEntity(entity),
       attachPlan(scope, pooled),
       grant(scope),
+      setCap(cap),
+      clearCap,
       spend(scope, amount),
       transfer(scope, other, amount),
       tick,
@@ -444,6 +486,10 @@ module entities {
       pooledExpired: 0,
       poolView: Map(Parent -> 0, EntityA -> 0, EntityB -> 0, Foreign -> 0),
       poolDrawn: Map(Parent -> 0, EntityA -> 0, EntityB -> 0, Foreign -> 0),
+      hasCap: false,
+      cap: 0,
+      billed: 0,
+      capLoweredBelowBill: false,
       lastSpendUsedPool: false,
       lastSpendOwnAfter: 0,
       spentAtArchive: Map(Parent -> 0, EntityA -> 0, EntityB -> 0, Foreign -> 0),
@@ -473,6 +519,14 @@ module entities {
     state.poolDrawn.get(EntityA) > 0 and state.poolDrawn.get(EntityB) > 0
 
   val ownSpent: bool = spentOf(state, EntityA) > 0
+
+  val billedSpend: bool = state.billed > 0
+
+  val splitDrawBilled: bool =
+    SCOPES.exists(scope => state.poolDrawn.get(scope) > 0 and spentOf(state, scope) > 0)
+      and state.billed > 0
+
+  val capLoweredBelowBillReached: bool = state.capLoweredBelowBill
 
   val transferred: bool = state.transferCount > 0
 

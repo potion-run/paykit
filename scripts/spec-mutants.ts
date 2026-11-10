@@ -650,6 +650,13 @@ const ENTITIES_MUTANTS: ReadonlyArray<Mutant> = [
     why: "a spend that draws the shared pool while the scope still holds its own units",
   },
   {
+    name: "spend-passes-the-ceiling",
+    invariant: "billedNeverExceedsCap",
+    from: "    not(state.hasCap) or state.billed + chargeOf(amount) <= state.cap,",
+    to: "    true,",
+    why: "a spend that bills the whole request past the customer's ceiling",
+  },
+  {
     name: "spend-after-archive",
     invariant: "noSpendAfterArchive",
     from:
