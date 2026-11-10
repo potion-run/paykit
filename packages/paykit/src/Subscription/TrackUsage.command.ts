@@ -65,12 +65,14 @@ export class SpendCapExceeded extends Domain.Rejection("SpendCapExceeded", {
 
 /**
  * The usage would bill more money than the allowance permits this period,
- * `billed + charge > moneyCap`. Like a quantity ceiling this is the account
+ * `billed + charge > moneyCap`. A request that draws both a scope's own source
+ * and the customer's pooled source is judged once, against the lowest ceiling
+ * among the sources it draws. Like a quantity ceiling this is the account
  * running out of what it bought, so `standing` stays `good`.
  */
 export class MoneyCapExceeded extends Domain.Rejection("MoneyCapExceeded", {
   feature: Schema.String,
-  /** The most this feature may bill in one period, in minor units. */
+  /** The lowest ceiling among the sources this request draws, in minor units. */
   cap: Schema.Int,
   /** What this feature has already billed this period. */
   billed: Schema.Int,

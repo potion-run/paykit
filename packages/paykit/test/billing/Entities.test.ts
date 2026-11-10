@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import { allowance } from "../../src/Allowance.ts";
 import { Actor, system } from "../../src/Auth/Actor.ts";
 import { balanceOfEntity } from "../../src/Balance.ts";
+import { evaluateCheck } from "../../src/Check.ts";
 import { EntityId } from "../../src/Customer.ts";
 import { feature, messages } from "../../src/Feature.ts";
 
@@ -15,6 +16,7 @@ import { ChangeTier } from "../../src/Subscription/ChangeTier.command.ts";
 import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { Entitlements, initialEntitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { GrantBalance } from "../../src/Subscription/GrantBalance.command.ts";
+import { SetBillingControls } from "../../src/Subscription/SetBillingControls.command.ts";
 import { SetUsage } from "../../src/Subscription/SetUsage.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import {
@@ -550,5 +552,261 @@ describe("a pooled item that bills", () => {
     // child scope, which is the only scope the turn runs in.
     expect(refused._tag).toBe("Rejected");
     expect(refused.rejection?._tag).toBe("SpendLimitExceeded");
+  });
+});
+
+describe("a split draw is one money total", () => {
+  type TrackedRefusal = {
+    readonly _tag: string;
+    readonly rejection?: {
+      readonly _tag: string;
+      readonly cap?: number;
+      readonly limit?: number;
+      readonly billed?: number;
+      readonly charge?: number;
+      readonly reserved?: number;
+    };
+  };
+
+  const splitScenario = (input: {
+    readonly ownMoneyCap: number;
+    readonly poolMoneyCap: number;
+    readonly ownGrant?: number;
+    readonly poolGrant?: number;
+    readonly spendLimit?: number;
+  }) => {
+    const traced = scenario();
+
+    traced.step(
+      new ChangeTier({
+        tier: "pool",
+        addOn: true,
+        allowances: {
+          messages: allowance(messages, {
+            included: 0,
+            overage: "bill",
+            cap: 100,
+            unitPrice: { amount: 2, currency: "usd" },
+            moneyCap: input.poolMoneyCap,
+            pooled: true,
+          }),
+        },
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+      }),
+    );
+
+    traced.step(new AttachEntity({ entityId: entA, name: "A" }));
+
+    traced.step(
+      new ChangeTier({
+        tier: "team",
+        allowances: {
+          messages: allowance(messages, {
+            included: 0,
+            overage: "bill",
+            cap: 100,
+            unitPrice: { amount: 2, currency: "usd" },
+            moneyCap: input.ownMoneyCap,
+          }),
+        },
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+        entity: entA,
+      }),
+    );
+
+    if ((input.poolGrant ?? 0) > 0) {
+      traced.step(new GrantBalance({ feature: "messages", granted: input.poolGrant ?? 0 }));
+    }
+
+    if ((input.ownGrant ?? 0) > 0) {
+      traced.step(
+        new GrantBalance({
+          feature: "messages",
+          granted: input.ownGrant ?? 0,
+          entity: entA,
+        }),
+      );
+    }
+
+    if (input.spendLimit !== undefined) {
+      traced.step(
+        new SetBillingControls({
+          billingControls: {
+            spendLimits: [{ featureId: "messages", amount: input.spendLimit }],
+          },
+          features: { messages: { priced: true } },
+        }),
+      );
+    }
+
+    return traced;
+  };
+
+  it("refuses a split draw whose combined charge crosses the effective cap", () => {
+    const traced = splitScenario({
+      ownMoneyCap: 6,
+      poolMoneyCap: 8,
+      ownGrant: 2,
+      poolGrant: 3,
+    });
+
+    const before = traced.state;
+    const recorded = traced.events.length;
+
+    const refused = traced.step(
+      new TrackUsage({ feature: "messages", amount: 5, entity: entA }),
+    ) as TrackedRefusal;
+
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("MoneyCapExceeded");
+    expect(refused.rejection?.cap).toBe(6);
+    expect(refused.rejection?.billed).toBe(0);
+    expect(refused.rejection?.charge).toBe(10);
+    expect(refused.rejection?.reserved).toBeUndefined();
+    expect(traced.state).toBe(before);
+    expect(traced.events).toHaveLength(recorded);
+  });
+
+  it("accepts a split draw at exactly the effective cap", () => {
+    const traced = splitScenario({
+      ownMoneyCap: 8,
+      poolMoneyCap: 10,
+      ownGrant: 2,
+      poolGrant: 2,
+    });
+
+    const result = traced.step(
+      new TrackUsage({ feature: "messages", amount: 4, entity: entA }),
+    ) as {
+      readonly _tag: string;
+      readonly events: ReadonlyArray<{
+        readonly _tag: string;
+        readonly charge?: number;
+        readonly billedAfter?: number;
+        readonly poolDrawn?: number;
+      }>;
+    };
+
+    expect(result._tag).toBe("Accepted");
+
+    const event = result.events.find((entry) => entry._tag === "UsageRecorded");
+
+    expect(event?.charge).toBe(8);
+    expect(event?.billedAfter).toBe(8);
+    expect(event?.poolDrawn).toBe(2);
+    expect(traced.state._tag === "Subscribed" && traced.state.billed?.messages).toBe(8);
+  });
+
+  it("refuses a split draw whose combined charge crosses the customer's spend limit", () => {
+    const traced = splitScenario({
+      ownMoneyCap: 100,
+      poolMoneyCap: 100,
+      ownGrant: 2,
+      poolGrant: 3,
+      spendLimit: 8,
+    });
+
+    const refused = traced.step(
+      new TrackUsage({ feature: "messages", amount: 5, entity: entA }),
+    ) as TrackedRefusal;
+
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("SpendLimitExceeded");
+    expect(refused.rejection?.limit).toBe(8);
+    expect(refused.rejection?.billed).toBe(0);
+    expect(refused.rejection?.charge).toBe(10);
+  });
+
+  it("judges an own-only draw by the own cap", () => {
+    const accepted = splitScenario({
+      ownMoneyCap: 6,
+      poolMoneyCap: 100,
+      ownGrant: 4,
+      poolGrant: 10,
+    });
+
+    const result = accepted.step(
+      new TrackUsage({ feature: "messages", amount: 3, entity: entA }),
+    ) as {
+      readonly _tag: string;
+      readonly events: ReadonlyArray<{ readonly _tag: string; readonly charge?: number }>;
+    };
+
+    expect(result._tag).toBe("Accepted");
+    expect(result.events.find((entry) => entry._tag === "UsageRecorded")?.charge).toBe(6);
+
+    const refused = splitScenario({
+      ownMoneyCap: 6,
+      poolMoneyCap: 100,
+      ownGrant: 4,
+      poolGrant: 10,
+    }).step(new TrackUsage({ feature: "messages", amount: 4, entity: entA })) as TrackedRefusal;
+
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("MoneyCapExceeded");
+    expect(refused.rejection?.cap).toBe(6);
+    expect(refused.rejection?.charge).toBe(8);
+  });
+
+  it("judges a pool-only draw by the pool cap", () => {
+    const accepted = splitScenario({
+      ownMoneyCap: 2,
+      poolMoneyCap: 8,
+      poolGrant: 10,
+    });
+
+    const result = accepted.step(
+      new TrackUsage({ feature: "messages", amount: 3, entity: entA }),
+    ) as {
+      readonly _tag: string;
+      readonly events: ReadonlyArray<{ readonly _tag: string; readonly charge?: number }>;
+    };
+
+    expect(result._tag).toBe("Accepted");
+    expect(result.events.find((entry) => entry._tag === "UsageRecorded")?.charge).toBe(6);
+
+    const refused = splitScenario({
+      ownMoneyCap: 2,
+      poolMoneyCap: 8,
+      poolGrant: 10,
+    }).step(new TrackUsage({ feature: "messages", amount: 5, entity: entA })) as TrackedRefusal;
+
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("MoneyCapExceeded");
+    expect(refused.rejection?.cap).toBe(8);
+    expect(refused.rejection?.charge).toBe(10);
+  });
+
+  it("carries the effective cap onto the entity's row and check", () => {
+    const traced = splitScenario({
+      ownMoneyCap: 6,
+      poolMoneyCap: 8,
+      ownGrant: 2,
+      poolGrant: 3,
+    });
+
+    const row = traced.view().entities?.ent_a?.features.messages;
+
+    expect(row?.moneyCap).toBe(6);
+    expect(row?.billed ?? 0).toBe(0);
+    expect(
+      evaluateCheck(traced.view(), {
+        account,
+        entityId: "ent_a",
+        featureId: "messages",
+        requiredBalance: 5,
+      }).allowed,
+    ).toBe(false);
+
+    const refused = traced.step(
+      new TrackUsage({ feature: "messages", amount: 5, entity: entA }),
+    ) as TrackedRefusal;
+
+    expect(refused._tag).toBe("Rejected");
+    expect(refused.rejection?._tag).toBe("MoneyCapExceeded");
   });
 });

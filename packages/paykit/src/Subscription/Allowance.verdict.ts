@@ -139,6 +139,28 @@ export type Capacity =
     };
 
 /**
+ * The money ceiling one request is judged by: the lowest ceiling among the
+ * sources it draws. A source it does not draw contributes no ceiling, so a
+ * request that draws one source uses that source's ceiling only.
+ */
+export const effectiveMoneyCapOf = (
+  sources: ReadonlyArray<{
+    readonly drawn: boolean;
+    readonly moneyCap?: number;
+  }>,
+): number | undefined => {
+  let effective: number | undefined;
+
+  for (const source of sources) {
+    if (!source.drawn || source.moneyCap === undefined) continue;
+
+    effective = effective === undefined ? source.moneyCap : Math.min(effective, source.moneyCap);
+  }
+
+  return effective;
+};
+
+/**
  * The money rule on its own: `billed + promised > moneyCap`. The promised total
  * judges this request and every open hold as one run past `used`, so the
  * included room is counted once rather than once per bucket.
@@ -200,6 +222,40 @@ export const spendLimitOverflowOf = (
   return feature.billed + promised > feature.spendLimit
     ? { limit: feature.spendLimit, billed: feature.billed, promised }
     : null;
+};
+
+/**
+ * A priced charge against the plan's money ceiling and the customer's spend
+ * limit. `capacityOf` applies it to one source; a split draw applies it once to
+ * the combined charge, so two parts cannot each pass the same ceiling.
+ */
+export const moneyCapacityOf = (input: {
+  readonly billed: number;
+  readonly charge: number;
+  readonly moneyCap?: number;
+  readonly spendLimit?: number;
+}): Capacity => {
+  const money =
+    input.moneyCap !== undefined && input.billed + input.charge > input.moneyCap
+      ? { cap: input.moneyCap, billed: input.billed, promised: input.charge }
+      : null;
+
+  const limit =
+    input.spendLimit !== undefined && input.billed + input.charge > input.spendLimit
+      ? { limit: input.spendLimit, billed: input.billed, promised: input.charge }
+      : null;
+
+  if (money !== null && limit !== null) {
+    return input.spendLimit !== undefined && input.spendLimit < (input.moneyCap ?? Infinity)
+      ? { _tag: "Limit", ...limit }
+      : { _tag: "Money", ...money };
+  }
+
+  if (limit !== null) return { _tag: "Limit", ...limit };
+
+  if (money !== null) return { _tag: "Money", ...money };
+
+  return { _tag: "Allowed" };
 };
 
 /**
@@ -281,18 +337,14 @@ export const capacityOf = (input: {
   // A customer's ceiling and the plan's are the same question — `billed +
   // promised` against money — so the binding ceiling names the refusal. A tie
   // names the plan's, which keeps a catalog-only case on its old tag (ADR 0038).
-  const money = moneyOverflowOf(feature, amount);
-  const limit = spendLimitOverflowOf(feature, amount);
+  const money = moneyCapacityOf({
+    billed: feature.billed,
+    charge: chargeOf(feature.pricing, feature.included, feature.used, amount + feature.reserved),
+    ...(feature.moneyCap === undefined ? {} : { moneyCap: feature.moneyCap }),
+    ...(feature.spendLimit === undefined ? {} : { spendLimit: feature.spendLimit }),
+  });
 
-  if (limit !== null && money !== null) {
-    return feature.spendLimit !== undefined && feature.spendLimit < (feature.moneyCap ?? Infinity)
-      ? { _tag: "Limit", ...limit }
-      : { _tag: "Money", ...money };
-  }
-
-  if (limit !== null) return { _tag: "Limit", ...limit };
-
-  if (money !== null) return { _tag: "Money", ...money };
+  if (money._tag !== "Allowed") return money;
 
   // A `null` remaining is an allowance that never runs out, and a flag is
   // granted rather than spent: neither has a count to run past.

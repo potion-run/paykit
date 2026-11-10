@@ -21,6 +21,8 @@ import { INITIAL_PLAN_VERSION } from "../Tier.ts";
 import {
   capacityOf,
   downgradeOf,
+  effectiveMoneyCapOf,
+  moneyCapacityOf,
   moneyOverflowOf,
   type Capacity,
   type JudgedFeature,
@@ -1795,12 +1797,12 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             ? null
             : ownRemaining + pool;
 
-      // A scope spends what it owns before the shared pool, so one request is
-      // two judgements: its own units against its own allowance, and the rest
-      // against the pooled item's terms. The pool's `used` is its own counter,
-      // not the scope's, because the pool's included amount is one window
-      // (ADR 0040 §3). A customer drawing a pooled item is the pool's half
-      // alone.
+      // A scope spends what it owns before the shared pool. Its own units and
+      // the rest are judged against their own source's unit terms; the money
+      // ceiling is judged once for the whole request when both sources are
+      // drawn. The pool's `used` is its own counter, not the scope's, because
+      // the pool's included amount is one window (ADR 0040 §3). A customer
+      // drawing a pooled item is the pool's half alone.
       const fromOwn =
         drawsPool && ownRemaining !== null
           ? Math.min(command.amount, Math.max(0, ownRemaining))
@@ -1808,19 +1810,32 @@ export class Subscription extends Domain.Aggregate("Subscription", {
 
       const fromPool = drawsPool ? command.amount - fromOwn : 0;
       const poolUsed = poolSpentOf(state, command.feature);
+      const split = drawsPool && fromOwn > 0 && fromPool > 0;
+
+      const ownFeature = judgedOf(scoped, command.feature, {
+        ...(customerOnPool
+          ? { used: poolUsed }
+          : drawsPool
+            ? { remaining: ownRemaining, billed: billedOf(state, command.feature) }
+            : shared === undefined
+              ? {}
+              : { remaining: shared }),
+        ...(command.entity === undefined ? {} : { carried: 0, reserved: 0 }),
+      });
+
+      const poolFeature =
+        drawsPool && fromPool > 0
+          ? judgedOf(state, command.feature, {
+              remaining: pool,
+              used: poolUsed,
+              carried: 0,
+              reserved: 0,
+            })
+          : null;
 
       const ownVerdict = capacityOf({
         standing: standingOf(state.status),
-        feature: judgedOf(scoped, command.feature, {
-          ...(customerOnPool
-            ? { used: poolUsed }
-            : drawsPool
-              ? { remaining: ownRemaining, billed: billedOf(state, command.feature) }
-              : shared === undefined
-                ? {}
-                : { remaining: shared }),
-          ...(command.entity === undefined ? {} : { carried: 0, reserved: 0 }),
-        }),
+        feature: split ? { ...ownFeature, moneyCap: undefined, spendLimit: undefined } : ownFeature,
         ask: {
           amount: fromOwn,
           ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
@@ -1829,22 +1844,19 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       });
 
       const poolVerdict =
-        drawsPool && fromPool > 0
-          ? capacityOf({
+        poolFeature === null
+          ? null
+          : capacityOf({
               standing: standingOf(state.status),
-              feature: judgedOf(state, command.feature, {
-                remaining: pool,
-                used: poolUsed,
-                carried: 0,
-                reserved: 0,
-              }),
+              feature: split
+                ? { ...poolFeature, moneyCap: undefined, spendLimit: undefined }
+                : poolFeature,
               ask: {
                 amount: fromPool,
                 ...(command.dimension === undefined ? {} : { dimension: command.dimension }),
                 ...(command.properties === undefined ? {} : { properties: command.properties }),
               },
-            })
-          : null;
+            });
 
       if (ownVerdict._tag === "Standing") {
         return new StandingBlocksUsage({ standing: ownVerdict.standing, status: state.status });
@@ -1868,6 +1880,63 @@ export class Subscription extends Domain.Aggregate("Subscription", {
         poolVerdict === null ? null : usageRefusalOf(poolVerdict, state, command.feature, fromPool);
 
       if (poolRefusal !== null) return poolRefusal;
+
+      if (split) {
+        const ownCharge = chargeOf(
+          pricingOf(allowance ?? {}),
+          allowance?.included ?? null,
+          usedOf(scoped, command.feature),
+          fromOwn,
+        );
+
+        const poolCharge = chargeOf(
+          pricingOf(pooled ?? {}),
+          pooled?.included ?? null,
+          poolUsed,
+          fromPool,
+        );
+
+        const billed = billedOf(state, command.feature);
+        const charge = ownCharge + poolCharge;
+
+        const moneyCap = effectiveMoneyCapOf([
+          {
+            drawn: fromOwn > 0,
+            ...(allowance?.moneyCap === undefined ? {} : { moneyCap: allowance.moneyCap }),
+          },
+          {
+            drawn: fromPool > 0,
+            ...(pooled?.moneyCap === undefined ? {} : { moneyCap: pooled.moneyCap }),
+          },
+        ]);
+
+        const spendLimit = spendLimitOf(state, command.feature);
+
+        const money = moneyCapacityOf({
+          billed,
+          charge,
+          ...(moneyCap === undefined ? {} : { moneyCap }),
+          ...(spendLimit === null ? {} : { spendLimit }),
+        });
+
+        if (money._tag === "Money") {
+          return new MoneyCapExceeded({
+            feature: command.feature,
+            cap: money.cap,
+            billed: money.billed,
+            charge,
+          });
+        }
+
+        if (money._tag === "Limit") {
+          return new SpendLimitExceeded({
+            feature: command.feature,
+            limit: money.limit,
+            billed: money.billed,
+            charge,
+          });
+        }
+      }
 
       // A credit-priced feature spends the account's one pool: the event carries
       // the cost and the balance after it, so the pool is a fold of the log.

@@ -20,7 +20,7 @@ import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
 import { INITIAL_PLAN_VERSION } from "../Tier.ts";
-import { capacityOf, type JudgedFeature } from "./Allowance.verdict.ts";
+import { capacityOf, effectiveMoneyCapOf, type JudgedFeature } from "./Allowance.verdict.ts";
 import {
   Plans,
   mergeAllowances,
@@ -276,6 +276,51 @@ const epoch = DateTime.makeUnsafe(0);
 /** The entity rows a view holds, or an empty map for a state written before one. */
 const entityMap = (view: EntitlementsState): EntityEntitlements => view.entities ?? {};
 
+/**
+ * The money ceiling an entity row is judged by: the lower of its own
+ * allowance's ceiling and the customer's pooled ceiling when the row can draw
+ * that pool.
+ */
+const entityMoneyCapOf = (
+  view: EntitlementsState,
+  entity: EntityEntitlement,
+  feature: string,
+): number | undefined => {
+  const customer = view.features[feature];
+  const own = mergeAllowances(entity.plans)[feature];
+
+  return effectiveMoneyCapOf([
+    { drawn: true, ...(own?.moneyCap === undefined ? {} : { moneyCap: own.moneyCap }) },
+    {
+      drawn: customer?.pooled === true,
+      ...(customer?.moneyCap === undefined ? {} : { moneyCap: customer.moneyCap }),
+    },
+  ]);
+};
+
+/** The row with the ceiling its sources actually give it, rejudged. */
+const withEntityMoneyCap = (
+  view: EntitlementsState,
+  entity: EntityEntitlement,
+  feature: string,
+  row: FeatureEntitlement,
+): FeatureEntitlement => {
+  if (row.kind === "non_consumable") return row;
+
+  const moneyCap = entityMoneyCapOf(view, entity, feature);
+  const { moneyCap: _previous, ...rest } = row;
+
+  const next: FeatureEntitlement = {
+    ...rest,
+    ...(moneyCap === undefined ? {} : { moneyCap }),
+  };
+
+  return {
+    ...next,
+    allowed: allowsOne(view.standing, judgedOf(next, {})),
+  };
+};
+
 /** Replace one entity's rows, leaving its lifecycle and every other scope alone. */
 const withEntityFeatures = (
   view: EntitlementsState,
@@ -288,7 +333,18 @@ const withEntityFeatures = (
 
   return {
     ...view,
-    entities: { ...view.entities, [entityId]: { ...entity, features } },
+    entities: {
+      ...view.entities,
+      [entityId]: {
+        ...entity,
+        features: Object.fromEntries(
+          Object.entries(features).map(([feature, row]) => [
+            feature,
+            withEntityMoneyCap(view, entity, feature, row),
+          ]),
+        ),
+      },
+    },
   };
 };
 
@@ -312,8 +368,9 @@ const withEntityFeature = (
 /**
  * The money plane is the customer's, so every scope's row carries the same
  * `billed`, `priced` and `spendLimit`: `check()` for an entity reads the total
- * and the ceiling `decide` judges its money against. A reset clears them
- * together too.
+ * and the ceiling `decide` judges its money against. Its `moneyCap` is the
+ * effective ceiling its own source and the customer's pooled source give it. A
+ * reset clears them together too.
  */
 const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
   if (view.entities === undefined) return view;
@@ -335,10 +392,9 @@ const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
                 billed: _previousBilled,
                 priced: _previousPriced,
                 spendLimit: _previousLimit,
+                moneyCap: _previousCap,
                 ...rest
               } = row;
-
-              const billed = customer.billed ?? 0;
 
               const synced: FeatureEntitlement = {
                 ...rest,
@@ -347,13 +403,7 @@ const syncEntityBilled = (view: EntitlementsState): EntitlementsState => {
                 ...(customer.spendLimit === undefined ? {} : { spendLimit: customer.spendLimit }),
               };
 
-              return [
-                feature,
-                {
-                  ...synced,
-                  allowed: allowsOne(view.standing, judgedOf(synced, { billed })),
-                },
-              ];
+              return [feature, withEntityMoneyCap(view, entity, feature, synced)];
             }),
           ),
         },
@@ -799,13 +849,13 @@ export class Entitlements extends Domain.View("Entitlements", {
         const row = updated.entities?.[event.entity];
 
         return withAccount(
-          {
+          syncEntityBilled({
             ...updated,
             entities: {
               ...updated.entities,
               [event.entity]: { ...(row ?? entity), plans },
             },
-          },
+          }),
           context,
         );
       }
