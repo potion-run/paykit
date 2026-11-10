@@ -157,6 +157,24 @@ describe("the request handler", () => {
       expect(invalid.status).toBe(400);
     }),
   );
+  it.live("refuses a malformed body on every plan operation path", () =>
+    Effect.gen(function* () {
+      for (const path of [
+        "/plans/attach",
+        "/plans/update",
+        "/plans/preview-attach",
+        "/plans/preview-update",
+      ]) {
+        const answer = yield* ask({ accountOf, surfaces: "none" }, path, {
+          method: "POST",
+          body: "{",
+        });
+
+        expect(answer.status).toBe(400);
+      }
+    }),
+  );
+
   it.live("mounts the two Api surfaces, and only the ones it was asked for", () =>
     Effect.gen(function* () {
       const tenantOnly = yield* ask({ accountOf, surfaces: "tenant" }, "/admin/absent");

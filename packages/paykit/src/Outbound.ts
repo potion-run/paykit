@@ -76,6 +76,20 @@ export class Outbound extends Context.Service<
 
 const HMAC = Mac.layerWebCrypto.pipe(Layer.provide(SecureRandom.layerWebCrypto));
 
+type MacService = Effect.Success<typeof Mac.Mac>;
+
+const encode = (value: string): Uint8Array => new TextEncoder().encode(value);
+
+const outboundKey = (secret: Redacted.Redacted<string>) =>
+  Mac.key(Mac.hmacSha256, encode(Redacted.value(secret)));
+
+const signatureWithKey = (mac: MacService, key: Mac.Key, timestamp: number, body: string) =>
+  Effect.gen(function* () {
+    const tag = yield* mac.sign(key, encode(`${timestamp}.${body}`));
+
+    return `t=${timestamp},v1=${Hex.encode(tag)}`;
+  });
+
 /**
  * The `x-paykit-signature` header: HMAC-SHA256 over `<timestamp>.<body>`, hex
  * encoded, shaped like the inbound edges (`t=…,v1=…`). The timestamp is epoch
@@ -89,14 +103,9 @@ export const outboundSignature = (input: {
   Effect.gen(function* () {
     const mac = yield* Mac.Mac;
 
-    const key = yield* Mac.key(
-      Mac.hmacSha256,
-      new TextEncoder().encode(Redacted.value(input.secret)),
-    );
+    const key = yield* outboundKey(input.secret);
 
-    const tag = yield* mac.sign(key, new TextEncoder().encode(`${input.timestamp}.${input.body}`));
-
-    return `t=${input.timestamp},v1=${Hex.encode(tag)}`;
+    return yield* signatureWithKey(mac, key, input.timestamp, input.body);
   }).pipe(Effect.provide(HMAC), Effect.orDie);
 
 /**
@@ -139,31 +148,41 @@ export const OutboundEventsLive = OutboundEvents.toLayer(
       const timestamp = yield* Clock.currentTimeMillis;
       const idempotencyKey = `${key.id}:${envelope.seq}`;
 
-      for (const endpoint of endpoints) {
-        const signature = yield* outboundSignature({
-          secret: endpoint.secret,
-          timestamp,
-          body,
-        });
+      // Derive each secret's key once for the event, then sign and deliver per
+      // endpoint. A shared secret pays for one key; every endpoint pays for one
+      // signature.
+      yield* Effect.gen(function* () {
+        const mac = yield* Mac.Mac;
+        const keys = new Map<string, Mac.Key>();
 
-        yield* deliver({
-          endpoint,
-          body,
-          idempotencyKey,
-          headers: {
-            "content-type": "application/json",
-            "x-paykit-signature": signature,
-            "x-paykit-idempotency-key": idempotencyKey,
-            "x-paykit-event": event._tag,
-          },
-        }).pipe(
-          // Retry the transport before leaving the event to the platform's
-          // at-least-once redelivery. The key is stable, so a receiver dedupes
-          // the retries and the redelivery alike.
-          Effect.retry({ schedule: Schedule.exponential("25 millis"), times: 3 }),
-          Effect.orDie,
-        );
-      }
+        for (const endpoint of endpoints) {
+          const secret = Redacted.value(endpoint.secret);
+          const cached = keys.get(secret);
+          const key = cached ?? (yield* outboundKey(endpoint.secret));
+
+          if (cached === undefined) keys.set(secret, key);
+
+          const signature = yield* signatureWithKey(mac, key, timestamp, body);
+
+          yield* deliver({
+            endpoint,
+            body,
+            idempotencyKey,
+            headers: {
+              "content-type": "application/json",
+              "x-paykit-signature": signature,
+              "x-paykit-idempotency-key": idempotencyKey,
+              "x-paykit-event": event._tag,
+            },
+          }).pipe(
+            // Retry the transport before leaving the event to the platform's
+            // at-least-once redelivery. The key is stable, so a receiver dedupes
+            // the retries and the redelivery alike.
+            Effect.retry({ schedule: Schedule.exponential("25 millis"), times: 3 }),
+            Effect.orDie,
+          );
+        }
+      }).pipe(Effect.provide(HMAC), Effect.orDie);
     }),
   ),
 );
