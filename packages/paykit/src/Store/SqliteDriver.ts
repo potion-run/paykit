@@ -64,7 +64,6 @@ const fail = (statement: string, cause: unknown): SqlError =>
  * const { platform } = Paykit.SqlPlatform(sql, log, { now: () => Date.now() });
  * ```
  *
- * @primitive
  */
 export const SqliteDriver = (options: SqliteDriverOptions = {}): ClosableSqlExecutor => {
   const database = new Database(
@@ -79,7 +78,6 @@ export const SqliteDriver = (options: SqliteDriverOptions = {}): ClosableSqlExec
  * Wrap a database handle a caller already owns — `new Database(...)`, or the
  * one a test opened.
  *
- * @primitive
  */
 export const fromDatabase = (database: Database): ClosableSqlExecutor => {
   const transaction = <A>(f: () => A): A => {

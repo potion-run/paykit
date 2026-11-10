@@ -128,9 +128,11 @@ type or constructor; these are the rules this repo follows. Paths below are rela
 - **Secrets are redacted; payloads are not traced by default.** Anything secret is
   `Redacted` / `Schema.Redacted`, and a span records only what a declaration's `attributes`
   returns (`packages/domain/src/Command.ts`, Alchemy AGENTS.md).
-- **Public primitives carry examples.** JSDoc on an exported primitive or resource includes a
-  runnable example and the tag a docs generator reads (`@primitive`, `@resource`, `@layer`); the
-  source is the docs source of truth (`packages/stripe/src/Price.ts`, Alchemy AGENTS.md).
+- **Public primitives carry examples.** JSDoc on an exported primitive, binding, layer or resource
+  includes a runnable example and the tag the docs generator reads (`@primitive`, `@binding`,
+  `@layer`, `@resource`); the source is the docs source of truth, and the reference under
+  `website/docs/reference` is generated from it (`packages/stripe/src/Price.ts`, Alchemy
+  AGENTS.md).
 
 ## Versioning and history
 
@@ -368,6 +370,10 @@ Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`,
 `pnpm test`, `pnpm spec`, `pnpm build`. None of the gates before
 `pnpm build` compile `lib/`; that build and `node scripts/smoke-artifact.mjs` are what prove a
 published artifact loads.
+
+`pnpm docs:reference:check` is part of `pnpm check:website` and the website
+build. Run `pnpm docs:reference` after changing a tagged JSDoc block, so the
+reference under `website/docs/reference` reflects the source.
 
 `.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
 carry a live case that skips without `STRIPE_API_KEY` / `POLAR_ACCESS_TOKEN`, so `check.yml` stays

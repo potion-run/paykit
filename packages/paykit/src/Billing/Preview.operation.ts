@@ -225,7 +225,6 @@ const prorationOf = (events: ReadonlyArray<PreviewEvent>): Proration | undefined
  * }
  * ```
  *
- * @primitive
  */
 export const previewOperation = Effect.fn("Paykit.Preview")(function* () {
   const catalog = yield* CatalogService;

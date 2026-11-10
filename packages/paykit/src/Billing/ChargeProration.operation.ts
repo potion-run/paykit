@@ -54,7 +54,6 @@ export type ChargeProrationResult = typeof ChargeProrationResult.Type;
  * if (charged.outcome === "charged") notify(charged.invoiceId);
  * ```
  *
- * @primitive
  */
 export const chargeProrationOperation = Effect.fn("Paykit.ChargeProration")(function* () {
   const subscription = yield* Subscription;

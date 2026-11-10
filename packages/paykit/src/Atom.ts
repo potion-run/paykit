@@ -415,6 +415,23 @@ const entitiesAtom = <E>(
   >;
 };
 
+/** The URL form: both clients over one `HttpClient`. */
+const clientLayer = (
+  options: BillingAtomUrlOptions,
+): Layer.Layer<BillingClient | BillingCommands, never, never> => {
+  const httpClient = options.httpClient ?? FetchHttpClient.layer;
+
+  return Layer.mergeAll(
+    BillingCommandsClient(options.commandsUrl ?? `${options.url}/commands`).pipe(
+      Layer.provide(httpClient),
+    ),
+    BillingApi.layerClientHttp(options.url).pipe(Layer.provide(httpClient)),
+  );
+};
+
+/** What building a URL client can fail with: nothing; both clients are built lazily. */
+export type BillingAtomClientError = never;
+
 /**
  * Billing as Effect atoms: the tenant bindings, shaped for a client.
  *
@@ -467,22 +484,6 @@ const entitiesAtom = <E>(
  * @primitive
  * @product Usage
  */
-const clientLayer = (
-  options: BillingAtomUrlOptions,
-): Layer.Layer<BillingClient | BillingCommands, never, never> => {
-  const httpClient = options.httpClient ?? FetchHttpClient.layer;
-
-  return Layer.mergeAll(
-    BillingCommandsClient(options.commandsUrl ?? `${options.url}/commands`).pipe(
-      Layer.provide(httpClient),
-    ),
-    BillingApi.layerClientHttp(options.url).pipe(Layer.provide(httpClient)),
-  );
-};
-
-/** What building a URL client can fail with: nothing; both clients are built lazily. */
-export type BillingAtomClientError = never;
-
 export const make = <E = never>(options: BillingAtomOptions<E>): BillingAtoms<E> => {
   const chosen = "layer" in options ? options.layer : clientLayer(options);
 

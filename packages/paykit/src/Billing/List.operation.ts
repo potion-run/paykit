@@ -39,7 +39,6 @@ import {
  * } while (cursor !== null);
  * ```
  *
- * @primitive
  */
 export const listOperation = Effect.fn("Paykit.List")(function* () {
   const store = yield* BillingReadStore;

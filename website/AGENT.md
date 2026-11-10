@@ -65,6 +65,21 @@ and page order. Root pages list above the groups, so `sidebar.order` on a root
 page and on a group share one namespace: keep root pages at 0-9 and groups at
 10 and up.
 
+### Module reference
+
+`docs/reference/paykit*` is generated from the JSDoc in `packages/*/src`. Edit
+the source comment, not the page. A declaration is included when its JSDoc
+carries `@primitive`, `@resource`, `@binding` or `@layer` and it is exported
+from a package entry; a tag on a private symbol fails the generator.
+
+- `pnpm docs:reference` writes the pages.
+- `pnpm docs:reference:check` fails when a page is stale.
+
+One page is one source module. The title is the export when the module has one
+tagged declaration, and the file stem when it has several. `@product`,
+`@provides` and `@peer` become the metadata line, and `###` sections with
+`**Example:**` blocks become the page body.
+
 ### Writing rules
 
 These came from review:

@@ -250,16 +250,7 @@ const viewTier = (
   view: { readonly pendingTier?: { readonly tier: string } } | null,
 ): string | null => view?.pendingTier?.tier ?? null;
 
-/**
- * The server-side implementation: the catalog and the standing are read here,
- * the command is built here, and the model is sent exactly once.
- *
- * It is the same join `BillingInProcess` makes. The Api layer uses it through
- * the wire, and a test or a Worker can provide it directly when the model and
- * the client share a process.
- *
- * @layer
- */
+/** The server-side join, built from the catalog and the standing. */
 export const makeBillingCommands = Effect.gen(function* () {
   const catalog = yield* CatalogService;
   const subscription = yield* Subscription;
@@ -399,7 +390,16 @@ export const makeBillingCommands = Effect.gen(function* () {
   } satisfies BillingCommandsShape;
 });
 
-/** The in-process server join, as one Layer. */
+/**
+ * The server-side implementation: the catalog and the standing are read here,
+ * the command is built here, and the model is sent exactly once.
+ *
+ * It is the same join `BillingInProcess` makes. The Api layer uses it through
+ * the wire, and a test or a Worker can provide it directly when the model and
+ * the client share a process.
+ *
+ * @layer
+ */
 export const BillingCommandsLive = Layer.effect(BillingCommands, makeBillingCommands);
 
 /**

@@ -1,0 +1,51 @@
+---
+title: Reference
+description: Every tagged public module in the four packages, generated from the JSDoc beside its source.
+sidebar:
+  label: Overview
+---
+
+The reference documents every public export in `packages/*/src` that carries a
+`@primitive`, `@resource`, `@binding` or `@layer` tag. One page is one source
+module. The `Source` line at the top links to the file and line the text came
+from.
+
+The pages are generated. To change one, change the JSDoc in the package and run
+`pnpm docs:reference`.
+
+## Packages
+
+<CardGroup cols={2}>
+  <Card title="Paykit" href="/reference/paykit" icon="package">
+    The model, the catalog, the bindings, the database layers, and the manual provider.
+  </Card>
+  <Card title="Paykit Polar" href="/reference/paykit-polar" icon="hexagon">
+    Polar as a provider, and the products its tiers are sold as.
+  </Card>
+  <Card title="Paykit Stripe" href="/reference/paykit-stripe" icon="credit-card">
+    Stripe as a provider, and the prices and meters its tiers are sold as.
+  </Card>
+  <Card title="Paykit Admin" href="/reference/paykit-admin" icon="layout-dashboard">
+    The Foldkit console over the admin read contract.
+  </Card>
+</CardGroup>
+
+## What a page is
+
+A metadata line names the kind of value a declaration exports.
+
+- **Binding** is a `Binding.Service` for one command or operation. It binds an
+  account or a deployment, and returns the verb a caller sends.
+- **Layer** is an Effect `Layer` a deployment provides to close a service.
+- **Resource** is an Alchemy resource the deploy creates and reconciles with a
+  vendor.
+- **Primitive** is a plain exported function, type or service the other three
+  are built from.
+
+Each package page also lists its public entry points, so an import path in the
+reference can be checked against `package.json`.
+
+## Package overview
+
+[Packages](/reference/packages) says what each of the four packages owns and
+which example deploys it.

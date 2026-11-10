@@ -130,32 +130,7 @@ const viewTier = (
   view: { readonly pendingTier?: { readonly tier: string } } | null,
 ): string | null => view?.pendingTier?.tier ?? null;
 
-/**
- * Every paykit binding, implemented in the process that hosts the model.
- *
- * One layer for the whole tenant surface, because the clearance is the Api's and
- * not the operation's: a deployment that provides this layer can send exactly the
- * commands `BillingApi` serves, and nothing an operator can.
- *
- * Provide it beside the store, the catalog and the payments router. Swap it for
- * `BillingApiLayer` to host the model in a different service — no call site
- * changes.
- *
- * ### Providing the tenant surface
- * **Example:** A Worker that hosts the model
- * ```typescript
- * const World = Layer.mergeAll(BillingInProcess, catalogLayer(Catalog), provider.payments);
- *
- * fetch: Effect.gen(function* () {
- *   const trackUsage = yield* Paykit.TrackUsage(account);
- *   yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId });
- * });
- * ```
- *
- * @layer
- * @product Usage
- * @provides Paykit.TrackUsage
- */
+/** The base layer: the tenant verbs over the in-process model, before the reads are merged in. */
 const BillingCore = Layer.mergeAll(
   Layer.effect(
     TrackUsage,
@@ -1229,6 +1204,32 @@ const BillingCore = Layer.mergeAll(
   ),
 );
 
+/**
+ * Every paykit binding, implemented in the process that hosts the model.
+ *
+ * One layer for the whole tenant surface, because the clearance is the Api's and
+ * not the operation's: a deployment that provides this layer can send exactly the
+ * commands `BillingApi` serves, and nothing an operator can.
+ *
+ * Provide it beside the store, the catalog and the payments router. Swap it for
+ * `BillingApiLayer` to host the model in a different service — no call site
+ * changes.
+ *
+ * ### Providing the tenant surface
+ * **Example:** A Worker that hosts the model
+ * ```typescript
+ * const World = Layer.mergeAll(BillingInProcess, catalogLayer(Catalog), provider.payments);
+ *
+ * fetch: Effect.gen(function* () {
+ *   const trackUsage = yield* Paykit.TrackUsage(account);
+ *   yield* trackUsage({ featureId: "messages", value: 1, idempotencyKey: requestId });
+ * });
+ * ```
+ *
+ * @layer
+ * @product Usage
+ * @provides Paykit.TrackUsage
+ */
 export const BillingInProcess = Layer.mergeAll(
   BillingCore,
   BalancesLive.pipe(Layer.provide(BillingCore)),

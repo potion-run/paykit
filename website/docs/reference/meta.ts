@@ -4,5 +4,5 @@ export default defineMeta({
   title: "Reference",
   icon: "book-open",
   order: 50,
-  pages: ["packages"],
+  pages: ["index", "packages", "paykit", "paykit-polar", "paykit-stripe", "paykit-admin"],
 });

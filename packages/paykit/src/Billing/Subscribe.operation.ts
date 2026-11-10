@@ -123,7 +123,6 @@ const purchasePath = (
  * if ("url" in purchase) return Response.redirect(purchase.url);
  * ```
  *
- * @primitive
  */
 export const subscribeOperation = Effect.fn("Paykit.Subscribe")(function* () {
   const catalog = yield* CatalogService;

@@ -10,10 +10,10 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "blume dev",
-    "build": "blume build",
+    "dev": "node ../scripts/generate-reference.ts && blume dev",
+    "build": "node ../scripts/generate-reference.ts --check && blume build",
     "preview": "blume preview",
-    "check": "blume check",
+    "check": "node ../scripts/generate-reference.ts --check && blume check",
     "validate": "blume validate --strict",
     "doctor": "blume doctor",
     "deploy": "alchemy deploy",

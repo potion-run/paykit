@@ -12,6 +12,8 @@
     "deploy:website": "pnpm --filter @potion.run/website deploy",
     "destroy:website": "pnpm --filter @potion.run/website destroy",
     "dev:website": "pnpm --filter @potion.run/website dev",
+    "docs:reference": "node scripts/generate-reference.ts",
+    "docs:reference:check": "node scripts/generate-reference.ts --check",
     "exports:check": "node scripts/check-exports.ts",
     "format": "oxfmt",
     "format:check": "oxfmt --check",

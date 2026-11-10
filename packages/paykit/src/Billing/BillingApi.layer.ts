@@ -42,32 +42,7 @@ import { TransferBalanceLive, TransferBalanceWrite } from "./TransferBalance.lay
 /** A layer's own failure, as the union its binding declares. */
 const bound = mapBindingFailure;
 
-/**
- * Every paykit tenant binding, implemented over `BillingApi` — the Api's own
- * `Session` middleware decides whether this caller may act for this account,
- * and its reply decoding turns a rejection back into the class a caller
- * matches.
- *
- * The layer is **protocol-agnostic**: it resolves `BillingApi.Client` for the
- * commands the Api serves directly, and `BillingCommands` for the four whose
- * catalog terms the deployment joins. The deployment picks the protocol beside
- * each.
- *
- * ```typescript
- * Layer.provide(BillingApi, BillingApi.layerClientInProcess)          // same host
- * Layer.provide(BillingCommands, BillingCommandsLive)                 // same host
- * Layer.provide(BillingApi, BillingApi.layerClientHttp(url))          // another service
- * Layer.provide(BillingCommands, BillingCommandsClient(`${url}/commands`))
- * ```
- *
- * Read-your-write survives the transport: every verb reads `Entitlements` with
- * `atLeast` the receipt it just committed, exactly as the in-process layer waits
- * on the view, so a `Check` straight after a `TrackUsage` sees it on either.
- *
- * @layer
- * @product Usage
- * @provides Paykit.TrackUsage, Paykit.Check, Paykit.Hold, Paykit.SettleHold, Paykit.ReleaseHold
- */
+/** The base layer: each tenant verb over the Api client, before the reads are merged in. */
 const BillingApiCore = Layer.mergeAll(
   Layer.effect(
     TrackUsage,
@@ -758,6 +733,32 @@ const BillingApiCore = Layer.mergeAll(
   ),
 );
 
+/**
+ * Every paykit tenant binding, implemented over `BillingApi` — the Api's own
+ * `Session` middleware decides whether this caller may act for this account,
+ * and its reply decoding turns a rejection back into the class a caller
+ * matches.
+ *
+ * The layer is **protocol-agnostic**: it resolves `BillingApi.Client` for the
+ * commands the Api serves directly, and `BillingCommands` for the four whose
+ * catalog terms the deployment joins. The deployment picks the protocol beside
+ * each.
+ *
+ * ```typescript
+ * Layer.provide(BillingApi, BillingApi.layerClientInProcess)          // same host
+ * Layer.provide(BillingCommands, BillingCommandsLive)                 // same host
+ * Layer.provide(BillingApi, BillingApi.layerClientHttp(url))          // another service
+ * Layer.provide(BillingCommands, BillingCommandsClient(`${url}/commands`))
+ * ```
+ *
+ * Read-your-write survives the transport: every verb reads `Entitlements` with
+ * `atLeast` the receipt it just committed, exactly as the in-process layer waits
+ * on the view, so a `Check` straight after a `TrackUsage` sees it on either.
+ *
+ * @layer
+ * @product Usage
+ * @provides Paykit.TrackUsage, Paykit.Check, Paykit.Hold, Paykit.SettleHold, Paykit.ReleaseHold
+ */
 export const BillingApiLayer = Layer.mergeAll(
   BillingApiCore,
   BalancesLive.pipe(Layer.provide(BillingApiCore)),
