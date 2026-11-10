@@ -36,14 +36,18 @@ export interface BillingOnPostgres {
  * Host the billing model on the executor a Drizzle pool yields. The function is
  * the same one `examples/postgres` uses; only where the executor comes from
  * changes, which is the port's whole claim.
+ *
+ * `schema` names the Postgres schema both stores use, and must match the one
+ * the deploy migrates. It defaults to `billing`.
  */
 export const billingOnPostgres = (
   sql: SqlExecutor,
-  options: { readonly now?: () => number } = {},
+  options: { readonly now?: () => number; readonly schema?: string } = {},
 ): BillingOnPostgres => {
   const now = options.now ?? (() => Date.now());
-  const log = SqlEventLog(sql, { now, schema: "billing" });
-  const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50, schema: "billing" });
+  const schema = options.schema ?? "billing";
+  const log = SqlEventLog(sql, { now, schema });
+  const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50, schema });
 
   return { log, world: postgresWorld(log, platform) };
 };

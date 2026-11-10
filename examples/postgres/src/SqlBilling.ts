@@ -43,16 +43,20 @@ export interface BillingOnPostgres {
  * events, its state, its receipt and the `Entitlements` row a `check()` reads
  * are written by the same store.
  *
+ * `schema` names the Postgres schema both stores use, and must match the one
+ * the deploy migrates. It defaults to `billing`.
+ *
  * `now` is injected rather than read from the ambient clock, so a replay is
  * deterministic and a test can pin time.
  */
 export const billingOnPostgres = (
   sql: SqlExecutor,
-  options: { readonly now?: () => number } = {},
+  options: { readonly now?: () => number; readonly schema?: string } = {},
 ): BillingOnPostgres => {
   const now = options.now ?? (() => Date.now());
-  const log = SqlEventLog(sql, { now, schema: "billing" });
-  const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50, schema: "billing" });
+  const schema = options.schema ?? "billing";
+  const log = SqlEventLog(sql, { now, schema });
+  const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50, schema });
 
   return { log, world: postgresWorld(log, platform) };
 };

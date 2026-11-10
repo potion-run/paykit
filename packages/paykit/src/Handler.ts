@@ -157,6 +157,12 @@ export interface HandlerOptions {
 
 const text = (body: string, status: number) => HttpServerResponse.text(body, { status });
 
+const matchesMount = (path: string, base: string): boolean => {
+  const root = base === "/" ? "" : base.replace(/\/+$/, "");
+
+  return path === root || path.startsWith(`${root}/`);
+};
+
 /**
  * The built-in paths every paykit deployment serves, as one request handler.
  *
@@ -236,11 +242,11 @@ export const handler = (options: HandlerOptions = {}) =>
 
       // The catalog join sits under the tenant path, so it is checked before
       // the Api's prefix catches its own subpath.
-      if (commands !== null && path.startsWith(mount.commands)) return yield* commands;
+      if (commands !== null && matchesMount(path, mount.commands)) return yield* commands;
 
-      if (tenant !== null && path.startsWith(mount.tenant)) return yield* tenant.fetch;
+      if (tenant !== null && matchesMount(path, mount.tenant)) return yield* tenant.fetch;
 
-      if (admin !== null && path.startsWith(mount.admin)) return yield* admin.fetch;
+      if (admin !== null && matchesMount(path, mount.admin)) return yield* admin.fetch;
 
       if (attach !== null && path === `${mount.plans}/attach`) {
         const account = accountOf(request);
@@ -345,7 +351,7 @@ export const handler = (options: HandlerOptions = {}) =>
           : HttpServerResponse.jsonUnsafe(purchase.success, { status: 200 });
       }
 
-      if (money !== null && path.startsWith(mount.webhooks)) {
+      if (money !== null && matchesMount(path, mount.webhooks)) {
         const body = yield* request.text;
 
         const applied = yield* Effect.result(money.deliver({ headers: request.headers, body }));
