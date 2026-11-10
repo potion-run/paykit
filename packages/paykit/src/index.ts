@@ -198,11 +198,20 @@ export {
   validateStack,
 } from "./Stack.ts";
 
-export type { Store, ValidateStackProps, ValidatedBillingStack } from "./Stack.ts";
+export type {
+  BillingValidationError,
+  Store,
+  ValidateBillingProps,
+  ValidateStackProps,
+  ValidatedBilling,
+  ValidatedBillingStack,
+} from "./Stack.ts";
 
 export { BillingStack } from "./BillingStack.ts";
 
 export type { BillingDeployment, BillingStackProps } from "./BillingStack.ts";
+
+export { providers } from "./Providers.ts";
 
 export {
   BILLING_STACK_VERSION,
@@ -213,7 +222,6 @@ export {
   BillingStackVersionTooNew,
   diffBillingStack,
   BillingStore,
-  providers,
   readBillingStack,
   reconcileBillingStack,
 } from "./BillingStack.resource.ts";

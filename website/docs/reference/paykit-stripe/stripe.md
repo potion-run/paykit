@@ -3,7 +3,7 @@ title: "Stripe"
 description: "Stripe as a processor, ready for Paykit.BillingStack."
 ---
 
-> **Source:** [`packages/paykit-stripe/src/Stripe.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/Stripe.ts#L361)
+> **Source:** [`packages/paykit-stripe/src/Stripe.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/Stripe.ts#L369)
 > **Kind:** Primitive
 
 Stripe as a processor, ready for `Paykit.BillingStack`.

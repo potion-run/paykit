@@ -426,6 +426,10 @@ test.provider.skipIf(!hasKey)(
               usage: { messages: { amount: 2, currency: "usd" } },
             },
           },
+          // A supplied secret means a hand-managed endpoint. This case is the
+          // price join, and the deploy would otherwise create an endpoint at a
+          // URL this suite does not serve; the endpoint has its own cases.
+          webhookSecret: Redacted.make("whsec_joined_endpoint_is_managed_by_hand"),
         }),
       );
 

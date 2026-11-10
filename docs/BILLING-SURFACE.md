@@ -67,7 +67,7 @@ documented billing surface, not a second implementation.
 | Payment flow | checkout, `Portal`, the `Payments` port | shipped — the library hands back the provider's URL |
 | Refunds and reversals | `Refund` / `ReverseRefund` commands, `Payments.refund`, the operator console | shipped — the provider moves the money, the log records the fact |
 | Dunning and billing reliability | `PaymentFailed`, `GraceEntered`, the dunning ladder | shipped — 3DS and the card UI are the provider's |
-| Vendor sync | `StripePrices` / `PolarPrices` provision prices, products and meters; webhooks apply provider facts | partial — one-way provisioning, not a two-way sync |
+| Vendor sync | `StripePrices` / `PolarPrices` provision prices, products and meters; `*Billing` reconciles the webhook endpoint; webhooks apply provider facts | partial — one-way provisioning, not a two-way sync |
 | Tax | — | provider — the vendor calculates and collects it |
 | Setup payment | `Payments.setupPayment`, `Paykit.SetupPayment` | shipped — the provider hosts the page; the library records nothing (ADR 0046) |
 | Migration from a vendor account | — | missing — a deployment migration, not a model rule |
@@ -78,7 +78,7 @@ documented billing surface, not a second implementation.
 | --- | --- | --- |
 | A hosted dashboard | deployment | paykit serves the read models (`BillingState`, `Entitlements`, `List`, `Balance`); `paykit-admin` is an optional console package |
 | A billing page | deployment | `Atom` and the read models are the client surface; the screens are the example's job |
-| Webhooks | paykit + deployment | the decoders and the outbound policy are the library's; the endpoint is the deployment's |
+| Webhooks | paykit | shipped — the endpoint is a resource (`Stripe.WebhookEndpoint`, `Polar.WebhookEndpoint`) whose minted secret the deploy hands the Worker, and the decoders verify deliveries; the route is the deployment's |
 | Chat or email notifications | deployment | `Outbound` signs and delivers the stream; a receiver formats the message |
 | Approval rules | deployment | the actor model and `Guards` answer "who may act"; a per-action approval flow is an app decision |
 | Fail-open / edge cache | deployment | `check` reads local state and never calls a provider; a last-known cache is a deployment choice |

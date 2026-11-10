@@ -5,10 +5,10 @@ import { allowance } from "../src/Allowance.ts";
 import {
   BILLING_STACK_VERSION,
   BillingStack as BillingStackResource,
-  providers,
 } from "../src/BillingStack.resource.ts";
 import { catalog } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
+import { providers } from "../src/Providers.ts";
 import { tier } from "../src/Tier.ts";
 
 const pro = tier({

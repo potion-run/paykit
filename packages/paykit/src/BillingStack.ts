@@ -3,17 +3,11 @@ import * as Option from "effect/Option";
 import { BillingStack as BillingStackResource } from "./BillingStack.resource.ts";
 import type { BillingStore } from "./BillingStack.resource.ts";
 import type { BillingStackShape } from "./BillingStack.resource.ts";
-import { catalog, type Catalog, type CatalogInput } from "./Catalog.ts";
+import type { Catalog, CatalogInput } from "./Catalog.ts";
 import { Database } from "./Database/Database.ts";
 import { registerDatabaseMigration } from "./Database/Migrate.ts";
 import type { MoneyProvider } from "./Payments.ts";
-import {
-  MemoryStore,
-  providerDescriptor,
-  type ProviderDescriptor,
-  type Store,
-  validateProviderMappings,
-} from "./Stack.ts";
+import { MemoryStore, type ProviderDescriptor, type Store, validateBilling } from "./Stack.ts";
 
 /**
  * What a deploy declares: the catalog, the providers that sell it, and the
@@ -131,17 +125,15 @@ export const BillingStack = Effect.fn("Paykit.BillingStack")(function* (
   id: string,
   props: BillingStackProps,
 ) {
-  const parsed = yield* catalog(props.catalog);
-  const providers = props.providers ?? [];
-  const descriptors = providers.map(providerDescriptor);
-  const invalid = validateProviderMappings(parsed, descriptors);
-
-  if (invalid !== null) return yield* invalid;
+  // One validating Effect for the catalog and the money plane: the same one
+  // `validateStack` and `world` run, so a deploy cannot accept a declaration a
+  // runtime refuses.
+  const billing = yield* validateBilling(props);
   const store = props.store ?? MemoryStore();
 
   const resource = yield* BillingStackResource(id, {
-    catalog: parsed,
-    providers: descriptors,
+    catalog: billing.catalog,
+    providers: billing.descriptors,
     store: storeKindOf(store),
   });
 
@@ -164,9 +156,9 @@ export const BillingStack = Effect.fn("Paykit.BillingStack")(function* (
 
   return {
     resource,
-    catalog: parsed,
-    tiers: parsed.tiers.map((tier) => tier.id),
-    providers: descriptors,
+    catalog: billing.catalog,
+    tiers: billing.catalog.tiers.map((tier) => tier.id),
+    providers: billing.descriptors,
     store,
   };
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type * as Layer from "effect/Layer";
@@ -16,7 +17,7 @@ import { Payments, PaymentsRouter } from "../../src/Payments.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
 import { tier } from "../../src/Tier.ts";
-import { world } from "../../src/World.ts";
+import { world, type PaykitWorldOptions } from "../../src/World.ts";
 
 const testCatalog = Effect.runSync(
   catalog({
@@ -24,6 +25,31 @@ const testCatalog = Effect.runSync(
     tiers: [tier({ id: "free", grants: [allowance(messages, { included: 100 })] })],
   }),
 );
+
+const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
+
+const pricedCatalog = Effect.runSync(
+  catalog({
+    features: [messages],
+    tiers: [
+      tier({
+        id: "pro",
+        price: proPrice,
+        grants: [allowance(messages, { included: 100, overage: "bill" })],
+      }),
+    ],
+  }),
+);
+
+/** Build a world and report the tagged error it refused with, if any. */
+const refusalOf = (options: PaykitWorldOptions) =>
+  Effect.gen(function* () {
+    const exit = yield* Effect.exit(
+      Effect.serviceOption(CatalogService).pipe(Effect.provide(world(options))),
+    );
+
+    return Exit.isFailure(exit) ? Option.getOrNull(Cause.findErrorOption(exit.cause)) : null;
+  });
 
 /** Is this service in the context the world built? */
 const provided = <A extends { readonly key: string }>(tag: A) =>
@@ -114,6 +140,79 @@ describe("world", () => {
 
       if (Exit.isFailure(exit)) expect(String(exit.cause)).toContain("CatalogDuplicateFeature");
     }),
+  );
+
+  it.live("refuses two providers that share a name, which `refs` cannot tell apart", () =>
+    Effect.gen(function* () {
+      const error = yield* refusalOf({
+        catalog: testCatalog,
+        guards: InsecureDevGuards,
+        providers: [PaymentsMemory(), PaymentsMemory()],
+      });
+
+      expect(error?._tag).toBe("ProviderDuplicate");
+
+      if (error?._tag === "ProviderDuplicate") expect(error.provider).toBe("memory");
+    }),
+  );
+
+  it.live("refuses a provider price that disagrees with the catalog", () =>
+    Effect.gen(function* () {
+      const error = yield* refusalOf({
+        catalog: pricedCatalog,
+        guards: InsecureDevGuards,
+        providers: [
+          {
+            ...PaymentsMemory(),
+            prices: { pro: { amount: 2000, currency: "usd", interval: "month" as const } },
+          },
+        ],
+      });
+
+      expect(error?._tag).toBe("CatalogPriceMismatch");
+
+      if (error?._tag === "CatalogPriceMismatch") {
+        expect(error.tier).toBe("pro");
+        expect(error.field).toBe("amount");
+      }
+    }),
+  );
+
+  it.live("refuses a priced tier no configured provider can sell", () =>
+    Effect.gen(function* () {
+      const error = yield* refusalOf({
+        catalog: pricedCatalog,
+        guards: InsecureDevGuards,
+        providers: [{ ...PaymentsManual(), capabilities: new Set(["refund"] as const) }],
+      });
+
+      expect(error?._tag).toBe("NoPurchasePath");
+
+      if (error?._tag === "NoPurchasePath") expect(error.tier).toBe("pro");
+    }),
+  );
+
+  it.live(
+    "builds a priced catalog over a pre-built money layer, whose capabilities are not declared",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.serviceOption(CatalogService).pipe(
+            Effect.provide(
+              world({
+                catalog: pricedCatalog,
+                guards: InsecureDevGuards,
+                // A fake `Payments` layer is the documented test seam; the router
+                // has no `MoneyProvider` to inspect, so the purchase-path rule is
+                // intentionally skipped.
+                payments: PaymentsMemory().payments,
+              }),
+            ),
+          ),
+        );
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }),
   );
 
   it.live("builds without guards, so a host can provide its own session", () =>

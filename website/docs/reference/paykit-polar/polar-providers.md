@@ -3,7 +3,7 @@ title: "polarProviders"
 description: "Register the Polar provider a stack needs to reconcile PolarPrices."
 ---
 
-> **Source:** [`packages/paykit-polar/src/Providers.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Providers.ts#L24)
+> **Source:** [`packages/paykit-polar/src/Providers.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Providers.ts#L25)
 > **Kind:** Layer
 
 Register the Polar provider a stack needs to reconcile `PolarPrices`.

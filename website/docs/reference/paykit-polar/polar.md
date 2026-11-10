@@ -3,7 +3,7 @@ title: "Polar"
 description: "Polar as a merchant of record, ready for Paykit.BillingStack."
 ---
 
-> **Source:** [`packages/paykit-polar/src/Polar.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Polar.ts#L312)
+> **Source:** [`packages/paykit-polar/src/Polar.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Polar.ts#L320)
 > **Kind:** Primitive
 
 Polar as a merchant of record, ready for `Paykit.BillingStack`.

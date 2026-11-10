@@ -11,12 +11,12 @@ import {
   BillingStackVersionTooNew,
   billingStackVersionDecision,
   diffBillingStack,
-  providers,
   readBillingStack,
   reconcileBillingStack,
 } from "../src/BillingStack.resource.ts";
 import { catalog } from "../src/Catalog.ts";
 import { messages } from "../src/Feature.ts";
+import { providers } from "../src/Providers.ts";
 import { CatalogPriceMismatch, NoPurchasePath, ProviderDuplicate } from "../src/Stack.ts";
 import { tier } from "../src/Tier.ts";
 import { assertProperty } from "./support/Property.ts";

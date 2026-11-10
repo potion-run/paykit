@@ -83,9 +83,9 @@ jobs:
           node scripts/smoke-artifact.mjs packages/paykit/lib/index.js \
             Paykit BillingStack world handler httpStatus accountFromHeaders postgresExecutor Preview Verify List ChargeProration SqlEventLog SqlPlatform SqlBillingReadStore
           node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js \
-            PolarBilling PolarPrices soldTiers Polar distilledPolarClient polarBindings polarBaseUrl polarWebhook
+            PolarBilling PolarPrices soldTiers Polar distilledPolarClient polarBindings polarBaseUrl polarWebhook WebhookEndpoint polarWebhookEndpoint
           node scripts/smoke-artifact.mjs packages/paykit-stripe/lib/index.js \
-            Stripe StripeBilling distilledStripeClient stripeClientBindings stripeWebhook
+            Stripe StripeBilling distilledStripeClient stripeClientBindings stripeWebhook stripeWebhookEndpoint
 
       # The example is a deployment, not a library: it is typechecked and tested
       # above, and this proves its Worker bundle is what a deploy would ship.

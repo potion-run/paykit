@@ -8,6 +8,7 @@ export default defineMeta({
     "actions-for",
     "billing-mcp",
     "billing-stack",
+    "billing-stack-resource",
     "catalog-guard",
     "catalog-rpc",
     "doctor",

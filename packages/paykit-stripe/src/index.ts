@@ -42,6 +42,16 @@ export {
 
 export type { MeteredPriceProps } from "./MeteredPrice.ts";
 
+// The endpoint the deploy converges, so no dashboard step and no hand-copied
+// secret: the events the decoder handles, and the resource that mints it.
+export {
+  DEFAULT_WEBHOOK_PATH,
+  STRIPE_WEBHOOK_EVENTS,
+  StripeWebhookSecretMissing,
+  stripeWebhookEndpoint,
+  stripeWebhookUrl,
+} from "./WebhookEndpoint.ts";
+
 // The other half of a deployment: the webhook that activates a standing.
 export { stripeWebhook } from "./Webhooks.ts";
 
@@ -54,4 +64,8 @@ export type { ArchivedPrices } from "./RetiredPrices.ts";
 // Provisioning and the provider in one call, for the common deployment.
 export { StripeBilling } from "./StripeBilling.ts";
 
-export type { StripeBillingProps, StripeBillingProvider } from "./StripeBilling.ts";
+export type {
+  StripeBillingProps,
+  StripeBillingProvider,
+  StripeBillingWebhook,
+} from "./StripeBilling.ts";

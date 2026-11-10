@@ -22,6 +22,7 @@ import {
   NoPurchasePath,
   Postgres,
   ProviderDuplicate,
+  validateBilling,
   validateStack,
   providerDescriptor,
   validateProviderMappings,
@@ -644,6 +645,38 @@ describe("Stack", () => {
       expect(error._tag).toBe("ProviderDuplicate");
 
       if (error._tag === "ProviderDuplicate") expect(error.provider).toBe("memory");
+    }),
+  );
+
+  it.effect("refuses one invalid declaration with the same tag through every validator", () =>
+    Effect.gen(function* () {
+      const mismatched = {
+        ...PaymentsMemory(),
+        prices: { pro: { amount: 2000, currency: "usd", interval: "month" as const } },
+      };
+
+      const noPurchase = { ...PaymentsManual(), capabilities: new Set(["refund"] as const) };
+
+      const declarations = [
+        ["ProviderDuplicate", [PaymentsMemory(), PaymentsMemory()]],
+        ["CatalogPriceMismatch", [mismatched]],
+        ["NoPurchasePath", [noPurchase]],
+      ] as const;
+
+      for (const [tag, providers] of declarations) {
+        const throughStack = yield* Effect.flip(
+          validateStack("Billing", { catalog: proCatalog, providers }),
+        );
+
+        const throughBilling = yield* Effect.flip(
+          validateBilling({ catalog: proCatalog, providers }),
+        );
+
+        // `BillingStack` runs `validateBilling` before it touches the stack, so
+        // the deploy and the runtime refuse the same declaration for one reason.
+        expect(throughStack._tag).toBe(tag);
+        expect(throughBilling._tag).toBe(tag);
+      }
     }),
   );
 

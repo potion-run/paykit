@@ -3,7 +3,7 @@ title: "polarWebhook"
 description: "Verify and translate one Polar webhook into paykit's provider-neutral event."
 ---
 
-> **Source:** [`packages/paykit-polar/src/Webhooks.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Webhooks.ts#L168)
+> **Source:** [`packages/paykit-polar/src/Webhooks.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-polar/src/Webhooks.ts#L170)
 > **Kind:** Primitive
 
 Verify and translate one Polar webhook into paykit's provider-neutral event.

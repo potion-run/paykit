@@ -58,6 +58,22 @@ export { Providers, polarProviders } from "./Providers.ts";
 
 export type { PolarProvidersProps } from "./Providers.ts";
 
+// The delivery destination: created by the deploy, verified by the Worker.
+export {
+  DEFAULT_WEBHOOK_PATH,
+  POLAR_WEBHOOK_EVENTS,
+  PolarWebhookSecretMissing,
+  WebhookEndpoint,
+  WebhookEndpointProvider,
+  polarWebhookEndpoint,
+  webhookEndpointNameOf,
+  webhookEndpointNamePrefixOf,
+  webhookEndpointUrlOf,
+  webhookSecretOrFail,
+} from "./WebhookEndpoint.ts";
+
+export type { WebhookEndpointFormat, WebhookEndpointProps } from "./WebhookEndpoint.ts";
+
 // The other half: the webhook that activates a standing.
 export { polarWebhook } from "./Webhooks.ts";
 

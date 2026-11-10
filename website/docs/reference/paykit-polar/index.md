@@ -23,3 +23,4 @@ Polar for paykit: a merchant of record in one call.
 - [polarWebhook](/reference/paykit-polar/polar-webhook): Verify and translate one Polar webhook into paykit's provider-neutral event.
 - [Product](/reference/paykit-polar/product): A Polar product that sells one tier at the price the catalog states.
 - [RetiredProducts](/reference/paykit-polar/retired-products): Archive the Polar products a stage still sells that its catalog no longer declares.
+- [WebhookEndpoint](/reference/paykit-polar/webhook-endpoint): Exports `WebhookEndpoint`, `polarWebhookEndpoint`.

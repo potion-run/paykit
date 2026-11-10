@@ -131,8 +131,33 @@ export const Sqlite = (props: {
   schema: props.schema ?? "billing",
 });
 
-/** What a Stack declares. */
-export interface ValidateStackProps {
+/** Every way a billing declaration is refused before anything is recorded. */
+export type BillingValidationError =
+  | CatalogError
+  | CatalogPriceMismatch
+  | NoPurchasePath
+  | ProviderDuplicate;
+
+/**
+ * Whether a validation must prove every priced tier has a provider that can
+ * sell it. A world that is handed a pre-built money layer is a test fake: its
+ * capabilities are not declared as a `MoneyProvider`, so the purchase-path rule
+ * has nothing to read and is skipped there.
+ */
+export interface ValidateBillingOptions {
+  /**
+   * Defaults to `true`. `false` is for a runtime that supplies `payments`
+   * directly, not a `MoneyProvider` the router can inspect.
+   */
+  readonly requirePurchasePath?: boolean;
+}
+
+/**
+ * What a billing declaration is validated from: the catalog and the money
+ * plane. `BillingStack`, `validateStack` and `world` all take this shape, so
+ * the three entry points share one validating Effect rather than three.
+ */
+export interface ValidateBillingProps {
   /** Plain catalog data; provider ids belong in provider config, never here. */
   readonly catalog: CatalogInput;
   /**
@@ -141,6 +166,20 @@ export interface ValidateStackProps {
    * provider that reference names. Every name must be distinct.
    */
   readonly providers?: ReadonlyArray<MoneyProvider>;
+}
+
+/**
+ * A validated billing declaration: the parsed catalog, the providers, and the
+ * serializable descriptors a deploy records.
+ */
+export interface ValidatedBilling {
+  readonly catalog: Catalog;
+  readonly providers: ReadonlyArray<MoneyProvider>;
+  readonly descriptors: ReadonlyArray<ProviderDescriptor>;
+}
+
+/** What a Stack declares. */
+export interface ValidateStackProps extends ValidateBillingProps {
   readonly store?: Store;
 }
 
@@ -159,6 +198,7 @@ const priceField = (price: Price, field: keyof Price): string =>
 export const validateProviderMappings = (
   parsed: Catalog,
   providers: ReadonlyArray<ProviderDescriptor>,
+  options?: ValidateBillingOptions,
 ): CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate | null => {
   // Several providers are fine — `paymentsRouter` keys them by name and the
   // account's `refs` pick one — but two with the same name make that choice
@@ -377,6 +417,10 @@ export const validateProviderMappings = (
     }
   }
 
+  // A pre-built money layer is a fake whose capabilities are not declared, so
+  // there is nothing here to compare a priced tier against.
+  if (options?.requirePurchasePath === false) return null;
+
   for (const tier of parsed.tiers) {
     if (tier.price === undefined) continue;
 
@@ -457,6 +501,27 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
 };
 
 /**
+ * Validate a billing declaration's catalog and its provider mappings. No id
+ * and no store: this is the half every entry point shares, so `BillingStack`,
+ * `validateStack` and `world` refuse the same declaration for the same reason.
+ * The catalog parses first, then each provider mapping is checked against it.
+ */
+export const validateBilling = (
+  props: ValidateBillingProps,
+  options?: ValidateBillingOptions,
+): Effect.Effect<ValidatedBilling, BillingValidationError> =>
+  Effect.gen(function* () {
+    const parsed = yield* catalog(props.catalog);
+    const providers = props.providers ?? [];
+    const descriptors = providers.map(providerDescriptor);
+    const invalid = validateProviderMappings(parsed, descriptors, options);
+
+    if (invalid !== null) return yield* invalid;
+
+    return { catalog: parsed, providers, descriptors };
+  });
+
+/**
  * Validate a billing declaration without recording it: the catalog, every
  * provider mapping, and the store. `Paykit.BillingStack` is the deploy call;
  * this is the pure half, for a test or a tool that wants the validated value
@@ -465,21 +530,10 @@ const checkPrice = (tier: Tier, mapped: Price): CatalogPriceMismatch | null => {
 export const validateStack = (
   id: string,
   props: ValidateStackProps,
-): Effect.Effect<
-  ValidatedBillingStack,
-  CatalogError | CatalogPriceMismatch | NoPurchasePath | ProviderDuplicate
-> =>
-  Effect.gen(function* () {
-    const parsed = yield* catalog(props.catalog);
-    const providers = props.providers ?? [];
-    const invalid = validateProviderMappings(parsed, providers.map(providerDescriptor));
-
-    if (invalid !== null) return yield* invalid;
-
-    return {
-      id,
-      catalog: parsed,
-      providers,
-      store: props.store ?? MemoryStore(),
-    };
-  });
+): Effect.Effect<ValidatedBillingStack, BillingValidationError> =>
+  Effect.map(validateBilling(props), (billing) => ({
+    id,
+    catalog: billing.catalog,
+    providers: billing.providers,
+    store: props.store ?? MemoryStore(),
+  }));

@@ -13,5 +13,6 @@ export default defineMeta({
     "polar-webhook",
     "product",
     "retired-products",
+    "webhook-endpoint",
   ],
 });

@@ -13,6 +13,11 @@ import type { PolarClient } from "../src/Polar.ts";
 import { PolarBilling } from "../src/PolarBilling.ts";
 import { PolarPrices } from "../src/Prices.ts";
 import { ProductProvider } from "../src/Product.ts";
+import {
+  POLAR_WEBHOOK_EVENTS,
+  WebhookEndpointProvider,
+  webhookEndpointNameOf,
+} from "../src/WebhookEndpoint.ts";
 
 /**
  * `PolarPrices` against a stand-in for Polar's products API.
@@ -188,9 +193,11 @@ const vendorProduct = (input: {
 const fakePolar = () => {
   const products = new Map<string, DistilledPolar.Product>();
   const meters = new Map<string, DistilledPolar.Meter>();
+  const webhookEndpoints = new Map<string, DistilledPolar.WebhookEndpoint>();
   const calls: Array<string> = [];
   let created = 0;
   let meterCreated = 0;
+  let webhookCreated = 0;
 
   const json = (
     request: HttpClientRequest.HttpClientRequest,
@@ -205,6 +212,99 @@ const fakePolar = () => {
       Effect.suspend(() => {
         const url = new URL(request.url);
         calls.push(`${request.method} ${url.pathname}`);
+        const webhookId = url.pathname.match(/^\/v1\/webhooks\/endpoints\/([^/]+)$/)?.[1];
+
+        const isWebhookCollection =
+          url.pathname === "/v1/webhooks/endpoints/" || url.pathname === "/v1/webhooks/endpoints";
+
+        if (isWebhookCollection && request.method === "POST") {
+          const body = bodyOf(request) as {
+            readonly url: string;
+            readonly name?: string | null;
+            readonly format: string;
+            readonly events: ReadonlyArray<string>;
+          };
+
+          const id = `wh_${++webhookCreated}`;
+
+          const endpoint: DistilledPolar.WebhookEndpoint = {
+            created_at: new Date(Date.UTC(2030, 0, 1, 0, 0, webhookCreated)).toISOString(),
+            modified_at: null,
+            id,
+            url: body.url,
+            name: body.name ?? null,
+            api_version: "2026-04",
+            format: body.format as DistilledPolar.WebhookFormat,
+            secret: `whsec_${id}`,
+            organization_id: "org_fake",
+            events: body.events as Array<DistilledPolar.WebhookEventType>,
+            enabled: true,
+            uses_standard_webhook_signature: true,
+          };
+
+          webhookEndpoints.set(id, endpoint);
+
+          return Effect.succeed(json(request, 201, endpoint));
+        }
+
+        if (isWebhookCollection && request.method === "GET") {
+          const matches = [...webhookEndpoints.values()];
+
+          return Effect.succeed(
+            json(request, 200, {
+              items: matches,
+              pagination: { total_count: matches.length, max_page: 1 },
+            }),
+          );
+        }
+
+        if (webhookId !== undefined && request.method === "GET") {
+          const endpoint = webhookEndpoints.get(webhookId);
+
+          return Effect.succeed(
+            endpoint === undefined
+              ? json(request, 404, { detail: "Not found" })
+              : json(request, 200, endpoint),
+          );
+        }
+
+        if (webhookId !== undefined && request.method === "PATCH") {
+          const current = webhookEndpoints.get(webhookId);
+
+          if (current === undefined) {
+            return Effect.succeed(json(request, 404, { detail: "Not found" }));
+          }
+
+          const body = bodyOf(request) as {
+            readonly url?: string | null;
+            readonly name?: string | null;
+            readonly format?: string | null;
+            readonly events?: ReadonlyArray<string> | null;
+            readonly enabled?: boolean | null;
+          };
+
+          const updated: DistilledPolar.WebhookEndpoint = {
+            ...current,
+            ...(body.url == null ? {} : { url: body.url }),
+            ...(body.name == null ? {} : { name: body.name }),
+            ...(body.format == null ? {} : { format: body.format as DistilledPolar.WebhookFormat }),
+            ...(body.events == null
+              ? {}
+              : { events: [...body.events] as Array<DistilledPolar.WebhookEventType> }),
+            ...(body.enabled == null ? {} : { enabled: body.enabled }),
+          };
+
+          webhookEndpoints.set(updated.id, updated);
+
+          return Effect.succeed(json(request, 200, updated));
+        }
+
+        if (webhookId !== undefined && request.method === "DELETE") {
+          webhookEndpoints.delete(webhookId);
+
+          return Effect.succeed(json(request, 200, {}));
+        }
+
         const meterId = url.pathname.match(/^\/v1\/meters\/([^/]+)$/)?.[1];
         const isMeterCollection = url.pathname === "/v1/meters/" || url.pathname === "/v1/meters";
 
@@ -412,18 +512,20 @@ const fakePolar = () => {
   const reset = () => {
     products.clear();
     meters.clear();
+    webhookEndpoints.clear();
     calls.length = 0;
     created = 0;
     meterCreated = 0;
+    webhookCreated = 0;
   };
 
-  return { layer, products, meters, calls, reset };
+  return { layer, products, meters, webhookEndpoints, calls, reset };
 };
 
 const polar = fakePolar();
 
 const { test } = Test.make({
-  providers: Layer.mergeAll(ProductProvider(), MeterProvider()).pipe(
+  providers: Layer.mergeAll(ProductProvider(), MeterProvider(), WebhookEndpointProvider()).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         DistilledPolar.PolarProtocol,
@@ -468,6 +570,41 @@ test.provider("joins provisioning and the provider into one call", (stack) =>
     expect(polar.products.size).toBe(1);
     expect(billing.prices).toEqual({ pro: proPrice });
     expect(billing.capabilities.has("checkout")).toBe(true);
+
+    // With no supplied secret the deploy owns the endpoint: it is created at
+    // the app's origin, subscribes to the decoded events, and its secret is
+    // what the provider carries and the Worker receives.
+    const endpoint = [...polar.webhookEndpoints.values()][0];
+    expect(endpoint?.name).toBe(webhookEndpointNameOf(stack.name, stack.stage));
+    expect(endpoint?.url).toBe("https://app.example.com/webhooks/polar");
+    expect(endpoint?.events).toEqual([...POLAR_WEBHOOK_EVENTS]);
+    expect(billing.webhookEndpoint.resource).toBeDefined();
+    expect(billing.webhook).toBeDefined();
+    expect(Redacted.value(billing.webhookEndpoint.secret)).toBe(endpoint?.secret);
+  }),
+);
+
+test.provider("supplying a secret keeps a hand-managed endpoint", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const supplied = Redacted.make("whsec_fake");
+
+    const billing = yield* stack.deploy(
+      PolarBilling("Billing", {
+        accessToken: "polar_fake",
+        origin: "https://app.example.com",
+        tiers: { pro: proPrice },
+        webhookSecret: supplied,
+        client: unusedClient,
+      }),
+    );
+
+    expect(polar.webhookEndpoints.size).toBe(0);
+    expect(billing.webhookEndpoint.resource).toBe(undefined);
+    expect(billing.webhookEndpoint.secret).toBe(supplied);
+    // The provider still carries the decoder, so the recorded descriptor says
+    // it can report a payment.
+    expect(billing.webhook).toBeDefined();
   }),
 );
 

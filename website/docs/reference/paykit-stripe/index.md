@@ -21,3 +21,4 @@ Stripe for paykit: a processor in one call.
 - [StripeBilling](/reference/paykit-stripe/stripe-billing): Stripe provisioning and the Stripe provider in one call.
 - [StripePrices](/reference/paykit-stripe/stripe-prices): The price resources a tier is sold through, reconciled from the catalog.
 - [stripeWebhook](/reference/paykit-stripe/stripe-webhook): Verify and translate one Stripe webhook into paykit's provider-neutral event.
+- [stripeWebhookEndpoint](/reference/paykit-stripe/stripe-webhook-endpoint): The webhook endpoint a deployment serves Stripe's deliveries on.

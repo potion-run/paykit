@@ -31,6 +31,7 @@ Billing and entitlement for Alchemy.
 - [actionsFor](/reference/paykit/actions-for): The actions that make sense for a standing, in a stable display order.
 - [BillingMcp](/reference/paykit/billing-mcp): The surfaces an Api projects onto, without a second declaration.
 - [BillingStack](/reference/paykit/billing-stack): The deploy-time billing stack, in one call.
+- [BillingStack.resource](/reference/paykit/billing-stack-resource): The deploy-time billing stack: it records the validated catalog, the provider descriptors and the store kind, retains on removal, and versions that state shape with BILLING_STACK_VERSION.
 - [CatalogGuard](/reference/paykit/catalog-guard): Exports `CatalogGuard`, `CatalogGuardLive`.
 - [CatalogRpc](/reference/paykit/catalog-rpc): Exports `PaykitCatalogRpcs`, `PaykitCatalogClient`.
 - [doctor](/reference/paykit/doctor): Rebuild every read model from billing_event and diff it.
