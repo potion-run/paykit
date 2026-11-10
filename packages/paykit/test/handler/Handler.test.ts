@@ -68,6 +68,17 @@ const ask = (
 const accountOf = (request: HttpServerRequest.HttpServerRequest): string | null =>
   request.headers["x-paykit-actor"] ?? null;
 
+const rpc = (tag: string): string =>
+  `${JSON.stringify({ _tag: "Request", id: 1, tag, payload: { target: account }, headers: [] })}\n`;
+
+const rpcDefect = (body: unknown): unknown => {
+  const response = body as {
+    readonly exit?: { readonly cause?: ReadonlyArray<{ readonly defect?: unknown }> };
+  };
+
+  return response.exit?.cause?.[0]?.defect;
+};
+
 describe("the request handler", () => {
   it.live("sells a tier through the provider at the checkout path", () =>
     Effect.gen(function* () {
@@ -153,6 +164,64 @@ describe("the request handler", () => {
 
       const none = yield* ask({ accountOf, surfaces: "none" }, "/api");
       expect(none.status).toBe(404);
+    }),
+  );
+
+  it.live("matches the Api mounts by segment, not by prefix", () =>
+    Effect.gen(function* () {
+      for (const path of ["/api", "/api/foo"]) {
+        const answer = yield* ask({ accountOf, surfaces: "tenant" }, path);
+        expect(answer.status).toBe(200);
+      }
+
+      for (const path of ["/apiary", "/administrator"]) {
+        const answer = yield* ask({ accountOf, surfaces: "both" }, path);
+        expect(answer.status).toBe(404);
+      }
+
+      const trailing = yield* ask(
+        { accountOf, surfaces: "tenant", mount: { tenant: "/api/" } },
+        "/api/foo",
+      );
+
+      expect(trailing.status).toBe(200);
+    }),
+  );
+
+  it.live("matches the webhook mount by segment, not by prefix", () =>
+    Effect.gen(function* () {
+      const delivery = yield* ask({ provider, accountOf, surfaces: "none" }, "/webhooks/manual", {
+        method: "POST",
+        body: "{}",
+      });
+
+      expect(delivery.status).toBe(501);
+
+      const stray = yield* ask({ provider, accountOf, surfaces: "none" }, "/webhooks-x", {
+        method: "POST",
+        body: "{}",
+      });
+
+      expect(stray.status).toBe(404);
+    }),
+  );
+
+  it.live("matches the command join by segment, not by prefix", () =>
+    Effect.gen(function* () {
+      const exact = yield* ask({ accountOf, surfaces: "tenant" }, "/api/commands", {
+        method: "POST",
+        body: rpc("Entitlements.get"),
+      });
+
+      expect(rpcDefect(exact.body)).toBe("Unknown request tag: Entitlements.get");
+
+      const sibling = yield* ask({ accountOf, surfaces: "tenant" }, "/api/commands-x", {
+        method: "POST",
+        body: rpc("Entitlements.get"),
+      });
+
+      expect(String(rpcDefect(sibling.body))).toContain("Missing key");
+      expect(String(rpcDefect(sibling.body))).not.toContain("Unknown request tag");
     }),
   );
 
