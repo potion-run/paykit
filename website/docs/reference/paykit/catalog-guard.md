@@ -3,7 +3,7 @@ title: "CatalogGuard"
 description: "Exports `CatalogGuard`, `CatalogGuardLive`."
 ---
 
-> **Source:** [`packages/paykit/src/CatalogGuard.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/CatalogGuard.ts#L423)
+> **Source:** [`packages/paykit/src/CatalogGuard.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/CatalogGuard.ts#L426)
 
 ## CatalogGuard
 
