@@ -23,19 +23,17 @@ const DrizzleExample = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
-
-    const url = yield* Config.Redacted("POSTGRES_URL").pipe(Effect.orDie);
+    const url = yield* Config.Redacted("POSTGRES_URL");
     const { db } = openDrizzle(Redacted.value(url));
 
     // The layer unwraps `db.$client` and gives paykit the pool's executor, so a
     // migration and a request share one connection boundary.
-    const database = Drizzle(db, { schema: "billing" });
-
-    yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(database));
+    const recorded = yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+      Effect.provide(Drizzle(db, { schema: "billing" })),
+    );
 
     return { tiers: recorded.tiers, model: Paykit.Model.modelName };
-  }),
+  }).pipe(Effect.orDie),
 );
 
 export default DrizzleExample;

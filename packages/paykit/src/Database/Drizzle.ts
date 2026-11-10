@@ -61,7 +61,7 @@ const isPool = (value: unknown): value is PgPoolLike =>
  * const db = drizzle({ client: pool });
  *
  * Effect.gen(function* () {
- *   yield* Paykit.registerMigrations("Billing");
+ *   yield* Paykit.BillingStack("Billing", { ...billing, migrate: true });
  * }).pipe(Effect.provide(Drizzle(db, { schema: "billing" })));
  * ```
  *

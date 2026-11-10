@@ -25,15 +25,14 @@ const MySQLExample = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
+    const url = yield* Config.Redacted("MYSQL_URL");
 
-    const url = yield* Config.Redacted("MYSQL_URL").pipe(Effect.orDie);
-    const database = MySQL(url);
-
-    yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(database));
+    const recorded = yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+      Effect.provide(MySQL(url)),
+    );
 
     return { tiers: recorded.tiers, model: Paykit.Model.modelName };
-  }),
+  }).pipe(Effect.orDie),
 );
 
 export default MySQLExample;

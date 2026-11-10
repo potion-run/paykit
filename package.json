@@ -17,7 +17,6 @@
     "format:check": "oxfmt --check",
     "lint": "oxlint -c oxlint.config.ts",
     "lint:fix": "oxlint -c oxlint.config.ts --fix",
-    "migrations:check": "node scripts/check-migrations.ts",
     "prepare": "pnpm prepare:hooks && pnpm prepare:patch",
     "prepare:hooks": "husky",
     "prepare:patch": "effect-tsgo patch --oxlint --no-typescript",

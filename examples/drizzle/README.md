@@ -19,8 +19,9 @@ paykit adopts that pool, not a second connection:
 ```ts
 import { Drizzle } from "@potion.run/paykit/Database/Drizzle";
 
-const database = Drizzle(db, { schema: "billing" });
-yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(database));
+const recorded = yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+  Effect.provide(Drizzle(db, { schema: "billing" })),
+);
 ```
 
 `Drizzle(db)` reads `db.$client` (the `pg` Pool), wraps it with

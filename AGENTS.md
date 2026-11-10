@@ -365,7 +365,7 @@ leaves out.
 ## Gates
 
 Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`,
-`pnpm migrations:check`, `pnpm test`, `pnpm spec`, `pnpm build`. None of the gates before
+`pnpm test`, `pnpm spec`, `pnpm build`. None of the gates before
 `pnpm build` compile `lib/`; that build and `node scripts/smoke-artifact.mjs` are what prove a
 published artifact loads.
 

@@ -8,11 +8,11 @@
 
 Paykit stores its event log, receipts, state, outbox, schedules and read models in SQL, and it now
 has three targets: SQLite under Bun for development and tests, D1 in a Cloudflare Worker, and
-Postgres through Hyperdrive, Neon, Aurora or a plain connection. The DDL is rendered from
-TypeScript and committed under `examples/*/migrations/`, but every target applies it differently.
-The billing example hands its directory to the D1 resource. The Postgres example carries its own
-`MigrateBilling` Action that builds a `pg` client from `POSTGRES_URL` and runs Alchemy's registry.
-Nothing connects those mechanisms, and nothing notices when a deploy should re-run one.
+Postgres through Hyperdrive, Neon, Aurora or a plain connection, and MySQL. The DDL is rendered from
+a typed description, but every target applied it differently: the billing example handed a directory
+to the D1 resource, and the Postgres example carried its own `MigrateBilling` Action that built a
+`pg` client and ran Alchemy's registry. Nothing connected those mechanisms, and nothing noticed when
+a deploy should re-run one.
 
 Three structural facts make this a decision rather than a cleanup.
 
@@ -23,9 +23,9 @@ restored around them, and a pooled connection spreads statements across sessions
 never migrate: workerd has no long-lived connection, a deploy cannot order a Worker after its own
 boot, and a failed migration would surface as a request failure.
 
-**The deploy cannot see a SQL change.** Alchemy diffs resource props. A new file in `migrations/`, a
-column added to the description, and a replaced database are invisible to that diff, so an unchanged
-deploy would look identical to a changed one. The deploy needs a value that changes exactly when the
+**The deploy cannot see a SQL change.** Alchemy diffs resource props. A column added to the
+description and a replaced database are invisible to that diff, so an unchanged deploy would look
+identical to a changed one. The deploy needs a value that changes exactly when the
 work does, and the Worker needs to depend on it, or it will serve requests against a schema that
 does not exist yet.
 
@@ -81,15 +81,16 @@ test must not pull a D1 binding into it. A target that cannot migrate simply lea
 a deployment that migrates outside the port passes `migrate: false` and opts out.
 
 **3. The schema is a description.** `BILLING_SCHEMA` is typed data — tables, columns and indexes —
-and `migrationFiles()` is the only thing that renders it, per dialect. The committed
-`examples/*/migrations/*.sql` files are that rendering, and `pnpm migrations:check` fails when they
-disagree. DDL text is never hand-written again. A column type is written once, a dialect difference
-(`INTEGER` versus `BIGINT` for epoch millis, `AUTOINCREMENT` versus `BIGSERIAL`, schema qualification,
-identifier quoting) belongs to the renderer, and a review reads a data change instead of SQL.
+and the renderer is the only thing that turns it into DDL, per dialect. No `.sql` file is committed:
+the registry keys applied history by the hash of the *baseline* (`BILLING_SCHEMA_V1`) rendering, and
+a test pins that hash, so the thing a database recorded can never move. A column type is written
+once, a dialect difference (`INTEGER` versus `BIGINT` for epoch millis, `AUTOINCREMENT` versus
+`BIGSERIAL` versus `AUTO_INCREMENT`, key columns versus `VARCHAR(191)`, identifier quoting) belongs
+to the renderer, and a review reads a data change instead of SQL.
 
-**4. Files are the baseline; convergence is the delta.** A deploy applies the shipped files through
+**4. The baseline is frozen; convergence is the delta.** A deploy applies the frozen baseline through
 `@alchemy.run/sql/Migrations` — the registry owns the bookkeeping table, the content hashes and the
-refusal of a rewritten or removed applied file — and then *converges* the description against the
+refusal of a rewritten applied file — and then *converges* the description against the
 live database. Convergence observes the live catalog (`information_schema` on Postgres,
 `pragma_table_info` on SQLite), computes what the description states and the database lacks, and adds
 missing columns and indexes. It never drops, renames, retypes or narrows anything. Adding a `NOT NULL`
@@ -116,11 +117,14 @@ process.
 
 - `Paykit.Database` and `DatabaseService`; the `Database/Sqlite`, `Database/Postgres` and
   `Database/D1` layers with their drivers as peers.
-- `BILLING_SCHEMA` becomes the source; `migrationFiles()` renders it; the committed files under
-  `examples/*/migrations/` are outputs rather than inputs; `pnpm migrations:check` gates them.
-- `Paykit.Migrations` replaces the per-example migration Actions. The Postgres example's
-  `MigrateBilling` becomes the port's `migrate.connect` plus the Action; the billing example keeps
-  the D1 resource and passes `migrate: false`.
+- `BILLING_SCHEMA` becomes the source; `BILLING_SCHEMA_V1` is the frozen baseline `migrationFiles()`
+  renders; a test pins the rendered hash, and no `.sql` file is committed. The derived-file drift
+  gate (`pnpm migrations:check`) is removed with the files.
+- `BillingStack(id, { migrate })` is the one call: it registers the Action when a `Paykit.Database`
+  layer is in context, and `migrate: false` opts out — the same shape as `BetterAuth({ migrate })`.
+- The per-example migration Actions are gone. The Postgres example's `MigrateBilling` became the
+  port's `migrate.connect`; D1 gained a migration connection over the HTTP API, so its resource no
+  longer needs a `migrations` directory.
 - `pnpm schema <dialect>` replaces the `node scripts/schema.ts … > …` incantation in the examples'
   READMEs.
 - A deploy that changes nothing about the schema does no database work: the Action is not re-run and
@@ -151,10 +155,12 @@ process.
   drop a column the event log still needs, which [ADR
   0003](./0003-the-deploy-provisions-the-vendor.md) refuses for every object a bill references. A
   plan would need a live connection, and a rollback would become a data migration. The rule that
-  survived: **additive convergence only, from committed files plus a description.**
+  survived: **additive convergence only, from a frozen baseline plus a description.**
 - **Hand-written migration files.** Rejected: two sources (the renderer and the file), a dialect
   copied twice, drift that only a human notices, and a schema that no longer states what the store
-  needs.
+  needs. A *committed rendering* was a half-step: it kept a reviewable artifact, but it made every
+  schema change a file edit and a drift gate, so the file went and the frozen baseline took its
+  place.
 - **A general-purpose migration framework or an ORM as the source.** Rejected: the description is two
   table classes and a fixed set of columns, the registry already owns bookkeeping and drift refusal,
   and a generated client is another runtime the model does not use. Drizzle's pool is welcome as a

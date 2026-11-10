@@ -5,13 +5,9 @@ same model over HTTP and MCP. The model runs on the D1 database declared beside 
 every read model and the entitlement a `check()` answers from are rows in one schema — and the
 provider is `Manual`, which sells through an invoice and needs no key.
 
-The tables come from `migrations/*.sql`, generated from paykit's own DDL:
-
-```sh
-node packages/paykit/scripts/schema.ts sqlite --file=0001_init > examples/billing/migrations/0001_init.sql
-```
-
-so the schema a release applies and the schema a test applies cannot drift.
+The tables come from paykit's own description: the deploy applies the frozen baseline
+(`BILLING_SCHEMA_V1`) through the D1 HTTP API and converges it, so the schema a release applies and
+the schema a test applies cannot drift — and there is no `.sql` file to keep in step.
 
 ```sh
 pnpm install

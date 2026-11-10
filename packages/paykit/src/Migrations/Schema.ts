@@ -141,8 +141,12 @@ export const columnStatement = (column: Column, dialect: SqlDialect, keyed = fal
 };
 
 /** One table's `CREATE TABLE IF NOT EXISTS` statement. */
-export const tableStatement = (entry: Table, scope: TableScope): string => {
-  const keyed = keyedColumnsOf(BILLING_SCHEMA, entry.name);
+export const tableStatement = (
+  entry: Table,
+  scope: TableScope,
+  schema: SchemaDefinition = BILLING_SCHEMA,
+): string => {
+  const keyed = keyedColumnsOf(schema, entry.name);
 
   const columns = entry.columns.map((column) =>
     columnStatement(column, scope.dialect, keyed.has(column.name)),
@@ -181,15 +185,19 @@ export const schemaStatementsOf = (
   scope: TableScope,
 ): ReadonlyArray<string> =>
   schema.items.map((item) =>
-    isIndex(item) ? indexStatement(item, scope) : tableStatement(item, scope),
+    isIndex(item) ? indexStatement(item, scope) : tableStatement(item, scope, schema),
   );
 
 /**
- * Every table and index paykit's billing store owns. The order is the
- * migration's emission order, so it is also the order a reader sees: the log
- * and its delivery tables first, then the rebuildable read models.
+ * The first released schema, frozen. It is what `migrationFiles()` renders and
+ * what an applied history is keyed by: the registry refuses a changed hash, so
+ * this description must never move. A later change edits `BILLING_SCHEMA`, and
+ * the deploy's convergence applies it.
+ *
+ * The order is the migration's emission order, so it is also the order a reader
+ * sees: the log and its delivery tables first, then the rebuildable read models.
  */
-export const BILLING_SCHEMA: SchemaDefinition = {
+export const BILLING_SCHEMA_V1: SchemaDefinition = {
   name: "paykit-billing",
   items: [
     // The append-only truth. Nothing here is rebuilt; a delivery row is the
@@ -399,3 +407,11 @@ export const BILLING_SCHEMA: SchemaDefinition = {
     ),
   ],
 };
+
+/**
+ * The schema convergence brings a database to. It is the frozen first release
+ * today; a change adds a table or a column here, and convergence applies it
+ * without touching `BILLING_SCHEMA_V1` — and therefore every applied history
+ * row — which is what lets the baseline stop moving.
+ */
+export const BILLING_SCHEMA: SchemaDefinition = BILLING_SCHEMA_V1;

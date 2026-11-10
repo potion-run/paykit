@@ -52,7 +52,7 @@ The driver is a peer dependency, so a Worker that imports the package must not p
 | Postgres a Drizzle instance opened | `@potion.run/paykit/Database/Drizzle` | the `pg` pool behind `db.$client` | the same pool, unless `migrate: false` |
 | MySQL (PlanetScale, RDS, Hyperdrive MySQL) | `@potion.run/paykit/Database/MySQL` | `@effect/sql-mysql2` per execution | `migrate.connect` uses the origin URL |
 
-Provide one layer where the deployment builds its world, and read the executor from the service:
+Provide one layer where the deployment builds its world, and declare `migrate` on the billing stack:
 
 ```ts
 import { Paykit } from "@potion.run/paykit";
@@ -62,20 +62,24 @@ import * as Effect from "effect/Effect";
 
 Effect.gen(function* () {
   const url = yield* Config.Redacted("POSTGRES_URL");
-  const store = Postgres(url, { schema: "billing" });
 
-  yield* Paykit.registerMigrations("Billing").pipe(Effect.provide(store));
-  // a request later reads `store`'s executor from `Paykit.Database`
+  yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+    Effect.provide(Postgres(url, { schema: "billing" })),
+  );
 });
 ```
+
+The boolean mirrors `BetterAuth({ migrate })`: `true` is explicit, absent means "migrate when a
+layer is provided", and `false` opts out — the application's own pipeline owns the tables. A
+request later reads the executor from `Paykit.Database`.
 
 **SQLite** is the development and test target. One file, one process, migrations and requests share
 the same connection, and there is nothing to provision. It is what the SQL tests run.
 
-**D1** is the Worker target without a separate migration step. The database resource applies the
-committed `./migrations` directory itself, so the port serves runtime reads and the layer carries no
-`migrate`: `registerMigrations` is a no-op there, and asking for `migrate: true` fails with a message
-naming this reason.
+**D1** reaches the database through the Worker's native binding at runtime, and the D1 HTTP API —
+including the local simulator under `alchemy dev` — for migrations. No `migrations` directory is
+involved: the deploy applies `migrationFiles()` and converges it, like every other target. A Worker
+host provides `Cloudflare.D1.QueryDatabaseBinding`; the stack does not need it.
 
 ```ts
 import * as Cloudflare from "@alchemy.run/cloudflare";
@@ -109,44 +113,43 @@ transaction boundary. `BILLING_SCHEMA` is still the source: letting Drizzle gene
 would make the ORM the source and the description a generator, which ADR 0049 rejects. Pass
 `migrate: false` if the application's own pipeline applies paykit's tables.
 
-## The description, the files, and the delta
+## The baseline, the description, and the delta
 
-`BILLING_SCHEMA` is the schema as typed data: tables, columns and indexes. `migrationFiles()` renders
-it for a dialect, and the files committed under `examples/*/migrations/` are that rendering. DDL text
-is never hand-written.
+`BILLING_SCHEMA` is the schema as typed data: tables, columns and indexes. A second, frozen
+description — `BILLING_SCHEMA_V1` — is the first release, and `migrationFiles()` renders *it* for a
+dialect. That split is what makes the history safe without a file on disk: the registry keys every
+applied row by the hash of the baseline's rendering, so the baseline must never move. A schema
+change edits `BILLING_SCHEMA`, and convergence applies it.
 
 ```ts
 import { migrationFiles } from "@potion.run/paykit";
 
-const files = migrationFiles({ dialect: "postgres", schema: "billing" });
+const [init] = migrationFiles({ dialect: "postgres", schema: "billing" });
 ```
 
 A schema change moves through one pipeline:
 
-1. **Describe.** Change `BILLING_SCHEMA`. A column type is stated once; the renderer owns
-   `INTEGER` versus `BIGINT` for epoch millis, `AUTOINCREMENT` versus `BIGSERIAL`, schema
-   qualification and identifier quoting.
-2. **Render.** `pnpm schema <dialect>` rewrites the committed files for `sqlite` or `postgres`.
-3. **Check.** `pnpm migrations:check` fails when a committed file is not the rendering of the
-   current description.
-4. **Apply.** The deploy runs the shipped files through `@alchemy.run/sql/Migrations`, which owns
+1. **Describe.** Change `BILLING_SCHEMA`, building it from `BILLING_SCHEMA_V1`. A type is stated
+   once; the renderer owns `INTEGER` versus `BIGINT` for epoch millis, `AUTOINCREMENT` versus
+   `BIGSERIAL` versus `AUTO_INCREMENT`, and identifier quoting.
+2. **Apply.** The deploy runs the frozen baseline through `@alchemy.run/sql/Migrations`, which owns
    the bookkeeping table and the content hashes.
-5. **Converge.** The deploy reads the live catalog and adds the columns and indexes the description
-   states and the database lacks.
+3. **Converge.** The deploy reads the live catalog and adds the tables, columns and indexes the
+   description states and the database lacks.
 
 | Command | What it does |
 | --- | --- |
-| `pnpm migrations:check` | Fails when a committed file disagrees with `BILLING_SCHEMA` for its dialect |
-| `pnpm schema <dialect>` | Re-renders the committed files for `sqlite` or `postgres` |
+| `pnpm schema <dialect>` | Prints the baseline DDL for `sqlite`, `postgres` or `mysql` — for an operator, not a build step |
 
-The files are the baseline a new database starts from. Convergence is the delta for one that already
-has a history. A new table is rendered as a file; a new column or index on an existing table is a
-delta the deploy adds without editing what it already applied. Each step is independently
-idempotent, so a crash mid-deploy converges on the next run.
+The baseline is frozen and its rendered hash is pinned by a test. Convergence is the delta for a
+database that already has a history. A new table, column or index is applied without editing what a
+database already recorded. Each step is independently idempotent, so a crash mid-deploy converges on
+the next run.
 
 ## What a deploy guarantees, and what it refuses
 
-`Paykit.registerMigrations` registers one Action per migrated target, with this input:
+`Paykit.BillingStack("Billing", { ...billing, migrate: true })` registers one Action per migrated
+target, with this input:
 
 ```ts
 { identity, schemaFingerprint, migrationFingerprint, dialect }
@@ -154,13 +157,13 @@ idempotent, so a crash mid-deploy converges on the next run.
 
 A deploy therefore:
 
-- applies every shipped file once, in order, and records its content hash;
-- re-runs the Action when a file is added, the description changes, or the target database is
-  replaced — and does no database work when none of those changed;
+- applies the frozen baseline once, in order, and records its content hash;
+- re-runs the Action when the description changes or the target database is replaced — and does no
+  database work when neither did;
 - runs only at apply: never at plan, never inside the deployed runtime;
 - binds the Action's output into the host environment, so the Worker depends on it and cannot start
   against a half-migrated database;
-- converges idempotently — a missing column or index is added, and a present one is left alone.
+- converges idempotently — a missing table, column or index is added, and a present one is left alone.
 
 It refuses:
 
@@ -168,9 +171,8 @@ It refuses:
 | --- | --- |
 | Drop, rename, retype or narrow a column or table | Never. That is a reviewed migration with its own record, not a deploy. |
 | Add a `NOT NULL` column with no default | A typed refusal naming the table and column, because the table may already have rows. |
-| Rewrite or remove a file a database already applied | The registry refuses it: the applied hash is history. |
+| Rewrite the baseline a database already applied | The registry refuses it: the applied hash is history. The frozen baseline is what prevents it. |
 | Put the billing tables in `public` | Refused. Postgres gets its own schema. |
-| Migrate D1 through the port | No `migrate` on the target: the D1 resource applies the directory. `migrate: true` fails, naming the reason. |
 
 ## Auth and billing own their own tables
 

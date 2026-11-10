@@ -87,10 +87,10 @@ const migrationInput = (
  * @primitive
  */
 const register = Effect.fn("Paykit.registerMigrations")(function* (
+  database: DatabaseService,
   id: string,
   options: RegisterMigrationsOptions = {},
 ) {
-  const database = yield* Database;
   const support = database.migrate;
 
   if (support === undefined) {
@@ -172,8 +172,26 @@ export const registerMigrations = (
   id: string,
   options: RegisterMigrationsOptions = {},
 ): Effect.Effect<void, never, Database> => {
-  const effect: unknown = register(id, options);
+  const effect: unknown = Effect.flatMap(Effect.service(Database), (database) =>
+    register(database, id, options),
+  );
 
   // SAFETY: the inner effect's only caller-owned requirement is `Database`; the ambient stack services are checked at runtime with `serviceOption`.
   return effect as Effect.Effect<void, never, Database>;
 };
+
+/**
+ * Register a migration for a database value the caller already holds. This is
+ * what `Paykit.BillingStack` calls when a `migrate` flag is declared, and it is
+ * the same body `registerMigrations` runs after reading the service.
+ *
+ * A caller owns `RuntimeContext | Stack` here — they are ambient during stack
+ * evaluation, and the body returns before touching either outside one.
+ *
+ * @internal
+ */
+export const registerDatabaseMigration = (
+  database: DatabaseService,
+  id: string,
+  options: RegisterMigrationsOptions = {},
+) => register(database, id, options);

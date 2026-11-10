@@ -67,7 +67,7 @@ const serve = () => ({
     const world = Layer.mergeAll(billing.world, Provider.payments);
 
     return yield* handle().pipe(Effect.provide(world), Effect.orDie);
-  }).pipe(Effect.provide(D1(BillingDatabase))),
+  }).pipe(Effect.provide(Layer.mergeAll(D1(BillingDatabase), Cloudflare.D1.QueryDatabaseBinding))),
 });
 
 /**

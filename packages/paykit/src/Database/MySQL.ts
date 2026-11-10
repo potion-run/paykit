@@ -43,7 +43,7 @@ export interface MySQLOptions {
  * import { MySQL } from "@potion.run/paykit/Database/MySQL";
  *
  * Effect.gen(function* () {
- *   yield* Paykit.registerMigrations("Billing");
+ *   yield* Paykit.BillingStack("Billing", { ...billing, migrate: true });
  * }).pipe(Effect.provide(MySQL(Config.Redacted("MYSQL_URL"), {
  *   migrate: Config.Redacted("MYSQL_MIGRATION_URL"),
  * })));

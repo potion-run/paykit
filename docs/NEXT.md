@@ -55,15 +55,16 @@ rewrites a standing and there is no automatic migration.
 
 The billing database is a port now. `Paykit.Database` gives a target one `DatabaseService` with a
 per-execution `runtime` connection and, when the target can migrate, a separate deploy-time
-`migrate.connect`; `Database/Sqlite`, `Database/Postgres` and `Database/D1` are imported from their
-own export condition because the driver is a peer. The schema is a description (`BILLING_SCHEMA`),
-`migrationFiles()` renders it, the committed `examples/*/migrations/*.sql` files are that rendering,
-and `pnpm migrations:check` fails when they disagree. A deploy applies those files through
-`@alchemy.run/sql/Migrations` and then converges the live database, adding missing columns and
-indexes and refusing every drop, rename or retype. `Paykit.Migrations` registers one Action per
-target keyed by `{ identity, schemaFingerprint, migrationFingerprint, dialect }`, so a new file, a
-description change or a replaced database re-runs it, an unchanged deploy is a no-op, and the Worker
-depends on its output. D1 keeps applying its own directory with no `migrate` at all. A database
+`migrate.connect`; `Database/Sqlite`, `Database/Postgres`, `Database/MySQL`, `Database/D1` and
+`Database/Drizzle` are imported from their own export condition because the driver is a peer. The
+schema is a description (`BILLING_SCHEMA`), a frozen baseline (`BILLING_SCHEMA_V1`) is what
+`migrationFiles()` renders, and a test pins its hash — no `.sql` file is committed. A deploy applies
+the baseline through `@alchemy.run/sql/Migrations` and then converges the live database, adding
+missing tables, columns and indexes and refusing every drop, rename or retype. `BillingStack(id, {
+migrate })` registers one Action per target keyed by `{ identity, schemaFingerprint,
+migrationFingerprint, dialect }`, so a description change or a replaced database re-runs it, an
+unchanged deploy is a no-op, and the Worker depends on its output. It is the same boolean shape as
+`BetterAuth({ migrate })`. A database
 Drizzle already opened is a connection, not a schema owner: `Database/Drizzle` unwraps its `pg` pool
 and gives paykit the same executor, while `BILLING_SCHEMA` stays the source of truth.
 `examples/auth/test/coexistence.test.ts` runs both migrators — Better Auth's and paykit's — against

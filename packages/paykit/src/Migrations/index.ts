@@ -25,7 +25,12 @@ import {
   tableName,
 } from "../Store/Tables.ts";
 import { converge } from "./Converge.ts";
-import { BILLING_SCHEMA, schemaStatementsOf, type SchemaDefinition } from "./Schema.ts";
+import {
+  BILLING_SCHEMA,
+  BILLING_SCHEMA_V1,
+  schemaStatementsOf,
+  type SchemaDefinition,
+} from "./Schema.ts";
 
 /** Where a migration's DDL is rendered: a dialect and, on Postgres, a schema. */
 export interface MigrationScope {
@@ -75,7 +80,7 @@ export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray
 // The DDL is a rendering of the one typed description, so the file a deploy
 // applies and the DDL a test or a dry run prints come from the same source.
 const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
-  schemaStatementsOf(BILLING_SCHEMA, scope);
+  schemaStatementsOf(BILLING_SCHEMA_V1, scope);
 
 /**
  * The migrations paykit ships, rendered for a dialect and schema. The list is
