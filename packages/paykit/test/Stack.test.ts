@@ -12,6 +12,8 @@ import { PaymentsManual } from "../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../src/PaymentsMemory.ts";
 import {
   CatalogPriceMismatch,
+  D1Store,
+  DurableObjectStore,
   MemoryStore,
   NoPurchasePath,
   Postgres,
@@ -56,6 +58,25 @@ describe("Stack", () => {
       expect(billing.catalog.tiers.length).toBe(1);
       expect(billing.providers.length).toBe(1);
       expect(billing.store._tag).toBe("MemoryStore");
+    }),
+  );
+
+  it.effect("records a D1 ledger and a Durable Object ledger as their own kinds", () =>
+    Effect.gen(function* () {
+      const d1 = yield* validateStack("Billing", {
+        catalog: proCatalog,
+        providers: [PaymentsMemory()],
+        store: D1Store(),
+      });
+
+      const durable = yield* validateStack("Billing", {
+        catalog: proCatalog,
+        providers: [PaymentsMemory()],
+        store: DurableObjectStore(),
+      });
+
+      expect(d1.store._tag).toBe("D1Store");
+      expect(durable.store._tag).toBe("DurableObjectStore");
     }),
   );
 

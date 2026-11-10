@@ -30,7 +30,12 @@ export interface BillingStackProps {
    * provider that reference names. Every name must be distinct.
    */
   readonly providers?: ReadonlyArray<MoneyProvider>;
-  /** The store the deploy records. The runtime provides the matching layer. */
+  /**
+   * The store kind the deploy records for drift. A host whose ledger lives in a
+   * platform — D1, Durable Objects — records that kind, so a later deploy can
+   * see a store change; the runtime still provides the matching layer or
+   * platform.
+   */
   readonly store?: Store;
   /**
    * Whether this declaration migrates its database. The default is to migrate
@@ -78,6 +83,10 @@ const storeKindOf = (store: Store): BillingStore => {
       return { _tag: "SqliteStore", schema: store.schema };
     case "MySQLStore":
       return { _tag: "MySQLStore" };
+    case "D1Store":
+      return { _tag: "D1Store" };
+    case "DurableObjectStore":
+      return { _tag: "DurableObjectStore" };
   }
 };
 

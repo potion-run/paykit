@@ -11,9 +11,9 @@ import { billing } from "./src/billing.config.ts";
  * admin Api and the console reads, and the Foldkit Website that hosts them on
  * one origin.
  *
- * The store is `MemoryStore`, so the example runs with no database and no
- * provider key. The console's header pair is the development guard; a real
- * deployment replaces it with its own session and CSRF headers.
+ * The model runs on Durable Objects, so the example needs no database, and
+ * `Manual` needs no provider key. The console's header pair is the development
+ * guard; a real deployment replaces it with its own session and CSRF headers.
  */
 const Example = Alchemy.Stack(
   "PaykitAdminExample",

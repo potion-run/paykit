@@ -80,7 +80,7 @@ destruction [ADR 0003](./0003-the-deploy-provisions-the-vendor.md) refuses, and 
 not a fact about a customer.
 
 **5. Reads accept older, refuse newer, and name a missing bump.** `Verify` judges every active
-plan row against the catalog:
+plan row against the catalog, for the customer and for every entity scope:
 
 - `row.version < catalog.version` is `PlanVersionOutdated`: the customer is on an older generation
   and the next move is the migration. It is drift, not an error.
@@ -88,7 +88,9 @@ plan row against the catalog:
   it serves. Nothing may move the account until the deploy catches up, because recording an older
   generation over a newer one is the one direction a version may never take. `decide` enforces it
   too: a `ChangeTier`, `ScheduleTierChange` or `ChangePlans` move that names an older generation
-  than the standing already holds is refused with `PlanVersionStale`.
+  than the standing already holds is refused with `PlanVersionStale`. A scheduled phase is held to
+  the same direction: a move to a newer generation drops the phases that name that plan, and
+  `ApplyPlanPhase` and the boundary close treat a phase older than the row it would write as stale.
 - `row.version === catalog.version` on a **fixed** plan compares the recorded terms with the
   catalog's (`catalogMismatchOf`, the same rule the guard runs). A difference is
   `PlanVersionDrift({ field })`: the deploy changed the plan without bumping it. A custom plan is
@@ -123,8 +125,9 @@ model has no previous deploy to compare with.
 - `PlanVersionOutdated`, `PlanVersionAhead` and `PlanVersionDrift` join `VerifyMismatch`;
   `PlanVersionStale` is the command refusal for a backwards move.
 - `plans.qnt` gains generations; its scenarios gain a scheduled version move, an immediate one, a
-  boundary landing, the same-generation no-op and an unknown-generation refusal. `spec-mutants`
-  gains one mutant for the generation bound.
+  boundary landing, the same-generation no-op, an unknown-generation refusal and the stale-version
+  refusals. The stale refusal is a run, not an invariant: it conserves every counter, so no mutant
+  can kill it. `spec-mutants` keeps the mutant for the generation bound.
 - The cross-account `BillingReadRow` keeps `tier` and does not gain a plan-version column. A
   projection column would need a `billing_rm_*` migration for a descriptive field, and the
   per-account view plus `Verify` already answer the question. A list that must show generations

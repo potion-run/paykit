@@ -19,8 +19,8 @@ export const Provider = Paykit.Manual();
  *
  * `store` is the deploy-time record, not the Worker's runtime store: the
  * database is the D1 resource beside this file, and `billingOnSql` hosts the
- * model on it. The SQL test uses the same function, which is why this file can
- * keep `MemoryStore` without making the Worker in-memory.
+ * model on it. It records `D1Store`, so a later deploy can see the ledger's
+ * store kind even though the binding is a runtime value.
  *
  * `satisfies` keeps the declaration's own types: `providers` stays a one-element
  * tuple whose element is `Provider`, not a widened `MoneyProvider[]`.
@@ -28,5 +28,5 @@ export const Provider = Paykit.Manual();
 export const billing = {
   catalog: billingCatalog,
   providers: [Provider],
-  store: Paykit.MemoryStore(),
+  store: Paykit.D1Store(),
 } satisfies BillingStackProps;

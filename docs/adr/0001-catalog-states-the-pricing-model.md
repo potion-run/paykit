@@ -95,7 +95,7 @@ Not part of this record; each gets its own.
 ## Consequences
 
 - **A catalog change old state cannot read bumps `BILLING_STACK_VERSION`**, and `read`, `diff` and
-  `reconcile` refuse a version they do not know — the guard added for exactly this. A widening does
+  `reconcile` refuse a state from a newer version — the guard added for exactly this. A widening does
   not bump it: `included: "unlimited"` still decodes from a record that holds a number, so refusing
   that state would force a reset for no reason.
 - **The catalog becomes the version ledger.** A deploy records what a price was; the log records

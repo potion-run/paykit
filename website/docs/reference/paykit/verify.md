@@ -3,7 +3,7 @@ title: "Verify"
 description: "Check one account's standing against the catalog and the configured provider."
 ---
 
-> **Source:** [`packages/paykit/src/Verify.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Verify.ts#L235)
+> **Source:** [`packages/paykit/src/Verify.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Verify.ts#L243)
 > **Kind:** Primitive
 
 Check one account's standing against the catalog and the configured

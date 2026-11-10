@@ -115,9 +115,9 @@ export const serve = Effect.gen(function* () {
  * The Worker world: the billing model and bindings, the Better Auth instance on
  * D1, and the two paykit guards over that instance.
  *
- * `MemoryStore` keeps the example runnable with no billing database. The auth
- * database is the only D1 database, and Better Auth's schema is migrated at
- * deploy by `@alchemy.run/better-auth`.
+ * The billing model runs on Durable Objects, so the example needs no billing
+ * database. The auth database is the only D1 database, and Better Auth's schema
+ * is migrated at deploy by `@alchemy.run/better-auth`.
  */
 const World = Layer.mergeAll(
   Paykit.world({

@@ -167,8 +167,9 @@ period, and `EnterGrace` is refused once the standing is terminal.
   add-on (`PlanPhaseNamesAddOn`). The close applies every phase due at the boundary, in order,
   before the counters reset, so the next period starts on the plan it lands on. `WithdrawTierChange`
   drops the next phase and refuses (`NoTierChangeScheduled`) when none is scheduled. A move drops
-  the phases its own group had waiting and leaves the other group's alone; a terminal standing
-  drops them with the cancellation. At the boundary the old plan's balance source is expired and
+  every phase naming the plan it writes and every phase its group had waiting; a terminal standing
+  drops them with the cancellation. A phase the held generation has outrun is never due, and the
+  close prunes it. At the boundary the old plan's balance source is expired and
   the new plan's source is granted; the expiry is recorded, so the pool's fold is complete. A
   lifetime source is untouched and a pack stays protected. The new plan grant is for the period
   starting here and expires at the next close. It also starts every counter over — a counter
@@ -207,8 +208,11 @@ period, and `EnterGrace` is refused once the standing is terminal.
   is the catalog generation a new move buys; `PlanRow.version`, `CustomerPlan.version` and every
   activation / change event keep the generation that was sold. A move to the same plan id at the
   same version is a replay; a different version is an ordinary move, classified by price like any
-  other. `Verify` reports an outdated row, a row ahead of the deploy and a fixed plan whose terms
-  changed without a bump. A deploy never rewrites a standing and there is no automatic migration.
+  other. A move to a newer generation drops every pending phase that names that plan, and a phase
+  older than the row it would write is stale: `ApplyPlanPhase` and the close never apply it.
+  `Verify` reports an outdated row, a row ahead of the deploy and a fixed plan whose terms changed
+  without a bump, for the customer and for every entity scope. A deploy never rewrites a standing
+  and there is no automatic migration.
 
 - Every command has one typed rejection per way it can refuse.
 

@@ -50,8 +50,13 @@ A plan now states its generation ([ADR
 generation a new move buys; every plan row, phase and activation event keeps the generation it was
 sold at, and a version move is the ordinary `attach` / `update` / scheduled phase. `Verify` reports
 `PlanVersionOutdated` (the account is on an older generation), `PlanVersionAhead` (the deploy is
-behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a bump). No deploy
-rewrites a standing and there is no automatic migration.
+behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a bump), for the
+customer and for every entity scope. A phase older than the generation it would write is never
+applied, and a move to a newer generation drops the phases naming that plan. No deploy rewrites a
+standing and there is no automatic migration.
+
+`BillingStack` records D1 and Durable Object ledgers as their own store kinds, so the deploy
+state names the store the Worker actually uses rather than defaulting to `MemoryStore`.
 
 The billing database is a port now. `Paykit.Database` gives a target one `DatabaseService` with a
 per-execution `runtime` connection and, when the target can migrate, a separate deploy-time
@@ -456,7 +461,10 @@ time. The browser holds no catalog at all: it sends a plan id and the deployment
 paths through `routes`, and builds no world — it requires the Api services, so one process stays one
 model. The result is a request function and `handler.fetch`, an `HttpEffect` that reads the ambient
 request (the shape Alchemy's `auth.fetch` uses), so a Worker whose world it builds once returns
-`{ fetch: handler.fetch }`.
+`{ fetch: handler.fetch }`. The D1 example builds its world per request because
+`Database.runtime` is a per-execution binding; a lazy executor port would let it build once, and the
+Postgres examples pay the same cost for a per-execution pool. The handler itself is stateless, so
+that is a connection-lifecycle choice, not a second model.
 `Paykit.moneyRoutes(provider)` is promoted beside it, which is where the copy the billing and polar
 examples each carried went. The *join* landed beside it ([ADR
 0048](./adr/0048-the-api-names-a-plan-and-the-deployment-joins-it.md)): `BillingCommandsRpcs` takes

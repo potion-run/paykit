@@ -3,7 +3,7 @@ title: "BillingStack"
 description: "The deploy-time billing stack, in one call."
 ---
 
-> **Source:** [`packages/paykit/src/BillingStack.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/BillingStack.ts#L84)
+> **Source:** [`packages/paykit/src/BillingStack.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/BillingStack.ts#L93)
 > **Kind:** Primitive · **Product:** Billing
 
 The deploy-time billing stack, in one call.

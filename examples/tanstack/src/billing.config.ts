@@ -12,5 +12,5 @@ export const Provider = Paykit.Manual();
 export const billing = {
   catalog: tanstackCatalog,
   providers: [Provider],
-  store: Paykit.MemoryStore(),
+  store: Paykit.DurableObjectStore(),
 } satisfies BillingStackProps;

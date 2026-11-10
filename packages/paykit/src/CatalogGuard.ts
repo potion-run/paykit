@@ -59,7 +59,10 @@ interface CatalogFallback {
 /** A command that carries catalog terms for a plan set rather than one plan. */
 interface CatalogPlanSet {
   readonly moves?: ReadonlyArray<CatalogCarried>;
-  readonly cancels?: ReadonlyArray<{ readonly fallback?: CatalogFallback }>;
+  readonly cancels?: ReadonlyArray<{
+    readonly group?: string;
+    readonly fallback?: CatalogFallback;
+  }>;
   readonly uncancels?: ReadonlyArray<string>;
 }
 

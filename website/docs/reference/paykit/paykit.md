@@ -3,7 +3,7 @@ title: "Paykit"
 description: "The four export groups as one namespace, so the docs' Paykit.feature(...) and the flat named exports are the same functions."
 ---
 
-> **Source:** [`packages/paykit/src/Paykit.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Paykit.ts#L47)
+> **Source:** [`packages/paykit/src/Paykit.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Paykit.ts#L55)
 > **Kind:** Primitive
 
 The four export groups as one namespace, so the docs' `Paykit.feature(...)`

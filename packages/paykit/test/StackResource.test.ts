@@ -48,6 +48,21 @@ describe("the BillingStack resource", () => {
     expect(result.success.providers).toEqual(props.providers);
   });
 
+  it("records D1 and Durable Object stores as their own kinds", () => {
+    const d1 = run(reconcileBillingStack({ ...props, store: { _tag: "D1Store" } }));
+
+    const durable = run(reconcileBillingStack({ ...props, store: { _tag: "DurableObjectStore" } }));
+
+    expect(d1._tag).toBe("Success");
+    expect(durable._tag).toBe("Success");
+
+    if (d1._tag === "Success") expect(d1.success.store).toEqual({ _tag: "D1Store" });
+
+    if (durable._tag === "Success") {
+      expect(durable.success.store).toEqual({ _tag: "DurableObjectStore" });
+    }
+  });
+
   it("reconciling the same props twice records byte-identical attributes", () => {
     // A deploy that changes nothing must diff to a no-op, so the recorded
     // attributes cannot carry a timestamp, a random id or a re-ordered list.

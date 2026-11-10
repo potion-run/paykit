@@ -185,6 +185,8 @@ export type { CatalogInput } from "./Catalog.ts";
 
 export {
   CatalogPriceMismatch,
+  D1Store,
+  DurableObjectStore,
   MemoryStore,
   NoPurchasePath,
   Postgres,

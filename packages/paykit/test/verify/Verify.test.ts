@@ -1,5 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
 import { expect, it } from "@alchemy.run/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { allowance } from "../../src/Allowance.ts";
@@ -50,7 +51,7 @@ const versionedCatalog: Catalog = Effect.runSync(
 const attachedEntity = (version: number) => ({
   id: EntityId.make("ent_1"),
   status: "attached" as const,
-  createdAt: new Date("2030-01-01T00:00:00Z"),
+  createdAt: DateTime.makeUnsafe("2030-01-01T00:00:00Z"),
   plans: {
     pro: planRow("pro", {
       version,

@@ -90,10 +90,18 @@ export type Store =
   | {
       readonly _tag: "MySQLStore";
       readonly url: Redacted.Redacted<string> | Config.Config<Redacted.Redacted<string>>;
-    };
+    }
+  | { readonly _tag: "D1Store" }
+  | { readonly _tag: "DurableObjectStore" };
 
 /** The in-memory store, for tests and `alchemy dev`. */
 export const MemoryStore = (): Store => ({ _tag: "MemoryStore" });
+
+/** A Cloudflare D1 ledger; the binding is the Worker's, not state. */
+export const D1Store = (): Store => ({ _tag: "D1Store" });
+
+/** A ledger hosted by the model's Durable Objects. */
+export const DurableObjectStore = (): Store => ({ _tag: "DurableObjectStore" });
 
 /** The Postgres store config. The schema defaults to `billing`. */
 export const Postgres = (props: {
