@@ -13,6 +13,7 @@ import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { AccountEvents } from "../../src/Subscription/AccountEvents.stream.ts";
 import { BillingRead } from "../../src/Subscription/BillingRead.projection.ts";
+import { CreateCustomer } from "../../src/Subscription/CreateCustomer.command.ts";
 import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -134,6 +135,17 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
     // for it to say what the view says rather than assuming one delivery feeds
     // both consumers.
     yield* waitForProjection(store, "acct_read_live", view);
+
+    const named = yield* subscription.send(
+      ref,
+      new CreateCustomer({ name: "Ada Lovelace", email: "ada@example.com" }),
+    );
+
+    const namedView = Option.getOrNull(yield* state.query(ref, { atLeast: named }));
+
+    yield* BillingRead.caughtUp(named);
+    yield* waitForProjection(store, "acct_read_live", namedView);
+
     const page = yield* store.list();
     expect(page.rows.length).toBe(1);
     expect(page.next).toBeNull();
@@ -142,6 +154,8 @@ it.live("BillingRead serves a cross-account row after the projection catches up"
     expect(page.rows[0]?.standing).toBe("good");
     expect(page.rows[0]?.credits).toBe(0);
     expect(page.rows[0]?.features.messages?.included).toBe(100);
+    expect(page.rows[0]?.customer?.name).toBe("Ada Lovelace");
+    expect(page.rows[0]?.customer?.email).toBe("ada@example.com");
   }).pipe(
     Effect.provide(
       PaykitModel.layer(PaykitHandlers)

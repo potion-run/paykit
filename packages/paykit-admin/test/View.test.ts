@@ -60,6 +60,7 @@ const page = BillingReadPage.make({
   rows: [
     {
       account,
+      customer: { name: "Maya Chen", email: "maya@acme.dev", createdAt: at },
       tier: "pro",
       status: "active",
       standing: "good",
@@ -243,6 +244,9 @@ describe("the console view", () => {
   it("renders the customer list with plan names, usage, credits and next bill", () => {
     const text = textOf(rootOf(model(false)));
 
+    expect(text).toContain("Maya Chen");
+    expect(text).toContain("maya@acme.dev");
+    expect(nodesWithClass(rootOf(model(false)), "pk-filter-search")).toHaveLength(1);
     expect(text).toContain("Pro");
     expect(text).toContain("1,840 / 2,000");
     expect(text).toContain("Messages");

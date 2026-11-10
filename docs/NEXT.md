@@ -342,9 +342,10 @@ the source of truth for this slice; `plans.qnt`, `balances.qnt`, `entities.qnt` 
   moving to small at the period end"; the console sends both, building the scheduled payload from the
   catalog it already holds because a scheduled change carries no proration and so needs no quote.
 - **Console screens**: `paykit-admin` now leads with the customer's name and email, its plan and
-  one operator-facing status, then the period's usage, limits and alerts; holds, provider IDs, raw
-  events, `Preview` and verification sit in a disclosure. The overview shows estimated MRR at list
-  price and a server-wide attention list. **Refund** now has its decision ([ADR
+  one operator-facing status, then the period's usage, limits and alerts; the list carries the
+  identity and searches name, email or account id, and holds, provider IDs, raw events, `Preview`
+  and verification sit in a disclosure. The overview shows estimated MRR at list price and a
+  server-wide attention list. **Refund** now has its decision ([ADR
   0019](./adr/0019-a-refund-names-the-charge-it-reverses.md), [brief](./briefs/refund.md)) and its
   model: `Refund` records `RefundRecorded`, the ceiling is what the log recorded as charged per
   currency, and the `Paykit.Refund` binding takes the money through `Payments.refund` before the

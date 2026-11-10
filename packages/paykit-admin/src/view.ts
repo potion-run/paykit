@@ -972,9 +972,13 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
   const standing = Option.getOrElse(filter.standing, () => "");
   const status = Option.getOrElse(filter.status, () => "");
   const tier = Option.getOrElse(filter.tier, () => "");
+  const search = Option.getOrElse(filter.search, () => "");
 
   const hasFilter =
-    Option.isSome(filter.standing) || Option.isSome(filter.status) || Option.isSome(filter.tier);
+    Option.isSome(filter.standing) ||
+    Option.isSome(filter.status) ||
+    Option.isSome(filter.tier) ||
+    Option.isSome(filter.search);
 
   // A list is a point-in-time read, never a live view: say when it was read,
   // or say the read time is unknown. The panel never presents the rows as
@@ -1037,6 +1041,18 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
           h.div(
             [h.Class("pk-filters")],
             [
+              h.div(
+                [h.Class("pk-filter-search")],
+                [
+                  input(h, {
+                    id: "filter-search",
+                    value: search,
+                    onInput: (value) => Message.UpdatedSearch({ value }),
+                    placeholder: "Search name, email or ID",
+                    attributes: [h.AriaLabel("Search customers")],
+                  }),
+                ],
+              ),
               selectControl(
                 "filter-standing",
                 "Access",
@@ -1101,8 +1117,11 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                   ]),
                   tableBody(
                     h,
-                    model.accounts.rows.map((row: BillingReadRow) =>
-                      tableRow(
+                    model.accounts.rows.map((row: BillingReadRow) => {
+                      const name = row.customer?.name?.trim() ?? "";
+                      const label = name === "" ? row.account : name;
+
+                      return tableRow(
                         h,
                         [
                           tableCell(
@@ -1111,26 +1130,30 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                               h.div(
                                 [h.Class("pk-account-cell")],
                                 [
-                                  accountAvatar(row.account, h, true),
+                                  accountAvatar(
+                                    row.account,
+                                    h,
+                                    true,
+                                    name === "" ? initialsOf(row.account) : initialsOfName(name),
+                                  ),
                                   h.div(
                                     [h.Class("pk-account-copy")],
                                     [
-                                      h.span([h.Class("pk-account-name")], [row.account]),
-                                      ...(row.dunningAttempts === 0
-                                        ? []
-                                        : [
-                                            h.span(
-                                              [h.Class("pk-account-meta")],
-                                              [
-                                                formatCount(
+                                      h.span([h.Class("pk-account-name")], [label]),
+                                      h.span(
+                                        [h.Class("pk-account-meta")],
+                                        [
+                                          row.customer?.email ??
+                                            (row.dunningAttempts === 0
+                                              ? row.account
+                                              : formatCount(
                                                   row.dunningAttempts,
                                                   row.dunningAttempts === 1
                                                     ? "failed payment"
                                                     : "failed payments",
-                                                ),
-                                              ],
-                                            ),
-                                          ]),
+                                                )),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                 ],
@@ -1178,8 +1201,8 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                             ),
                           ],
                         },
-                      ),
-                    ),
+                      );
+                    }),
                   ),
                 ],
                 { ariaLabel: "Customers" },

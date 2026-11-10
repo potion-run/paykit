@@ -11,6 +11,7 @@ const sameRow = (row: BillingReadRow | null, view: EntitlementsState): boolean =
   row.status === view.status &&
   row.standing === view.standing &&
   row.credits === view.credits &&
+  JSON.stringify(row.customer ?? null) === JSON.stringify(view.customer ?? null) &&
   JSON.stringify(row.features) === JSON.stringify(view.features);
 
 /**

@@ -426,4 +426,32 @@ export const BILLING_SCHEMA_V1: SchemaDefinition = {
  * without touching `BILLING_SCHEMA_V1` — and therefore every applied history
  * row — which is what lets the baseline stop moving.
  */
-export const BILLING_SCHEMA: SchemaDefinition = BILLING_SCHEMA_V1;
+const withColumn = (schema: SchemaDefinition, on: string, column: Column): SchemaDefinition => ({
+  ...schema,
+  items: schema.items.map((item) =>
+    "on" in item || item.name !== on ? item : { ...item, columns: [...item.columns, column] },
+  ),
+});
+
+const withIndex = (schema: SchemaDefinition, entry: Index): SchemaDefinition => ({
+  ...schema,
+  items: [...schema.items, entry],
+});
+
+/**
+ * The target schema. It starts at the frozen baseline and adds only the
+ * columns a later read model carries; convergence applies the delta, so an
+ * existing deployment gets the column without rewriting the baseline.
+ */
+export const BILLING_SCHEMA: SchemaDefinition = withIndex(
+  withColumn(
+    withColumn(BILLING_SCHEMA_V1, BILLING_TABLES.readModel, { name: "customer", type: "text" }),
+    BILLING_TABLES.readModel,
+    { name: "usage_limited", type: "integer", notNull: true, default: 0 },
+  ),
+  index("billing_rm_billing_read_attention", BILLING_TABLES.readModel, [
+    "status",
+    "cancel_at_period_end",
+    "usage_limited",
+  ]),
+);

@@ -1198,6 +1198,16 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         "replace",
       ),
 
+    UpdatedSearch: ({ value }) =>
+      navigate(
+        model,
+        withFilter(model.route, {
+          ...model.accounts.filter,
+          search: value.trim() === "" ? Option.none() : Option.some(value),
+        }),
+        "replace",
+      ),
+
     ClickedAccount: ({ account }) =>
       // Opening an account keeps the list's filters and the page it was on, so
       // closing it (and stepping back) returns to the same list.

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { List } from "../../src/Billing/List.binding.ts";
 import {
@@ -31,6 +32,7 @@ const row = (account: string, overrides: Partial<BillingReadRow> = {}): BillingR
   }) as BillingReadRow;
 
 const accounts = ["acct_a", "acct_b", "acct_c", "acct_d", "acct_e"];
+const customerAt = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const testCatalog = Effect.runSync(catalog({ features: [], tiers: [] }));
 
 describe("cross-account list", () => {
@@ -93,6 +95,37 @@ describe("cross-account list", () => {
     expect(
       queryRows(rows, { standing: "grace", tier: "scale" }).rows.map((entry) => entry.account),
     ).toEqual(["acct_d"]);
+  });
+
+  it("searches the account id, customer name and customer email", () => {
+    const rows = [
+      row("acct_a", {
+        customer: {
+          name: "Maya Chen",
+          email: "maya@acme.dev",
+          createdAt: customerAt,
+        },
+      }),
+      row("acct_b", {
+        customer: {
+          name: "Sam Rivera",
+          email: "sam@other.dev",
+          createdAt: customerAt,
+        },
+      }),
+      row("acct_c"),
+    ];
+
+    expect(queryRows(rows, { search: "MAYA" }).rows.map((entry) => entry.account)).toEqual([
+      "acct_a",
+    ]);
+    expect(queryRows(rows, { search: "other.dev" }).rows.map((entry) => entry.account)).toEqual([
+      "acct_b",
+    ]);
+    expect(queryRows(rows, { search: "acct_c" }).rows.map((entry) => entry.account)).toEqual([
+      "acct_c",
+    ]);
+    expect(queryRows(rows, { search: "  " }).rows.length).toBe(3);
   });
 
   it("caps the page size", () => {

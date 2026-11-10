@@ -23,6 +23,7 @@ export const Message = defineMessageUnion({
   UpdatedStandingFilter: { value: Schema.String },
   UpdatedStatusFilter: { value: Schema.String },
   UpdatedTierFilter: { value: Schema.String },
+  UpdatedSearch: { value: Schema.String },
   ClickedAccount: { account: AccountId },
   ClosedAccount: {},
   ClickedOverview: {},

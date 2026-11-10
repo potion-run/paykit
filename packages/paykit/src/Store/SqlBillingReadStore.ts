@@ -38,6 +38,7 @@ export const SqlBillingReadStore = (log: SqlEventLog): Layer.Layer<BillingReadSt
     get: (account) => log.readModel(account).pipe(Effect.orDie),
     list: (query?: BillingReadQuery) => log.readModelPage(query).pipe(Effect.orDie),
     summary: () => log.readModelSummary().pipe(Effect.orDie),
+    attention: () => log.readModelAttention().pipe(Effect.orDie),
   });
 
 export { DEFAULT_PAGE, MAX_PAGE };

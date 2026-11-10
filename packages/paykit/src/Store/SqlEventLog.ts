@@ -11,7 +11,9 @@ import {
 import {
   BillingReadRow as BillingReadRowSchema,
   BillingReadSummary as BillingReadSummarySchema,
+  usageLimitedOf,
 } from "../BillingReadStore.ts";
+import type { CustomerDetails } from "../Customer.ts";
 import type { EntityEntitlement, FeatureEntitlement } from "../Subscription/Entitlements.view.ts";
 import { asyncOf, type SqlDialect, type SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
@@ -406,6 +408,15 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         params.push(query.status);
       }
 
+      const search = query.search?.trim().toLowerCase();
+
+      if (search !== undefined && search !== "") {
+        const needle = `%${search}%`;
+
+        where.push("(LOWER(account) LIKE ? OR LOWER(customer) LIKE ?)");
+        params.push(needle, needle);
+      }
+
       if (query.after !== undefined) {
         where.push(order === "asc" ? "account > ?" : "account < ?");
         params.push(query.after);
@@ -451,6 +462,19 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         (rows) => Effect.forEach(rows, summaryToReadModel),
       ),
 
+    /**
+     * The rows the overview's attention list can name, filtered in SQL so a
+     * dashboard never reads the entire projection to find them. The reason
+     * list and its order are folded in the console read.
+     */
+    readModelAttention: () =>
+      Effect.flatMap(
+        sql.query<ReadModelColumns>(
+          `SELECT ${READ_MODEL_COLUMNS} FROM ${readModels} WHERE status NOT IN ('canceled', 'expired') AND (status = 'grace' OR cancel_at_period_end = 1 OR usage_limited = 1) ORDER BY account ASC`,
+        ),
+        (rows) => Effect.forEach(rows, rowToReadModel),
+      ),
+
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         upsertRow(
@@ -472,6 +496,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
             "currency",
             "features",
             "entities",
+            "customer",
+            "usage_limited",
           ],
           ["account"],
         ),
@@ -491,6 +517,8 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
           row.currency ?? null,
           featuresJson(row.features),
           row.entities === undefined ? null : entitiesJson(row.entities),
+          row.customer === undefined ? null : customerJson(row.customer),
+          usageLimitedOf(row) ? 1 : 0,
         ] satisfies ReadonlyArray<SqlValue>,
       ),
 
@@ -502,10 +530,11 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
 export type SqlEventLog = ReturnType<typeof SqlEventLog>;
 
 const READ_MODEL_COLUMNS =
-  "account, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features, entities";
+  "account, customer, tier, status, standing, period_start, period_end, cancel_at_period_end, credits, prepaid_credits, dunning_attempts, proration, proration_invoice, currency, features, entities";
 
 interface ReadModelColumns {
   readonly account: string;
+  readonly customer: string | null;
   readonly tier: string;
   readonly status: string;
   readonly standing: string;
@@ -534,6 +563,7 @@ const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
   Effect.suspend(() =>
     decodeReadModelRow({
       account: row.account,
+      ...(row.customer === null ? {} : { customer: customerFrom(row.customer) }),
       tier: row.tier,
       status: row.status,
       standing: row.standing,
@@ -621,6 +651,18 @@ const featureFromWire = (
           })),
         }),
   };
+};
+
+const customerJson = (customer: CustomerDetails): string =>
+  JSON.stringify({ ...customer, createdAt: customer.createdAt.epochMilliseconds });
+
+const customerFrom = (json: string): CustomerDetails => {
+  // SAFETY: the JSON is `customerJson`'s own output, in the wire shape below.
+  const value = JSON.parse(json) as Omit<CustomerDetails, "createdAt"> & {
+    readonly createdAt: number;
+  };
+
+  return { ...value, createdAt: dateTimeFrom(value.createdAt) };
 };
 
 const featuresJson = (features: BillingReadRow["features"]): string =>

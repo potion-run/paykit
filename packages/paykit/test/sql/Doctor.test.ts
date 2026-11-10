@@ -7,7 +7,7 @@ import { allowance } from "../../src/Allowance.ts";
 import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { doctor } from "../../src/Doctor.ts";
 import { messages } from "../../src/Feature.ts";
-import { migrate } from "../../src/Migrations/index.ts";
+import { sync } from "../../src/Migrations/index.ts";
 import { SqlEventLog } from "../../src/Store/SqlEventLog.ts";
 import { Subscribe } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
@@ -29,7 +29,7 @@ const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const opened = (account = "acct_doctor") =>
   Effect.gen(function* () {
     const sql = sqliteExecutor();
-    yield* migrate(sql);
+    yield* sync(sql);
     const log = SqlEventLog(sql, { now: () => 1_000 });
 
     const events = Subscription.definition.decide.Subscribe(
@@ -78,7 +78,7 @@ const historyLog = (
 ) =>
   Effect.gen(function* () {
     const sql = sqliteExecutor();
-    yield* migrate(sql);
+    yield* sync(sql);
     const log = SqlEventLog(sql, { now: () => 1_000 });
 
     for (const [index, event] of events.entries()) {
@@ -279,7 +279,7 @@ describe("doctor", () => {
           if (events.length === 0) return true;
 
           const sql = sqliteExecutor();
-          yield* migrate(sql);
+          yield* sync(sql);
           const log = SqlEventLog(sql, { now: () => now.epochMilliseconds });
 
           for (const [index, event] of events.entries()) {

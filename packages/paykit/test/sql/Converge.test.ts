@@ -34,17 +34,23 @@ describe("convergence", () => {
     }),
   );
 
-  it.live("adds nothing to a target the shipped migration already built", () =>
+  it.live("adds the target delta to a target the shipped migration built", () =>
     Effect.gen(function* () {
       const sql = sqliteExecutor();
       yield* migrate(sql);
 
       const result = yield* converge(sql);
       expect(result.created).toEqual([]);
-      expect(result.columns).toEqual([]);
+      expect(result.columns).toEqual([
+        "billing_rm_billing_read.customer",
+        "billing_rm_billing_read.usage_limited",
+      ]);
       expect(result.extra).toEqual([]);
       expect(result.indexes).toContain("billing_outbox_pending");
       expect(result.indexes).toContain("billing_outbox_account_pending");
+      expect(result.indexes).toContain("billing_rm_billing_read_attention");
+
+      expect((yield* converge(sql)).columns).toEqual([]);
     }),
   );
 
@@ -122,7 +128,10 @@ describe("convergence", () => {
       const first = yield* sync(sql);
       expect(first.applied).toEqual(["0001_init"]);
       expect(first.created).toEqual([]);
-      expect(first.columns).toEqual([]);
+      expect(first.columns).toEqual([
+        "billing_rm_billing_read.customer",
+        "billing_rm_billing_read.usage_limited",
+      ]);
 
       const second = yield* sync(sql);
       expect(second.applied).toEqual([]);

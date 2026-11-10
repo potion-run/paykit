@@ -9,7 +9,7 @@ import { Actor, system } from "../../src/Auth/Actor.ts";
 import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { planItemsOf, catalog } from "../../src/Catalog.ts";
 import { messages } from "../../src/Feature.ts";
-import { migrate } from "../../src/Migrations/index.ts";
+import { sync } from "../../src/Migrations/index.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import type { SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlViewStore } from "../../src/Store/SqlConsumers.ts";
@@ -36,7 +36,7 @@ const world = Effect.gen(function* () {
   const database = new Database(":memory:");
   const clock = { now: 1_700_000_000_000 };
   const sql = sqliteExecutor(database);
-  yield* migrate(sql);
+  yield* sync(sql);
   const log = SqlEventLog(sql, { now: () => clock.now });
 
   const { platform } = SqlPlatform(sql, log, {
@@ -522,7 +522,8 @@ describe("the model hosted on SQL", () => {
       const event = JSON.parse(entry.event) as { readonly _tag: string };
 
       const delivery = {
-        target: { kind: "projection", name: "BillingRead" },
+        // BillingRead generation = its version (1) + Entitlements' version (1).
+        target: { kind: "projection", name: "BillingRead", generation: 2 },
         key: account.id,
         source: `Entitlements/${account.id}`,
         seq: Number(entry.seq),

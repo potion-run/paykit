@@ -87,7 +87,8 @@ root [AGENTS.md](../../AGENTS.md) for repo rules.
 - **The console renders the customer record, and never invents one.**
   `BillingStateView.customer` carries the name and email a `CreateCustomer`
   recorded (ADR 0045); the console renders that field and stores no identity of
-  its own. The list stays id-based until `BillingReadRow` carries identity.
+  its own. The list reads `BillingReadRow.customer` for the name and email, and
+  searches the account id, name and email through the list query.
 - **Credits are counts, not money.** `BillingStateView.credits` is a pool of
   credits. Render it with a unit (`formatCredits`), never with `formatMoney`; a
   pool of 4,820 credits is not $48.20. The same rule applies to the

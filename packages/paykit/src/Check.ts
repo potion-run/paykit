@@ -268,6 +268,7 @@ const verdictOf = (
  */
 export const rowToState = (row: BillingReadRow, entityId?: string): EntitlementsState => ({
   account: row.account,
+  ...(row.customer === undefined ? {} : { customer: row.customer }),
   tier: row.tier,
   status: row.status,
   standing: row.standing,

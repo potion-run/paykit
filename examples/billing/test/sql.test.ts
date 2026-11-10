@@ -2,13 +2,14 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it } from "@alchemy.run/test";
 import {
   BillingApi,
+  BILLING_SCHEMA,
   catalog,
   Check,
   Entitlements,
   List,
   type D1Like,
   type D1Prepared,
-  migrationFiles,
+  schemaStatementsOf,
   Subscription,
   type SqlValue,
 } from "@potion.run/paykit";
@@ -71,15 +72,16 @@ const d1Over = (database: Database): D1Like => ({
 });
 
 /**
- * The schema a deployment applies: the statements the renderer emits, in the
- * same order `Paykit.sync` applies them. Nothing is read from disk, so a test
- * and a release cannot disagree about the DDL.
+ * The schema a deployment converges to: the target description's statements,
+ * in the same order `Paykit.sync` applies them. Nothing is read from disk, so a
+ * test and a release cannot disagree about the DDL.
  */
 const migrated = () => {
   const database = new Database(":memory:");
-  const [init] = migrationFiles({ dialect: "sqlite" });
 
-  for (const statement of init!.statements) database.exec(statement);
+  for (const statement of schemaStatementsOf(BILLING_SCHEMA, { dialect: "sqlite" })) {
+    database.exec(statement);
+  }
 
   return database;
 };

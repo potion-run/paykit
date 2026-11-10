@@ -9,6 +9,7 @@ import {
   afterOf,
   ConsoleRoute,
   noFilter,
+  queryOf,
   reflectRoute,
   routeOf,
   withAfter,
@@ -45,6 +46,7 @@ describe("the console route", () => {
       accountsRoute(noFilter),
       accountsRoute(filter({ standing: Option.some("grace") })),
       accountsRoute(filter({ status: Option.some("canceled"), tier: Option.some("pro") })),
+      accountsRoute(filter({ search: Option.some("maya chen") })),
       accountsRoute(noFilter, Option.some("acct_b")),
       accountRoute(account, noFilter),
       accountRoute(account, filter({ standing: Option.some("blocked") })),
@@ -67,6 +69,10 @@ describe("the console route", () => {
     expect(reflectRoute(accountRoute(account, filter({ tier: Option.some("pro") })))).toBe(
       "/accounts/acct_a?tier=pro",
     );
+    expect(reflectRoute(accountsRoute(filter({ search: Option.some("maya") })))).toBe(
+      "/?search=maya",
+    );
+    expect(queryOf(filter({ search: Option.some("maya") }))).toEqual({ search: "maya" });
     // The page cursor is in the URL too, so a refresh keeps the page.
     expect(reflectRoute(accountsRoute(noFilter, Option.some("acct_b")))).toBe("/?after=acct_b");
     expect(afterOf(accountsRoute(noFilter, Option.some("acct_b")))).toEqual(Option.some("acct_b"));

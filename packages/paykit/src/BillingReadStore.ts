@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { CustomerDetails } from "./Customer.ts";
 import { Proration } from "./Proration.ts";
 import { EntityEntitlement, FeatureEntitlement } from "./Subscription/Entitlements.view.ts";
 import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.ts";
@@ -10,6 +11,12 @@ import { Standing, SubscriptionStatus } from "./Subscription/Subscription.state.
 /** One row a dashboard or the edge read path can query without a view. */
 export const BillingReadRow = Schema.Struct({
   account: Schema.String,
+  /**
+   * The identity `CreateCustomer` recorded (ADR 0045). Absent on an account
+   * that only ever bought something, and on a row written before the list
+   * carried identity, so a reader falls back to the account id.
+   */
+  customer: Schema.optionalKey(CustomerDetails),
   tier: Schema.String,
   status: SubscriptionStatus,
   standing: Standing,
@@ -58,6 +65,12 @@ export const BillingReadQuery = Schema.Struct({
   standing: Schema.optionalKey(Standing),
   tier: Schema.optionalKey(Schema.String),
   status: Schema.optionalKey(SubscriptionStatus),
+  /**
+   * A case-insensitive substring match on the account id, the customer's name
+   * or the customer's email. The store pushes it down, so a search never reads
+   * the whole projection.
+   */
+  search: Schema.optionalKey(Schema.String),
   order: Schema.optionalKey(AccountOrder),
   /** How many rows to return. Defaults to 50, capped at 200. */
   take: Schema.optionalKey(Schema.Int),
@@ -98,6 +111,22 @@ export const BillingReadSummary = Schema.Struct({
 
 export type BillingReadSummary = typeof BillingReadSummary.Type;
 
+/**
+ * Whether any counted feature on the row is at or past the point where it
+ * refuses another unit. It is stored beside the row so the attention query can
+ * filter in SQL without parsing the feature JSON.
+ */
+export const usageLimitedOf = (row: BillingReadRow): boolean =>
+  Object.values(row.features).some(
+    (feature) => feature.allowed === false && (feature.kind ?? "metered") !== "flag",
+  );
+
+/** Whether the row belongs in the overview's attention query at all. */
+export const attentionCandidateOf = (row: BillingReadRow): boolean =>
+  row.status !== "canceled" &&
+  row.status !== "expired" &&
+  (row.status === "grace" || row.cancelAtPeriodEnd || usageLimitedOf(row));
+
 const pageSizeOf = (query: BillingReadQuery): number =>
   Math.min(MAX_PAGE, Math.max(1, query.take ?? DEFAULT_PAGE));
 
@@ -110,19 +139,32 @@ const pageSizeOf = (query: BillingReadQuery): number =>
 const compareAccounts = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
+const searchNeedle = (query: BillingReadQuery): string | null => {
+  const value = query.search?.trim().toLowerCase();
+
+  return value === undefined || value === "" ? null : value;
+};
+
+const matchesSearch = (row: BillingReadRow, needle: string): boolean =>
+  row.account.toLowerCase().includes(needle) ||
+  (row.customer?.name?.toLowerCase().includes(needle) ?? false) ||
+  (row.customer?.email?.toLowerCase().includes(needle) ?? false);
+
 /** The rows a query selects, in the order it walks them. */
 export const queryRows = (
   rows: ReadonlyArray<BillingReadRow>,
   query: BillingReadQuery = {},
 ): BillingReadPage => {
   const order = query.order ?? "asc";
+  const needle = searchNeedle(query);
 
   const selected = rows
     .filter(
       (row) =>
         (query.standing === undefined || row.standing === query.standing) &&
         (query.tier === undefined || row.tier === query.tier) &&
-        (query.status === undefined || row.status === query.status),
+        (query.status === undefined || row.status === query.status) &&
+        (needle === null || matchesSearch(row, needle)),
     )
     .sort((left, right) =>
       order === "asc"
@@ -190,6 +232,8 @@ export class BillingReadStore extends Context.Service<
     readonly list: (query?: BillingReadQuery) => Effect.Effect<BillingReadPage>;
     /** Counts of accounts grouped by the dimensions the console summarises. */
     readonly summary: () => Effect.Effect<ReadonlyArray<BillingReadSummary>>;
+    /** The rows that qualify for the overview's attention list. */
+    readonly attention: () => Effect.Effect<ReadonlyArray<BillingReadRow>>;
   }
 >()("paykit/BillingReadStore") {}
 
@@ -206,5 +250,11 @@ export const MemoryBillingReadStore = Layer.sync(BillingReadStore, () => {
       Effect.sync(() => Option.getOrNull(Option.fromUndefinedOr(rows.get(account)))),
     list: (query) => Effect.sync(() => queryRows([...rows.values()], query)),
     summary: () => Effect.sync(() => summariseRows([...rows.values()])),
+    attention: () =>
+      Effect.sync(() =>
+        [...rows.values()]
+          .filter(attentionCandidateOf)
+          .toSorted((left, right) => compareAccounts(left.account, right.account)),
+      ),
   };
 });

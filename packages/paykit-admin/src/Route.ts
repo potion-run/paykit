@@ -20,6 +20,7 @@ const accountFilterFields = {
   standing: Schema.OptionFromOptional(Standing),
   status: Schema.OptionFromOptional(SubscriptionStatus),
   tier: Schema.OptionFromOptional(Schema.String),
+  search: Schema.OptionFromOptional(Schema.String),
 } as const;
 
 /** One query filter set, absent meaning "all". */
@@ -43,6 +44,7 @@ export const noFilter: AccountFilter = {
   standing: Option.none(),
   status: Option.none(),
   tier: Option.none(),
+  search: Option.none(),
 };
 
 /**
@@ -53,6 +55,7 @@ export const noFilter: AccountFilter = {
  * - `/` — the account list
  * - `/accounts/:account` — one account, with the list's filters preserved
  * - `/?standing=grace&tier=pro&after=acct_50` — a filtered page
+ * - `/?search=maya` — searched by name, email or account id
  * - `/overview` — cross-account revenue and account mix
  * - `/plans` — the deploy's tiers, read only
  * - `/features` — the deploy's features, read only
@@ -108,7 +111,12 @@ export const routeOf = (url: Url): ConsoleRoute => parseRoute(url);
 /** The filter a route carries. Catalog pages show no account list, so they carry none. */
 export const filterOf = (route: ConsoleRoute): AccountFilter =>
   route._tag === "Accounts" || route._tag === "Account"
-    ? { standing: route.standing, status: route.status, tier: route.tier }
+    ? {
+        standing: route.standing,
+        status: route.status,
+        tier: route.tier,
+        search: route.search,
+      }
     : noFilter;
 
 /** The page cursor a route carries: the `next` of the page before it. */
@@ -171,6 +179,7 @@ export const queryOf = (filter: AccountFilter, after?: string): BillingReadQuery
   ...(Option.isSome(filter.standing) ? { standing: filter.standing.value } : {}),
   ...(Option.isSome(filter.status) ? { status: filter.status.value } : {}),
   ...(Option.isSome(filter.tier) ? { tier: filter.tier.value } : {}),
+  ...(Option.isSome(filter.search) ? { search: filter.search.value } : {}),
   ...(after === undefined ? {} : { after }),
 });
 
@@ -178,7 +187,8 @@ export const queryOf = (filter: AccountFilter, after?: string): BillingReadQuery
 export const sameFilter = (left: AccountFilter, right: AccountFilter): boolean =>
   Option.getOrUndefined(left.standing) === Option.getOrUndefined(right.standing) &&
   Option.getOrUndefined(left.status) === Option.getOrUndefined(right.status) &&
-  Option.getOrUndefined(left.tier) === Option.getOrUndefined(right.tier);
+  Option.getOrUndefined(left.tier) === Option.getOrUndefined(right.tier) &&
+  Option.getOrUndefined(left.search) === Option.getOrUndefined(right.search);
 
 /** Whether two cursors name the same page. */
 export const samePage = (left: Option.Option<string>, right: Option.Option<string>): boolean =>

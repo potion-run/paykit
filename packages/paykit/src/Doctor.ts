@@ -130,6 +130,7 @@ const decodeEvent = (
 
 const rowFromState = (account: string, state: EntitlementsState): BillingReadRow => ({
   account,
+  ...(state.customer === undefined ? {} : { customer: state.customer }),
   tier: state.tier,
   status: state.status,
   standing: state.standing,

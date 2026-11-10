@@ -22,6 +22,7 @@ import {
   BillingReadPage,
   BillingReadQuery,
   BillingReadStore,
+  type BillingReadRow,
   type BillingReadSummary,
 } from "../BillingReadStore.ts";
 import { Catalog } from "../Catalog.ts";
@@ -275,6 +276,7 @@ const monthlyPriceOf = (price: Price | undefined): number => {
 
 const overviewOf = (
   summaries: ReadonlyArray<BillingReadSummary>,
+  attentionRows: ReadonlyArray<BillingReadRow>,
   catalog: Catalog,
   asOf: DateTime.Utc,
 ): BillingOverview => {
@@ -332,7 +334,7 @@ const overviewOf = (
     revenue.set(currency, entry);
   }
 
-  const attention = rows
+  const attention = attentionRows
     .flatMap((row) => {
       const entry = attentionOf(row);
 
@@ -516,8 +518,14 @@ export const makeAdminReads = Effect.gen(function* () {
     overview: () =>
       Effect.gen(function* () {
         const summaries = yield* store.summary();
+        const attention = yield* store.attention();
 
-        return overviewOf(summaries, catalog, DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        return overviewOf(
+          summaries,
+          attention,
+          catalog,
+          DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+        );
       }),
     catalog: () => Effect.succeed(catalog),
   } satisfies AdminReadsShape;

@@ -15,7 +15,7 @@ import {
 import { Actor, mayActOn } from "../Auth/Actor.ts";
 import { Forbidden } from "../Auth/Forbidden.rejection.ts";
 import { Session } from "../Auth/Guards.ts";
-import { BillingControls, EntityId, EntityStatus } from "../Customer.ts";
+import { BillingControls, CustomerDetails, EntityId, EntityStatus } from "../Customer.ts";
 import { RateCard } from "../Feature.ts";
 import { PricedLine, Pricing, soleUnitPriceOf } from "../Pricing.ts";
 import { Proration } from "../Proration.ts";
@@ -223,6 +223,11 @@ export const EntitlementsState = Schema.Struct({
    * actually has (ADR 0038).
    */
   billingControls: Schema.optionalKey(BillingControls),
+  /**
+   * The identity the customer recorded. The list projection reads this field,
+   * so a row can show a name without a second lookup (ADR 0045).
+   */
+  customer: Schema.optionalKey(CustomerDetails),
   /** The account's plan set, one row per active plan (ADR 0039). */
   plans: Schema.optionalKey(Plans),
   /** The customer's own scope rows. */
@@ -531,6 +536,8 @@ export class Entitlements extends Domain.View("Entitlements", {
   key: Subscription,
   state: EntitlementsState,
   initial: initialEntitlements,
+  // The customer identity is part of the state the list projection reads.
+  version: 1,
   middleware: [Session],
   rejects: [Forbidden],
   validate: Effect.fn(function* ({ key }) {
@@ -1785,10 +1792,20 @@ export class Entitlements extends Domain.View("Entitlements", {
     },
     // An alert is evidence: no feature's count, allowance or pool moves.
     UsageAlertFired: (view, _event, context): EntitlementsState => withAccount(view, context),
-    // The identity a customer records is a latch no entitlement reads: it
-    // moves no count, allowance or pool, and the view emits it only so the
-    // read-model projection sees the whole log (ADR 0045).
-    CustomerCreated: (view, _event, context): EntitlementsState => withAccount(view, context),
+    // The identity is a latch on the customer: it moves no count, allowance or
+    // pool, but the list projection reads it, so the view carries it (ADR 0045).
+    CustomerCreated: (view, event, context): EntitlementsState =>
+      withAccount(
+        {
+          ...view,
+          customer: {
+            ...(event.name === undefined ? {} : { name: event.name }),
+            ...(event.email === undefined ? {} : { email: event.email }),
+            createdAt: event.at,
+          },
+        },
+        context,
+      ),
     // A refill that could not be bought moved no credit: the pool and every
     // counter are exactly where the crossing left them. The view still emits it
     // so the read-model projection sees the whole log.

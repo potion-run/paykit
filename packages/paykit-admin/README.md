@@ -61,11 +61,11 @@ asking the ceiling for headroom the first attempt spent. Provide
 `AdminRefundClient` beside the other resources, and serve `AdminConsoleServer`
 from the Worker that holds `Paykit.Refund`.
 
-The console renders the customer record the account page already reads:
-`BillingStateView.customer` carries the name and email a `CreateCustomer`
-recorded (ADR 0045). The console never stores or invents an identity, and the
-list stays id-based until `BillingReadRow` carries identity, so a row shows its
-account id even when its page shows a name.
+The console renders the customer record the reads already carry:
+`BillingReadRow.customer` and `BillingStateView.customer` hold the name and
+email a `CreateCustomer` recorded (ADR 0045). The console never stores or
+invents an identity; a row without a record falls back to the account id, and
+the search covers the account id, the name and the email.
 
 ## Where you are lives in the URL
 
@@ -76,6 +76,7 @@ button all land on the same view:
 | --- | --- |
 | `/` | The account list, unfiltered |
 | `/?standing=grace&tier=pro` | The list, filtered |
+| `/?search=maya` | The list, searched by name, email or account id |
 | `/?after=acct_50` | The next page, by the cursor the previous one returned |
 | `/accounts/:account` | One account, with the list's filters and page preserved |
 | `/overview` | Cross-account revenue and attention |
@@ -107,6 +108,8 @@ list as live.
 
 - **Refresh** re-reads the current filter, keeping the rows on screen and
   labelling the panel as refreshing.
+- **Search** is part of the filter and the URL: a name, email or account id
+  substring, pushed down to the read store.
 - **A confirmed write** re-reads the list, because the row the operator just
   changed (tier, standing, credits) is the one the snapshot has wrong.
 - **The account panel** is live: `Entitlements`, `BillingState` and

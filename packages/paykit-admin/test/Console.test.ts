@@ -854,6 +854,24 @@ describe("the console model", () => {
     expect(Option.getOrNull(echoed.model.accounts.filter.standing)).toBe("grace");
   });
 
+  it("keeps a search in the URL and the list query", () => {
+    const changed = update(seeded(), Message.UpdatedSearch({ value: "maya" }));
+
+    expect(changed.commands?.map((command) => command.name).sort()).toEqual([
+      "ListAccounts",
+      "ReflectRoute",
+    ]);
+    expect(changed.commands?.find((command) => command.name === "ReflectRoute")?.args).toEqual({
+      url: "/?search=maya",
+      replace: true,
+    });
+    expect(Option.getOrNull(changed.model.accounts.filter.search)).toBe("maya");
+
+    const echoed = update(changed.model, Message.ChangedUrl({ url: url("/", "search=maya") }));
+    expect(echoed.commands).toBeUndefined();
+    expect(Option.getOrNull(echoed.model.accounts.filter.search)).toBe("maya");
+  });
+
   it("says when the list was read, and re-reads it after a write", () => {
     const stamped = BillingReadPage.make({ rows: [row], next: null, asOf: at });
 

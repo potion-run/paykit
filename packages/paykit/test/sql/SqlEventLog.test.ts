@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { EntityId } from "../../src/Customer.ts";
-import { migrate } from "../../src/Migrations/index.ts";
+import { migrate, sync } from "../../src/Migrations/index.ts";
 import { SqlError, type SqlExecutor } from "../../src/Store/Sql.ts";
 import { SqlEventLog, type AppendInput } from "../../src/Store/SqlEventLog.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
@@ -15,7 +15,7 @@ type Log = ReturnType<typeof SqlEventLog>;
 
 const store = Effect.gen(function* () {
   const sql = sqliteExecutor();
-  yield* migrate(sql);
+  yield* sync(sql);
 
   return { sql, log: SqlEventLog(sql, { now: () => 1_000 }) };
 });
@@ -41,6 +41,7 @@ const count = (sql: SqlExecutor, table: string) =>
 
 const readModelRow = {
   account: "acct_1",
+  customer: { name: "Maya Chen", email: "maya@acme.dev", createdAt: at },
   tier: "free",
   status: "active" as const,
   standing: "good" as const,
@@ -253,7 +254,12 @@ describe("SqlEventLog", () => {
       expect(yield* log.readModel("acct_1")).toEqual(readModelRow);
       yield* log.upsertReadModel({ ...readModelRow, credits: 50 });
       expect((yield* log.readModel("acct_1"))?.credits).toBe(50);
-      yield* log.upsertReadModel({ ...readModelRow, account: "acct_0", currency: "usd" });
+      yield* log.upsertReadModel({
+        ...readModelRow,
+        account: "acct_0",
+        currency: "usd",
+        customer: { name: "Other Person", email: "other@example.dev", createdAt: at },
+      });
       expect((yield* log.readModelList()).map((entry) => entry.account)).toEqual([
         "acct_0",
         "acct_1",
@@ -261,6 +267,38 @@ describe("SqlEventLog", () => {
       expect((yield* log.readModel("acct_0"))?.currency).toBe("usd");
       expect((yield* log.readModel("acct_1"))?.currency).toBeUndefined();
       expect(yield* log.readModel("missing")).toBe(null);
+      expect((yield* log.readModelPage({ search: "maya" })).rows.map((row) => row.account)).toEqual(
+        ["acct_1"],
+      );
+      expect(
+        (yield* log.readModelPage({ search: "ACCT_0" })).rows.map((row) => row.account),
+      ).toEqual(["acct_0"]);
+
+      yield* log.upsertReadModel({
+        ...readModelRow,
+        account: "acct_past_due",
+        status: "grace",
+        standing: "grace",
+      });
+      yield* log.upsertReadModel({
+        ...readModelRow,
+        account: "acct_limit",
+        features: {
+          ...readModelRow.features,
+          messages: { ...readModelRow.features.messages, allowed: false },
+        },
+      });
+      yield* log.upsertReadModel({
+        ...readModelRow,
+        account: "acct_expired",
+        status: "expired",
+        standing: "blocked",
+      });
+
+      expect((yield* log.readModelAttention()).map((row) => row.account)).toEqual([
+        "acct_limit",
+        "acct_past_due",
+      ]);
     }),
   );
 

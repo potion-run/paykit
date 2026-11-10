@@ -79,6 +79,11 @@ const withColumn = (schema: SchemaDefinition, on: string, column: Column): Schem
   ),
 });
 
+const withIndex = (schema: SchemaDefinition, entry: Index): SchemaDefinition => ({
+  ...schema,
+  items: [...schema.items, entry],
+});
+
 describe("the billing schema description", () => {
   it.effect("keeps the first release frozen, per dialect", () =>
     Effect.gen(function* () {
@@ -98,12 +103,28 @@ describe("the billing schema description", () => {
     }),
   );
 
-  it.effect("starts the target schema at the baseline", () =>
+  it.effect("adds the list's customer identity to the baseline", () =>
     Effect.gen(function* () {
-      // A change to this invariant is fine — convergence applies it — but it has
-      // to be a deliberate edit of `BILLING_SCHEMA`, not an accidental one.
+      // A deliberate delta: convergence applies the added column, so the
+      // baseline hash and its migration stay frozen.
+      const expected = withIndex(
+        withColumn(
+          withColumn(BILLING_SCHEMA_V1, BILLING_TABLES.readModel, {
+            name: "customer",
+            type: "text",
+          }),
+          BILLING_TABLES.readModel,
+          { name: "usage_limited", type: "integer", notNull: true, default: 0 },
+        ),
+        {
+          name: "billing_rm_billing_read_attention",
+          on: BILLING_TABLES.readModel,
+          columns: ["status", "cancel_at_period_end", "usage_limited"],
+        },
+      );
+
       for (const scope of scopes) {
-        expect(renderedOf(BILLING_SCHEMA, scope)).toEqual(renderedOf(BILLING_SCHEMA_V1, scope));
+        expect(renderedOf(BILLING_SCHEMA, scope)).toEqual(renderedOf(expected, scope));
       }
     }),
   );

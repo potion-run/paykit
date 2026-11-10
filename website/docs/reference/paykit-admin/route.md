@@ -3,7 +3,7 @@ title: "Route"
 description: "Exports `ConsoleRoute`, `reflectRoute`."
 ---
 
-> **Source:** [`packages/paykit-admin/src/Route.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-admin/src/Route.ts#L48)
+> **Source:** [`packages/paykit-admin/src/Route.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-admin/src/Route.ts#L50)
 
 ## ConsoleRoute
 
@@ -16,6 +16,7 @@ same view the operator left:
 - `/` — the account list
 - `/accounts/:account` — one account, with the list's filters preserved
 - `/?standing=grace&tier=pro&after=acct_50` — a filtered page
+- `/?search=maya` — searched by name, email or account id
 - `/overview` — cross-account revenue and account mix
 - `/plans` — the deploy's tiers, read only
 - `/features` — the deploy's features, read only

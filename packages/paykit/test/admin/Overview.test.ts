@@ -14,7 +14,7 @@ import {
 import { catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
-import { migrate } from "../../src/Migrations/index.ts";
+import { sync } from "../../src/Migrations/index.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsProvider } from "../../src/Payments.ts";
 import { SqlBillingReadStore } from "../../src/Store/SqlBillingReadStore.ts";
@@ -168,7 +168,7 @@ const overviewCase = Effect.gen(function* () {
 
 const sqlStore = Effect.gen(function* () {
   const sql = sqliteExecutor();
-  yield* migrate(sql);
+  yield* sync(sql);
 
   return SqlBillingReadStore(SqlEventLog(sql, { now: () => 1_000 }));
 });

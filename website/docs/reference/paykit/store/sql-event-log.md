@@ -3,7 +3,7 @@ title: "SqlEventLog"
 description: "The durable half of the store: events are the truth, receipts dedupe by command id, the outbox carries deliveries, and the read model is rebuildable."
 ---
 
-> **Source:** [`packages/paykit/src/Store/SqlEventLog.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlEventLog.ts#L88)
+> **Source:** [`packages/paykit/src/Store/SqlEventLog.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit/src/Store/SqlEventLog.ts#L90)
 > **Kind:** Primitive
 
 The durable half of the store: events are the truth, receipts dedupe by

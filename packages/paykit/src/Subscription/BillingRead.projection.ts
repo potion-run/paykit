@@ -25,6 +25,7 @@ export const BillingReadLive = BillingRead.toLayer(
 
         const row: BillingReadRow = {
           account: input.key.id,
+          ...(input.state.customer === undefined ? {} : { customer: input.state.customer }),
           tier: input.state.tier,
           status: input.state.status,
           standing: standingOf(input.state.status),
@@ -49,4 +50,7 @@ export const BillingReadLive = BillingRead.toLayer(
       }
     });
   }),
+  // The list row gained the customer identity, so every existing row is
+  // rewritten from the log once the projection generation moves.
+  { version: 1 },
 );
