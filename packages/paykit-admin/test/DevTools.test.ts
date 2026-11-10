@@ -14,7 +14,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { Url } from "foldkit/url";
-import { decodeDevToolsEvent, devToolsEvents, subscriptionEventTags } from "../src/DevTools.ts";
+import {
+  decodeDevToolsEvent,
+  devToolsEvents,
+  initialDevToolsState,
+  subscriptionEventTags,
+} from "../src/DevTools.ts";
 import { Flags } from "../src/Flags.ts";
 import { init } from "../src/init.ts";
 import { Message } from "../src/Message.ts";
@@ -94,6 +99,8 @@ describe("the event lab", () => {
   });
 
   it("stays inert unless the host seeds `devTools`", () => {
+    expect(initialDevToolsState(true).eventTag).toBe(devToolsEvents[0].tag);
+
     const model = opened(false);
     expect(model.devTools.isEnabled).toBe(false);
     const toggled = update(model, Message.ToggledDevTools({ isOpen: true })).model;

@@ -353,24 +353,20 @@ export const MeteredPriceProvider = () =>
       const observedMetadata = tagRecord(current.metadata);
       const { upsert, removed } = diffMetadata(observedMetadata, metadata);
       const metadataChanged = upsert.length > 0 || removed.length > 0;
-      const lookupKeyChanged = (current.lookup_key ?? "") !== desiredLookupKey;
 
-      if (!metadataChanged && !lookupKeyChanged) return attrsOf(current);
+      if (!metadataChanged) return attrsOf(current);
 
+      // The lookup key was already transferred above. A metadata update cannot
+      // change it, so there is no lookup-key branch and no second check here.
       const updated = yield* UpdatePrice({
         price: current.id,
-        ...(lookupKeyChanged ? { lookup_key: desiredLookupKey, transfer_lookup_key: true } : {}),
-        ...(metadataChanged
-          ? {
-              metadata: {
-                ...Object.fromEntries(upsert.map((tag) => [tag.Key, tag.Value])),
-                ...Object.fromEntries(removed.map((key) => [key, ""])),
-              },
-            }
-          : {}),
+        metadata: {
+          ...Object.fromEntries(upsert.map((tag) => [tag.Key, tag.Value])),
+          ...Object.fromEntries(removed.map((key) => [key, ""])),
+        },
       });
 
-      return attrsOf(yield* ensureLookupKey(updated, desiredLookupKey));
+      return attrsOf(updated);
     }),
 
     delete: Effect.fn(function* ({ output }) {

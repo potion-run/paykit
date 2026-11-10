@@ -157,6 +157,11 @@ export interface HandlerOptions {
 
 const text = (body: string, status: number) => HttpServerResponse.text(body, { status });
 
+const decodeAttachBody = Schema.decodeEffect(Schema.fromJsonString(AttachRequest));
+const decodeUpdateBody = Schema.decodeEffect(Schema.fromJsonString(UpdateRequest));
+const decodePreviewAttachBody = Schema.decodeEffect(Schema.fromJsonString(PreviewAttachRequest));
+const decodePreviewUpdateBody = Schema.decodeEffect(Schema.fromJsonString(PreviewUpdateRequest));
+
 const matchesMount = (path: string, base: string): boolean => {
   const root = base === "/" ? "" : base.replace(/\/+$/, "");
 
@@ -253,9 +258,7 @@ export const handler = (options: HandlerOptions = {}) =>
 
         if (account === null) return text("an account is required", 401);
 
-        const body = yield* Schema.decodeEffect(Schema.fromJsonString(AttachRequest))(
-          yield* request.text,
-        ).pipe(Effect.result);
+        const body = yield* decodeAttachBody(yield* request.text).pipe(Effect.result);
 
         if (Result.isFailure(body)) return text("invalid attach request", 400);
 
@@ -274,9 +277,7 @@ export const handler = (options: HandlerOptions = {}) =>
 
         if (account === null) return text("an account is required", 401);
 
-        const body = yield* Schema.decodeEffect(Schema.fromJsonString(UpdateRequest))(
-          yield* request.text,
-        ).pipe(Effect.result);
+        const body = yield* decodeUpdateBody(yield* request.text).pipe(Effect.result);
 
         if (Result.isFailure(body)) return text("invalid update request", 400);
 
@@ -295,9 +296,7 @@ export const handler = (options: HandlerOptions = {}) =>
 
         if (account === null) return text("an account is required", 401);
 
-        const body = yield* Schema.decodeEffect(Schema.fromJsonString(PreviewAttachRequest))(
-          yield* request.text,
-        ).pipe(Effect.result);
+        const body = yield* decodePreviewAttachBody(yield* request.text).pipe(Effect.result);
 
         if (Result.isFailure(body)) return text("invalid preview request", 400);
 
@@ -316,9 +315,7 @@ export const handler = (options: HandlerOptions = {}) =>
 
         if (account === null) return text("an account is required", 401);
 
-        const body = yield* Schema.decodeEffect(Schema.fromJsonString(PreviewUpdateRequest))(
-          yield* request.text,
-        ).pipe(Effect.result);
+        const body = yield* decodePreviewUpdateBody(yield* request.text).pipe(Effect.result);
 
         if (Result.isFailure(body)) return text("invalid preview request", 400);
 

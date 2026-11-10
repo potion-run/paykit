@@ -42,7 +42,7 @@ const body = (value: Readonly<Record<string, unknown>>): string => JSON.stringif
  * cannot move the console's billing model. A coverage test fails when the
  * aggregate grows an event this table does not name.
  */
-export const devToolsEvents: ReadonlyArray<DevToolsEvent> = [
+export const devToolsEvents: Array.NonEmptyReadonlyArray<DevToolsEvent> = [
   {
     tag: "TrialStarted",
     body: body({
@@ -485,7 +485,7 @@ export const DevToolsState = Schema.Struct({
 
 export type DevToolsState = typeof DevToolsState.Type;
 
-const firstEvent = Option.getOrThrow(Array.head(devToolsEvents));
+const firstEvent = Array.headNonEmpty(devToolsEvents);
 
 /** The state a host gets when it opts into the lab through `Flags.devTools`. */
 export const initialDevToolsState = (isEnabled: boolean): DevToolsState => ({
