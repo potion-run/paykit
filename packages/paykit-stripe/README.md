@@ -13,7 +13,9 @@ import { Paykit } from "@potion.run/paykit";
 import { StripeBilling } from "@potion.run/paykit-stripe";
 import * as Redacted from "effect/Redacted";
 
-// The deploy: create the products, prices and meters the catalog states.
+// The deploy: create the products, prices, meters and webhook endpoint the
+// catalog states. The resources are declared here, so the stack's provider
+// collection is provided to the call that creates them.
 const stripe = yield* StripeBilling("Stripe", {
   secretKey: Redacted.make(process.env.STRIPE_API_KEY ?? ""),
   origin: "https://app.example.com",
@@ -23,15 +25,23 @@ const stripe = yield* StripeBilling("Stripe", {
       usage: { messages: { amount: 2, currency: "usd" } },
     },
   },
-  webhookSecret: Redacted.make(process.env.STRIPE_WEBHOOK_SECRET ?? ""),
-});
+}).pipe(Effect.provide(Stripe.providers()));
 
 yield* Paykit.BillingStack("Billing", {
   catalog: { features: [messages], tiers: [free, pro] },
   providers: [stripe],
 });
 
-// The runtime: resolve the lookup keys the deploy created.
+// The endpoint lives at `${origin}/webhooks/stripe` and receives exactly the
+// events `stripeWebhook` decodes. Stripe mints its signing secret at create, so
+// it is an output of the deploy, never a value copied from the dashboard:
+const worker = yield* Cloudflare.Worker("Worker", {
+  main: "./src/Worker.ts",
+  env: { STRIPE_WEBHOOK_SECRET: stripe.webhookEndpoint.secret },
+});
+
+// The runtime: resolve the lookup keys the deploy created, and verify
+deliveries with the secret the endpoint minted.
 const runtime = Stripe({
   secretKey: Redacted.make(env.STRIPE_SECRET_KEY),
   origin: "https://app.example.com",
@@ -47,7 +57,10 @@ const runtime = Stripe({
 });
 ```
 
-[`examples/stripe`](../../examples/stripe) is the whole loop: the deploy, the
+A deployment that already owns an endpoint — a shared API, a different host, a secret in a vault —
+passes `webhookSecret` instead, and `StripeBilling` creates nothing.
+
+[`examples/stripe`](https://github.com/potion-run/paykit/tree/main/examples/stripe) is the whole loop: the deploy, the
 Worker's `GET /checkout?tier=pro`, `POST /webhooks/stripe`, and a test with a fake
 client and a signed delivery.
 

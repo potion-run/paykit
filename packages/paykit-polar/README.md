@@ -13,7 +13,9 @@ import { Paykit } from "@potion.run/paykit";
 import { PolarBilling } from "@potion.run/paykit-polar";
 import * as Redacted from "effect/Redacted";
 
-// The deploy: create the products, meters and prices the catalog states.
+// The deploy: create the products, meters and prices the catalog states, and
+// the webhook endpoint Polar delivers to. The resources are declared here, so
+// the stack's provider collection is provided to the call that creates them.
 const polar = yield* PolarBilling("Polar", {
   accessToken: Redacted.make(process.env.POLAR_ACCESS_TOKEN ?? ""),
   server: "sandbox",
@@ -24,12 +26,20 @@ const polar = yield* PolarBilling("Polar", {
       usage: { messages: { amount: 2, currency: "usd" } },
     },
   },
-  webhookSecret: Redacted.make(process.env.POLAR_WEBHOOK_SECRET ?? ""),
-});
+}).pipe(Effect.provide(polarProviders({ accessToken })));
 
 yield* Paykit.BillingStack("Billing", {
   catalog: { features: [messages], tiers: [free, pro] },
   providers: [polar],
+});
+
+// The endpoint lives at `${origin}/webhooks/polar` and receives exactly the
+// events `polarWebhook` decodes. Polar mints its signing secret at create and
+// never returns it again, so it is an output of the deploy — the endpoint's
+// state is the only copy, and nothing is set by hand:
+const worker = yield* Cloudflare.Worker("Worker", {
+  main: "./src/Worker.ts",
+  env: { POLAR_WEBHOOK_SECRET: polar.webhookEndpoint.secret },
 });
 
 // The runtime: build the provider from the outputs the Worker received.
@@ -43,7 +53,10 @@ const runtime = Polar({
 });
 ```
 
-[`examples/polar`](../../examples/polar) is the whole loop: the deploy, the
+A deployment that already owns an endpoint — a shared API, a different host, a secret in a vault —
+passes `webhookSecret` instead, and `PolarBilling` creates nothing.
+
+[`examples/polar`](https://github.com/potion-run/paykit/tree/main/examples/polar) is the whole loop: the deploy, the
 Worker's `GET /checkout?tier=pro`, `POST /webhooks/polar`, and a test with a fake
 client and a signed delivery.
 

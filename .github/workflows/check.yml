@@ -40,6 +40,13 @@ jobs:
           install: true
           require-lockfile: true
 
+      # The manifest gates. Both read `package.json` and `src/`, never `lib/`, so
+      # they cost nothing here and fail a branch before the type graph runs: an
+      # export map that no longer matches `src/`, or a package that drifted off
+      # the shared version, is a release problem no other gate reports.
+      - name: Check the manifests
+        run: pnpm exports:check && pnpm validate:publish-packages
+
       - name: Check formatting
         run: pnpm format:check
 

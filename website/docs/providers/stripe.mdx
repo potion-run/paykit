@@ -26,7 +26,6 @@ const billing = yield* StripeBilling("StripeBilling", {
   secretKey,
   origin: "https://app.example.com",
   tiers: stripeTiers,
-  webhookSecret,
 }).pipe(Effect.provide(Stripe.providers()));
 
 const recorded = yield* Paykit.BillingStack("Billing", {
@@ -41,6 +40,17 @@ copies each price onto the object it creates, so the model and the invoice agree
 
 `billing.sold` carries the ids: `sold.prices.pro`, `sold.usage.pro.messages` and
 `sold.meters.messages`. Bind them into the Worker's environment.
+
+`billing.webhookEndpoint` is the endpoint the deploy created: `resource` is the
+vendor object, and `secret` is the signing key Stripe minted at create. Bind the
+secret into the Worker's environment, so no one copies it out of the dashboard:
+
+```ts title="alchemy.run.ts"
+const worker = yield* Cloudflare.Worker("Worker", {
+  main: "./src/Worker.ts",
+  env: { STRIPE_WEBHOOK_SECRET: billing.webhookEndpoint.secret },
+});
+```
 
 ## Build the runtime provider
 
@@ -75,10 +85,17 @@ Worker.
 
 ## Deliveries
 
-Point a Stripe webhook endpoint at the deployment's `/webhooks` path. A delivery
-is verified with `STRIPE_WEBHOOK_SECRET` and decoded by the provider, then
-applied as a command. An account becomes active on the delivery, not on the
-redirect from checkout.
+`StripeBilling` creates the endpoint at `${origin}/webhooks/stripe` —
+`webhookPath` moves it — and subscribes it to exactly the events the provider
+decodes, so the vendor's event list cannot drift from what paykit handles. A
+delivery is verified with the secret the endpoint minted, decoded by the
+provider, then applied as a command. An account becomes active on the delivery,
+not on the redirect from checkout.
+
+Destroying the stack deletes the endpoint: it is configuration, not financial
+history, and a retired deployment must stop receiving deliveries. A deployment
+that already owns one — a shared API, a secret in a vault — passes
+`webhookSecret` instead, and nothing is created.
 
 `client` is for a test only. A deployment omits it, and Stripe builds its own
 client from the secret key.

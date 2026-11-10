@@ -40,10 +40,11 @@ balance reads, the four commands and `Paykit.TransferBalance` are the surface. C
 ([ADR 0041](./adr/0041-a-custom-plan-is-a-catalog-opt-in.md)): a plan may declare `custom: true`, and
 a bespoke allowance set travels on the plan command and into the event.
 
-`@potion.run/paykit` is at `0.1.0`, unpublished and never deployed. Four packages publish together
-(`paykit`, `paykit-polar`, `paykit-stripe`, `paykit-admin`) on one version line. The gates are green:
-`format:check`, `lint`, `typecheck`, `test` (every project; the vendor live cases skip without a
-key), `build`, `exports:check`, `validate:publish-packages`.
+`@potion.run/paykit` is at `0.1.0`. Four packages publish together (`paykit`, `paykit-polar`,
+`paykit-stripe`, `paykit-admin`) on one version line: `release.yml` is a manual run off `main` that
+defaults to a dry run, so nothing publishes on a push and the `v<version>` tag is the record of what
+shipped. The gates are green: `format:check`, `exports:check`, `validate:publish-packages`, `lint`,
+`typecheck`, `test` (every project; the vendor live cases skip without a key), `spec`, `build`.
 
 A plan now states its generation ([ADR
 0047](./adr/0047-a-plan-is-versioned-and-a-move-is-its-migration.md)). `Plan.version` is the catalog

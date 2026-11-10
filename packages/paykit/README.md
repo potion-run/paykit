@@ -4,11 +4,11 @@ Billing and entitlement for Alchemy. You declare a catalog next to your stack, p
 account's **standing**, and `check()` answers from one local read.
 
 A subscription is not a payment. A payment is an event that changes a standing. Every rule in
-this package derives from that sentence. [PLAN.md](./PLAN.md) is the design of record; this
+this package derives from that sentence. [PLAN.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md) is the design of record; this
 README is the quickstart and the honest status of what ships today.
 
 > **Status:** the plan/customer/balance API in
-> [ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md) has landed. The public
+> [ADR 0035](https://github.com/potion-run/paykit/blob/main/docs/adr/0035-plans-plan-items-and-balance-sources.md) has landed. The public
 > words are `Plan`, `PlanItem`, `Feature`, `Customer` and `Balance`; the bindings are named after
 > their commands, and `Paykit.plan()` / `Paykit.planItem()` are the authoring calls.
 
@@ -464,8 +464,8 @@ migration registry at deploy, and one Worker.
 | `Paykit.Stripe({ bindings, tiers })` | processor | checkout | invoice, refund, portal, usage |
 | `Paykit.PaymentsPolar({ bindings, tiers })` | merchant of record | checkout | refund, portal, usage |
 
-`Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](../paykit-polar), and
-`Stripe`'s is [`@potion.run/paykit-stripe`](../paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
+`Polar` itself — the one-call provider — is [`@potion.run/paykit-polar`](https://github.com/potion-run/paykit/tree/main/packages/paykit-polar), and
+`Stripe`'s is [`@potion.run/paykit-stripe`](https://github.com/potion-run/paykit/tree/main/packages/paykit-stripe). `PaymentsPolar` and `PaymentsStripe`
 here are the port mappings those packages wrap, for a caller who brings its own bindings.
 
 A Stack can run several providers. `Paykit.paymentsRouter(...)` holds them by name, and each call
@@ -473,7 +473,7 @@ resolves the provider the account's `refs` already name — falling back to the 
 sold through one provider never gets upgraded through another. Names must be distinct.
 
 `Manual` is the reference: if the port only fits Stripe, it is not a port. Every provider runs
-the same conformance suite in [`test/conformance`](./test/conformance), parameterized by the
+the same conformance suite in [`test/conformance`](https://github.com/potion-run/paykit/tree/main/packages/paykit/test/conformance), parameterized by the
 capabilities it declares.
 
 The Stripe and Polar adapters take the bindings (`StripeBindings`, `PolarBindings`) a vendor
@@ -571,5 +571,5 @@ Run the gates from the repo root: `pnpm format:check`, `pnpm lint`, `pnpm typech
 
 ## Further reading
 
-- [PLAN.md](./PLAN.md) — the design of record.
-- [AGENTS.md](./AGENTS.md) — the rules for changing this package.
+- [PLAN.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md) — the design of record.
+- [AGENTS.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/AGENTS.md) — the rules for changing this package.

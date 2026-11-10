@@ -26,7 +26,6 @@ const billing = yield* PolarBilling("PolarBilling", {
   server: "sandbox",
   origin: "https://app.example.com",
   tiers: polarTiers,
-  webhookSecret,
 });
 
 const recorded = yield* Paykit.BillingStack("Billing", {
@@ -40,6 +39,18 @@ const recorded = yield* Paykit.BillingStack("Billing", {
 
 `billing.sold` carries the ids: `sold.products.pro` and `sold.meters.messages`.
 Bind them into the Worker's environment.
+
+`billing.webhookEndpoint` is the endpoint the deploy created: `resource` is the
+vendor object, and `secret` is the signing key Polar minted at create. Bind the
+secret into the Worker's environment — Polar never returns it again, so the
+endpoint's state is the only copy:
+
+```ts title="alchemy.run.ts"
+const worker = yield* Cloudflare.Worker("Worker", {
+  main: "./src/Worker.ts",
+  env: { POLAR_WEBHOOK_SECRET: billing.webhookEndpoint.secret },
+});
+```
 
 ## Build the runtime provider
 
@@ -71,9 +82,17 @@ production objects from it. A live deployment states its own server.
 
 ## Deliveries
 
-Point a Polar webhook endpoint at `/webhooks/polar`. A delivery is verified with
-`POLAR_WEBHOOK_SECRET`, decoded by the provider, and applied as a command. The
-account becomes active on the delivery, not on the redirect from checkout.
+`PolarBilling` creates the endpoint at `${origin}/webhooks/polar` —
+`webhookPath` moves it — and subscribes it to exactly the events the provider
+decodes, so the vendor's event list cannot drift from what paykit handles. A
+delivery is verified with the secret the endpoint minted, decoded by the
+provider, and applied as a command. The account becomes active on the delivery,
+not on the redirect from checkout.
+
+Destroying the stack deletes the endpoint: it is configuration, not financial
+history, and a retired deployment must stop receiving deliveries. A deployment
+that already owns one — a shared API, a secret in a vault — passes
+`webhookSecret` instead, and nothing is created.
 
 `client` is for a test only. A deployment omits it, and Polar builds its own
 client from the token.

@@ -75,6 +75,12 @@ jobs:
           set -euo pipefail
           node scripts/release/bump.ts '${{ inputs.version }}' | tee -a "$GITHUB_OUTPUT"
 
+      # The bump rewrites four manifests at once, so the lockstep version, the
+      # export maps and the publish metadata are checked on the tree that is
+      # about to be packed — not on the one `check.yml` saw before the bump.
+      - name: Check the manifests
+        run: pnpm exports:check && pnpm validate:publish-packages
+
       - name: Build packages
         run: pnpm build
 
