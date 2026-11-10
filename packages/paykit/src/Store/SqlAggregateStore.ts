@@ -330,25 +330,29 @@ export const SqlAggregateStore = (
       // decoding the whole state every tick; the full state is read only when
       // it moved, and `seen` drops the read that raced a newer commit (its
       // version is emitted once, not again on the next tick).
-      changes: (id) => {
-        let seen = 0;
+      // A Stream is a value; its cursor must not outlive a run.
+      changes: (id) =>
+        Stream.unwrap(
+          Effect.sync(() => {
+            let seen = 0;
 
-        return Stream.tick(Duration.millis(pollMillis)).pipe(
-          Stream.mapEffect(() => versionOf(id)),
-          Stream.changesWith((left, right) => left === right),
-          Stream.filter((version) => version > 0),
-          Stream.mapEffect(() => read(id)),
-          Stream.filter((entry) => {
-            if (entry.version <= seen) return false;
-            seen = entry.version;
+            return Stream.tick(Duration.millis(pollMillis)).pipe(
+              Stream.mapEffect(() => versionOf(id)),
+              Stream.changesWith((left, right) => left === right),
+              Stream.filter((version) => version > 0),
+              Stream.mapEffect(() => read(id)),
+              Stream.filter((entry) => {
+                if (entry.version <= seen) return false;
+                seen = entry.version;
 
-            return true;
+                return true;
+              }),
+              // SAFETY: the entry is the stored state the kernel's schema decodes; `AggregateStore` widens its value to JSON at this boundary.
+              Stream.map((entry) => entry as never),
+              Stream.orDie,
+            );
           }),
-          // SAFETY: the entry is the stored state the kernel's schema decodes; `AggregateStore` widens its value to JSON at this boundary.
-          Stream.map((entry) => entry as never),
-          Stream.orDie,
-        );
-      },
+        ),
 
       tail: ((id: string, after: number) => {
         let seen = after;

@@ -173,6 +173,35 @@ const sqlStore = Effect.gen(function* () {
   return SqlBillingReadStore(SqlEventLog(sql, { now: () => 1_000 }));
 });
 
+/** One active `pro` row, so every other status, standing and tier is absent. */
+const sparseCase = Effect.gen(function* () {
+  const store = yield* BillingReadStore;
+
+  yield* store.upsert(row("acct_only", {}));
+
+  const reads = yield* AdminReads;
+  const overview = yield* reads.overview();
+
+  expect(overview.byStatus).toEqual([
+    { status: "trialing", count: 0 },
+    { status: "active", count: 1 },
+    { status: "grace", count: 0 },
+    { status: "canceled", count: 0 },
+    { status: "expired", count: 0 },
+  ]);
+  expect(overview.byStanding).toEqual([
+    { standing: "good", count: 1 },
+    { standing: "grace", count: 0 },
+    { standing: "blocked", count: 0 },
+  ]);
+  expect(overview.byTier).toEqual([
+    { tier: "free", count: 0 },
+    { tier: "pro", count: 1 },
+    { tier: "annual", count: 0 },
+    { tier: "euro", count: 0 },
+  ]);
+});
+
 describe("the console overview", () => {
   it.live("folds the memory store's summary", () =>
     overviewCase.pipe(Effect.provide(worldFor(MemoryBillingReadStore))),
@@ -183,6 +212,15 @@ describe("the console overview", () => {
       const store = yield* sqlStore;
 
       yield* overviewCase.pipe(Effect.provide(worldFor(store)));
+    }),
+  );
+
+  it.live("keeps a zero row for every unused status, standing and tier", () =>
+    Effect.gen(function* () {
+      const store = yield* sqlStore;
+
+      yield* sparseCase.pipe(Effect.provide(worldFor(MemoryBillingReadStore)));
+      yield* sparseCase.pipe(Effect.provide(worldFor(store)));
     }),
   );
 

@@ -541,37 +541,42 @@ export const SqlViewStore = (
           }),
         ).pipe(Effect.orDie),
 
-      changes: (key) => {
-        // Per subscriber: the version it last emitted. An idle tick reads one
-        // small column and skips the snapshot; only a moved version pays for
-        // the row, whose parse is what the old `changesWith` then dropped.
-        let last: number | undefined;
+      // A Stream is a value; its cursor must not outlive a run.
+      changes: (key) =>
+        Stream.unwrap(
+          Effect.sync(() => {
+            // Per subscriber: the version it last emitted. An idle tick reads
+            // one small column and skips the snapshot; only a moved version
+            // pays for the row, whose parse is what the old `changesWith` then
+            // dropped.
+            let last: number | undefined;
 
-        return poll(pollMillis).pipe(
-          Stream.mapEffect(() =>
-            withKey(
-              key,
-              Effect.gen(function* () {
-                const bound = kit;
+            return poll(pollMillis).pipe(
+              Stream.mapEffect(() =>
+                withKey(
+                  key,
+                  Effect.gen(function* () {
+                    const bound = kit;
 
-                if (bound === undefined)
-                  return yield* Effect.die("view store used before it was built");
-                yield* ensureCaughtUp(key);
-                const version = yield* storedVersion(key, bound.generation);
+                    if (bound === undefined)
+                      return yield* Effect.die("view store used before it was built");
+                    yield* ensureCaughtUp(key);
+                    const version = yield* storedVersion(key, bound.generation);
 
-                if (version === last) return undefined;
-                const snapshot = (yield* readSnapshot(key, bound.generation)).snapshot;
+                    if (version === last) return undefined;
+                    const snapshot = (yield* readSnapshot(key, bound.generation)).snapshot;
 
-                last = snapshot.version;
+                    last = snapshot.version;
 
-                return snapshot;
-              }),
-            ),
-          ),
-          Stream.filter((snapshot): snapshot is ViewSnapshot => snapshot !== undefined),
-          Stream.orDie,
-        );
-      },
+                    return snapshot;
+                  }),
+                ),
+              ),
+              Stream.filter((snapshot): snapshot is ViewSnapshot => snapshot !== undefined),
+              Stream.orDie,
+            );
+          }),
+        ),
 
       list: (key) =>
         withKey(
@@ -1004,29 +1009,33 @@ export const SqlStreamStore = (
 
       read: (key) => read(key).pipe(Effect.orDie),
 
-      changes: (key) => {
-        // Per subscriber: the sequence it last emitted. An idle tick reads one
-        // integer rather than parsing the meta row, and `advance` moving only
-        // checkpoints keeps moving `seq` not at all — the same value the old
-        // `changesWith` kept.
-        let last: number | undefined;
+      // A Stream is a value; its cursor must not outlive a run.
+      changes: (key) =>
+        Stream.unwrap(
+          Effect.sync(() => {
+            // Per subscriber: the sequence it last emitted. An idle tick reads
+            // one integer rather than parsing the meta row, and `advance`
+            // moving only checkpoints keeps moving `seq` not at all — the same
+            // value the old `changesWith` kept.
+            let last: number | undefined;
 
-        return poll(pollMillis).pipe(
-          Stream.mapEffect(() =>
-            Effect.gen(function* () {
-              const seq = yield* storedSeq(key);
+            return poll(pollMillis).pipe(
+              Stream.mapEffect(() =>
+                Effect.gen(function* () {
+                  const seq = yield* storedSeq(key);
 
-              if (seq === last) return undefined;
-              const meta = yield* read(key);
+                  if (seq === last) return undefined;
+                  const meta = yield* read(key);
 
-              last = meta.seq;
+                  last = meta.seq;
 
-              return meta;
-            }).pipe(Effect.orDie),
-          ),
-          Stream.filter((meta): meta is StreamMeta => meta !== undefined),
-        );
-      },
+                  return meta;
+                }).pipe(Effect.orDie),
+              ),
+              Stream.filter((meta): meta is StreamMeta => meta !== undefined),
+            );
+          }),
+        ),
 
       list: (key) => entries(key).pipe(Effect.orDie),
 

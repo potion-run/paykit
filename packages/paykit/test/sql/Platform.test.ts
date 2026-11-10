@@ -484,4 +484,44 @@ describe("the SQL platform", () => {
       ]);
     }),
   );
+
+  it.live("changes gives every run of one aggregate value its own cursor", () =>
+    Effect.gen(function* () {
+      const database = new Database(":memory:");
+      const world = yield* worldOver(sqliteExecutor(database));
+
+      const reader = yield* changesStore(world.log, world.sql);
+      const writer = yield* changesStore(world.log, world.sql);
+
+      reader.bind(counterKit as never);
+      writer.bind(counterKit as never);
+
+      yield* writer.send(
+        "acct_changes",
+        { _tag: "Tick" } as never,
+        { commandId: "cmd-run-1" } as never,
+      );
+
+      const watched = reader.changes("acct_changes");
+      const first = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+      expect(first.map((entry) => entry.version)).toEqual([1]);
+
+      // No write yet: a fresh run emits the current state again.
+      const second = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+      expect(second.map((entry) => entry.version)).toEqual([1]);
+
+      yield* writer.send(
+        "acct_changes",
+        { _tag: "Tick" } as never,
+        { commandId: "cmd-run-2" } as never,
+      );
+
+      const third = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+      expect(third.map((entry) => entry.version)).toEqual([2]);
+      expect(third.map((entry) => (entry.state as { readonly count: number }).count)).toEqual([2]);
+    }),
+  );
 });

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { Delivery, ViewEntry, ViewSnapshot } from "@alchemy.run/domain/Platform";
+import type { Delivery, StreamWrite, ViewEntry, ViewSnapshot } from "@alchemy.run/domain/Platform";
 import { describe, expect, it } from "@alchemy.run/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -7,11 +7,12 @@ import * as Fiber from "effect/Fiber";
 import * as Stream from "effect/Stream";
 import { migrate } from "../../src/Migrations/index.ts";
 import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
-import { CAUGHT_UP_CAP, SqlViewStore } from "../../src/Store/SqlConsumers.ts";
+import { CAUGHT_UP_CAP, SqlStreamStore, SqlViewStore } from "../../src/Store/SqlConsumers.ts";
 import { BILLING_TABLES } from "../../src/Store/Tables.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
 const VIEW = "Counter";
+const STREAM = "CounterStream";
 const KEY = "acct_counter";
 const AT = 1_700_000_000_000;
 
@@ -35,6 +36,15 @@ const delivery = (seq: number, source = `Account/${KEY}`, generation = 1): Deliv
 
 const countOf = (snapshot: ViewSnapshot): number =>
   snapshot.state === null ? 0 : (snapshot.state as { readonly count: number }).count;
+
+const streamWrite = (seq: number): StreamWrite => ({
+  origin: [0, seq],
+  source: `Account/${KEY}`,
+  sourceSeq: seq,
+  at: AT,
+  commandId: `stream-${seq}`,
+  events: [{ _tag: "Ticked", seq }],
+});
 
 /** The same delivery, for a key other than the shared fixture's. */
 const keyedDelivery = (key: string, seq: number, generation = 1): Delivery => ({
@@ -366,6 +376,73 @@ describe("the statements a view store sends", () => {
         expect(snapshot.version).toBe(1);
         expect(countOf(snapshot)).toBe(1);
         expect(view.diagnostics.caughtUpSize()).toBe(CAUGHT_UP_CAP);
+      }),
+    ),
+  );
+
+  it.live("changes gives every run of one view value its own cursor", () =>
+    withWorld(({ sql }) =>
+      Effect.gen(function* () {
+        const reader = yield* SqlViewStore(sql, { name: VIEW, now: () => AT, pollMillis: 5 });
+        const writer = yield* SqlViewStore(sql, { name: VIEW, now: () => AT, pollMillis: 5 });
+        const subscriber = reader.bind(foldKit(1) as never);
+        const publisher = writer.bind(foldKit(1) as never);
+
+        yield* publisher.receive(KEY, [delivery(1)]);
+        const watched = subscriber.changes(KEY);
+        const first = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(first.map((snapshot) => snapshot.version)).toEqual([1]);
+
+        // No write yet: the second run must still start at the current value
+        // instead of inheriting the first run's cursor.
+        const second = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(second.map((snapshot) => snapshot.version)).toEqual([1]);
+
+        // A write between runs reaches the next run of the same value.
+        yield* publisher.receive(KEY, [delivery(2)]);
+
+        const third = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(third.map((snapshot) => snapshot.version)).toEqual([2]);
+        expect(third.map(countOf)).toEqual([2]);
+      }),
+    ),
+  );
+
+  it.live("changes gives every run of one stream value its own cursor", () =>
+    withWorld(({ sql }) =>
+      Effect.gen(function* () {
+        const reader = yield* SqlStreamStore(sql, {
+          name: STREAM,
+          now: () => AT,
+          pollMillis: 5,
+        });
+
+        const writer = yield* SqlStreamStore(sql, {
+          name: STREAM,
+          now: () => AT,
+          pollMillis: 5,
+        });
+
+        yield* writer.store.append(KEY, streamWrite(1));
+        const watched = reader.store.changes(KEY);
+        const first = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(first.map((meta) => meta.seq)).toEqual([1]);
+
+        // No write yet: a fresh run emits the current meta again.
+        const second = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(second.map((meta) => meta.seq)).toEqual([1]);
+
+        yield* writer.store.append(KEY, streamWrite(2));
+
+        const third = Array.from(yield* Stream.runCollect(watched.pipe(Stream.take(1))));
+
+        expect(third.map((meta) => meta.seq)).toEqual([2]);
+        expect(third[0]?.origin).toEqual([0, 2]);
       }),
     ),
   );

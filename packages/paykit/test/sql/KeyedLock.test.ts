@@ -118,6 +118,49 @@ describe("a keyed lock", () => {
     }),
   );
 
+  it.effect("keeps the holder's entry when a queued waiter is interrupted", () =>
+    Effect.gen(function* () {
+      const lock = KeyedLock();
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const ran = yield* Deferred.make<void>();
+
+      const holder = yield* Effect.forkChild(
+        lock.withKey(
+          "key",
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }),
+        ),
+      );
+
+      yield* Deferred.await(entered);
+
+      const queued = yield* Effect.forkChild(lock.withKey("key", Deferred.succeed(ran, undefined)));
+
+      // Give the waiter the executor: it takes a reference and suspends on the
+      // held key without running its effect.
+      yield* Effect.yieldNow;
+      expect(yield* Deferred.isDone(ran)).toBe(false);
+      expect(lock.size()).toBe(1);
+      expect(lock.activeKeys()).toEqual(["key"]);
+
+      yield* Fiber.interrupt(queued);
+
+      // The waiter's reference is gone, but the holder still owns the entry.
+      expect(lock.size()).toBe(1);
+      expect(lock.activeKeys()).toEqual(["key"]);
+      expect(yield* Deferred.isDone(ran)).toBe(false);
+
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+
+      expect(lock.size()).toBe(0);
+      expect(lock.activeKeys()).toEqual([]);
+    }),
+  );
+
   it.effect("releases the entry when the holder fails or is interrupted", () =>
     Effect.gen(function* () {
       const lock = KeyedLock();
