@@ -704,7 +704,6 @@ const BillingCore = Layer.mergeAll(
                   amount: request.amount,
                   ...(request.dimension === undefined ? {} : { dimension: request.dimension }),
                   ...(request.properties === undefined ? {} : { properties: request.properties }),
-                  ...(request.properties === undefined ? {} : { properties: request.properties }),
                   ...(request.expiresAt === undefined ? {} : { expiresAt: request.expiresAt }),
                   dedupeKey: request.dedupeKey,
                 }),
