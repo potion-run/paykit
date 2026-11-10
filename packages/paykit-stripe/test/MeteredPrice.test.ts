@@ -6,11 +6,77 @@ import * as Effect from "effect/Effect";
 import {
   MeteredPrice,
   registerMeteredPriceProvider,
+  shouldReplace,
   stripeTiersOf,
   stripeTransformOf,
+  type MeteredPriceProps,
 } from "../src/MeteredPrice.ts";
 
+const usagePrice = pricing({
+  kind: "graduated",
+  currency: "usd",
+  bands: [
+    { upTo: 100, amount: 1, currency: "usd" },
+    { upTo: "inf", amount: 500, currency: "usd", units: 1_000 },
+  ],
+});
+
+const packagePrice = pricing({ kind: "unit", amount: 500, currency: "usd", units: 1_000 });
+
+const props = (overrides: Partial<MeteredPriceProps> = {}): MeteredPriceProps => ({
+  product: "prod_1",
+  interval: "month",
+  meter: "mtr_1",
+  lookupKey: "paykit:prod:pro:usage:messages",
+  pricing: usagePrice,
+  ...overrides,
+});
+
+const attrs = (
+  overrides: Partial<MeteredPrice["Attributes"]> = {},
+): MeteredPrice["Attributes"] => ({
+  id: "price_1",
+  product: "prod_1",
+  currency: "usd",
+  interval: "month",
+  meter: "mtr_1",
+  lookupKey: "paykit:prod:pro:usage:messages",
+  pricing: usagePrice,
+  active: true,
+  created: 1,
+  ...overrides,
+});
+
 describe("a metered price that is not one rate", () => {
+  it("replaces a price when a create-only prop changes", () => {
+    expect(shouldReplace(props({ product: "prod_2" }), attrs())).toBe(true);
+    expect(shouldReplace(props({ interval: "year" }), attrs())).toBe(true);
+    expect(shouldReplace(props({ meter: "mtr_2" }), attrs())).toBe(true);
+    expect(
+      shouldReplace(
+        props({ pricing: pricing({ kind: "unit", amount: 2, currency: "usd" }) }),
+        attrs(),
+      ),
+    ).toBe(true);
+    expect(
+      shouldReplace(
+        props({ pricing: pricing({ kind: "unit", amount: 700, currency: "usd", units: 1_000 }) }),
+        attrs({ pricing: packagePrice }),
+      ),
+    ).toBe(true);
+    expect(shouldReplace(props({ pricing: packagePrice }), attrs({ pricing: packagePrice }))).toBe(
+      false,
+    );
+  });
+
+  it("keeps the price when only the lookup key changes", () => {
+    expect(shouldReplace(props({ lookupKey: "paykit:prod:pro:usage:other" }), attrs())).toBe(false);
+  });
+
+  it("keeps an unchanged price", () => {
+    expect(shouldReplace(props(), attrs())).toBe(false);
+  });
+
   it("turns a package into the quantity transform Stripe applies before billing", () => {
     expect(
       stripeTransformOf(pricing({ kind: "unit", amount: 500, currency: "usd", units: 1_000 })),

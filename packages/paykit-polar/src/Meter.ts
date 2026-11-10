@@ -64,6 +64,8 @@ export type Meter = Resource<
     filter: Polar.Filter;
     /** The aggregation that turns events into units. */
     aggregation: Polar.MeterAggregation;
+    /** Polar's unit label. */
+    unit: Polar.MeterUnit;
     /** Whether Polar has archived the meter. */
     archived: boolean;
     /** Polar's creation timestamp, used to pick the newest generation. */
@@ -114,6 +116,7 @@ const attrsOf = (meter: Polar.Meter): Meter["Attributes"] => {
     eventName: clause !== undefined && "value" in clause ? String(clause.value) : "",
     filter: meter.filter,
     aggregation: meter.aggregation,
+    unit: meter.unit,
     archived: meter.archived_at != null,
     createdAt: meter.created_at,
   };
@@ -181,7 +184,7 @@ const observe = Effect.fn(function* (input: { id?: string; stage: string; featur
   if (input.id !== undefined) {
     const byId = yield* getById(input.id);
 
-    if (byId !== undefined) return byId;
+    if (byId !== undefined && byId.archived_at == null) return byId;
   }
 
   return yield* findByFeature(input.stage, input.feature);
@@ -204,6 +207,8 @@ export const MeterProvider = () =>
 
     diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
+
+      if (output?.archived === true) return { action: "replace" } as const;
 
       // Polar cannot rename a meter's event, so an explicit change is a
       // replacement. An omitted eventName keeps the stage-derived one.
@@ -247,6 +252,7 @@ export const MeterProvider = () =>
       const name = meterNameOf(stage, feature);
       const eventName = news.eventName ?? meterEventNameOf(stage, feature);
       const displayName = news.displayName ?? name;
+      const unit = news.unit ?? "scalar";
       const filter = meterFilterOf(eventName);
       const aggregation = meterAggregationOf();
       const metadata = yield* desiredMetadata(id, feature);
@@ -256,7 +262,7 @@ export const MeterProvider = () =>
       if (current === undefined) {
         current = yield* Polar.metersCreate({
           name: displayName,
-          unit: news.unit ?? "scalar",
+          unit,
           filter,
           aggregation,
           metadata,
@@ -269,14 +275,22 @@ export const MeterProvider = () =>
       const nameChanged = current.name !== displayName;
       const filterChanged = !sameFilter(current.filter, filter);
       const aggregationChanged = !sameAggregation(current.aggregation, aggregation);
+      const unitChanged = current.unit !== unit;
 
-      if (!nameChanged && !filterChanged && !aggregationChanged && !metadataChanged) {
+      if (
+        !nameChanged &&
+        !filterChanged &&
+        !aggregationChanged &&
+        !unitChanged &&
+        !metadataChanged
+      ) {
         return attrsOf(current);
       }
 
       const updated = yield* Polar.metersUpdate({
         id: current.id,
         name: displayName,
+        ...(unitChanged ? { unit } : {}),
         ...(filterChanged ? { filter } : {}),
         ...(aggregationChanged ? { aggregation } : {}),
         ...(metadataChanged ? { metadata } : {}),

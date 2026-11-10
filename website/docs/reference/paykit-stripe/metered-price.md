@@ -3,7 +3,7 @@ title: "MeteredPrice"
 description: "A Stripe metered price that states more than one unit amount: a package transform or a graduated/volume ladder."
 ---
 
-> **Source:** [`packages/paykit-stripe/src/MeteredPrice.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/MeteredPrice.ts#L127)
+> **Source:** [`packages/paykit-stripe/src/MeteredPrice.ts`](https://github.com/potion-run/paykit/blob/main/packages/paykit-stripe/src/MeteredPrice.ts#L111)
 > **Kind:** Resource · **Product:** Product
 
 A Stripe metered price that states more than one unit amount: a package

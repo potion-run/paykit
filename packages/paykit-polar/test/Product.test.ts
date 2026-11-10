@@ -1,13 +1,14 @@
 import { expect } from "@alchemy.run/test";
 import * as Test from "@alchemy.run/test/Alchemy";
 import * as DistilledPolar from "@distilled.cloud/polar";
+import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { MeterProvider } from "../src/Meter.ts";
+import { Meter, MeterProvider } from "../src/Meter.ts";
 import type { PolarClient } from "../src/Polar.ts";
 import { PolarBilling } from "../src/PolarBilling.ts";
 import { PolarPrices } from "../src/Prices.ts";
@@ -270,6 +271,7 @@ const fakePolar = () => {
 
           const body = bodyOf(request) as {
             readonly name?: string | null;
+            readonly unit?: string | null;
             readonly filter?: DistilledPolar.Filter | null;
             readonly aggregation?: DistilledPolar.MeterAggregation | null;
             readonly metadata?: Readonly<Record<string, unknown>>;
@@ -279,6 +281,7 @@ const fakePolar = () => {
           const updated: DistilledPolar.Meter = {
             ...current,
             ...(body.name == null ? {} : { name: body.name }),
+            ...(body.unit == null ? {} : { unit: body.unit as DistilledPolar.MeterUnit }),
             ...(body.filter == null ? {} : { filter: body.filter }),
             ...(body.aggregation == null
               ? {}
@@ -631,6 +634,45 @@ test.provider("creates a meter and a metered price from the catalog's unit price
     expect(
       polar.calls.filter((call) => call.startsWith("PATCH") && call.includes("/meters")),
     ).toEqual([]);
+  }),
+);
+
+test.provider("updates a meter's unit on the next reconcile", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+    const first = yield* stack.deploy(Meter("Meter_messages", { feature: "messages" }));
+
+    expect(polar.meters.get(first.id)?.unit).toBe("scalar");
+
+    const changed = yield* stack.deploy(
+      Meter("Meter_messages", { feature: "messages", unit: "token" }),
+    );
+
+    expect(changed.id).toBe(first.id);
+    expect(polar.meters.get(first.id)?.unit).toBe("token");
+  }),
+);
+
+test.provider("recreates a meter Polar archived instead of returning it", (stack) =>
+  Effect.gen(function* () {
+    polar.reset();
+
+    const first = yield* stack.deploy(
+      Meter("Meter_messages", { feature: "messages" }).pipe(RemovalPolicy.retain()),
+    );
+
+    const archived = polar.meters.get(first.id)!;
+
+    polar.meters.set(first.id, { ...archived, archived_at: "2030-01-02T00:00:00.000Z" });
+
+    const again = yield* stack.deploy(
+      Meter("Meter_messages", { feature: "messages" }).pipe(RemovalPolicy.retain()),
+      { force: true },
+    );
+
+    expect(again.id).not.toBe(first.id);
+    expect(polar.meters.get(first.id)?.archived_at).toBe("2030-01-02T00:00:00.000Z");
+    expect(polar.meters.get(again.id)?.archived_at).toBe(null);
   }),
 );
 

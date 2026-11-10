@@ -12,7 +12,6 @@ import {
   UpdatePrice,
   type CreatePriceRequestTiersList,
   type Price as StripePrice,
-  type PriceTiersList,
   type TransformQuantity,
 } from "@distilled.cloud/stripe/stripe";
 import {
@@ -66,32 +65,17 @@ export const meteredPriceNameOf = (stage: string, tier: string, feature: string)
 const amountKey = (value: number | string | null | undefined): string | null =>
   value === null || value === undefined ? null : String(Number(value));
 
-const sortedTiers = (tiers: PriceTiersList | undefined): string =>
-  JSON.stringify(
-    (tiers ?? []).map((tier) => ({
-      upTo: tier.up_to === null ? "inf" : tier.up_to,
-      amount: amountKey(tier.unit_amount_decimal ?? tier.unit_amount),
-    })),
-  );
-
-const desiredTiers = (tiers: CreatePriceRequestTiersList): string =>
-  JSON.stringify(
-    tiers.map((tier) => ({
+const pricingSignature = (pricing: Pricing): string =>
+  JSON.stringify({
+    tag: pricing._tag,
+    currency: currencyOf(pricing),
+    unit: pricing._tag === "unit" ? unitAmountDecimalOf(pricing.unitPrice) : null,
+    tiers: stripeTiersOf(pricing).map((tier) => ({
       upTo: tier.up_to,
       amount: amountKey(tier.unit_amount_decimal ?? tier.unit_amount),
     })),
-  );
-
-const sameTiers = (observed: PriceTiersList | undefined, desired: CreatePriceRequestTiersList) =>
-  sortedTiers(observed) === desiredTiers(desired);
-
-const sameTransform = (
-  observed: TransformQuantity | null,
-  desired: TransformQuantity | undefined,
-): boolean =>
-  desired === undefined
-    ? observed === null
-    : observed?.divide_by === desired.divide_by && observed.round === desired.round;
+    transform: stripeTransformOf(pricing) ?? null,
+  });
 
 export interface MeteredPriceProps {
   /** The Stripe product the price belongs to (`prod_…`). */
@@ -184,25 +168,21 @@ const attrsOf = (price: StripePrice): MeteredPrice["Attributes"] => ({
   created: price.created,
 });
 
-const matches = (price: StripePrice, props: MeteredPriceProps): boolean => {
-  const pricing = props.pricing;
-  const tiers = stripeTiersOf(pricing);
-  const transform = stripeTransformOf(pricing);
+export const shouldReplace = (
+  news: MeteredPriceProps,
+  output: MeteredPrice["Attributes"] | undefined,
+): boolean =>
+  output !== undefined &&
+  (news.product !== output.product ||
+    news.interval !== output.interval ||
+    news.meter !== output.meter ||
+    pricingSignature(news.pricing) !== pricingSignature(output.pricing));
 
-  return (
-    price.active &&
-    price.lookup_key === props.lookupKey &&
-    price.billing_scheme === (pricing._tag === "unit" ? "per_unit" : "tiered") &&
-    price.currency === currencyOf(pricing) &&
-    price.recurring?.interval === props.interval &&
-    price.recurring?.usage_type === "metered" &&
-    price.recurring?.meter === props.meter &&
-    sameTransform(price.transform_quantity, transform) &&
-    (pricing._tag === "unit"
-      ? price.unit_amount === pricing.unitPrice.amount
-      : price.tiers_mode === pricing._tag && sameTiers(price.tiers, tiers))
-  );
-};
+const matches = (price: StripePrice, props: MeteredPriceProps): boolean =>
+  price.active &&
+  price.billing_scheme === (props.pricing._tag === "unit" ? "per_unit" : "tiered") &&
+  price.recurring?.usage_type === "metered" &&
+  !shouldReplace(props, attrsOf(price));
 
 const isMissing = (error: { readonly _tag?: string }) => error._tag === "NotFound";
 
@@ -308,8 +288,10 @@ export const MeteredPriceProvider = () =>
     stables: ["id", "product", "currency", "created"],
     nuke: { skip: true },
 
-    diff: Effect.fn(function* ({ news }) {
+    diff: Effect.fn(function* ({ news, output }) {
       if (!isResolved(news)) return undefined;
+
+      if (shouldReplace(news, output)) return { action: "replace" } as const;
 
       return undefined;
     }),
