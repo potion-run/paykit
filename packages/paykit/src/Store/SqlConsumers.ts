@@ -55,6 +55,11 @@ export interface SqlConsumerOptions {
 
 const DEFAULT_POLL = 250;
 
+interface StoredSnapshot {
+  readonly snapshot: ViewSnapshot;
+  readonly stored: number | undefined;
+}
+
 const parse = (json: string | null): unknown => (json === null ? null : JSON.parse(json));
 
 const poll = (interval: number) => Stream.tick(Duration.millis(interval));
@@ -123,15 +128,6 @@ export const SqlViewStore = (
     /** A key whose catch-up this process has already performed. */
     const caughtUp = new Set<string>();
 
-    const storedGeneration = (key: string) =>
-      Effect.map(
-        sql.get<{ generation: number | string }>(
-          `SELECT generation FROM ${state} WHERE view = ? AND key = ?`,
-          [view, key],
-        ),
-        (row) => (row === undefined ? undefined : Number(row.generation)),
-      );
-
     const readSnapshot = (key: string, generation: number) =>
       Effect.map(
         sql.get<{
@@ -144,32 +140,69 @@ export const SqlViewStore = (
           `SELECT generation, version, seq, checkpoints, state FROM ${state} WHERE view = ? AND key = ?`,
           [view, key],
         ),
-        (row): ViewSnapshot => {
+        (row): StoredSnapshot => {
+          const stored = row === undefined ? undefined : Number(row.generation);
+
           // A key built by an earlier generation starts over: its rows describe
           // a fold this code no longer produces.
-          if (row === undefined || Number(row.generation) !== generation) {
-            return { state: null, version: 0, checkpoints: {}, seq: 0, generation };
+          if (row === undefined || stored !== generation) {
+            return {
+              snapshot: { state: null, version: 0, checkpoints: {}, seq: 0, generation },
+              stored,
+            };
           }
 
           // SAFETY: the row's text is decoded by the consumer's schema; the kernel's generics are erased at this store boundary.
           return {
-            state: parse(row.state) as never,
-            version: Number(row.version),
-            checkpoints: JSON.parse(row.checkpoints) as never,
-            seq: Number(row.seq),
-            generation,
+            snapshot: {
+              state: parse(row.state) as never,
+              version: Number(row.version),
+              checkpoints: JSON.parse(row.checkpoints) as never,
+              seq: Number(row.seq),
+              generation,
+            },
+            stored,
           };
         },
       );
 
-    const alreadyApplied = (key: string, delivery: Delivery, generation: number) =>
+    const storedGeneration = (key: string) =>
       Effect.map(
-        sql.get<{ one: number }>(
-          `SELECT 1 AS one FROM ${input} WHERE view = ? AND key = ? AND source = ? AND source_seq = ? AND generation = ?`,
-          [view, key, delivery.source, delivery.seq, generation],
+        sql.get<{ generation: number | string }>(
+          `SELECT generation FROM ${state} WHERE view = ? AND key = ?`,
+          [view, key],
         ),
-        (row) => row !== undefined,
+        (row) => (row === undefined ? undefined : Number(row.generation)),
       );
+
+    // One query per source per 200 candidate sequences, so a batch costs a
+    // handful of reads instead of one per delivery. The chunk keeps the bound
+    // variable count well under SQLite's 999 limit and is deterministic.
+    const APPLIED_CHUNK = 200;
+
+    const appliedSequences = (
+      key: string,
+      source: string,
+      sequences: ReadonlyArray<number>,
+      generation: number,
+    ) =>
+      Effect.gen(function* () {
+        const applied = new Set<number>();
+
+        for (let start = 0; start < sequences.length; start += APPLIED_CHUNK) {
+          const chunk = sequences.slice(start, start + APPLIED_CHUNK);
+          const placeholders = chunk.map(() => "?").join(", ");
+
+          const rows = yield* sql.query<{ source_seq: number | string }>(
+            `SELECT source_seq FROM ${input} WHERE view = ? AND key = ? AND generation = ? AND source = ? AND source_seq IN (${placeholders})`,
+            [view, key, generation, source, ...chunk],
+          );
+
+          for (const row of rows) applied.add(Number(row.source_seq));
+        }
+
+        return applied;
+      });
 
     const write = (
       key: string,
@@ -186,20 +219,21 @@ export const SqlViewStore = (
           // by the previous generation are no longer part of it, so remove them
           // in the same unit that writes the first new row. Without this a
           // generation that emits fewer entries than its predecessor would keep
-          // serving the tail of the old one.
+          // serving the tail of the old one. An update inside one generation
+          // has nothing to clear, so it issues no delete at all. The generation
+          // is read here, inside the unit, so a concurrent rebuild cannot leave
+          // the old generation's rows behind.
           const previous = yield* storedGeneration(key);
-          yield* sql.write(`DELETE FROM ${entry} WHERE view = ? AND key = ? AND generation <> ?`, [
-            view,
-            key,
-            generation,
-          ]);
-          yield* sql.write(`DELETE FROM ${input} WHERE view = ? AND key = ? AND generation <> ?`, [
-            view,
-            key,
-            generation,
-          ]);
 
           if (previous !== undefined && previous !== generation) {
+            yield* sql.write(
+              `DELETE FROM ${entry} WHERE view = ? AND key = ? AND generation <> ?`,
+              [view, key, generation],
+            );
+            yield* sql.write(
+              `DELETE FROM ${input} WHERE view = ? AND key = ? AND generation <> ?`,
+              [view, key, generation],
+            );
             // A pending downstream delivery from the old fold would describe an
             // entry the new generation no longer has. Drop it; the rebuild
             // emits its own.
@@ -311,23 +345,44 @@ export const SqlViewStore = (
         );
 
         if (matching.length === 0) return;
-        const snapshot = yield* readSnapshot(key, generation);
+        const { snapshot } = yield* readSnapshot(key, generation);
         // Dedupe before applying: at-least-once delivery means the same event
         // can arrive twice, and a view that applied both would double it. The
         // committed input log answers for earlier batches; a batch can also
         // carry the same delivery twice, which no row has recorded yet.
-        const fresh: Array<Delivery> = [];
+        const candidates: Array<Delivery> = [];
         const seen = new Set<string>();
 
         for (const delivery of matching) {
           const identity = `${delivery.source}:${delivery.seq}`;
 
           if (seen.has(identity)) continue;
-
-          if (yield* alreadyApplied(key, delivery, generation)) continue;
           seen.add(identity);
-          fresh.push(delivery);
+          candidates.push(delivery);
         }
+
+        // The committed input log is read once per source, not once per
+        // delivery. Grouping preserves the batch's order, so `fresh` does too.
+        const bySource = new Map<string, Array<number>>();
+
+        for (const delivery of candidates) {
+          const sequences = bySource.get(delivery.source);
+
+          if (sequences === undefined) bySource.set(delivery.source, [delivery.seq]);
+          else sequences.push(delivery.seq);
+        }
+
+        const recorded = new Set<string>();
+
+        for (const [source, sequences] of bySource) {
+          const found = yield* appliedSequences(key, source, sequences, generation);
+
+          for (const seq of found) recorded.add(`${source}:${seq}`);
+        }
+
+        const fresh = candidates.filter(
+          (delivery) => !recorded.has(`${delivery.source}:${delivery.seq}`),
+        );
 
         if (fresh.length === 0) {
           // The input was already applied, but its downstream deliveries may
@@ -399,15 +454,12 @@ export const SqlViewStore = (
         if (caughtUp.has(marker)) return;
 
         const generation = bound.generation;
+        const { snapshot, stored } = yield* readSnapshot(key, generation);
 
-        if ((yield* storedGeneration(key)) === generation) {
-          const snapshot = yield* readSnapshot(key, generation);
+        if (stored === generation && snapshot.version > 0) {
+          caughtUp.add(marker);
 
-          if (snapshot.version > 0) {
-            caughtUp.add(marker);
-
-            return;
-          }
+          return;
         }
 
         const rows =
@@ -447,7 +499,7 @@ export const SqlViewStore = (
             // so a key nobody writes to again is not stuck waiting for a send.
             yield* drainOutbox(key);
 
-            return yield* readSnapshot(key, bound.generation);
+            return (yield* readSnapshot(key, bound.generation)).snapshot;
           }),
         ).pipe(Effect.orDie),
 
@@ -463,7 +515,7 @@ export const SqlViewStore = (
                   return yield* Effect.die("view store used before it was built");
                 yield* ensureCaughtUp(key);
 
-                return yield* readSnapshot(key, bound.generation);
+                return (yield* readSnapshot(key, bound.generation)).snapshot;
               }),
             ),
           ),
