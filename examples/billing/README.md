@@ -166,6 +166,7 @@ same database after a subscribe.
 
 | Example | The axis it changes |
 | --- | --- |
+| [`examples/saas`](../saas) | The whole product: sign-up, projects, transfers, an add-on, guardrails and the metered turn. |
 | [`examples/memory`](../memory) | The smallest deployment: `MemoryStore`, `Manual`, no database or key. |
 | [`examples/stripe`](../stripe) | `StripeBilling` provisions prices and meters; the Worker resolves the lookup keys. |
 | [`examples/postgres`](../postgres) | The model on Postgres through Cloudflare Hyperdrive. |

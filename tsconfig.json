@@ -88,6 +88,12 @@
     },
     {
       "path": "./examples/mysql/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/saas"
+    },
+    {
+      "path": "./examples/saas/tsconfig.test.json"
     }
   ]
 }
