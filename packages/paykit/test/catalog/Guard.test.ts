@@ -1,10 +1,22 @@
 import { describe, expect, it } from "@alchemy.run/test";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance, type Allowance } from "../../src/Allowance.ts";
-import { planItemsOf, catalog, creditTermsOf } from "../../src/Catalog.ts";
-import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
+import { planItemsOf, catalog, creditTermsOf, planTermsOf } from "../../src/Catalog.ts";
+import {
+  CatalogGuard,
+  CatalogGuardLive,
+  catalogCommandMismatchOf,
+  catalogMismatchOf,
+} from "../../src/CatalogGuard.ts";
+import { catalogLayer } from "../../src/CatalogService.ts";
 import { messages } from "../../src/Feature.ts";
+import { ChangePlans, type PlanMove } from "../../src/Subscription/ChangePlans.command.ts";
+import { DEFAULT_PLAN_GROUP, type PlanRow } from "../../src/Subscription/PlanSet.ts";
 import { tier } from "../../src/Tier.ts";
 
 const freeTier = tier({ id: "free", grants: [allowance(messages, { included: 100 })] });
@@ -78,6 +90,67 @@ const proTerms = creditTermsOf(testCatalog, "pro")!;
 const freeTerms = creditTermsOf(testCatalog, "free")!;
 const supportTerms = creditTermsOf(testCatalog, "support")!;
 const riderTerms = creditTermsOf(testCatalog, "rider")!;
+
+const moveOf = (tierId: string, overrides: Partial<PlanMove> = {}): PlanMove => {
+  const terms = planTermsOf(testCatalog, tierId)!;
+
+  return {
+    tier: tierId,
+    ...(terms.version === undefined ? {} : { version: terms.version }),
+    ...(terms.group === undefined ? {} : { group: terms.group }),
+    ...(terms.addOn === true ? { addOn: true } : {}),
+    allowances: terms.allowances,
+    ...(terms.price === undefined ? {} : { price: terms.price }),
+    credits: terms.credits,
+    creditsExpire: terms.creditsExpire,
+    ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
+    rates: terms.rates,
+    ...overrides,
+  };
+};
+
+const fallbackOf = (tierId: string, overrides: Partial<PlanRow> = {}): PlanRow => {
+  const terms = planTermsOf(testCatalog, tierId)!;
+
+  return {
+    planId: tierId,
+    version: terms.version,
+    group: terms.group ?? DEFAULT_PLAN_GROUP,
+    addOn: terms.addOn === true,
+    allowances: terms.allowances,
+    credits: terms.credits,
+    creditsExpire: terms.creditsExpire,
+    ...(terms.price === undefined ? {} : { price: terms.price }),
+    ...(terms.topUp === undefined ? {} : { topUp: terms.topUp }),
+    rates: terms.rates,
+    ...overrides,
+  };
+};
+
+type Guard = (
+  effect: Effect.Effect<unknown, never, never>,
+  options: { readonly payload: unknown },
+) => Effect.Effect<unknown, unknown, never>;
+
+const guardRefusal = (input: unknown) => {
+  const guard = Effect.runSync(
+    Effect.scoped(
+      Effect.map(
+        Layer.build(CatalogGuardLive.pipe(Layer.provide(catalogLayer(testCatalog)))),
+        (context) => Context.get(context, CatalogGuard),
+      ),
+    ),
+  ) as unknown as Guard;
+
+  const outcome = Effect.runSync(Effect.exit(guard(Effect.void, { payload: { input } })));
+
+  return Exit.isFailure(outcome)
+    ? (Option.getOrNull(Cause.findErrorOption(outcome.cause)) as {
+        readonly _tag: string;
+        readonly field: string;
+      } | null)
+    : null;
+};
 
 describe("the catalog guard", () => {
   it("accepts a command whose fields match the catalog", () => {
@@ -269,6 +342,105 @@ describe("the catalog guard", () => {
 
   it("ignores a command that carries no catalog field", () => {
     expect(catalogMismatchOf(testCatalog, {})).toBe(null);
+  });
+});
+
+describe("the catalog guard over a plan set", () => {
+  it("accepts moves whose terms match the catalog", () => {
+    expect(catalogCommandMismatchOf(testCatalog, { moves: [moveOf("pro")] })).toBe(null);
+    expect(catalogCommandMismatchOf(testCatalog, { moves: [moveOf("support")] })).toBe(null);
+  });
+
+  it("refuses a move whose price, allowances or version the catalog never sold", () => {
+    const price = catalogCommandMismatchOf(testCatalog, {
+      moves: [moveOf("pro", { price: { amount: 100, currency: "usd", interval: "month" } })],
+    });
+
+    const allowances = catalogCommandMismatchOf(testCatalog, {
+      moves: [moveOf("pro", { allowances: { messages: allowance(messages, { included: 1 }) } })],
+    });
+
+    const version = catalogCommandMismatchOf(testCatalog, {
+      moves: [moveOf("pro", { version: 2 })],
+    });
+
+    expect(price?.field).toBe("price");
+    expect(allowances?.field).toBe("allowances");
+    expect(version?.field).toBe("version");
+  });
+
+  it("accepts a cancellation fallback that names a catalog plan", () => {
+    expect(
+      catalogCommandMismatchOf(testCatalog, {
+        cancels: [{ group: DEFAULT_PLAN_GROUP, fallback: fallbackOf("pro") }],
+      }),
+    ).toBe(null);
+    expect(
+      catalogCommandMismatchOf(testCatalog, {
+        cancels: [{ group: "floor", fallback: fallbackOf("bespoke-floor") }],
+      }),
+    ).toBe(null);
+  });
+
+  it("refuses a cancellation fallback whose terms the catalog never sold", () => {
+    const price = catalogCommandMismatchOf(testCatalog, {
+      cancels: [
+        {
+          group: DEFAULT_PLAN_GROUP,
+          fallback: fallbackOf("pro", {
+            price: { amount: 100, currency: "usd", interval: "month" },
+          }),
+        },
+      ],
+    });
+
+    const version = catalogCommandMismatchOf(testCatalog, {
+      cancels: [{ group: DEFAULT_PLAN_GROUP, fallback: fallbackOf("pro", { version: 2 }) }],
+    });
+
+    expect(price?.field).toBe("price");
+    expect(version?.field).toBe("version");
+  });
+});
+
+describe("the catalog guard layer over a plan set", () => {
+  it("refuses a forged move and a forged cancellation fallback", () => {
+    const move = guardRefusal(
+      new ChangePlans({
+        moves: [moveOf("pro", { price: { amount: 100, currency: "usd", interval: "month" } })],
+      }),
+    );
+
+    const fallback = guardRefusal(
+      new ChangePlans({
+        moves: [],
+        cancels: [
+          {
+            group: DEFAULT_PLAN_GROUP,
+            fallback: fallbackOf("pro", {
+              price: { amount: 100, currency: "usd", interval: "month" },
+            }),
+          },
+        ],
+      }),
+    );
+
+    expect(move?._tag).toBe("CatalogMismatch");
+    expect(move?.field).toBe("price");
+    expect(fallback?._tag).toBe("CatalogMismatch");
+    expect(fallback?.field).toBe("price");
+  });
+
+  it("passes a valid move and a valid fallback through the layer", () => {
+    expect(guardRefusal(new ChangePlans({ moves: [moveOf("pro")] }))).toBe(null);
+    expect(
+      guardRefusal(
+        new ChangePlans({
+          moves: [],
+          cancels: [{ group: DEFAULT_PLAN_GROUP, fallback: fallbackOf("pro") }],
+        }),
+      ),
+    ).toBe(null);
   });
 });
 

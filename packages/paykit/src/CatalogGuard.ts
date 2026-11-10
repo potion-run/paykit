@@ -15,6 +15,7 @@ import { CatalogMismatch } from "./CatalogMismatch.rejection.ts";
 import { CatalogService } from "./CatalogService.ts";
 import type { CreditRateCards } from "./Feature.ts";
 import { pricingKey } from "./Pricing.ts";
+import { DEFAULT_PLAN_GROUP } from "./Subscription/PlanSet.ts";
 import {
   INITIAL_PLAN_VERSION,
   priceFor,
@@ -39,6 +40,27 @@ interface CatalogCarried {
   readonly rates?: CreditRateCards;
   /** The catalog facts a customer-controls write names, keyed by feature id. */
   readonly features?: Readonly<Record<string, { readonly priced: boolean }>>;
+}
+
+/** One cancellation's fallback: a plan row, spelled with `planId`. */
+interface CatalogFallback {
+  readonly planId: string;
+  readonly version?: number;
+  readonly group: string;
+  readonly addOn: boolean;
+  readonly allowances: Readonly<Record<string, Allowance>>;
+  readonly price?: Price;
+  readonly credits: number;
+  readonly creditsExpire: string;
+  readonly topUp?: TopUpTerms;
+  readonly rates: CreditRateCards;
+}
+
+/** A command that carries catalog terms for a plan set rather than one plan. */
+interface CatalogPlanSet {
+  readonly moves?: ReadonlyArray<CatalogCarried>;
+  readonly cancels?: ReadonlyArray<{ readonly fallback?: CatalogFallback }>;
+  readonly uncancels?: ReadonlyArray<string>;
 }
 
 /**
@@ -342,13 +364,70 @@ export const catalogMismatchOf = (
   return null;
 };
 
+const carriedOfFallback = (
+  catalog: Parameters<typeof planOf>[0],
+  fallback: CatalogFallback,
+): CatalogCarried => {
+  const group =
+    fallback.group === DEFAULT_PLAN_GROUP && planOf(catalog, fallback.planId)?.group === undefined
+      ? undefined
+      : fallback.group;
+
+  return {
+    tier: fallback.planId,
+    ...(fallback.version === undefined ? {} : { version: fallback.version }),
+    ...(group === undefined ? {} : { group }),
+    addOn: fallback.addOn,
+    allowances: fallback.allowances,
+    ...(fallback.price === undefined ? {} : { price: fallback.price }),
+    credits: fallback.credits,
+    creditsExpire: fallback.creditsExpire,
+    ...(fallback.topUp === undefined ? {} : { topUp: fallback.topUp }),
+    rates: fallback.rates,
+  };
+};
+
+/**
+ * Compare a command's catalog-derived fields with what the catalog says,
+ * folding a plan set's moves and cancellation fallbacks through
+ * {@link catalogMismatchOf}. Pure, so a test can call it without an Api.
+ */
+export const catalogCommandMismatchOf = (
+  catalog: Parameters<typeof planOf>[0],
+  input: CatalogCarried & CatalogPlanSet,
+): CatalogMismatch | null => {
+  if (input.moves === undefined && input.cancels === undefined) {
+    return catalogMismatchOf(catalog, input);
+  }
+
+  const controls = catalogMismatchOf(catalog, { features: input.features });
+
+  if (controls !== null) return controls;
+
+  for (const move of input.moves ?? []) {
+    const mismatch = catalogMismatchOf(catalog, move);
+
+    if (mismatch !== null) return mismatch;
+  }
+
+  for (const cancel of input.cancels ?? []) {
+    if (cancel.fallback === undefined) continue;
+    const mismatch = catalogMismatchOf(catalog, carriedOfFallback(catalog, cancel.fallback));
+
+    if (mismatch !== null) return mismatch;
+  }
+
+  return null;
+};
+
 /**
  * The guard that keeps the log honest about money. A `Subscribe`,
- * `ChangeTier` or `StartTrial` carries the allowances and the price it will
- * record, because `decide` is pure and cannot look them up. A caller that
- * omits the price, or sends allowances its tier does not grant, is refused
- * with `CatalogMismatch` instead of writing a standing that can never be
- * reconciled against an invoice.
+ * `ChangeTier`, `StartTrial` or `ChangePlans` carries the allowances and the
+ * price it will record, because `decide` is pure and cannot look them up. A
+ * caller that omits the price, or sends allowances its tier does not grant, is
+ * refused with `CatalogMismatch` instead of writing a standing that can never
+ * be reconciled against an invoice. A plan set is judged move by move, and a
+ * cancellation's fallback is judged like the plan it moves to.
  *
  * A plan the catalog declares with `custom: true` is the one exception, and it
  * is the catalogue's choice rather than the caller's (ADR 0041): its `grants`
@@ -385,7 +464,7 @@ export class CatalogGuard extends RpcMiddleware.Service<CatalogGuard>()("paykit/
 
 /**
  * The guard's Layer: it reads the catalog the deployment validated and refuses
- * what disagrees with it.
+ * what disagrees with it, whether the command carries one plan or a plan set.
  *
  * @layer
  */
@@ -397,12 +476,14 @@ export const CatalogGuardLive = Layer.effect(
     return (effect, { payload }) =>
       Effect.suspend(() => {
         // SAFETY: `payload` is the command's decoded input, which the Api
-        // normalizes; the `input` key is the one a carried catalog uses, and a
-        // command without it is left untouched below.
-        const input = (payload as { readonly input?: CatalogCarried } | null)?.input;
+        // normalizes; the `input` key is the one a carried catalog uses, whether
+        // it names one plan or a plan set, and a command without it is left
+        // untouched below.
+        const input = (payload as { readonly input?: CatalogCarried & CatalogPlanSet } | null)
+          ?.input;
 
         if (input === undefined) return effect;
-        const mismatch = catalogMismatchOf(catalog, input);
+        const mismatch = catalogCommandMismatchOf(catalog, input);
 
         return mismatch === null ? effect : Effect.fail(mismatch);
       });
