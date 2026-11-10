@@ -36,9 +36,10 @@ pnpm --filter @potion.run/example-auth dev    # alchemy dev
 | --- | --- |
 | `src/Auth.ts` | Better Auth, the session-to-actor resolver, and `Paykit.GuardsFrom`. |
 | `src/AuthDatabase.ts` | The D1 database Better Auth migrates at deploy. |
-| `src/Billing.ts` | The catalog, the model on `MemoryStore`, and the `Manual` provider. |
-| `src/catalog.ts` | Two tiers. Plain data, no provider ids. |
-| `src/Worker.ts` | `/api/auth/*` for Better Auth, `/api/*` and `/admin/*` for paykit, `/checkout` for a purchase. |
+| `src/billing.config.ts` | The provider, the catalog and the store, as one declaration. |
+| `src/Billing.ts` | The model and its bindings, on `MemoryStore`. |
+| `src/catalog.ts` | Two tiers, and the plan a checkout query resolves to. Plain data, no provider ids. |
+| `src/AuthWorker.ts` | `/api/auth/*` for Better Auth, `/api/*` and `/admin/*` for paykit, `/checkout` for a purchase. |
 | `src/Page.ts` | A one-page client for sign-up, sign-in, the session and a checkout. |
 | `test/auth.test.ts` | The session maps to the account, and no cookie, another account and a non-admin are all refused. |
 | `alchemy.run.ts` | Validates and records the catalog, then deploys the Worker. |

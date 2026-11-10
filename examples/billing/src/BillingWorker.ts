@@ -1,14 +1,15 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
-import { ACTOR_HEADER, Paykit } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
+import { D1 } from "@potion.run/paykit/Database/D1";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { Provider } from "./Billing.ts";
-import { BillingDatabase } from "./Database.ts";
-import { toMcpHandler } from "./Mcp.ts";
-import { billingOnSql } from "./SqlBilling.ts";
+import { Provider } from "./billing.config.ts";
+import { BillingDatabase } from "./BillingDatabase.ts";
+import { toMcpHandler } from "./BillingMcp.ts";
+import { billingOn } from "./SqlBilling.ts";
 
 /**
  * The five paths, served from one model hosted on one database.
@@ -21,7 +22,7 @@ import { billingOnSql } from "./SqlBilling.ts";
  * Every service this reaches is resolved from the world `serve` provides, so a
  * route cannot answer from a second copy of the model.
  */
-const handle = (request: HttpServerRequest.HttpServerRequest) =>
+const handle = () =>
   Effect.gen(function* () {
     // The MCP server is a web handler, not an Effect fetch. `toMcpHandler`
     // captures *these* services — the ones the world provided — so the tools
@@ -29,9 +30,9 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
     const mcp = yield* toMcpHandler;
     yield* Effect.addFinalizer(() => Effect.promise(mcp.dispose));
 
-    const serve = yield* Paykit.handler({
+    const handler = yield* Paykit.handler({
       provider: Provider,
-      accountOf: (incoming) => incoming.headers[ACTOR_HEADER] ?? null,
+      accountOf: (incoming) => Paykit.accountFromHeaders(incoming.headers),
       routes: [
         {
           path: "/mcp",
@@ -45,7 +46,7 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
       ],
     });
 
-    return yield* serve(request);
+    return yield* handler.fetch;
   });
 
 /**
@@ -55,14 +56,18 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
  * deferred accessor the platform hands back, and `D1Like` is the Promise-shaped
  * slice of it the store asks for.
  */
-const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
+const serve = () => ({
+  // The port resolves the D1 binding on this execution's scope; the model
+  // never touches a driver, and `billingOn` is the same function a test calls
+  // with a SQLite executor. Provisioning the port here keeps the Worker shape
+  // free of the database requirement.
   fetch: Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const billing = billingOnSql(yield* database.raw);
+    const database = yield* Paykit.Database;
+    const billing = billingOn(yield* database.runtime);
     const world = Layer.mergeAll(billing.world, Provider.payments);
 
-    return yield* handle(request).pipe(Effect.provide(world), Effect.orDie);
-  }),
+    return yield* handle().pipe(Effect.provide(world), Effect.orDie);
+  }).pipe(Effect.provide(Layer.mergeAll(D1(BillingDatabase), Cloudflare.D1.QueryDatabaseBinding))),
 });
 
 /**
@@ -85,19 +90,14 @@ const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
  *
  * Without a provider key the example still bills: `Manual` answers `/checkout`
  * with an invoice id, and `/webhooks` reports that the manual provider has no
- * webhook to verify. Point `Billing.ts` at `Polar()` with a fake client in a
- * test — or a real one in a deployment — and the same two routes carry the
- * whole loop.
+ * webhook to verify. Point `billing.config.ts` at `Polar()` with a fake client
+ * in a test — or a real one in a deployment — and the same two routes carry
+ * the whole loop.
  */
 export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
   "BillingWorker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    return serve(yield* Cloudflare.D1.QueryDatabase(BillingDatabase));
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(DomainCloudflare.layerDurableObjects(), Cloudflare.D1.QueryDatabaseBinding),
-    ),
-    Effect.orDie,
-  ),
+    return serve();
+  }).pipe(Effect.provide(DomainCloudflare.layerDurableObjects()), Effect.orDie),
 ) {}

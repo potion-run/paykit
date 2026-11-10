@@ -20,7 +20,7 @@ name it created, and the Worker receives the same outputs as bindings:
 | `src/catalog.ts` | Two tiers and the prices `PolarBilling` copies onto the product. |
 | `alchemy.run.ts` | `PolarBilling`, `BillingStack`, and the Worker with the product and meter ids in its env. |
 | `src/Billing.ts` | The runtime `Polar` provider, its world, and the two money routes. |
-| `src/Worker.ts` | `GET /checkout?tier=pro` and `POST /webhooks/polar`, served by `Paykit.handler`, plus the `/` page this example owns. |
+| `src/PolarWorker.ts` | `GET /checkout?tier=pro` and `POST /webhooks/polar`, served by `Paykit.handler`, plus the `/` page this example owns. |
 | `test/example.test.ts` | The same routes with a fake Polar client and a signed delivery. |
 
 ```sh

@@ -6,6 +6,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Schema from "effect/Schema";
 import { useEffect, useState } from "react";
 import { billing } from "../billing.atoms.ts";
+import { MESSAGES } from "../features.ts";
 
 export const Route = createFileRoute("/")({ component: Home });
 
@@ -91,7 +92,7 @@ function Usage({ account }: Readonly<{ account: string }>) {
     ? String(Cause.squash(entitlements.cause))
     : null;
 
-  const messages = view?.features.messages;
+  const messages = view?.features[MESSAGES];
 
   const run = (label: string, action: () => Promise<unknown>) => {
     setNotice(`${label}…`);
@@ -124,7 +125,7 @@ function Usage({ account }: Readonly<{ account: string }>) {
       {problem !== null ? <p className="error">{problem}</p> : null}
 
       <div className="feature">
-        <p className="label">messages</p>
+        <p className="label">{MESSAGES}</p>
         {messages === undefined ? (
           <p className="muted">No standing yet.</p>
         ) : (
@@ -147,7 +148,7 @@ function Usage({ account }: Readonly<{ account: string }>) {
           onClick={() =>
             run("Tracked 10 messages", () =>
               trackUsage({
-                featureId: "messages",
+                featureId: MESSAGES,
                 value: 10,
                 idempotencyKey: crypto.randomUUID(),
               }),
@@ -160,7 +161,7 @@ function Usage({ account }: Readonly<{ account: string }>) {
           type="button"
           onClick={() => {
             setNotice("Checking 25 messages…");
-            check({ featureId: "messages", requiredBalance: 25 })
+            check({ featureId: MESSAGES, requiredBalance: 25 })
               .then((result) => {
                 setAnswer(
                   `allowed: ${result.allowed} · remaining: ${String(result.balance.remaining)} · standing: ${result.standing}`,

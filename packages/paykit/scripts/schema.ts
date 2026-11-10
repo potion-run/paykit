@@ -1,18 +1,25 @@
 /**
- * Render paykit's schema as SQL, so a hosted database can apply it as a
- * migration file. The source of truth is `migrationFiles`, so the file a
- * deploy runs and the DDL a test runs cannot drift.
+ * Render paykit's schema as SQL, so an operator can read or apply it by hand.
+ * The source of truth is `migrationFiles`, which is also what the deploy
+ * applies — printing it is a convenience, not a build step.
  *
  * Usage:
- *   node packages/paykit/scripts/schema.ts [sqlite|postgres] > migrations/0001_init.sql
- *   node packages/paykit/scripts/schema.ts [sqlite|postgres] --file=0001_init > migrations/0001_init.sql
+ *   node packages/paykit/scripts/schema.ts [sqlite|postgres|mysql]
+ *   node packages/paykit/scripts/schema.ts [sqlite|postgres|mysql] --file=0001_init
  */
 import { migrationFiles } from "../src/Migrations/index.ts";
 
 const args = process.argv.slice(2);
-const dialect = args.includes("postgres") ? "postgres" : "sqlite";
+
+const dialect = args.includes("postgres")
+  ? "postgres"
+  : args.includes("mysql")
+    ? "mysql"
+    : "sqlite";
+
 const only = args.find((arg) => arg.startsWith("--file="))?.slice("--file=".length);
 const files = migrationFiles({ dialect });
+
 const selected = only === undefined ? files : files.filter((file) => file.id === only);
 
 if (selected.length === 0) {

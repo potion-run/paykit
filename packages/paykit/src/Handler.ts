@@ -1,5 +1,6 @@
+import type { HttpEffect } from "alchemy/Http";
 import * as Effect from "effect/Effect";
-import type * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
@@ -47,12 +48,15 @@ import type { WebhookRequest } from "./Webhooks.ts";
 export const moneyRoutes = (provider: MoneyProvider) =>
   Effect.gen(function* () {
     const applyWebhook = yield* Webhook();
+    // Resolve the binding once, at the edge: the purchase verb binds an
+    // account per call, so it does not ask the caller's context for it.
+    const subscribeOf = yield* Subscribe;
 
     const purchase = Effect.fn("Paykit.moneyRoutes.purchase")(function* (
       account: string,
       tier: string,
     ) {
-      const subscribe = yield* Subscribe(account);
+      const subscribe = yield* subscribeOf(account);
 
       return yield* subscribe({ tier });
     });
@@ -113,6 +117,21 @@ export interface HandlerMount {
 /** Which Api surfaces a handler mounts. Defaults to `"both"`. */
 export type HandlerSurfaces = "tenant" | "admin" | "both" | "none";
 
+/** The request function a handler answers with, and the same paths as an `HttpEffect`. */
+export interface PaykitHandler {
+  /**
+   * Answer one request value. A host whose world exists only inside a request —
+   * a D1 binding on Cloudflare — builds the handler per request and calls this.
+   */
+  (request: HttpServerRequest.HttpServerRequest): HttpEffect;
+  /**
+   * The same paths as an `HttpEffect`: it reads the ambient request, so a
+   * Worker that can build the handler once returns `{ fetch: handler.fetch }`,
+   * exactly as `BetterAuth`'s `auth.fetch` is mounted.
+   */
+  readonly fetch: HttpEffect;
+}
+
 export interface HandlerOptions {
   /**
    * The provider the money paths sell through and verify deliveries from.
@@ -152,23 +171,29 @@ const text = (body: string, status: number) => HttpServerResponse.text(body, { s
  * delivery answers 202 whether or not it recorded anything, because a provider
  * should not retry an event paykit does not model.
  *
+ * The result is both a request function and an `HttpEffect` (`handler.fetch`),
+ * the shape Alchemy's Better Auth integration uses for `auth.fetch`: a Worker
+ * whose world it can build once returns `{ fetch: handler.fetch }`, and one
+ * whose world exists only inside a request calls `handler(request)` with the
+ * world provided there.
+ *
  * ### A Worker's paths
  * **Example:** The tenant Api, the console, checkout and webhooks
  * ```typescript
- * const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
- *   fetch: Effect.gen(function* () {
- *     const request = yield* HttpServerRequest.HttpServerRequest;
- *     const handle = yield* Paykit.handler({
+ * const BillingLive = Paykit.world({ catalog, providers: [Provider], guards });
+ *
+ * export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
+ *   "BillingWorker",
+ *   { main: import.meta.url },
+ *   Effect.gen(function* () {
+ *     const handler = yield* Paykit.handler({
  *       provider: Provider,
- *       accountOf: (incoming) => incoming.headers[ACTOR_HEADER] ?? null,
+ *       accountOf: (request) => Paykit.accountFromHeaders(request.headers),
  *     });
  *
- *     return yield* handle(request).pipe(
- *       Effect.provide(Layer.mergeAll(billingOnSql(yield* database.raw).world, Provider.payments)),
- *       Effect.orDie,
- *     );
- *   }),
- * });
+ *     return { fetch: handler.fetch };
+ *   }).pipe(Effect.provide(BillingLive)),
+ * ) {}
  * ```
  *
  * @primitive
@@ -197,7 +222,9 @@ export const handler = (options: HandlerOptions = {}) =>
       commands: options.mount?.commands ?? `${tenantPath}/commands`,
     };
 
-    return Effect.fn("Paykit.handler")(function* (request: HttpServerRequest.HttpServerRequest) {
+    const handle = Effect.fn("Paykit.handler")(function* (
+      request: HttpServerRequest.HttpServerRequest,
+    ) {
       const url = new URL(request.url, "http://localhost");
       const path = url.pathname;
 
@@ -336,4 +363,14 @@ export const handler = (options: HandlerOptions = {}) =>
 
       return text("Not Found", 404);
     });
+
+    const fetch = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+
+      return yield* handle(request);
+    });
+
+    // A function with `fetch`: the request form ADR 0029 records, plus the
+    // ambient form Better Auth's `auth.fetch` establishes.
+    return Object.assign(handle, { fetch }) satisfies PaykitHandler;
   });

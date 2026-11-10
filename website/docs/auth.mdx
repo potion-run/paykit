@@ -106,3 +106,29 @@ Never derive the account from a query parameter or a request body. The guard
 compares the command's target with the session's account, so a caller cannot
 name another account — but the route must still pass the session's id when it
 binds `Paykit.Subscribe(account)` or `Paykit.TrackUsage(account)`.
+
+## What the deployment must preserve
+
+A session is a cookie over state the deployment owns. Four things must survive a
+deploy; lose one and a deploy signs everyone out or treats the database as new:
+
+- **The signing secret.** `BetterAuth({ secret })` signs every session cookie.
+  Alchemy provisions a stable secret by default and binds it into the host
+  environment; when you pass your own, keep it across deploys. Rotating it is a
+  deliberate sign-out of every user, not a routine change.
+- **The stack state.** State records the auth database, the secret resource, the
+  migration fingerprints and the vendor objects. Losing it makes the next deploy
+  create new resources beside the old ones and run migrations against what looks
+  like a new target. The examples use `Alchemy.localState()`; a deployment uses a
+  durable backend.
+- **The migration history.** Better Auth's migrator and paykit's are both
+  additive and forward-only. Never edit a file a database already applied; the
+  registry records its hash and refuses the rewrite. Migrations run at apply,
+  never in the deployed Worker, so a broken migration fails the deploy rather
+  than a request.
+- **D1's missing interactive transactions.** D1 offers one `batch`, not
+  `BEGIN … COMMIT`. Sessions fit; a plugin that needs interactive transactions
+  and the billing store belong on Postgres.
+
+paykit's side of that — the database port, the target layers and the converge
+step — is in [Database](/database/).

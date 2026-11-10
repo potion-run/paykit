@@ -11,7 +11,7 @@ store and the manual provider, so it needs no database and no provider key.
 ## Declare the catalog
 
 The catalog is plain data beside the stack. It is validated when the world is
-built: a priced tier nothing can sell is an error.
+built: a priced plan nothing can sell is an error.
 
 ```ts
 import { Paykit } from "@potion.run/paykit";
@@ -58,7 +58,11 @@ const World = Paykit.world({ ...billing, guards: Paykit.InsecureDevGuards });
 
 `Paykit.world` is what a Worker serves. `Paykit.handler` mounts the paths every
 deployment has — `/api`, `/admin`, `/checkout` and `/webhooks` — and leaves the
-rest to `routes`.
+rest to `routes`. It answers as a request function and as `handler.fetch`, an
+`HttpEffect` that reads the ambient request, so a Worker whose world it can build
+once returns `{ fetch: handler.fetch }` — the same shape Better Auth's
+`auth.fetch` is mounted with. A host whose world exists only inside a request
+(a D1 binding) calls `handler(request)` instead.
 
 ## Check an account
 
@@ -88,7 +92,7 @@ const reservation = yield* hold({ feature: "messages", amount: 100, dedupeKey: t
 
 const settle = yield* Paykit.SettleHold(account);
 yield* settle({ holdId: reservation.holdId, amount: 80, dedupeKey: `${turnId}:settle` });
-// 20 returns to the allowance in the same command
+// 20 returns to the plan item in the same command
 ```
 
 ## Read balances and controls

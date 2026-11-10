@@ -4,6 +4,7 @@ import {
   d1Executor,
   type D1Like,
   Paykit,
+  type SqlExecutor,
   SqlBillingReadStore,
   SqlEventLog,
   SqlPlatform,
@@ -50,14 +51,23 @@ export interface BillingOnSql {
  * `now` is injected rather than read from the ambient clock, so a replay is
  * deterministic and a test can pin time.
  */
-export const billingOnSql = (
-  d1: D1Like,
+export const billingOn = (
+  sql: SqlExecutor,
   options: { readonly now?: () => number } = {},
 ): BillingOnSql => {
   const now = options.now ?? (() => Date.now());
-  const sql = d1Executor(d1);
   const log = SqlEventLog(sql, { now });
   const { platform } = SqlPlatform(sql, log, { now, pollMillis: 50 });
 
   return { log, world: sqlWorld(log, platform) };
 };
+
+/**
+ * The model on a D1-shaped target, which is what a test passes. A deployed
+ * Worker reads the executor from `Paykit.Database` instead, so the platform
+ * binding is resolved once, in the port.
+ */
+export const billingOnSql = (
+  d1: D1Like,
+  options: { readonly now?: () => number } = {},
+): BillingOnSql => billingOn(d1Executor(d1), options);

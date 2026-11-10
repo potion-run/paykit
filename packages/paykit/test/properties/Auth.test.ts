@@ -2,7 +2,12 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Schema from "effect/Schema";
 import { mayActOn } from "../../src/Auth/Actor.ts";
-import { ACTOR_HEADER, KIND_HEADER, actorFromHeaders } from "../../src/Auth/FromHeaders.ts";
+import {
+  ACTOR_HEADER,
+  KIND_HEADER,
+  accountFromHeaders,
+  actorFromHeaders,
+} from "../../src/Auth/FromHeaders.ts";
 import { assertProperty } from "../support/Property.ts";
 
 const ActorKind = Schema.Literals(["account", "admin", "system"]);
@@ -57,5 +62,11 @@ describe("authorization", () => {
 
   it("refuses a kind it does not know", () => {
     expect(actorFromHeaders({ [ACTOR_HEADER]: "acct_1", [KIND_HEADER]: "superuser" })).toBe(null);
+  });
+
+  it("reduces the header pair to the account a handler's checkout acts for", () => {
+    expect(accountFromHeaders({ [ACTOR_HEADER]: "acct_1", [KIND_HEADER]: "admin" })).toBe("acct_1");
+    expect(accountFromHeaders({})).toBe(null);
+    expect(accountFromHeaders({ [ACTOR_HEADER]: "acct_1", [KIND_HEADER]: "superuser" })).toBe(null);
   });
 });

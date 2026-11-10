@@ -107,3 +107,40 @@ jobs:
         env:
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
         run: pnpm --filter @potion.run/paykit-polar test
+
+  postgres:
+    name: Postgres example
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: paykit_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      POSTGRES_URL: postgres://postgres:postgres@localhost:5432/paykit_test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      # The example's integration case drops and recreates the `billing`
+      # schema, so the throwaway service is safe. It is the only case that
+      # exercises the Postgres executor, the migration registry and the SQL
+      # world together.
+      - name: Serve the model from Postgres
+        run: pnpm --filter @potion.run/example-postgres test

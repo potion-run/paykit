@@ -3,8 +3,8 @@ import { Paykit } from "@potion.run/paykit";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import AuthWorker from "./src/AuthWorker.ts";
 import { billing } from "./src/billing.config.ts";
-import AuthWorker from "./src/Worker.ts";
 
 /**
  * The auth-gated billing example: a Better Auth Worker over a D1 auth database,

@@ -10,13 +10,12 @@ import {
 import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import { billing } from "../src/billing.config.ts";
-import { Provider } from "../src/Billing.ts";
+import { billing, Provider } from "../src/billing.config.ts";
+import { pro, proPrice } from "../src/catalog.ts";
 
 const account = "acct_routes";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
-const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
-const tiers = { pro: { price: proPrice, productId: "prod_example" } };
+const tiers = { [pro.id]: { price: proPrice, productId: "prod_example" } };
 
 /** A stand-in for Polar: no key, no account, the same calls a deployment makes. */
 const recording = (asked: Array<Record<string, unknown>> = []): PolarClient => ({
@@ -80,7 +79,7 @@ describe("the example's money routes", () => {
   it.live("the manual provider answers a purchase with an invoice, not a checkout", () =>
     Effect.gen(function* () {
       const routes = yield* moneyRoutes(Provider);
-      const purchase = yield* routes.purchase(account, "pro");
+      const purchase = yield* routes.purchase(account, pro.id);
       expect("invoiceId" in purchase).toBe(true);
       // And it has no webhook to verify, which the route turns into a 501.
       const error = yield* Effect.flip(routes.deliver({ headers: {}, body: "{}" }));
@@ -94,7 +93,7 @@ describe("the example's money routes", () => {
       const routes = yield* moneyRoutes(polar(asked));
 
       // 1. The route asks the provider for a path to pay.
-      const purchase = yield* routes.purchase(account, "pro");
+      const purchase = yield* routes.purchase(account, pro.id);
       expect("url" in purchase).toBe(true);
 
       if ("url" in purchase) expect(purchase.url).toContain("prod_example");

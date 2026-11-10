@@ -20,6 +20,7 @@ import {
   schemaStatements,
 } from "../../src/Migrations/index.ts";
 import type { SqlExecutor, SqlValue } from "../../src/Store/Sql.ts";
+import { asyncOf, SqlError } from "../../src/Store/Sql.ts";
 import { assertProperty } from "../support/Property.ts";
 import { sqliteExecutor } from "../support/Sqlite.ts";
 
@@ -60,6 +61,17 @@ describe("migrations", () => {
     expect(sql).toContain('"billing"."billing_event"');
     expect(sql).toContain("BIGINT");
     expect(sql).not.toContain('"public"');
+  });
+
+  it("renders a Postgres index name unqualified on its qualified table", () => {
+    const [file] = migrationFiles({ dialect: "postgres", schema: "billing" });
+
+    const index = file!.statements.find((statement) =>
+      statement.startsWith('CREATE INDEX IF NOT EXISTS "billing_event_command"'),
+    );
+
+    expect(index).toContain('ON "billing"."billing_event"');
+    expect(index).not.toContain('"billing"."billing_event_command"');
   });
 
   it("carries every migration as statements and a canonical SQL string", () =>
@@ -119,9 +131,19 @@ describe("migrations", () => {
               statement.startsWith("CREATE TABLE") || statement.startsWith("CREATE INDEX"),
           );
 
+          const tables = ddl.filter((statement) => statement.startsWith("CREATE TABLE"));
+          const indexes = ddl.filter((statement) => statement.startsWith("CREATE INDEX"));
+
           if (dialect === "postgres") {
-            // Every table and index is qualified with the chosen schema.
-            if (!ddl.every((statement) => statement.includes(`"${schema}".`))) return false;
+            // Tables are qualified; an index name is not (Postgres rejects
+            // `CREATE INDEX "schema"."name"`), only its `ON` table is.
+            if (!tables.every((statement) => statement.includes(`"${schema}".`))) return false;
+
+            const indexOnTable = new RegExp(
+              `^CREATE INDEX IF NOT EXISTS "[^"]+"\\s+ON "${schema}"\\.`,
+            );
+
+            if (!indexes.every((statement) => indexOnTable.test(statement))) return false;
           } else if (ddl.some((statement) => statement.includes(`"${schema}".`))) {
             return false;
           }
@@ -279,14 +301,14 @@ describe("migrations", () => {
   it.effect("refuses to read an unreadable registry as a fresh database", () =>
     Effect.gen(function* () {
       const base = store();
+      const port = asyncOf(base);
 
       const denied: SqlExecutor = {
         ...base,
-        all: (statement: string, params?: ReadonlyArray<SqlValue>) => {
-          if (statement.includes("billing_schema_version")) throw new Error("permission denied");
-
-          return base.all(statement, params);
-        },
+        query: (statement: string, params?: ReadonlyArray<SqlValue>) =>
+          statement.includes("billing_schema_version")
+            ? Effect.fail(new SqlError({ message: "permission denied", statement }))
+            : port.query(statement, params),
       };
 
       // A permission failure is not "no table yet": swallowing it would replay
@@ -334,13 +356,14 @@ describe("migrations", () => {
   it.effect("fails a non-transient batch failure without resending it", () =>
     Effect.gen(function* () {
       const base = store();
+      const port = asyncOf(base);
 
       const failing: SqlExecutor = {
         ...base,
-        exec: (statement: string) => {
-          if (statement.includes('"billing_event"')) throw new Error("disk full");
-          base.exec(statement);
-        },
+        batch: (statements: ReadonlyArray<string>) =>
+          statements.some((statement) => statement.includes('"billing_event"'))
+            ? Effect.fail(new SqlError({ message: "disk full", statement: "batch" }))
+            : port.batch(statements),
       };
 
       const error = yield* Effect.flip(migrate(failing));
@@ -407,22 +430,30 @@ describe("migrations", () => {
   it.effect("surfaces a lost reply instead of resending the batch", () =>
     Effect.gen(function* () {
       const base = store();
+      const port = asyncOf(base);
       let lost = false;
 
       const flaky: SqlExecutor = {
         ...base,
         // The migration commits, then its reply is lost. The registry checks
         // its history before resending, so the statements do not run twice.
-        transaction: <A>(f: () => A): A => {
-          const result = base.transaction(f);
+        batch: (statements: ReadonlyArray<string>) =>
+          port.batch(statements).pipe(
+            Effect.flatMap(() =>
+              lost
+                ? Effect.void
+                : Effect.suspend(() => {
+                    lost = true;
 
-          if (!lost) {
-            lost = true;
-            throw new Error("connection reset after commit");
-          }
-
-          return result;
-        },
+                    return Effect.fail(
+                      new SqlError({
+                        message: "connection reset after commit",
+                        statement: "batch",
+                      }),
+                    );
+                  }),
+            ),
+          ),
       };
 
       // A reply lost after the DDL committed is surfaced, not swallowed: the

@@ -1,7 +1,7 @@
 import { expect, it } from "@alchemy.run/test";
 import * as Effect from "effect/Effect";
 import type { PolarEnv } from "../src/Billing.ts";
-import Worker from "../src/Worker.ts";
+import Worker from "../src/PolarWorker.ts";
 
 /**
  * A fake token and ids: every path asserted here answers before the provider is

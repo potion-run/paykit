@@ -1,10 +1,12 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Paykit } from "@potion.run/paykit";
+import { D1 } from "@potion.run/paykit/Database/D1";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { billing } from "./src/billing.config.ts";
-import BillingWorker from "./src/Worker.ts";
+import { BillingDatabase } from "./src/BillingDatabase.ts";
+import BillingWorker from "./src/BillingWorker.ts";
 
 /**
  * The stack: one deploy-time billing stack and the Worker that serves it.
@@ -17,10 +19,12 @@ import BillingWorker from "./src/Worker.ts";
  * `Paykit.providers()` is what makes the resource callable at all: a resource
  * with no provider layer cannot reconcile.
  *
- * The store is `MemoryStore` so the example runs with no database and no
- * provider key. Swap it for
- * `Paykit.Postgres({ url: Config.Redacted("DATABASE_URL") })` and nothing in
- * the model changes.
+ * The `store` this records is a deploy-time kind, not the Worker's runtime
+ * store: the database is the D1 resource beside it, and `billingOnSql` in
+ * `src/SqlBilling.ts` is what the Worker and the SQL test actually read. A
+ * deployment that manages a Postgres connection records it here as
+ * `Paykit.Postgres({ url: Config.Redacted("DATABASE_URL") })`; the recorded
+ * kind is what a later deploy diffs.
  */
 const BillingExample = Alchemy.Stack(
   "BillingExample",
@@ -29,7 +33,13 @@ const BillingExample = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
+    // The database layer is what turns `migrate: true` into the deploy Action:
+    // it supplies the target's identity and its two-stage migration connection.
+    const recorded = yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+      Effect.provide(D1(BillingDatabase)),
+      Effect.orDie,
+    );
+
     const worker = yield* BillingWorker;
 
     return {

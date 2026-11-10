@@ -1,4 +1,4 @@
-import { Paykit } from "@potion.run/paykit";
+import { Paykit, type Plan } from "@potion.run/paykit";
 
 /**
  * The catalog. Plain data, no provider ids, so the same tiers sell through
@@ -21,3 +21,13 @@ export const pro = Paykit.plan({
 });
 
 export const authCatalog = { features: [messages], tiers: [free, pro] };
+
+/**
+ * The plan a request names, from the same array the deploy validates.
+ *
+ * A query string is a string; this is the one place it becomes a declaration,
+ * so the checkout cannot send a tier the catalog does not sell — and the page
+ * that advertises the link uses the plan's own id.
+ */
+export const planWithId = (id: string): Plan | null =>
+  authCatalog.tiers.find((plan) => plan.id === id) ?? null;

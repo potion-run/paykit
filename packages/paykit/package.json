@@ -23,7 +23,13 @@
     "./Read": "./src/Read.ts",
     "./Surfaces": "./src/Surfaces.ts",
     "./Webhooks": "./src/Webhooks.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./Database": "./src/Database/index.ts",
+    "./Database/Postgres": "./src/Database/Postgres.ts",
+    "./Database/Sqlite": "./src/Database/Sqlite.ts",
+    "./Database/D1": "./src/Database/D1.ts",
+    "./Database/Drizzle": "./src/Database/Drizzle.ts",
+    "./Database/MySQL": "./src/Database/MySQL.ts"
   },
   "publishConfig": {
     "exports": {
@@ -67,7 +73,37 @@
         "bun": "./src/Webhooks.ts",
         "default": "./lib/Webhooks.js"
       },
-      "./package.json": "./package.json"
+      "./package.json": "./package.json",
+      "./Database": {
+        "types": "./lib/Database/index.d.ts",
+        "bun": "./src/Database/index.ts",
+        "default": "./lib/Database/index.js"
+      },
+      "./Database/Postgres": {
+        "types": "./lib/Database/Postgres.d.ts",
+        "bun": "./src/Database/Postgres.ts",
+        "default": "./lib/Database/Postgres.js"
+      },
+      "./Database/Sqlite": {
+        "types": "./lib/Database/Sqlite.d.ts",
+        "bun": "./src/Database/Sqlite.ts",
+        "default": "./lib/Database/Sqlite.js"
+      },
+      "./Database/D1": {
+        "types": "./lib/Database/D1.d.ts",
+        "bun": "./src/Database/D1.ts",
+        "default": "./lib/Database/D1.js"
+      },
+      "./Database/Drizzle": {
+        "types": "./lib/Database/Drizzle.d.ts",
+        "bun": "./src/Database/Drizzle.ts",
+        "default": "./lib/Database/Drizzle.js"
+      },
+      "./Database/MySQL": {
+        "types": "./lib/Database/MySQL.d.ts",
+        "bun": "./src/Database/MySQL.ts",
+        "default": "./lib/Database/MySQL.js"
+      }
     },
     "access": "public"
   },
@@ -86,24 +122,34 @@
     "@alchemy.run/cloudflare": "catalog:",
     "@alchemy.run/test": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
     "foldkit": "catalog:",
+    "mysql2": "catalog:",
     "typescript": "catalog:"
   },
   "peerDependencies": {
     "@alchemy.run/cloudflare": "catalog:",
+    "@effect/sql-mysql2": "catalog:",
     "alchemy": "catalog:",
     "effect": "catalog:",
-    "foldkit": "catalog:"
+    "foldkit": "catalog:",
+    "mysql2": "catalog:"
   },
   "peerDependenciesMeta": {
     "@alchemy.run/cloudflare": {
       "optional": true
     },
+    "@effect/sql-mysql2": {
+      "optional": true
+    },
     "foldkit": {
+      "optional": true
+    },
+    "mysql2": {
       "optional": true
     }
   }

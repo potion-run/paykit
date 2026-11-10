@@ -1,0 +1,200 @@
+---
+title: Database
+description: One port for billing storage, and a schema the deploy converges.
+sidebar:
+  order: 4
+---
+
+paykit keeps its event log, receipts, state and read models in SQL. The database is a port: the
+model asks for an executor, and a deployment chooses the target. Nothing in the model imports a
+driver, `check()` still answers from one local read, and a Worker never runs a migration.
+
+## One port, two obligations
+
+`Paykit.Database` is the port. A target supplies one `DatabaseService`:
+
+```ts
+interface DatabaseService {
+  dialect: "sqlite" | "postgres" | "mysql";
+  schema?: string; // the Postgres schema, when the target has one
+  runtime: Effect<SqlExecutor, never, RuntimeContext | Scope.Scope>; // per execution
+  migrate?: {
+    // absent when the target cannot migrate
+    identity: Input<Record<string, unknown>>; // non-secret identity of the target
+    connect: Effect<Effect<SqlExecutor, MigrationApplyError, Scope.Scope>, never, RuntimeContext>;
+  };
+}
+```
+
+`runtime` is opened per execution and closed when the event settles, which is the only pooling
+shape workerd allows. `migrate.connect` is a separate obligation because a migration needs one
+dedicated session: the registry's bookkeeping queries are unqualified, so Postgres scopes
+`search_path` around them, and a pooled connection would spread the statements across sessions.
+
+The two connections are also separate because they exist in different places. A Hyperdrive
+connection string is only valid inside the Worker, so the deploy cannot use it; migrations take the
+origin URL, or the target has no `migrate` at all. `identity` is the non-secret identity of the
+target — a URL digest on Postgres, a filename on SQLite — and never the URL itself, because it is
+persisted in the migration Action's input. `schema` names the Postgres schema (`billing` by default;
+`public` is never touched) and is ignored by SQLite.
+
+## Choose a target
+
+The layers ship one per target and are imported from their own export condition, never the barrel.
+The driver is a peer dependency, so a Worker that imports the package must not pull `pg` or
+`bun:sqlite` into its bundle, and a Bun test must not pull a D1 binding.
+
+| Target | Layer | Runtime | Migrations |
+| --- | --- | --- | --- |
+| SQLite under Bun (dev, tests) | `@potion.run/paykit/Database/Sqlite` | `bun:sqlite` over one file | `migrate.connect` opens the same file |
+| D1 in a Worker | `@potion.run/paykit/Database/D1` | the D1 binding, asynchronous | none — the D1 resource applies the directory |
+| Postgres (Hyperdrive, Neon, Aurora, plain) | `@potion.run/paykit/Database/Postgres` | Hyperdrive inside a Worker, `pg` where sockets exist | `migrate.connect` uses the origin URL |
+| Postgres a Drizzle instance opened | `@potion.run/paykit/Database/Drizzle` | the `pg` pool behind `db.$client` | the same pool, unless `migrate: false` |
+| MySQL (PlanetScale, RDS, Hyperdrive MySQL) | `@potion.run/paykit/Database/MySQL` | `@effect/sql-mysql2` per execution | `migrate.connect` uses the origin URL |
+
+Provide one layer where the deployment builds its world, and declare `migrate` on the billing stack:
+
+```ts
+import { Paykit } from "@potion.run/paykit";
+import { Postgres } from "@potion.run/paykit/Database/Postgres";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+
+Effect.gen(function* () {
+  const url = yield* Config.Redacted("POSTGRES_URL");
+
+  yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+    Effect.provide(Postgres(url, { schema: "billing" })),
+  );
+});
+```
+
+The boolean mirrors `BetterAuth({ migrate })`: `true` is explicit, absent means "migrate when a
+layer is provided", and `false` opts out — the application's own pipeline owns the tables. A
+request later reads the executor from `Paykit.Database`.
+
+**SQLite** is the development and test target. One file, one process, migrations and requests share
+the same connection, and there is nothing to provision. It is what the SQL tests run.
+
+**D1** reaches the database through the Worker's native binding at runtime, and the D1 HTTP API —
+including the local simulator under `alchemy dev` — for migrations. No `migrations` directory is
+involved: the deploy applies `migrationFiles()` and converges it, like every other target. A Worker
+host provides `Cloudflare.D1.QueryDatabaseBinding`; the stack does not need it.
+
+```ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+
+export const BillingDatabase = Cloudflare.D1.Database("BillingDatabase", {
+  migrations: "./migrations",
+});
+```
+
+D1 has no interactive transactions: one `batch` is the closest it offers. That is fine for the
+session and small-read workload it usually carries, but a store or plugin that needs a real
+transaction belongs on Postgres.
+
+**Postgres** is the target for a durable deployment. In a Worker it is reached through Hyperdrive,
+which pools the connections workerd would otherwise open per request; a test or a long-lived
+service uses `pg` directly. When the runtime and the deploy use different credentials — the usual
+Hyperdrive arrangement — `migrate.connect` names the origin connection and `runtime` keeps the
+binding. Neon, Aurora and a plain connection string are the same two obligations with a different
+driver.
+
+**MySQL** is a third dialect with three consequences worth knowing. A key or index column renders as
+`VARCHAR(191)` because MySQL rejects `TEXT` in a key or an index without a prefix length; convergence
+checks `information_schema.statistics` before creating an index because MySQL 8 has no
+`CREATE INDEX IF NOT EXISTS`; and every upsert spells `ON DUPLICATE KEY UPDATE col = VALUES(col)`
+instead of `ON CONFLICT ... excluded`, from one helper. MySQL's namespace is the connection's
+database, so `schema` stays undefined and no table is schema-qualified.
+
+**Drizzle** is a connection, not a schema owner. `Database/Drizzle` unwraps the pool behind
+`db.$client` and every store statement runs on it, so an application keeps one pool and one
+transaction boundary. `BILLING_SCHEMA` is still the source: letting Drizzle generate the tables
+would make the ORM the source and the description a generator, which ADR 0049 rejects. Pass
+`migrate: false` if the application's own pipeline applies paykit's tables.
+
+## The baseline, the description, and the delta
+
+`BILLING_SCHEMA` is the schema as typed data: tables, columns and indexes. A second, frozen
+description — `BILLING_SCHEMA_V1` — is the first release, and `migrationFiles()` renders *it* for a
+dialect. That split is what makes the history safe without a file on disk: the registry keys every
+applied row by the hash of the baseline's rendering, so the baseline must never move. A schema
+change edits `BILLING_SCHEMA`, and convergence applies it.
+
+```ts
+import { migrationFiles } from "@potion.run/paykit";
+
+const [init] = migrationFiles({ dialect: "postgres", schema: "billing" });
+```
+
+A schema change moves through one pipeline:
+
+1. **Describe.** Change `BILLING_SCHEMA`, building it from `BILLING_SCHEMA_V1`. A type is stated
+   once; the renderer owns `INTEGER` versus `BIGINT` for epoch millis, `AUTOINCREMENT` versus
+   `BIGSERIAL` versus `AUTO_INCREMENT`, and identifier quoting.
+2. **Apply.** The deploy runs the frozen baseline through `@alchemy.run/sql/Migrations`, which owns
+   the bookkeeping table and the content hashes.
+3. **Converge.** The deploy reads the live catalog and adds the tables, columns and indexes the
+   description states and the database lacks.
+
+| Command | What it does |
+| --- | --- |
+| `pnpm schema <dialect>` | Prints the baseline DDL for `sqlite`, `postgres` or `mysql` — for an operator, not a build step |
+
+The baseline is frozen and its rendered hash is pinned by a test. Convergence is the delta for a
+database that already has a history. A new table, column or index is applied without editing what a
+database already recorded. Each step is independently idempotent, so a crash mid-deploy converges on
+the next run.
+
+## What a deploy guarantees, and what it refuses
+
+`Paykit.BillingStack("Billing", { ...billing, migrate: true })` registers one Action per migrated
+target, with this input:
+
+```ts
+{ identity, schemaFingerprint, migrationFingerprint, dialect }
+```
+
+A deploy therefore:
+
+- applies the frozen baseline once, in order, and records its content hash;
+- re-runs the Action when the description changes or the target database is replaced — and does no
+  database work when neither did;
+- runs only at apply: never at plan, never inside the deployed runtime;
+- binds the Action's output into the host environment, so the Worker depends on it and cannot start
+  against a half-migrated database;
+- converges idempotently — a missing table, column or index is added, and a present one is left alone.
+
+It refuses:
+
+| Change | Answer |
+| --- | --- |
+| Drop, rename, retype or narrow a column or table | Never. That is a reviewed migration with its own record, not a deploy. |
+| Add a `NOT NULL` column with no default | A typed refusal naming the table and column, because the table may already have rows. |
+| Rewrite the baseline a database already applied | The registry refuses it: the applied hash is history. The frozen baseline is what prevents it. |
+| Put the billing tables in `public` | Refused. Postgres gets its own schema. |
+
+## Auth and billing own their own tables
+
+Better Auth and paykit are two products with two migrators. Neither reads or writes the other's
+tables, so one database with two disjoint table families and two databases are both supported — and
+a version bump in one never rewrites the other's history.
+
+| Owner | Migrator | Tables |
+| --- | --- | --- |
+| Better Auth | `@alchemy.run/better-auth` | the auth tables, plugins included |
+| paykit | `Paykit.registerMigrations` | `billing_event`, `billing_receipt`, `billing_state`, `billing_outbox`, `billing_schedule`, `billing_rm_*` |
+
+The split matters most on D1. Sessions are a small, transactional read/write workload that D1 serves
+well; the billing store is the event log, and a plugin that needs interactive transactions has no
+way to get one there. Put those on Postgres, either in a second database or in the same one under a
+different table family. `examples/auth/test/coexistence.test.ts` runs both migrators against one
+SQLite handle: Better Auth's `getMigrations` creates `user`/`session`/`account`/`verification`, `Paykit.sync`
+creates the `billing_*` family and records one `billing_schema_version` row, and neither migrator
+touches the other's tables or history.
+
+The decisions are [ADR 0049](https://github.com/potion-run/paykit/blob/main/docs/adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md)
+for the port and the convergence, and [ADR 0003](https://github.com/potion-run/paykit/blob/main/docs/adr/0003-the-deploy-provisions-the-vendor.md)
+for why a deploy retains what a bill references.
+
+See [Auth](/auth/) for the session side, including what a deployment must preserve across deploys.

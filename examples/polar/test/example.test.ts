@@ -3,7 +3,7 @@ import { Check, moneyRoutes, Paykit } from "@potion.run/paykit";
 import type { PolarClient } from "@potion.run/paykit-polar";
 import * as Effect from "effect/Effect";
 import { providerOf, worldOptions, type PolarEnv } from "../src/Billing.ts";
-import { proPrice } from "../src/catalog.ts";
+import { pro, proPrice } from "../src/catalog.ts";
 
 const account = "acct_polar_example";
 const secret = "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw";
@@ -76,7 +76,7 @@ describe("the Polar example", () => {
     Effect.gen(function* () {
       const routes = yield* moneyRoutes(provider);
 
-      const purchase = yield* routes.purchase(account, "pro");
+      const purchase = yield* routes.purchase(account, pro.id);
       expect("url" in purchase).toBe(true);
 
       if ("url" in purchase) expect(purchase.url).toContain(env.POLAR_PRODUCT_PRO);

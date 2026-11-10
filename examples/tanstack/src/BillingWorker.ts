@@ -13,6 +13,7 @@ import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Result from "effect/Result";
 import { billing } from "./billing.config.ts";
+import { free } from "./catalog.ts";
 
 /**
  * The billing service for the TanStack Start app:
@@ -55,7 +56,7 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
 
           if (state._tag !== "Subscribed") {
             const subscribe = yield* subscribeOf(actor.id);
-            const started = yield* Effect.result(subscribe({ tier: "free" }));
+            const started = yield* Effect.result(subscribe({ tier: free.id }));
 
             if (Result.isFailure(started)) {
               return HttpServerResponse.jsonUnsafe(

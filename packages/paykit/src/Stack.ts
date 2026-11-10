@@ -86,6 +86,10 @@ export type Store =
       readonly _tag: "SqliteStore";
       readonly url: Redacted.Redacted<string> | Config.Config<Redacted.Redacted<string>>;
       readonly schema: string;
+    }
+  | {
+      readonly _tag: "MySQLStore";
+      readonly url: Redacted.Redacted<string> | Config.Config<Redacted.Redacted<string>>;
     };
 
 /** The in-memory store, for tests and `alchemy dev`. */
@@ -99,6 +103,14 @@ export const Postgres = (props: {
   _tag: "PostgresStore",
   url: props.url,
   schema: props.schema ?? "billing",
+});
+
+/** The MySQL store config. MySQL's namespace is the connection's database. */
+export const MySQL = (props: {
+  readonly url: Redacted.Redacted<string> | Config.Config<Redacted.Redacted<string>>;
+}): Store => ({
+  _tag: "MySQLStore",
+  url: props.url,
 });
 
 /** The SQLite / D1 store config. The schema is unused there, kept for parity. */
