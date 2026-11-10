@@ -24,6 +24,7 @@ import {
   quoteIdentifier,
   tableName,
 } from "../Store/Tables.ts";
+import { BILLING_SCHEMA, schemaStatementsOf, type SchemaDefinition } from "./Schema.ts";
 
 /** Where a migration's DDL is rendered: a dialect and, on Postgres, a schema. */
 export interface MigrationScope {
@@ -64,219 +65,16 @@ const scopeOf = (input: Partial<MigrationScope> | undefined): Required<Migration
   table: input?.table ?? DEFAULT_MIGRATION_TABLE,
 });
 
-const millisType = (dialect: SqlDialect): "BIGINT" | "INTEGER" =>
-  // Postgres INTEGER is 32-bit; every epoch-millis column needs 64.
-  dialect === "postgres" ? "BIGINT" : "INTEGER";
-
-const createTable = (
-  scope: Required<MigrationScope>,
-  table: string,
-  columns: ReadonlyArray<string>,
-): string => `CREATE TABLE IF NOT EXISTS ${tableName(table, scope)} (${columns.join(", ")})`;
-
-const createIndex = (
-  scope: Required<MigrationScope>,
-  name: string,
-  on: string,
-  columns: ReadonlyArray<string>,
-): string =>
-  // Postgres index names are never schema-qualified: the index lands in the
-  // table's schema, and `CREATE INDEX "schema"."name"` is a syntax error.
-  `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(name)} ON ${tableName(on, scope)} (${columns.join(", ")})`;
-
 /** The schema creation, before any table. Postgres only. */
 export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
   scope.dialect === "postgres"
     ? [`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(scope.schema)}`]
     : [];
 
-const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-
-  const sequence =
-    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
-
-  return [
-    createTable(scope, BILLING_TABLES.event, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "seq INTEGER NOT NULL",
-      "command_id TEXT NOT NULL",
-      `at ${time} NOT NULL`,
-      "event TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account, seq)",
-    ]),
-    createIndex(scope, "billing_event_command", BILLING_TABLES.event, [
-      "aggregate",
-      "account",
-      "command_id",
-    ]),
-    createTable(scope, BILLING_TABLES.receipt, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "command_id TEXT NOT NULL",
-      "version INTEGER NOT NULL",
-      "receipt TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account, command_id)",
-    ]),
-    createTable(scope, BILLING_TABLES.state, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "version INTEGER NOT NULL",
-      "state TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account)",
-    ]),
-    createTable(scope, BILLING_TABLES.outbox, [
-      `seq ${sequence}`,
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "event_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    createIndex(scope, "billing_outbox_pending", BILLING_TABLES.outbox, ["delivered_at", "seq"]),
-    createTable(scope, BILLING_TABLES.schedule, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "command_id TEXT NOT NULL",
-      `due_at ${time} NOT NULL`,
-      "command TEXT NOT NULL",
-      `delivered_at ${time}`,
-      "PRIMARY KEY (aggregate, account, command_id)",
-    ]),
-    createIndex(scope, "billing_schedule_due", BILLING_TABLES.schedule, ["delivered_at", "due_at"]),
-    createTable(scope, BILLING_TABLES.readModel, [
-      "account TEXT PRIMARY KEY",
-      "tier TEXT NOT NULL",
-      "status TEXT NOT NULL",
-      "standing TEXT NOT NULL",
-      `period_start ${time} NOT NULL`,
-      `period_end ${time} NOT NULL`,
-      "cancel_at_period_end INTEGER NOT NULL",
-      "credits INTEGER NOT NULL",
-      "prepaid_credits INTEGER NOT NULL",
-      "dunning_attempts INTEGER NOT NULL",
-      "proration TEXT",
-      "proration_invoice TEXT",
-      "currency TEXT",
-      "features TEXT NOT NULL",
-      "entities TEXT",
-    ]),
-    createIndex(scope, "billing_rm_billing_read_standing", BILLING_TABLES.readModel, [
-      "standing",
-      "tier",
-    ]),
-    createTable(scope, BILLING_TABLES.backfill, [
-      "consumer TEXT PRIMARY KEY",
-      "generation INTEGER NOT NULL",
-      "plan TEXT NOT NULL",
-      `completed_at ${time} NOT NULL`,
-    ]),
-    createTable(scope, BILLING_TABLES.viewOutbox, [
-      `seq ${sequence}`,
-      "view TEXT NOT NULL",
-      "key TEXT NOT NULL",
-      "entry_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    createIndex(scope, "billing_rm_view_outbox_pending", BILLING_TABLES.viewOutbox, [
-      "view",
-      "key",
-      "delivered_at",
-      "seq",
-    ]),
-    ...consumerStatements(scope),
-  ];
-};
-
-/**
- * The consumer tables: a view's snapshot, its emitted entries, and the input
- * log each consumer dedupes by. All of them are `billing_rm_*`, so dropping
- * every one and rebuilding from `billing_event` is always allowed.
- */
-const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-  const name = scope.dialect === "postgres" && scope.schema !== undefined;
-
-  const table = (logical: string) =>
-    name ? `${quoteIdentifier(scope.schema!)}.${quoteIdentifier(logical)}` : logical;
-
-  return [
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewState)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      version INTEGER NOT NULL,
-      seq INTEGER NOT NULL,
-      checkpoints TEXT NOT NULL,
-      state TEXT,
-      PRIMARY KEY (view, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewEntry)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL DEFAULT 0,
-      event TEXT NOT NULL,
-      envelope TEXT NOT NULL,
-      state TEXT NOT NULL,
-      PRIMARY KEY (view, key, seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewInput)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL,
-      PRIMARY KEY (view, key, source, source_seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionInput)} (
-      projection TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      delivery TEXT NOT NULL,
-      accepted_at ${time} NOT NULL,
-      processed_at ${time},
-      PRIMARY KEY (projection, key, source, source_seq)
-    )`,
-    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier("billing_rm_projection_pending")}
-      ON ${table(BILLING_TABLES.projectionInput)} (projection, key, processed_at, position)`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionCursor)} (
-      projection TEXT NOT NULL,
-      key TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      PRIMARY KEY (projection, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.policySeen)} (
-      policy TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      PRIMARY KEY (policy, key, source, source_seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamMeta)} (
-      stream TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      checkpoints TEXT NOT NULL,
-      origin_a INTEGER NOT NULL,
-      origin_b INTEGER NOT NULL,
-      PRIMARY KEY (stream, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamEntry)} (
-      stream TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      event TEXT NOT NULL,
-      envelope TEXT NOT NULL,
-      PRIMARY KEY (stream, key, seq)
-    )`,
-  ];
-};
+// The DDL is a rendering of the one typed description, so the file a deploy
+// applies and the DDL a test or a dry run prints come from the same source.
+const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
+  schemaStatementsOf(BILLING_SCHEMA, scope);
 
 /**
  * The migrations paykit ships, rendered for a dialect and schema. The list is
@@ -295,6 +93,34 @@ export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<M
   const scope = scopeOf(input);
 
   return [fileOf("0001_init", initStatements(scope))];
+};
+
+/**
+ * The digest of the schema description rendered for a dialect: the DDL a
+ * deploy would apply, without the migration wrapper. Two builds that create
+ * the same tables hash the same, and adding a column, changing a type or
+ * moving a key moves it.
+ *
+ * `schema` defaults to `BILLING_SCHEMA`; a tool with a candidate description
+ * can fingerprint that instead.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { schemaFingerprint } from "@potion.run/paykit"
+ *
+ * const sqlite = yield* schemaFingerprint()
+ * const postgres = yield* schemaFingerprint({ dialect: "postgres" })
+ * ```
+ */
+export const schemaFingerprint = (
+  input?: Partial<MigrationScope>,
+  schema: SchemaDefinition = BILLING_SCHEMA,
+): Effect.Effect<string> => {
+  const statements = schemaStatementsOf(schema, scopeOf(input));
+
+  return sha256(`${statements.join(";\n")};`);
 };
 
 const fileOf = (id: string, statements: ReadonlyArray<string>): MigrationFile => ({
@@ -321,6 +147,40 @@ export const readMigrationFiles = (
       statements: [...file.statements],
     })),
   );
+};
+
+/**
+ * The digest of the shipped migration set for a scope: its file ids, their
+ * content hashes, and the dialect, schema and bookkeeping table it was
+ * rendered for. It answers "did what we ship change", where
+ * `schemaFingerprint` answers "did the table shape change". A schema or table
+ * change counts even when the DDL bytes happen to match, because the registry
+ * writes history under the table and routes DDL to the schema.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { migrationFingerprint } from "@potion.run/paykit"
+ *
+ * const shipped = yield* migrationFingerprint({ dialect: "postgres", schema: "billing" })
+ * ```
+ */
+export const migrationFingerprint = (input?: Partial<MigrationScope>): Effect.Effect<string> => {
+  const scope = scopeOf(input);
+
+  return Effect.gen(function* () {
+    const files = yield* readMigrationFiles(scope);
+
+    const payload = {
+      dialect: scope.dialect,
+      schema: scope.schema,
+      table: scope.table,
+      files: files.map((file) => ({ id: file.name, hash: file.hash })),
+    };
+
+    return yield* sha256(JSON.stringify(payload));
+  });
 };
 
 /**
