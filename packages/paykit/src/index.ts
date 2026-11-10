@@ -281,7 +281,9 @@ export {
   migrate,
   migrateDryRun,
   migrationFiles,
+  migrationFingerprint,
   readMigrationFiles,
+  schemaFingerprint,
 } from "./Migrations/index.ts";
 
 export type {
@@ -291,6 +293,12 @@ export type {
   MigrationScope,
   MigrateOptions,
 } from "./Migrations/index.ts";
+
+// The billing DDL as a typed description, so a tool can render or fingerprint
+// the schema without parsing a migration file.
+export { BILLING_SCHEMA, schemaStatementsOf } from "./Migrations/Schema.ts";
+
+export type { Column, ColumnType, Index, SchemaDefinition, Table } from "./Migrations/Schema.ts";
 
 // ── 2. runtime ──────────────────────────────────────────────────────────────
 /**
