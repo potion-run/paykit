@@ -6,8 +6,12 @@ import {
   MAX_PAGE,
   type BillingReadQuery,
   type BillingReadRow,
+  type BillingReadSummary,
 } from "../BillingReadStore.ts";
-import { BillingReadRow as BillingReadRowSchema } from "../BillingReadStore.ts";
+import {
+  BillingReadRow as BillingReadRowSchema,
+  BillingReadSummary as BillingReadSummarySchema,
+} from "../BillingReadStore.ts";
 import type { EntityEntitlement, FeatureEntitlement } from "../Subscription/Entitlements.view.ts";
 import { asyncOf, type SqlDialect, type SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
 import { BILLING_TABLES, DEFAULT_SCHEMA, tableName, type TableScope } from "./Tables.ts";
@@ -434,6 +438,19 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
         (rows) => Effect.forEach(rows, rowToReadModel),
       ),
 
+    /**
+     * The console's overview in one aggregate: how many accounts share each
+     * `(tier, status, standing)` cell. A dashboard folds these counts instead
+     * of reading the projection row by row.
+     */
+    readModelSummary: () =>
+      Effect.flatMap(
+        sql.query<SummaryColumns>(
+          `SELECT tier, status, standing, COUNT(*) AS accounts FROM ${readModels} GROUP BY tier, status, standing ORDER BY tier ASC, status ASC, standing ASC`,
+        ),
+        (rows) => Effect.forEach(rows, summaryToReadModel),
+      ),
+
     upsertReadModel: (row: BillingReadRow) =>
       sql.write(
         upsertRow(
@@ -507,9 +524,15 @@ interface ReadModelColumns {
 }
 
 // SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
+const decodeReadModelRow = Schema.decodeUnknownEffect(BillingReadRowSchema);
+
+// SAFETY: a driver may return BIGINT as text, so the schema owns the count.
+const decodeReadModelSummary = Schema.decodeUnknownEffect(BillingReadSummarySchema);
+
+// SAFETY: an error cause and a stored JSON row are untyped at the storage boundary; the event log's schema owns the value.
 const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
   Effect.suspend(() =>
-    Schema.decodeUnknownEffect(BillingReadRowSchema)({
+    decodeReadModelRow({
       account: row.account,
       tier: row.tier,
       status: row.status,
@@ -534,6 +557,26 @@ const rowToReadModel = (row: ReadModelColumns): Effect.Effect<BillingReadRow> =>
 
 const numberFrom = (value: number | string): number =>
   typeof value === "number" ? value : Number(value);
+
+interface SummaryColumns {
+  readonly tier: string;
+  readonly status: string;
+  readonly standing: string;
+  /** A driver may return BIGINT as text; `numberFrom` normalizes it. */
+  readonly accounts: number | string;
+}
+
+const summaryToReadModel = (row: SummaryColumns): Effect.Effect<BillingReadSummary> =>
+  decodeReadModelSummary({
+    tier: row.tier,
+    status: row.status,
+    standing: row.standing,
+    accounts: numberFrom(row.accounts),
+  }).pipe(
+    // A grouping this schema cannot read is a bug in the store, not a case a
+    // caller can handle: the read-model port has no failure channel.
+    Effect.orDie,
+  );
 
 const dateTimeFrom = (millis: number): DateTime.Utc => DateTime.makeUnsafe(millis);
 

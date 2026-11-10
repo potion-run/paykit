@@ -87,6 +87,22 @@ export const doctor = (log: SqlEventLog) =>
 const StoredEvent = Schema.fromJsonString(Schema.Unknown);
 
 /**
+ * One JSON decoder per event tag the current schema knows, built once. The
+ * doctor decodes every event of every account, so a scan of the event list and
+ * a fresh codec per row would be the rebuild's whole cost.
+ */
+const eventCodecs: ReadonlyMap<string, Schema.ConstraintDecoder<unknown>> = new Map(
+  Subscription.definition.events.map((event): [string, Schema.ConstraintDecoder<unknown>] => [
+    event.tag,
+    // `toCodecJson` decodes the JSON wire form, which is what the parse above
+    // hands back: `decodeEffect` is the decoder for exactly that input.
+    // SAFETY: the event class is one of the definition's own events, and the
+    // map's value type is the decoder the doctor's parse produces.
+    Schema.toCodecJson(event as never) as Schema.ConstraintDecoder<unknown>,
+  ]),
+);
+
+/**
  * Decode one stored event by its tag, as an `Effect`. The whole payload is
  * kept for the second decode — a `Struct` here would strip the fields the
  * event's own codec needs. An event the current schema cannot read fails the
@@ -104,14 +120,10 @@ const decodeEvent = (
     const tag = (raw as { readonly _tag?: unknown })._tag;
 
     if (typeof tag !== "string") return null;
-    const cls = Subscription.definition.events.find((event) => event.tag === tag);
+    const codec = eventCodecs.get(tag);
 
-    if (cls === undefined) return null;
-    // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
-    const codec = Schema.toCodecJson(cls as never) as Schema.ConstraintDecoder<unknown>;
+    if (codec === undefined) return null;
 
-    // `toCodecJson` decodes the JSON wire form, which is what the parse above
-    // handed back: `decodeEffect` is the decoder for exactly that input.
     // SAFETY: the value is a decoded event, or a JSON value this diagnostic walks.
     return (yield* Schema.decodeEffect(codec)(raw)) as { readonly _tag: string };
   });

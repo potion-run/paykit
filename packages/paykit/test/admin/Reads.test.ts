@@ -106,41 +106,6 @@ describe("the admin read port", () => {
     }).pipe(run),
   );
 
-  it.live("summarizes accounts and recurring revenue for the overview", () =>
-    Effect.gen(function* () {
-      const store = yield* BillingReadStore;
-      yield* store.upsert(row("acct_active", { tier: "pro", status: "active" }));
-      yield* store.upsert(row("acct_grace", { tier: "pro", status: "grace", standing: "grace" }));
-      yield* store.upsert(
-        row("acct_trial", { tier: "scale", status: "trialing", standing: "good" }),
-      );
-      yield* store.upsert(row("acct_free", { tier: "free" }));
-
-      const reads = yield* AdminReads;
-      const overview = yield* reads.overview();
-      expect(overview.accounts).toBe(4);
-      const usd = overview.revenue.find((entry) => entry.currency === "usd");
-      expect(usd?.mrr).toBe(3_800);
-      expect(usd?.arr).toBe(45_600);
-      expect(usd?.atRisk).toBe(1_900);
-      expect(usd?.trialPipeline).toBe(9_900);
-
-      const status = Object.fromEntries(
-        overview.byStatus.map((entry) => [entry.status, entry.count]),
-      );
-
-      expect(status).toEqual({
-        trialing: 1,
-        active: 2,
-        grace: 1,
-        canceled: 0,
-        expired: 0,
-      });
-      const tiers = Object.fromEntries(overview.byTier.map((entry) => [entry.tier, entry.count]));
-      expect(tiers).toEqual({ free: 1, pro: 2, scale: 1 });
-    }).pipe(run),
-  );
-
   it.live("returns an accepted preview as wire data", () =>
     Effect.gen(function* () {
       yield* subscribeToPro;

@@ -84,6 +84,20 @@ export const BillingReadPage = Schema.Struct({
 
 export type BillingReadPage = typeof BillingReadPage.Type;
 
+/**
+ * One cell of the console's overview: how many accounts share a tier, a status
+ * and a standing. The store groups them, so a console folds a handful of counts
+ * instead of every row in the projection.
+ */
+export const BillingReadSummary = Schema.Struct({
+  tier: Schema.String,
+  status: SubscriptionStatus,
+  standing: Standing,
+  accounts: Schema.Int,
+});
+
+export type BillingReadSummary = typeof BillingReadSummary.Type;
+
 const pageSizeOf = (query: BillingReadQuery): number =>
   Math.min(MAX_PAGE, Math.max(1, query.take ?? DEFAULT_PAGE));
 
@@ -134,6 +148,34 @@ export const queryRows = (
 };
 
 /**
+ * Fold rows into one count per `(tier, status, standing)` cell, ordered the way
+ * SQL orders the same `GROUP BY`, so a store and its memory twin answer the
+ * same list for the same rows.
+ */
+const summariseRows = (rows: ReadonlyArray<BillingReadRow>): ReadonlyArray<BillingReadSummary> => {
+  const cells = new Map<string, BillingReadSummary>();
+
+  for (const row of rows) {
+    const key = `${row.tier}\u0000${row.status}\u0000${row.standing}`;
+    const cell = cells.get(key);
+
+    cells.set(
+      key,
+      cell === undefined
+        ? { tier: row.tier, status: row.status, standing: row.standing, accounts: 1 }
+        : { ...cell, accounts: cell.accounts + 1 },
+    );
+  }
+
+  return [...cells.values()].toSorted(
+    (left, right) =>
+      compareAccounts(left.tier, right.tier) ||
+      compareAccounts(left.status, right.status) ||
+      compareAccounts(left.standing, right.standing),
+  );
+};
+
+/**
  * The projection's port. A SQL store upserts by `account` and answers a page
  * from one indexed query; the memory implementation backs tests and
  * `alchemy dev`. Rows are rebuildable from the event log at any moment, so a
@@ -146,6 +188,8 @@ export class BillingReadStore extends Context.Service<
     readonly get: (account: string) => Effect.Effect<BillingReadRow | null>;
     /** One page of accounts. The only cross-account read the model offers. */
     readonly list: (query?: BillingReadQuery) => Effect.Effect<BillingReadPage>;
+    /** Counts of accounts grouped by the dimensions the console summarises. */
+    readonly summary: () => Effect.Effect<ReadonlyArray<BillingReadSummary>>;
   }
 >()("paykit/BillingReadStore") {}
 
@@ -161,5 +205,6 @@ export const MemoryBillingReadStore = Layer.sync(BillingReadStore, () => {
     get: (account) =>
       Effect.sync(() => Option.getOrNull(Option.fromUndefinedOr(rows.get(account)))),
     list: (query) => Effect.sync(() => queryRows([...rows.values()], query)),
+    summary: () => Effect.sync(() => summariseRows([...rows.values()])),
   };
 });
