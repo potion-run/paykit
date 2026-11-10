@@ -15,7 +15,8 @@ import {
 } from "@alchemy.run/sql/Migrations";
 import { sha256 } from "alchemy/Util/sha256";
 import * as Effect from "effect/Effect";
-import type { SqlDialect, SqlExecutor, SqlValue } from "../Store/Sql.ts";
+import * as Result from "effect/Result";
+import { asyncOf, type SqlDialect, type SqlExecutor, type SqlValue } from "../Store/Sql.ts";
 import {
   BILLING_TABLES,
   DEFAULT_SCHEMA,
@@ -365,61 +366,103 @@ const describeCause = (cause: unknown): string => {
 };
 
 /**
- * Adapt the store's synchronous `SqlExecutor` into the registry's Effect
- * executor. `batch` is the atomic unit both Alchemy and paykit rely on: a
- * migration's statements and its bookkeeping row commit together.
+ * The registry runs on whichever half the driver implements. A synchronous
+ * driver keeps its own transaction — one `BEGIN IMMEDIATE` around the batch —
+ * and a remote driver (Postgres, D1 over HTTP) goes through `asyncOf`'s
+ * `batch`, which is its atomic unit. `Paykit.migrate` is therefore the same
+ * call on every target.
  */
-// SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
+const isAsync = (sql: SqlExecutor): boolean => sql.query !== undefined;
+
+const queryFailure = (scope: Required<MigrationScope>, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `${scope.dialect} query failed: ${cause.message}`,
+    cause,
+  });
+
+const batchFailure = (scope: Required<MigrationScope>, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `${scope.dialect} migration batch failed: ${cause.message}`,
+    cause,
+  });
+
+/**
+ * Adapt the store's executor into the registry's Effect executor. `batch` is
+ * the atomic unit both Alchemy and paykit rely on: a migration's statements and
+ * its bookkeeping row commit together.
+ */
 const migrationExecutor = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
-): MigrationSqlExecutor => ({
-  dialect: scope.dialect,
-  ...(scope.dialect === "postgres" ? { defaultSchema: scope.schema } : {}),
-  transactionalDdl: true,
-  query: (statement, params) =>
-    Effect.try({
-      try: () => [
-        ...sql.all<Record<string, unknown>>(statement, (params ?? []) as ReadonlyArray<SqlValue>),
-      ],
-      catch: (cause) =>
-        new MigrationError({
-          message: `${scope.dialect} query failed: ${describeCause(cause)}`,
-          cause,
+): MigrationSqlExecutor => {
+  const defaultSchema = scope.dialect === "postgres" ? { defaultSchema: scope.schema } : {};
+
+  if (!isAsync(sql)) {
+    return {
+      dialect: scope.dialect,
+      ...defaultSchema,
+      transactionalDdl: true,
+      query: (statement, params) =>
+        Effect.try({
+          try: () => [
+            ...sql.all<Record<string, unknown>>(
+              statement,
+              (params ?? []) as ReadonlyArray<SqlValue>,
+            ),
+          ],
+          catch: (cause) => queryFailure(scope, { message: describeCause(cause) }),
         }),
-    }),
-  batch: (statements) =>
-    Effect.try({
-      try: () => {
-        // A migration's statements and its bookkeeping row commit together:
-        // one transaction where the target has one, which is what the store's
-        // executor gives. A target without transactions supplies its own
-        // atomic batch through the asynchronous port instead.
-        sql.transaction(() => {
-          for (const statement of statements) sql.exec(statement);
-        });
-      },
-      catch: (cause) =>
-        new MigrationError({
-          message: `${scope.dialect} migration batch failed: ${describeCause(cause)}`,
-          cause,
+      batch: (statements) =>
+        Effect.try({
+          try: () => {
+            sql.transaction(() => {
+              for (const statement of statements) sql.exec(statement);
+            });
+          },
+          catch: (cause) => batchFailure(scope, { message: describeCause(cause) }),
         }),
-    }),
-});
+    };
+  }
+
+  const port = asyncOf(sql);
+
+  return {
+    dialect: scope.dialect,
+    ...defaultSchema,
+    transactionalDdl: true,
+    query: (statement, params) =>
+      port
+        .query<Record<string, unknown>>(statement, (params ?? []) as ReadonlyArray<SqlValue>)
+        .pipe(
+          Effect.map((rows) => [...rows]),
+          Effect.mapError((cause) => queryFailure(scope, cause)),
+        ),
+    batch: (statements) =>
+      port.batch(statements).pipe(Effect.mapError((cause) => batchFailure(scope, cause))),
+  };
+};
+
+const statementFailure = (migration: string, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `migration ${migration} failed: ${cause.message}`,
+    cause,
+  });
 
 const tryExec = (
   sql: SqlExecutor,
   statement: string,
   migration = "setup",
 ): Effect.Effect<void, MigrationError> =>
-  Effect.try({
-    try: () => sql.exec(statement),
-    catch: (cause) =>
-      new MigrationError({
-        message: `migration ${migration} failed: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  isAsync(sql)
+    ? asyncOf(sql)
+        .batch([statement])
+        .pipe(Effect.mapError((cause) => statementFailure(migration, cause)))
+    : Effect.try({
+        try: () => {
+          sql.exec(statement);
+        },
+        catch: (cause) => statementFailure(migration, { message: describeCause(cause) }),
+      });
 
 const tryRun = (
   sql: SqlExecutor,
@@ -427,24 +470,41 @@ const tryRun = (
   params: ReadonlyArray<SqlValue>,
   migration = "setup",
 ): Effect.Effect<void, MigrationError> =>
-  Effect.try({
-    try: () => sql.run(statement, params),
-    catch: (cause) =>
-      new MigrationError({
-        message: `migration ${migration} failed: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  isAsync(sql)
+    ? asyncOf(sql)
+        .write(statement, params)
+        .pipe(Effect.mapError((cause) => statementFailure(migration, cause)))
+    : Effect.try({
+        try: () => {
+          sql.run(statement, params);
+        },
+        catch: (cause) => statementFailure(migration, { message: describeCause(cause) }),
+      });
 
 const readSearchPath = (sql: SqlExecutor): Effect.Effect<string | undefined, MigrationError> =>
-  Effect.try({
-    try: () => sql.get<{ search_path: string }>("SHOW search_path")?.search_path,
-    catch: (cause) =>
-      new MigrationError({
-        message: `could not read search_path: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  Effect.map(
+    isAsync(sql)
+      ? asyncOf(sql)
+          .get<{ search_path: string }>("SHOW search_path")
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new MigrationError({
+                  message: `could not read search_path: ${cause.message}`,
+                  cause,
+                }),
+            ),
+          )
+      : Effect.try({
+          try: () => sql.get<{ search_path: string }>("SHOW search_path"),
+          catch: (cause) =>
+            new MigrationError({
+              message: `could not read search_path: ${describeCause(cause)}`,
+              cause,
+            }),
+        }),
+    (row) => row?.search_path,
+  );
 
 const useSearchPath = <A, E, R>(
   sql: SqlExecutor,
@@ -513,34 +573,62 @@ const recoverable = (cause: unknown): boolean => {
   );
 };
 
+const readNames = (
+  sql: SqlExecutor,
+  statement: string,
+): Effect.Effect<ReadonlyArray<string>, MigrationError> =>
+  isAsync(sql)
+    ? asyncOf(sql)
+        .query<{ name: string }>(statement)
+        .pipe(
+          Effect.map((rows) => rows.map((row) => row.name)),
+          Effect.mapError(
+            (cause) =>
+              new MigrationError({
+                message: `could not read the applied migrations: ${cause.message}`,
+                cause,
+              }),
+          ),
+        )
+    : Effect.try({
+        try: () => sql.all<{ name: string }>(statement).map((row) => row.name),
+        catch: (cause) =>
+          new MigrationError({
+            message: `could not read the applied migrations: ${describeCause(cause)}`,
+            cause,
+          }),
+      });
+
+/**
+ * The migration names a target records as applied. A missing bookkeeping table
+ * is a fresh database; a permission or connection failure is not, and must
+ * surface, or a migration run would replay over a database it cannot read.
+ */
 const readAppliedNames = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
-): ReadonlyArray<string> => {
+): Effect.Effect<ReadonlyArray<string>, MigrationApplyError> => {
   const table = tableName(scope.table, scope);
 
-  try {
-    return sql
-      .all<{ name: string }>(`SELECT name FROM ${table} ORDER BY name ASC`)
-      .map((row) => row.name);
-  } catch (cause) {
-    // The registry creates the table; before the first run it does not exist.
-    // A permission or connection failure is not "fresh database" and must
-    // surface, or a migration run would replay over a database it cannot read.
-    if (!recoverable(cause)) throw cause;
+  return Effect.gen(function* () {
+    const primary = yield* readNames(sql, `SELECT name FROM ${table} ORDER BY name ASC`).pipe(
+      Effect.result,
+    );
+
+    if (Result.isSuccess(primary)) return primary.success;
+    if (!recoverable(primary.failure)) return yield* primary.failure;
 
     // The oldest Alchemy shape carries the name in `id`, so read that too —
     // otherwise a legacy upgrade would look like a fresh application.
-    try {
-      return sql
-        .all<{ name: string }>(`SELECT id AS name FROM ${table} ORDER BY id ASC`)
-        .map((row) => row.name);
-    } catch (fallback) {
-      if (!recoverable(fallback)) throw fallback;
+    const legacy = yield* readNames(sql, `SELECT id AS name FROM ${table} ORDER BY id ASC`).pipe(
+      Effect.result,
+    );
 
-      return [];
-    }
-  }
+    if (Result.isSuccess(legacy)) return legacy.success;
+    if (!recoverable(legacy.failure)) return yield* legacy.failure;
+
+    return [];
+  });
 };
 
 /** Name the pending file a registry failure belongs to, keeping its tag. */
@@ -583,7 +671,7 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
 ) {
   const scope = yield* normalizeScope(input, sql.dialect);
   const records = yield* readMigrationFiles(scope);
-  const before = new Set(readAppliedNames(sql, scope));
+  const before = new Set(yield* readAppliedNames(sql, scope));
   const executor = migrationExecutor(sql, scope);
   const pending = records.find((record) => !before.has(record.name))?.name;
 
@@ -605,7 +693,7 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
     yield* apply;
   }
 
-  return readAppliedNames(sql, scope).filter((name) => !before.has(name));
+  return (yield* readAppliedNames(sql, scope)).filter((name) => !before.has(name));
 });
 
 export {
