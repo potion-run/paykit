@@ -9,7 +9,9 @@ import { planRedealOf } from "../../src/Billing/Attach.binding.ts";
 import { catalog, planTermsOf, planVersionOf, type Catalog } from "../../src/Catalog.ts";
 import { catalogMismatchOf } from "../../src/CatalogGuard.ts";
 import { messages } from "../../src/Feature.ts";
+import { ApplyPlanPhase } from "../../src/Subscription/ApplyPlanPhase.command.ts";
 import { ChangeTier, PlanChanged } from "../../src/Subscription/ChangeTier.command.ts";
+import { ClosePeriod } from "../../src/Subscription/ClosePeriod.command.ts";
 import { PlanVersionStale } from "../../src/Subscription/PlanVersionStale.rejection.ts";
 import {
   PlanChangeScheduled,
@@ -17,11 +19,14 @@ import {
 } from "../../src/Subscription/ScheduleTierChange.command.ts";
 import { Subscribe, SubscriptionActivated } from "../../src/Subscription/Subscribe.command.ts";
 import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
-import { initialSubscriptionState } from "../../src/Subscription/Subscription.state.ts";
-import type { SubscribedState } from "../../src/Subscription/Subscription.state.ts";
+import { initialSubscriptionState, scheduleOf } from "../../src/Subscription/Subscription.state.ts";
+import type {
+  SubscribedState,
+  SubscriptionState,
+} from "../../src/Subscription/Subscription.state.ts";
 import { INITIAL_PLAN_VERSION, tier, type Price } from "../../src/Tier.ts";
 import { verifyState } from "../../src/Verify.ts";
-import { planRow } from "../support/Plans.ts";
+import { planPhase, planRow } from "../support/Plans.ts";
 
 const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
 const later = DateTime.makeUnsafe("2030-02-01T00:00:00Z");
@@ -254,6 +259,163 @@ describe("attaching a plan again", () => {
     expect(planRedealOf(v2Catalog, row, { grants: bespoke })).toBe(true);
     expect(planRedealOf(v2Catalog, row, { price })).toBe(true);
     expect(planRedealOf(v2Catalog, undefined, {})).toBe(true);
+  });
+});
+
+describe("a scheduled generation move", () => {
+  const scheduledPhase = (): SubscribedState => ({
+    ...subscribed(1),
+    plans: {
+      ...subscribed(1).plans,
+      support: planRow("support", { group: "support", allowances: {} }),
+    },
+    schedule: [
+      planPhase("pro", later, {
+        version: 1,
+        group: "team",
+        allowances: items(v1Catalog, "pro"),
+      }),
+    ],
+  });
+
+  const moved = (addOn: boolean): SubscribedState => {
+    const outcome = Subscription.predict(
+      scheduledPhase(),
+      new ChangeTier({
+        tier: "pro",
+        version: 2,
+        ...(addOn ? { addOn: true } : {}),
+        allowances: items(v2Catalog, "pro"),
+        credits: 0,
+        creditsExpire: "period",
+        rates: {},
+      }),
+      { id: Subscription.ref(account).id, now: at, context },
+    );
+
+    expect(outcome._tag).toBe("Accepted");
+
+    if (outcome._tag !== "Accepted" || outcome.state._tag !== "Subscribed") {
+      return undefined as never;
+    }
+
+    return outcome.state;
+  };
+
+  const deadline = (state: SubscribedState) => {
+    const outcome = Subscription.predict(state, new ApplyPlanPhase({ planId: "pro", at: later }), {
+      id: Subscription.ref(account).id,
+      now: later,
+      context,
+    });
+
+    expect(outcome._tag).toBe("Accepted");
+
+    return outcome;
+  };
+
+  const closed = (state: SubscribedState) => {
+    const outcome = Subscription.predict(
+      state,
+      new ClosePeriod({ periodEnd: later, input: { periodEnd: later } } as never),
+      { id: Subscription.ref(account).id, now: later, context },
+    );
+
+    expect(outcome._tag).toBe("Accepted");
+
+    return outcome;
+  };
+
+  const expectStillV2 = (state: SubscriptionState) => {
+    expect(state._tag).toBe("Subscribed");
+
+    if (state._tag !== "Subscribed") return;
+
+    expect(state.plans.pro?.version).toBe(2);
+  };
+
+  it("drops a phase in another group when the move writes a newer generation", () => {
+    const state = moved(false);
+
+    expect(scheduleOf(state)).toEqual([]);
+
+    const applied = deadline(state);
+    expect(applied._tag === "Accepted" ? applied.events : []).toEqual([]);
+
+    const after = closed(state);
+
+    if (after._tag !== "Accepted") return;
+
+    expect(after.events.filter((event) => event._tag === "PlanChanged")).toEqual([]);
+    expectStillV2(after.state);
+  });
+
+  it("drops a phase in another group when the move writes the generation as an add-on", () => {
+    const state = moved(true);
+
+    expect(scheduleOf(state)).toEqual([]);
+
+    const applied = deadline(state);
+    expect(applied._tag === "Accepted" ? applied.events : []).toEqual([]);
+
+    const after = closed(state);
+
+    if (after._tag !== "Accepted") return;
+
+    expect(after.events.filter((event) => event._tag === "PlanChanged")).toEqual([]);
+    expectStillV2(after.state);
+  });
+
+  it("applies a phase that names a plan generation the standing does not hold", () => {
+    const state: SubscribedState = {
+      ...subscribed(1),
+      schedule: [
+        planPhase("pro", later, {
+          version: 2,
+          allowances: items(v2Catalog, "pro"),
+        }),
+      ],
+    };
+
+    const applied = deadline(state);
+
+    expect(applied._tag).toBe("Accepted");
+
+    if (applied._tag !== "Accepted") return;
+
+    expect(applied.events.map((event) => event._tag)).toEqual(["PlanChanged"]);
+    expect(scheduleOf(applied.state as SubscribedState)).toEqual([]);
+    expectStillV2(applied.state);
+  });
+
+  it("does not write a stale phase and leaves no stale phase behind at the boundary", () => {
+    const state: SubscribedState = {
+      ...subscribed(2, v2Catalog),
+      schedule: [
+        planPhase("pro", later, {
+          version: 1,
+          group: "team",
+          allowances: items(v1Catalog, "pro"),
+        }),
+      ],
+    };
+
+    const applied = deadline(state);
+
+    expect(applied._tag).toBe("Accepted");
+
+    if (applied._tag !== "Accepted") return;
+
+    expect(applied.events).toEqual([]);
+    expectStillV2(applied.state);
+
+    const after = closed(state);
+
+    if (after._tag !== "Accepted") return;
+
+    expect(after.events.filter((event) => event._tag === "PlanChanged")).toEqual([]);
+    expectStillV2(after.state);
+    expect(scheduleOf(after.state as SubscribedState)).toEqual([]);
   });
 });
 

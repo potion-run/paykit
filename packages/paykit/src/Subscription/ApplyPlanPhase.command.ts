@@ -12,6 +12,8 @@ import { AccountId } from "./Subscription.id.ts";
  * A fire that no longer matches a pending phase records nothing, the way a
  * stale `RetryTopUp` does: a withdrawal, a later move in the same group, a
  * cancellation or a previous apply all remove or replace the phase it named.
+ * A phase naming an older generation than the standing holds for that plan is
+ * stale for the same reason and records nothing (ADR 0047 §5).
  */
 export class ApplyPlanPhase extends Domain.Command("ApplyPlanPhase", {
   target: AccountId,

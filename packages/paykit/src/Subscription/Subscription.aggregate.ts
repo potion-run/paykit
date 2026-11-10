@@ -117,6 +117,7 @@ import {
   withoutGroup,
   withoutGroupPhases,
   withoutPhase,
+  withoutStalePhases,
   withPhase,
   withPlan,
 } from "./PlanSet.ts";
@@ -3417,12 +3418,17 @@ export class Subscription extends Domain.Aggregate("Subscription", {
       };
 
       // A move replaces its group's plan; an add-on stacks beside it (ADR 0039
-      // §1–2). A phase the boundary applied removes only its own phase; an
-      // explicit move drops every phase its group still had waiting (§6).
-      const schedule =
+      // §1–2). A move to a plan drops every phase naming that plan, whichever
+      // group scheduled it: writing the newer generation supersedes them. An
+      // explicit move also drops every phase its group still had waiting (§6).
+      const withoutMoved = withoutPhase(state.schedule, event.tier);
+
+      const schedule = withoutStalePhases(
+        state.plans,
         event.supersedesSchedule === true
-          ? withoutGroupPhases(state.schedule, event.group ?? DEFAULT_PLAN_GROUP)
-          : withoutPhase(state.schedule, event.tier);
+          ? withoutGroupPhases(withoutMoved, event.group ?? DEFAULT_PLAN_GROUP)
+          : withoutMoved,
+      );
 
       if (event.entity !== undefined) {
         return {
@@ -3893,14 +3899,18 @@ export class Subscription extends Domain.Aggregate("Subscription", {
             // the phases and cancellations that were waiting for a period it
             // will not have. A close with nothing left in any group drops the
             // plan set too; a whole-account cancellation keeps it as history
-            // (ADR 0039 §7).
+            // (ADR 0039 §7). A phase the held generation has outrun cannot
+            // apply and leaves with the boundary it missed (ADR 0047 §5).
             ...(event.statusAfter === "canceled" || event.statusAfter === "expired"
               ? {
                   schedule: [],
                   cancellations: {},
                   ...(event.cancelAtPeriodEndAfter ? {} : { plans: {} }),
                 }
-              : { cancellations: {} }),
+              : {
+                  schedule: withoutStalePhases(state.plans, state.schedule),
+                  cancellations: {},
+                }),
             period: {
               start: event.nextPeriodStart,
               end: event.nextPeriodEnd,

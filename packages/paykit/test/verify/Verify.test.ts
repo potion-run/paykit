@@ -7,6 +7,7 @@ import { Actor, system } from "../../src/Auth/Actor.ts";
 import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { planItemsOf, catalog, type Catalog } from "../../src/Catalog.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
+import { EntityId } from "../../src/Customer.ts";
 import { messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsProvider } from "../../src/Payments.ts";
@@ -34,6 +35,30 @@ const free = planItemsOf(testCatalog, "free")!;
 const pro = planItemsOf(testCatalog, "pro")!;
 const proPrice = { amount: 1900, currency: "usd", interval: "month" as const };
 const account = "acct_verify";
+
+const proV2Tier = tier({
+  id: "pro",
+  version: 2,
+  price: proPrice,
+  grants: [allowance(messages, { included: 2000, overage: "bill" })],
+});
+
+const versionedCatalog: Catalog = Effect.runSync(
+  catalog({ features: [messages], tiers: [freeTier, proV2Tier] }),
+);
+
+const attachedEntity = (version: number) => ({
+  id: EntityId.make("ent_1"),
+  status: "attached" as const,
+  createdAt: new Date("2030-01-01T00:00:00Z"),
+  plans: {
+    pro: planRow("pro", {
+      version,
+      allowances: planItemsOf(versionedCatalog, "pro")!,
+    }),
+  },
+  remaining: {},
+});
 
 const subscribed = (tierId: string, state?: Partial<SubscriptionState>): SubscriptionState =>
   ({
@@ -117,6 +142,51 @@ it("a sold tier no provider can charge is drift", () => {
   );
 
   expect(mismatches[0]?._tag).toBe("TierHasNoPurchasePath");
+});
+
+it("an entity plan on an older generation is outdated", () => {
+  const mismatches = verifyState(
+    account,
+    subscribed("free", { entities: { ent_1: attachedEntity(1) } }),
+    { catalog: versionedCatalog, provider: null },
+  );
+
+  expect(mismatches.map((mismatch) => mismatch._tag)).toEqual(["PlanVersionOutdated"]);
+});
+
+it("an entity plan ahead of the catalog is ahead", () => {
+  const mismatches = verifyState(
+    account,
+    subscribed("free", { entities: { ent_1: attachedEntity(3) } }),
+    { catalog: versionedCatalog, provider: null },
+  );
+
+  expect(mismatches.map((mismatch) => mismatch._tag)).toEqual(["PlanVersionAhead"]);
+});
+
+it("a removed primary plan does not hide the other plan rows", () => {
+  const mismatches = verifyState(
+    account,
+    subscribed("pro", {
+      plans: {
+        legacy: planRow("legacy", { allowances: {} }),
+        pro: planRow("pro", { addOn: true, allowances: pro }),
+      },
+    }),
+    { catalog: versionedCatalog, provider: null },
+  );
+
+  expect(mismatches.map((mismatch) => mismatch._tag)).toEqual(["PlanVersionOutdated"]);
+});
+
+it("a removed primary plan is skipped when it is the only row", () => {
+  const mismatches = verifyState(
+    account,
+    subscribed("legacy", { plans: { legacy: planRow("legacy", { allowances: {} }) } }),
+    { catalog: versionedCatalog, provider: null },
+  );
+
+  expect(mismatches).toEqual([]);
 });
 
 const World = PaykitModel.layer(PaykitHandlers.pipe(Layer.provide(MemoryBillingReadStore)))
