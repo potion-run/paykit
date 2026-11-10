@@ -1,5 +1,5 @@
 import { type BillingStackProps, Paykit } from "@potion.run/paykit";
-import { saasCatalog } from "./catalog.ts";
+import { credits100k, saasCatalog } from "./catalog.ts";
 
 /**
  * The money provider the example runs by default.
@@ -16,6 +16,14 @@ import { saasCatalog } from "./catalog.ts";
  * `TopUpFailed` instead of buying the pack.
  */
 export const Provider = Paykit.Memory();
+
+/**
+ * The auto top-up policy's fallback: the pack a tier buys when its own line
+ * names none. A tier's line is catalog data, but installing the policy is the
+ * deployment's call — without it a crossing records nothing and the line is
+ * inert. The tier's own `pack` and `cooldown` win over these.
+ */
+export const refill = { pack: credits100k.id } as const;
 
 /**
  * The one declaration the deploy, the Worker and the tests read. The catalog is

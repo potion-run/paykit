@@ -1,4 +1,5 @@
 import { Paykit } from "@potion.run/paykit";
+import * as Duration from "effect/Duration";
 
 /**
  * The product's catalog: what the support desk sells, in plain data with no
@@ -47,6 +48,20 @@ export const seats = Paykit.feature({ id: "seats", name: "Seats", kind: "non_con
 export const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
 
 /**
+ * A one-off pack the refill line buys. A pack is bought, never moved onto, and
+ * its credits never expire, so they outlive the plan that happened to be active.
+ */
+export const credits100k = Paykit.plan({
+  id: "credits-100k",
+  name: "100,000 credits",
+  kind: "one_off",
+  // The interval is part of every `Price` and a one-off pack never opens a
+  // period, so it is stated once and read by nothing.
+  price: { amount: 4_900, currency: "usd", interval: "month" },
+  credits: 100_000,
+});
+
+/**
  * The plan an account gets on sign-up. `isDefault` is what makes it the plan a
  * customer with none is put on, and what a cancelled group falls back to.
  */
@@ -73,6 +88,16 @@ export const pro = Paykit.plan({
   name: "Pro",
   price: { amount: 1_900, currency: "usd", interval: "month" },
   credits: 5_000,
+  // Below 500 credits, a spend buys the 100k pack at most once an hour, and a
+  // refused charge is retried twice (ADRs 0013–0031). The policy that acts on
+  // this line is the deployment's, not the catalog's: `billing.config.ts`
+  // installs it and names the pack a line without one buys.
+  topUp: {
+    threshold: 500,
+    pack: credits100k.id,
+    cooldown: Duration.hours(1),
+    retry: { attempts: 2, every: Duration.minutes(10) },
+  },
   grants: [
     Paykit.planItem(conversations, {
       included: 2_000,
@@ -124,5 +149,5 @@ export const studio = Paykit.plan({
 /** The catalog the deploy validates and the model runs with. */
 export const saasCatalog = {
   features: [conversations, ai, seats, sso],
-  tiers: [free, pro, scale, studio],
+  tiers: [free, pro, scale, studio, credits100k],
 };

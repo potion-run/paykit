@@ -2,6 +2,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import { BillingState, Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import { answering, setGuardrails } from "../src/Agent.ts";
 import { SaasLive } from "../src/Billing.layer.ts";
 import { conversations, pro } from "../src/catalog.ts";
@@ -117,6 +118,28 @@ describe("one metered turn", () => {
     }).pipe(Effect.provide(SaasLive)),
   );
 
+  it.live("buys the 100k pack when a spend takes the pool under the line", () =>
+    Effect.gen(function* () {
+      yield* activate(pro);
+
+      // 5,000 - 4,600 = 400, under the tier's 500-credit line.
+      const consume = yield* Paykit.ConsumeCredits(account.id);
+      yield* consume({ amount: 4_600, dedupeKey: "top-up-crossing" });
+
+      // The policy reacts after the commit, so the read model catches up rather
+      // than the spend waiting on a provider call.
+      const credits = yield* Effect.map(entitlementsOf, (view) => view?.credits ?? 0).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced("10 millis"),
+          times: 200,
+          until: (pool) => pool >= 100_400,
+        }),
+      );
+
+      expect(credits).toBe(100_400);
+    }).pipe(Effect.provide(SaasLive)),
+  );
+
   it.live("refuses a turn the credit pool cannot pay for, before recording the conversation", () =>
     Effect.gen(function* () {
       yield* activate(pro);
@@ -124,6 +147,10 @@ describe("one metered turn", () => {
       const workspace = yield* Workspace(account.id);
       const docs = yield* workspace.create(project("proj_docs"), "Docs");
       const { answer } = yield* answering;
+
+      // The org switched its refills off, so the pool is not topped up before
+      // the turn: this is the customer's guardrail, not the deployment's.
+      yield* setGuardrails(account.id, { refill: false });
 
       // Spend the pool down to four credits, below the large model's ten.
       const consume = yield* Paykit.ConsumeCredits(account.id);

@@ -1,5 +1,5 @@
 import { InsecureDevGuards, Paykit } from "@potion.run/paykit";
-import { billing } from "./billing.config.ts";
+import { billing, refill } from "./billing.config.ts";
 
 /**
  * The world the Worker and the tests both serve: the model, the catalog, the
@@ -18,4 +18,5 @@ import { billing } from "./billing.config.ts";
 export const SaasLive = Paykit.world({
   ...billing,
   guards: InsecureDevGuards,
+  autoTopUp: refill,
 });

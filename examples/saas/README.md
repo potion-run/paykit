@@ -15,6 +15,7 @@ axis — the six surfaces no other example exercises are the reason it exists:
 | A project is closed and its units return | `ArchiveEntity`, `EntityHasOccupancy` (ADR 0040 §7) |
 | The org sets a monthly overage ceiling | `SetBillingControls`, `SpendLimitExceeded` (ADR 0038) |
 | The org is paged at 2,000 conversations | `CustomerUsageAlert`, `UsageAlertFired` (ADR 0038) |
+| A spend under 500 credits buys the 100k pack | `autoTopUp` on the world, the tier's `topUp` line (ADRs 0013–0031) |
 | Every turn records a conversation and spends credits | `Check`, `TrackUsage`, `ConsumeCredits` |
 | A retried turn records nothing twice | the caller's request id as the command id |
 
@@ -128,15 +129,31 @@ every bill it produced are kept.
 `setGuardrails` writes the customer's controls in the product's words:
 
 ```ts
-yield* setGuardrails(account, { monthlyCeiling: 100, alertAt: 2_000 });
+yield* setGuardrails(account, { monthlyCeiling: 100, alertAt: 2_000, refill: false });
 ```
 
 `monthlyCeiling` is money, in minor units: the most `conversations` may bill this
 period. It is enforced in addition to the plan's `cap`, and a refusal leaves the
 standing `good` — the account used what it allowed itself. `alertAt` records an
-`UsageAlertFired` once per period; an alert is evidence, never a refusal. Both
-are customer state, not catalog data, so support can change them without a
+`UsageAlertFired` once per period; an alert is evidence, never a refusal.
+`refill` switches the installed top-up policy off for this org without touching
+the catalog. All three are customer state, so support can change them without a
 deploy, and the log records what was in force when each spend happened.
+
+The refill line is the tier's (`topUp` on `pro`); the policy that acts on it is
+the deployment's:
+
+```ts
+// billing.config.ts — the pack a line without one buys
+export const refill = { pack: credits100k.id } as const;
+
+// Billing.layer.ts — installing it, once
+export const SaasLive = Paykit.world({ ...billing, guards: InsecureDevGuards, autoTopUp: refill });
+```
+
+Without that option a crossing records nothing and the line is inert, which the
+library's own test pins: the catalog states a line, the deployment says whether
+to act on it.
 
 ## The Worker
 
@@ -166,9 +183,6 @@ do not change.
 
 ## What this example does not wire
 
-- **The refill line.** `Paykit.autoTopUp` is a policy layer a deployment provides
-  on its own model; `Paykit.world` does not take it, so a catalog `topUp` line
-  would state a refill that never fires. Add it when the world grows the seam.
 - **A real model and a real provider.** `/ask` echoes the prompt, and
   `Paykit.Memory()` moves no money. Swapping either keeps the billing shape: the
   provider is one line in `billing.config.ts`, and the model call is the one line

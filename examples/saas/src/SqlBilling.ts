@@ -10,7 +10,7 @@ import {
   SqlPlatform,
 } from "@potion.run/paykit";
 import * as Layer from "effect/Layer";
-import { billing } from "./billing.config.ts";
+import { billing, refill } from "./billing.config.ts";
 
 /**
  * The same world a memory host builds, on a database: the read store is the SQL
@@ -23,6 +23,7 @@ const sqlWorld = (log: SqlEventLog, platform: Domain.Platform["Service"]) =>
     platform: Layer.succeed(Domain.Platform, platform),
     readStore: SqlBillingReadStore(log),
     guards: InsecureDevGuards,
+    autoTopUp: refill,
   });
 
 /** Everything a SQL-hosted world provides, and nothing it does not. */

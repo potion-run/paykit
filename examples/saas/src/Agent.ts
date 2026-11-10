@@ -207,17 +207,20 @@ export const answering = Effect.gen(function* () {
 
 /**
  * The customer's guardrails, in the product's words: a monthly money ceiling on
- * overage and a page at a usage threshold.
+ * overage, a page at a usage threshold, and whether the installed refill policy
+ * may charge the saved method on this account.
  *
  * They are state on the customer, not catalog data, so a support agent can lower
- * a ceiling or move the page without a deploy, and the log records what was in
- * force when each spend happened (ADR 0038).
+ * a ceiling, move the page or switch refills off without a deploy, and the log
+ * records what was in force when each spend happened (ADR 0038).
  */
 export interface Guardrails {
   /** The most overage, in cents, this period. Absent means no ceiling. */
   readonly monthlyCeiling?: number;
   /** Page the org at this many conversations this period. */
   readonly alertAt?: number;
+  /** Whether the deployment's refill policy may buy a pack for this org. */
+  readonly refill?: boolean;
 }
 
 /** Replace the customer's guardrails. `undefined` clears one; `{}` clears all. */
@@ -236,6 +239,7 @@ export const setGuardrails = Effect.fn("Saas.setGuardrails")(function* (
     ...(guardrails.alertAt === undefined
       ? {}
       : { usageAlerts: [{ featureId: conversations.id, at: guardrails.alertAt }] }),
+    ...(guardrails.refill === undefined ? {} : { autoTopUp: { enabled: guardrails.refill } }),
   };
 
   const written = yield* customers.update({ billingControls });
