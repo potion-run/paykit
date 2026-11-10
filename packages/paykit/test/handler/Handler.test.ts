@@ -179,6 +179,28 @@ describe("the request handler", () => {
     }),
   );
 
+  it.live("answers the same paths through fetch, with the request ambient", () =>
+    Effect.gen(function* () {
+      const built = yield* handler({ provider, accountOf, surfaces: "none" });
+      const headers = new Headers({ "x-paykit-actor": account });
+
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://billing.test/checkout?tier=free", { headers }),
+      );
+
+      // `fetch` reads `HttpServerRequest` from the context, the shape a Worker
+      // returns and `auth.fetch` establishes; it is the same table, not a copy.
+      const response = yield* built.fetch.pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      );
+
+      const web = HttpServerResponse.toWeb(response);
+
+      expect(web.status).toBe(200);
+      expect(yield* Effect.promise(() => web.json())).toEqual({ activated: true });
+    }).pipe(Effect.provide(testWorld)),
+  );
+
   it.live("moves a mount point without re-deriving the table", () =>
     Effect.gen(function* () {
       const answer = yield* ask(

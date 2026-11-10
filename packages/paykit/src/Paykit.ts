@@ -1,6 +1,6 @@
 import { grant } from "./Allowance.ts";
 import { account as actorAccount, admin as actorAdmin, mayActOn } from "./Auth/Actor.ts";
-import { InsecureDevGuards } from "./Auth/FromHeaders.ts";
+import { accountFromHeaders, InsecureDevGuards } from "./Auth/FromHeaders.ts";
 import { AdminFrom, GuardsFrom, SessionFrom, authenticate } from "./Auth/FromResolver.ts";
 import * as Billing from "./Billing/index.ts";
 import { BillingAdminApi } from "./BillingAdminApi.api.ts";
@@ -25,6 +25,7 @@ import { plan } from "./Plan.ts";
 import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
 import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
+import { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
@@ -97,6 +98,8 @@ export const Paykit = {
   layerSqlPlatform,
   SqlBillingReadStore,
   d1Executor,
+  postgresExecutor,
+  toPostgresPlaceholders,
   // runtime — the tenant surface, one binding per command
   Attach: Billing.Attach,
   Update: Billing.Update,
@@ -153,6 +156,7 @@ export const Paykit = {
   GuardsFrom,
   authenticate,
   InsecureDevGuards,
+  accountFromHeaders,
   mayActOn,
   actorAccount,
   actorAdmin,

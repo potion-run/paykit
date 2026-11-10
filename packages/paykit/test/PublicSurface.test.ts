@@ -32,6 +32,8 @@ it("exports the four groups from the package root", () => {
   expect(typeof Paykit.migrateDryRun).toBe("function");
   expect(typeof Paykit.readMigrationFiles).toBe("function");
   expect(typeof Paykit.SqlEventLog).toBe("function");
+  expect(typeof Paykit.postgresExecutor).toBe("function");
+  expect(typeof Paykit.toPostgresPlaceholders).toBe("function");
   expect(Paykit.MigrationError).toBeDefined();
   expect(Paykit.MigrationHistoryConflictError).toBeDefined();
   expect(Paykit.RewrittenMigrationHistoryError).toBeDefined();

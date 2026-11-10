@@ -5,9 +5,6 @@ import { CookieGuards } from "./Session.ts";
 /** The catalog the deploy declares, for a test or a page that reads it. */
 export const Catalog = billing.catalog;
 
-/** The example sells through an invoice; no provider key is needed. */
-export const Provider = billing.providers[0]!;
-
 /**
  * The model, catalog, provider and cookie guards the admin Worker serves. The
  * guards read the same-origin session cookie, so the browser's live reads can

@@ -28,6 +28,28 @@ export const actorFromHeaders = (headers: Headers.Input): ActorValue | null => {
   return { kind: decoded.value, id: id.value };
 };
 
+/**
+ * The account id a request's development header names, for
+ * `Paykit.handler`'s `accountOf`.
+ *
+ * The same header the insecure guards read, reduced to the one field a
+ * purchase needs. A deployment with its own session resolves its actor once,
+ * in its auth file, and hands the handler that resolver's `actor.id`.
+ *
+ * ### A checkout's account
+ * **Example:** The handler's account resolver over the development header
+ * ```typescript
+ * const handler = yield* Paykit.handler({
+ *   provider,
+ *   accountOf: (request) => Paykit.accountFromHeaders(request.headers),
+ * });
+ * ```
+ *
+ * @primitive
+ */
+export const accountFromHeaders = (headers: Headers.Input): string | null =>
+  actorFromHeaders(headers)?.id ?? null;
+
 /** The development resolver: the actor a request's headers name. */
 const fromHeaders: ActorResolver = ({ headers }) => Effect.sync(() => actorFromHeaders(headers));
 

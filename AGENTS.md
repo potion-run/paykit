@@ -10,19 +10,24 @@ beside its source.
 | --- | --- | --- | --- |
 | `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
 | `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, and the products its tiers are sold as | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
+| `@potion.run/paykit-stripe` | `packages/paykit-stripe` | Stripe as a paykit provider, and the prices and meters its tiers are sold as | [README.md](./packages/paykit-stripe/README.md) |
 | `@potion.run/paykit-admin` | `packages/paykit-admin` | Foldkit ops console for a paykit deployment | [AGENTS.md](./packages/paykit-admin/AGENTS.md) · [README.md](./packages/paykit-admin/README.md) |
 
-`examples/billing` is a runnable Worker that bills with `MemoryStore` and the `Manual` provider, so
-it needs no database and no provider key. `examples/admin` mounts the Foldkit console against the
-same kind of stack and forwards `/admin` and `/console` to its Worker. `examples/auth` gates the
-same model with a Better Auth session through the provider-neutral `Paykit.SessionFrom` /
-`Paykit.AdminFrom` resolver, so the identity provider is the only file that changes.
-`examples/tanstack` deploys a TanStack Start app on Cloudflare and makes its billing UI the
+`examples/billing` is the full Worker on D1: the tenant Api, the console, MCP, the two money routes,
+and a typed `Tenant` API over the catalog declarations. `examples/memory` is the same model as the
+smallest deployment — `MemoryStore`, the `Manual` provider, no database and no key.
+`examples/polar` and `examples/stripe` show `PolarBilling` / `StripeBilling` provisioning a product
+and handing its ids or lookup keys to the Worker through the environment. `examples/postgres` hosts
+the model on Postgres through Cloudflare Hyperdrive, reusing Alchemy's `Hyperdrive.Connection` and
+`@alchemy.run/sql/Postgres` and `Paykit.postgresExecutor`. `examples/admin` mounts the Foldkit
+console against the same kind of stack and forwards `/admin` and `/console` to its Worker.
+`examples/auth` gates the same model with a Better Auth session through the provider-neutral
+`Paykit.SessionFrom` / `Paykit.AdminFrom` resolver, so the identity provider is the only file that
+changes. `examples/tanstack` deploys a TanStack Start app on Cloudflare and makes its billing UI the
 first-class Effect Atom client: `PaykitAtom.make({ layer })` over the tenant Api, with
-account-keyed queries and command atoms that refresh them. `examples/polar` shows `PolarBilling`
-provisioning a product and handing its id to the Worker through the environment. All five are in
-the workspace, in the root `tsconfig.json` and in `pnpm test`, so an API change that breaks the
-advertised usage breaks a gate.
+account-keyed queries and command atoms that refresh them. All eight are in the workspace, in the
+root `tsconfig.json` and in `pnpm test`, so an API change that breaks the advertised usage breaks a
+gate.
 
 A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
 carries rules a reader needs before touching it, and add it to the workspace globs and the root

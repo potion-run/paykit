@@ -9,7 +9,7 @@ and the deployment own, and names the gaps that are still ours.
 
 ## Where it stands
 
-The current slice is the plan/customer/balance API, recorded in
+The plan/customer/balance API landed in
 [ADR 0035](./adr/0035-plans-plan-items-and-balance-sources.md),
 [ADR 0036](./adr/0036-a-seat-is-purchased-and-occupied.md) and
 [ADR 0037](./adr/0037-a-lifetime-grant-is-a-balance-source.md). The public words are `Plan`,
@@ -22,9 +22,9 @@ creates a standalone grant. The balance ledger is real: `balances.qnt` models a 
 an expiring grant and a lifetime grant, `Balance.breakdown` reports each source, and a spend takes
 from the plan and rollover before a grant. The
 internal event and helper words are `PlanChanged` / `PlanChangeScheduled` / `PlanNotInCatalog` /
-`PlanItemReset`; `Tier` and `Allowance` remain the schema names while the state migration lands.
-The command-level notes below remain the advanced surface until that migration lands. The working
-plan is [the API brief](./briefs/plan-customer-balance-api.md).
+`PlanItemReset`; `Tier` and `Allowance` remain the schema names the state is written in. The
+command-level notes below are the advanced surface. The working plan was
+[the API brief](./briefs/plan-customer-balance-api.md).
 
 Customer controls landed after it ([ADR 0038](./adr/0038-customer-controls-are-state.md)):
 `controls.qnt` models a money ceiling and a usage alert, `SetBillingControls` writes the customer's
@@ -93,8 +93,8 @@ queries refresh without a manual call. `examples/tanstack` deploys it in
 a TanStack Start app on Alchemy, with the purchase operation left in the Worker that owns the
 provider.
 
-A deployment serves itself with `Paykit.handler`, which mounts the four paths every deployment has
-and leaves the rest to `routes`. Two money facts the log used to lose are recorded now: `TopUpFailed`,
+A deployment serves itself with `Paykit.handler`, which mounts the built-in paths every deployment
+has and leaves the rest to `routes`. Two money facts the log used to lose are recorded now: `TopUpFailed`,
 when a provider will not collect a refill, and `RefundReversed`, when a provider takes a refund back.
 Both are evidence that moves no counter, and both fold into the timeline.
 
@@ -153,7 +153,9 @@ status and a release reason, so a close no longer drops one silently. The table 
 
 ## The queue
 
-Ordered by value per unit of work. Each is small enough to finish in one pass and leave green.
+This section is the record of the API-migration slice: every item below landed, and it is kept as
+the reasoning behind the shape rather than as open work. The gaps that are still ours live in
+[BILLING-SURFACE.md](./BILLING-SURFACE.md#what-is-actually-ours-to-build).
 
 The vendor meter landed in [ADR 0006](./adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) §2:
 the quantity pushed at close is the period's *billable* units (`used - included`), not `billed`
@@ -172,9 +174,9 @@ period has already billed past is refused with `DowngradeBelowSpend`, and a chan
 it has already passed with `DowngradeBelowCeiling`. Both were previously reachable, and both produced a
 standing no command could leave until the period reset.
 
-### 0. The current slice
+### 0. The API migration
 
-The next work is the API migration, not another command. The order is:
+The migration below landed; the order it was done in is:
 
 1. **Vocabulary and catalog** — `Plan` and `PlanItem` public aliases are in, with `plan()` and
    `planItem()`, `plans` on the catalog, and plan `group`, `addOn`, `isDefault` and `trial` fields.
@@ -413,25 +415,25 @@ standing change.
 
 ### 3. The configuration surface
 
-Landed ([the configuration brief](./briefs/billing-configuration.md)). The four examples export one
+Landed ([the configuration brief](./briefs/billing-configuration.md)). The examples export one
 `billing.config.ts` and pass it to three one-call surfaces: `Paykit.BillingStack` validates and
 records, `Paykit.world` builds the runtime graph with the catalog in the layer's error channel, and
 `PaykitAtom.make({ url })` builds the browser client over the tenant Api and the server-expanded
-command surface, and reads no catalog. The catalog constructors are
-discriminated unions, so `"unlimited"` beside `overage: "bill"`, a cap without a bill, a flag with a
-rate card, and a one-off pack with grants are editor errors; the runtime validator still refuses the
-serialized path. `StripeBilling` joins `StripePrices` and `Stripe` into one call, and `PolarBilling`
-does the same for Polar: its product ids are `Output<string>`s, so the provider keeps the handle and
-resolves it at checkout or webhook time. The browser's catalog copy is gone: [ADR
-0028](./adr/0028-a-browser-reads-the-catalog-from-the-deploy.md) serves the deploy's own catalog over
-a guarded `Catalog` RPC, and `make` reads it once when the runtime is built, so a stale bundle can no
-longer join terms the server refuses with `CatalogMismatch`.
+command surface. The catalog constructors are discriminated unions, so `"unlimited"` beside
+`overage: "bill"`, a cap without a bill, a flag with a rate card, and a one-off pack with grants are
+editor errors; the runtime validator still refuses the serialized path. `StripeBilling` joins
+`StripePrices` and `Stripe` into one call, and `PolarBilling` does the same for Polar: its product
+ids are `Output<string>`s, so the provider keeps the handle and resolves it at checkout or webhook
+time. The browser holds no catalog at all: it sends a plan id and the deployment joins it (ADR
+0048), so a stale bundle cannot supply terms the server refuses with `CatalogMismatch`.
 
 `Paykit.handler` landed beside it ([ADR
 0029](./adr/0029-the-request-handler-is-a-primitive.md)): it mounts `/api`, `/api/commands`, `/admin`,
 `/checkout` and `/webhooks`, answers a refusal with `Paykit.httpStatus`, takes the deployment's own
 paths through `routes`, and builds no world — it requires the Api services, so one process stays one
-model.
+model. The result is a request function and `handler.fetch`, an `HttpEffect` that reads the ambient
+request (the shape Alchemy's `auth.fetch` uses), so a Worker whose world it builds once returns
+`{ fetch: handler.fetch }`.
 `Paykit.moneyRoutes(provider)` is promoted beside it, which is where the copy the billing and polar
 examples each carried went. The *join* landed beside it ([ADR
 0048](./adr/0048-the-api-names-a-plan-and-the-deployment-joins-it.md)): `BillingCommandsRpcs` takes

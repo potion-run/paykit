@@ -260,6 +260,8 @@ export type {
 
 export { SqlError, asyncOf } from "./Store/Sql.ts";
 
+export { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
+
 export type {
   SqlAsyncExecutor,
   SqlDialect,
@@ -534,6 +536,7 @@ export type {
   HandlerRoute,
   HandlerSurfaces,
   MoneyRoutes,
+  PaykitHandler,
 } from "./Handler.ts";
 
 export type { CheckInput, CheckResult } from "./Check.ts";
@@ -729,6 +732,7 @@ export {
   InsecureDevGuards,
   InsecureSessionFromHeaders,
   KIND_HEADER,
+  accountFromHeaders,
   actorFromHeaders,
 } from "./Auth/FromHeaders.ts";
 

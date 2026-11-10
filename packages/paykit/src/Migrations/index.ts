@@ -79,7 +79,9 @@ const createIndex = (
   on: string,
   columns: ReadonlyArray<string>,
 ): string =>
-  `CREATE INDEX IF NOT EXISTS ${tableName(name, scope)} ON ${tableName(on, scope)} (${columns.join(", ")})`;
+  // Postgres index names are never schema-qualified: the index lands in the
+  // table's schema, and `CREATE INDEX "schema"."name"` is a syntax error.
+  `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(name)} ON ${tableName(on, scope)} (${columns.join(", ")})`;
 
 /** The schema creation, before any table. Postgres only. */
 export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
@@ -240,7 +242,7 @@ const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<stri
       processed_at ${time},
       PRIMARY KEY (projection, key, source, source_seq)
     )`,
-    `CREATE INDEX IF NOT EXISTS ${table("billing_rm_projection_pending")}
+    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier("billing_rm_projection_pending")}
       ON ${table(BILLING_TABLES.projectionInput)} (projection, key, processed_at, position)`,
     `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionCursor)} (
       projection TEXT NOT NULL,

@@ -11,7 +11,7 @@ import { billingCatalog, polarTiers } from "./src/catalog.ts";
  * The stack: `PolarBilling` creates the products the catalog states and returns
  * the provider `BillingStack` validates, so the tier prices are declared once.
  * The Worker then receives the product and meter ids from `billing.sold`
- * through its environment; nothing in `src/Worker.ts` names a vendor id.
+ * through its environment; nothing in `src/PolarWorker.ts` names a vendor id.
  *
  * The token reaches both the resource providers and the runtime. The stack is
  * always pinned to Polar's sandbox, so a production token cannot create
@@ -49,7 +49,7 @@ const PolarExample = Alchemy.Stack(
     });
 
     const worker = yield* Cloudflare.Worker("PolarWorker", {
-      main: "./src/Worker.ts",
+      main: "./src/PolarWorker.ts",
       env: {
         POLAR_ACCESS_TOKEN: accessToken,
         POLAR_WEBHOOK_SECRET: webhookSecret,

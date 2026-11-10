@@ -33,6 +33,24 @@
       "path": "./examples/polar/tsconfig.test.json"
     },
     {
+      "path": "./examples/stripe"
+    },
+    {
+      "path": "./examples/stripe/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/memory"
+    },
+    {
+      "path": "./examples/memory/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/postgres"
+    },
+    {
+      "path": "./examples/postgres/tsconfig.test.json"
+    },
+    {
       "path": "./scripts/tsconfig.json"
     },
     {

@@ -1,13 +1,13 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
-import { ACTOR_HEADER, Paykit } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import { Provider } from "./Billing.ts";
-import { BillingDatabase } from "./Database.ts";
-import { toMcpHandler } from "./Mcp.ts";
+import { Provider } from "./billing.config.ts";
+import { BillingDatabase } from "./BillingDatabase.ts";
+import { toMcpHandler } from "./BillingMcp.ts";
 import { billingOnSql } from "./SqlBilling.ts";
 
 /**
@@ -21,7 +21,7 @@ import { billingOnSql } from "./SqlBilling.ts";
  * Every service this reaches is resolved from the world `serve` provides, so a
  * route cannot answer from a second copy of the model.
  */
-const handle = (request: HttpServerRequest.HttpServerRequest) =>
+const handle = () =>
   Effect.gen(function* () {
     // The MCP server is a web handler, not an Effect fetch. `toMcpHandler`
     // captures *these* services — the ones the world provided — so the tools
@@ -29,9 +29,9 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
     const mcp = yield* toMcpHandler;
     yield* Effect.addFinalizer(() => Effect.promise(mcp.dispose));
 
-    const serve = yield* Paykit.handler({
+    const handler = yield* Paykit.handler({
       provider: Provider,
-      accountOf: (incoming) => incoming.headers[ACTOR_HEADER] ?? null,
+      accountOf: (incoming) => Paykit.accountFromHeaders(incoming.headers),
       routes: [
         {
           path: "/mcp",
@@ -45,7 +45,7 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
       ],
     });
 
-    return yield* serve(request);
+    return yield* handler.fetch;
   });
 
 /**
@@ -57,11 +57,10 @@ const handle = (request: HttpServerRequest.HttpServerRequest) =>
  */
 const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
   fetch: Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
     const billing = billingOnSql(yield* database.raw);
     const world = Layer.mergeAll(billing.world, Provider.payments);
 
-    return yield* handle(request).pipe(Effect.provide(world), Effect.orDie);
+    return yield* handle().pipe(Effect.provide(world), Effect.orDie);
   }),
 });
 
@@ -85,9 +84,9 @@ const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
  *
  * Without a provider key the example still bills: `Manual` answers `/checkout`
  * with an invoice id, and `/webhooks` reports that the manual provider has no
- * webhook to verify. Point `Billing.ts` at `Polar()` with a fake client in a
- * test — or a real one in a deployment — and the same two routes carry the
- * whole loop.
+ * webhook to verify. Point `billing.config.ts` at `Polar()` with a fake client
+ * in a test — or a real one in a deployment — and the same two routes carry
+ * the whole loop.
  */
 export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
   "BillingWorker",

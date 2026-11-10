@@ -25,13 +25,13 @@ pnpm add @potion.run/paykit alchemy effect
 import { Paykit } from "@potion.run/paykit";
 
 const messages = Paykit.feature({ id: "messages", name: "Messages" });
-const pro = Paykit.tier({
+const pro = Paykit.plan({
   id: "pro",
   price: { amount: 1900, currency: "usd", interval: "month" },
-  grants: [Paykit.allowance(messages, { included: 2_000, overage: "bill" })],
+  grants: [Paykit.planItem(messages, { included: 2_000, overage: "bill" })],
 });
 
-// One declaration, read by the deploy, the Worker and the browser client.
+// One declaration, read by the deploy, the Worker and the tests.
 const billing = {
   catalog: { features: [messages], tiers: [pro] },
   providers: [Paykit.Manual()],
@@ -54,12 +54,14 @@ const balances = yield* Paykit.Balances(account);
 yield* balances.get({ featureId: "messages" });
 ```
 
-[`examples/billing`](./examples/billing) is a runnable Worker that bills with a real database and no
-provider key. It serves the API (`/api`), the console (`/admin`), MCP (`/mcp`), and the two money
-routes — `/checkout?tier=pro` asks the provider for a path to pay, and `/webhooks/*` verifies and
-applies a delivery with that provider's own decoder. Swap `Manual()` for `Polar({ ..., webhookSecret })`
-in [`Billing.ts`](./examples/billing/src/Billing.ts) and the same two routes carry the whole loop;
-the test suite already drives them with a fake client, so the loop is proven without a key.
+[`examples/billing`](./examples/billing) is the full Worker: D1 for the event log and the read
+models, the API (`/api`), the console (`/admin`), MCP (`/mcp`), the two money routes, and a typed
+`Tenant` API over the catalog declarations. `/checkout?tier=pro` asks the provider for a path to pay,
+and `/webhooks/*` verifies and applies a delivery with that provider's own decoder. Swap `Manual()`
+for `Polar({ ..., webhookSecret })` in
+[`billing.config.ts`](./examples/billing/src/billing.config.ts) and the same two routes carry the
+whole loop; the test suite already drives them with a fake client, so the loop is proven without a
+key.
 
 ```sh
 pnpm install
@@ -67,13 +69,31 @@ pnpm --filter @potion.run/example-billing test
 pnpm --filter @potion.run/example-billing dev
 ```
 
-[`examples/polar`](./examples/polar) is the same loop with Polar rather than `Manual`.
-`PolarBilling` creates the product, its meter and its metered price, then hands their ids to the
-Worker through the environment; the runtime `Polar({ tiers, meters })` is built from those outputs.
-The test uses a fake Polar client, so it still needs no account.
+[`examples/memory`](./examples/memory) is the same model as the smallest deployment: one Worker,
+`MemoryStore`, the `Manual` provider, and no database or key. Start here when you want the catalog
+and the three paykit paths without the rest of the surface.
+
+```sh
+pnpm --filter @potion.run/example-memory test
+```
+
+[`examples/polar`](./examples/polar) and [`examples/stripe`](./examples/stripe) are the same loop
+sold through a vendor. `PolarBilling` / `StripeBilling` create the product, price, meter and metered
+price the catalog states, then hand the ids or lookup keys to the Worker through the environment.
+Both tests use a fake vendor client, so neither needs an account.
 
 ```sh
 pnpm --filter @potion.run/example-polar test
+pnpm --filter @potion.run/example-stripe test
+```
+
+[`examples/postgres`](./examples/postgres) is the model on Postgres through Cloudflare Hyperdrive.
+The connection and the schema are Alchemy's (`Hyperdrive.Connection` / `Connect`,
+`@alchemy.run/sql/Postgres`, `@alchemy.run/sql/Migrations`); paykit contributes
+`Paykit.postgresExecutor` and the SQL stores. Its integration case is gated on `POSTGRES_URL`.
+
+```sh
+pnpm --filter @potion.run/example-postgres test
 ```
 
 [`examples/auth`](./examples/auth) gates the same model with a
@@ -84,10 +104,9 @@ the catalog or the model.
 
 [`examples/tanstack`](./examples/tanstack) is a TanStack Start app on Cloudflare whose billing UI is
 the first-class Effect Atom client. `PaykitAtom.make({ url })` builds one runtime over the tenant
-Api — reading the deploy's own catalog from `/api/billing/catalog`, so the browser bundles no second
-copy: `entitlements(account)` and `billing(account)` are queries, every tenant verb is a command, and
-a successful command invalidates the account's reactivity key — so the view refreshes without a
-manual call.
+Api — the catalog stays in the Billing Worker, so the browser bundles no copy: `entitlements(account)`
+and `billing(account)` are queries, every tenant verb is a command, and a successful command
+invalidates the account's reactivity key — so the view refreshes without a manual call.
 
 ## The shape of it
 

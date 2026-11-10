@@ -10,6 +10,7 @@ import * as Result from "effect/Result";
 import { Auth, AuthGuards, SessionResolver } from "./Auth.ts";
 import { AuthDatabase } from "./AuthDatabase.ts";
 import { billing } from "./billing.config.ts";
+import { planWithId } from "./catalog.ts";
 import { Page } from "./Page.ts";
 
 /**
@@ -81,8 +82,17 @@ export const serve = Effect.gen(function* () {
           return HttpServerResponse.text("?tier= is required", { status: 400 });
         }
 
+        // The query is a string and the catalog is the decode. A tier this
+        // deployment does not sell is a 400 before the provider is asked,
+        // exactly the answer the binding would give.
+        const plan = planWithId(tier);
+
+        if (plan === null) {
+          return HttpServerResponse.jsonUnsafe({ error: "PlanNotInCatalog" }, { status: 400 });
+        }
+
         const subscribe = yield* subscribeOf(resolved.success.id);
-        const purchase = yield* Effect.result(subscribe({ tier }));
+        const purchase = yield* Effect.result(subscribe({ tier: plan.id }));
 
         if (Result.isFailure(purchase)) {
           return HttpServerResponse.jsonUnsafe(

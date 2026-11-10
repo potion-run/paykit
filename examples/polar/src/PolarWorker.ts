@@ -1,4 +1,4 @@
-import { ACTOR_HEADER, Paykit } from "@potion.run/paykit";
+import { Paykit } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -6,7 +6,7 @@ import { providerOf, worldOptions, type PolarEnv } from "./Billing.ts";
 
 /** The account a request acts for. A deployment reads its own session here. */
 const accountOf = (request: HttpServerRequest.HttpServerRequest): string | null =>
-  request.headers[ACTOR_HEADER] ?? null;
+  Paykit.accountFromHeaders(request.headers);
 
 /**
  * The routes this example says it serves, offered at `/` so a deployed Worker
@@ -41,14 +41,14 @@ const handle = (request: Request, env: PolarEnv) => {
   const incoming = HttpServerRequest.fromWeb(request);
 
   return Effect.gen(function* () {
-    const serve = yield* Paykit.handler({
+    const handler = yield* Paykit.handler({
       provider,
       accountOf,
       surfaces: "none",
       routes: [{ path: "/", handle: () => Effect.succeed(home(provider.name)) }],
     });
 
-    const response = yield* serve(incoming).pipe(
+    const response = yield* handler.fetch.pipe(
       Effect.provideService(HttpServerRequest.HttpServerRequest, incoming),
     );
 

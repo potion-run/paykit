@@ -14,14 +14,20 @@ The catalog is not passed in. A command that names a plan (`startTrial`,
 `scheduleTierChange`) sends the id; the Billing Worker expands it with the
 catalog its model was built with, so the browser never holds a copy.
 
+The one thing the page shares is the feature id (`src/features.ts`): a name, not
+a plan term, so the page cannot disagree with the catalog about what to meter
+and a price or a grant still cannot go stale in the browser.
+
 `make` builds one runtime over the tenant Api. From it, a page reads two views
 and calls every tenant command:
 
 ```tsx
+import { MESSAGES } from "../features.ts";
+
 const entitlements = useAtomValue(billing.entitlements(account));
 const trackUsage = useAtomSet(billing.trackUsage(account), { mode: "promise" });
 
-await trackUsage({ featureId: "messages", value: 10, idempotencyKey: crypto.randomUUID() });
+await trackUsage({ featureId: MESSAGES, value: 10, idempotencyKey: crypto.randomUUID() });
 // `entitlements` refreshes: the command invalidated the account's reactivity key.
 ```
 
@@ -63,7 +69,9 @@ Api serves, and the deployment owns the operations the model's process owns.
 | File | What it declares |
 | --- | --- |
 | `src/catalog.ts` | Two tiers. Plain data, imported by the Worker only. |
-| `src/Billing.ts` | The model on `MemoryStore`, the `Manual` provider, and `InsecureDevGuards`. |
+| `src/features.ts` | The feature id the Worker and the page share. A name, not a plan term. |
+| `src/billing.config.ts` | The provider, the catalog and the store, as one declaration. |
+| `src/Billing.ts` | That declaration as the world, on `MemoryStore` and `InsecureDevGuards`. |
 | `src/BillingWorker.ts` | `/api/*` for the tenant Api, `/api/billing/commands` for the server-expanded plan commands, `/bootstrap` for the free tier. |
 | `src/worker.ts` | The Website entry: proxy billing paths, hand the rest to TanStack. |
 | `src/billing.atoms.ts` | `PaykitAtom.make` over the Api and server-command clients, with no catalog. |
@@ -92,8 +100,8 @@ Two files, not the atom client:
   own session (Better Auth, yielded/auth, a bearer token) and set the header from
   that session instead of a cookie the demo mints. `examples/auth` is the
   `GuardsFrom` version of this seam.
-- `src/Billing.ts`: swap `MemoryStore` for `Paykit.SqlAggregateStore` over D1, and
-  `Manual()` for `Polar(...)` or `Stripe(...)`.
+- `src/billing.config.ts`: swap `MemoryStore` for `Paykit.SqlAggregateStore` over
+  D1, and `Manual()` for `Polar(...)` or `Stripe(...)`.
 
 The catalog, the model, the atom declarations and every command atom stay as
 they are.

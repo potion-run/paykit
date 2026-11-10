@@ -1,4 +1,5 @@
 import { feature, plan, planItem } from "@potion.run/paykit/Read";
+import { MESSAGES } from "./features.ts";
 
 /**
  * The catalog. Plain data, no provider ids, so the same tiers sell through
@@ -8,7 +9,7 @@ import { feature, plan, planItem } from "@potion.run/paykit/Read";
  * expands it with this value, so there is one catalog in the system and no
  * second copy to go stale.
  */
-export const messages = feature({ id: "messages", name: "Messages" });
+export const messages = feature({ id: MESSAGES, name: "Messages" });
 
 export const free = plan({
   id: "free",

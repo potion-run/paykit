@@ -23,11 +23,14 @@ pnpm --filter @potion.run/example-billing dev    # alchemy dev
 
 | File | What it declares |
 | --- | --- |
-| `src/catalog.ts` | Two features and three tiers. Plain data, no provider ids. |
-| `src/Billing.ts` | The catalog, the provider and the guards, as one Layer on `Domain.InMemory`. |
+| `src/catalog.ts` | Four features and three plans. Plain data, no provider ids. |
+| `src/billing.config.ts` | The provider, the catalog and the store, as one declaration. |
+| `src/Billing.layer.ts` | That declaration as the world, on `Domain.InMemory`. |
+| `src/Tenant.ts` | The end API: one account's verbs, taking declared features and plans. |
 | `src/SqlBilling.ts` | The same model on SQL: `billingOnSql(d1)` is what the Worker and the SQL test both call. |
-| `src/Database.ts` | The D1 database, with the generated migration file. |
-| `src/Worker.ts` | `/api` for an account, `/admin` for an operator, `/mcp` for an agent — from one model. |
+| `src/BillingDatabase.ts` | The D1 database, with the generated migration file. |
+| `src/BillingMcp.ts` | The tenant Api as MCP tools, captured from the world the Worker built. |
+| `src/BillingWorker.ts` | `/api` for an account, `/admin` for an operator, `/mcp` for an agent — from one model. |
 | `alchemy.run.ts` | `Paykit.BillingStack` validates the catalog and records it; the Worker is released beside it. |
 | `test/example.test.ts` | Every claim below, run in `Domain.InMemory`. |
 | `test/sql.test.ts` | The same flow on a real database, through the generated migration file. |
@@ -44,47 +47,54 @@ that changes at runtime has no version and no diff.
 
 ## Selling
 
+The app calls `Tenant(account)`, and every request names a declaration from `src/catalog.ts`:
+
 ```ts
-const subscribe = yield* Paykit.Subscribe(account);
-yield* subscribe({ tier: "pro" });
+const tenant = yield* Tenant(account);
+
+const purchased = yield* tenant.subscribe({ plan: pro });
+const answer = yield* tenant.check({ feature: messages, requiredBalance: 1 });
+yield* tenant.track({ feature: messages, value: 1, idempotencyKey: requestId });
 ```
 
-`tierCommand` turns a tier id into the fields a `Subscribe` command carries. A command has to carry
-its own allowances and price because `decide` is pure and cannot look them up, so `CatalogGuard`
-refuses any command whose allowances or price disagree with the catalog the deployment validated.
-Without that guard, an Api client that forgot `price` would write a standing that can never be
-reconciled against an invoice.
+The bindings behind it take a plain string id, because the same binding is a wire contract. `Tenant`
+closes that gap once: a `Feature` or `Plan` is the only thing a verb accepts, and a feature's `kind`
+decides which verbs take it — a flag cannot be tracked, and a seat is set rather than spent. The
+answer, the refusals and the read-your-write wait are still the library's.
+
+`subscribeInput` in `test/support.ts` turns a plan declaration into the fields a raw `Subscribe`
+command carries. A command has to carry its own allowances and price because `decide` is pure and
+cannot look them up, so `CatalogGuard` refuses any command whose allowances or price disagree with
+the catalog the deployment validated. Without that guard, an Api client that forgot `price` would
+write a standing that can never be reconciled against an invoice.
 
 ## Checking and tracking
 
 ```ts
-const check = yield* Paykit.Check(account);
-const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
+const tenant = yield* Tenant(account);
+const answer = yield* tenant.check({ feature: messages, requiredBalance: 1 });
 // { allowed: true, balance, standing: "good" }
 ```
 
 `check` answers from one local read of the `Entitlements` view. There is no provider round trip,
-ever, and the preferred path is in-process (`CheckInProcess`) before the read model and HTTP
-fallbacks.
+ever, and the preferred path is in-process before the read model and HTTP fallbacks.
 
-`Track` records usage in the same transaction that judges the allowance, so a blocking allowance
-refuses before anything is written, and a `dedupeKey` makes a retry record once.
+`tenant.track` records usage in the same transaction that judges the allowance, so a blocking
+allowance refuses before anything is written, and the `idempotencyKey` makes a retry record once.
 
 ## Holding allowance
 
 Work that has started but not finished should not be billed, and should not be spendable twice:
 
 ```ts
-const hold = yield* Paykit.Hold(account);
-const settle = yield* Paykit.SettleHold(account);
-const release = yield* Paykit.ReleaseHold(account);
+const tenant = yield* Tenant(account);
 
-const reservation = yield* hold({ feature: "messages", amount: 10, dedupeKey: turnId });
+const reservation = yield* tenant.hold({ feature: messages, amount: 10, dedupeKey: turnId });
 const used = yield* runTheTurn();
 // One call bills what ran and returns the rest.
-yield* settle({ holdId: reservation.holdId, amount: used, dedupeKey: `${turnId}:settle` });
+yield* tenant.settleHold({ holdId: reservation.holdId, amount: used, dedupeKey: `${turnId}:settle` });
 // Or return the whole hold without billing it.
-yield* release({ holdId: reservation.holdId, dedupeKey: `${turnId}:release` });
+yield* tenant.releaseHold({ holdId: reservation.holdId, dedupeKey: `${turnId}:release` });
 ```
 
 A reservation moves `remaining` and `reserved`, never `usage`. `check` therefore refuses the next
@@ -94,8 +104,8 @@ so a leaking reservation is an error rather than a quietly shrinking allowance.
 ## Showing the charge first
 
 ```ts
-const preview = yield* Paykit.Preview(account);
-const result = yield* preview({ command: { kind: "changeTier", tier: "scale" } });
+const tenant = yield* Tenant(account);
+const result = yield* tenant.preview({ kind: "changeTier", plan: scale });
 if (result._tag === "accepted") console.log(result.proration?.due);
 ```
 
@@ -105,7 +115,7 @@ records nothing.
 
 ## Two surfaces, one model
 
-`src/Worker.ts` serves `/api` from `BillingApi` and `/admin` from `BillingAdminApi`. They differ in
+`src/BillingWorker.ts` serves `/api` from `BillingApi` and `/admin` from `BillingAdminApi`. They differ in
 authorization, not in model:
 
 - `Session` resolves the caller and pins an account to itself. Both views declare it and re-check
@@ -151,10 +161,22 @@ same database after a subscribe.
 ## Swapping in a real provider
 
 1. Add the peer: `@alchemy.run/stripe`, or `@potion.run/paykit-polar` for Polar.
-2. Replace `Manual()` with `Stripe()` in `src/Billing.ts` and map tiers to price handles in the
+2. Replace `Manual()` with `Stripe()` in `src/billing.config.ts` and map tiers to price handles in the
    provider config. The catalog does not move, and no file under `src/` changes shape.
 3. Point the provider's webhook endpoint at `handleWebhook`. The provider's event id becomes the
    command id, so a redelivery is a replay rather than a second charge.
+
+## Other variants
+
+| Example | The axis it changes |
+| --- | --- |
+| [`examples/memory`](../memory) | The smallest deployment: `MemoryStore`, `Manual`, no database or key. |
+| [`examples/stripe`](../stripe) | `StripeBilling` provisions prices and meters; the Worker resolves the lookup keys. |
+| [`examples/postgres`](../postgres) | The model on Postgres through Cloudflare Hyperdrive. |
+| [`examples/polar`](../polar) | `PolarBilling` provisions a product; the Worker sells it. |
+| [`examples/auth`](../auth) | Better Auth on D1 and the provider-neutral session resolver. |
+| [`examples/admin`](../admin) | The Foldkit console over `BillingAdminApi`. |
+| [`examples/tanstack`](../tanstack) | A TanStack Start UI on the Effect Atom client. |
 
 ## Destroying this stack
 

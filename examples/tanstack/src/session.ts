@@ -2,7 +2,7 @@
 export const ACCOUNT_COOKIE = "paykit_account";
 
 /** The header the Billing Worker's development guard reads. */
-export const ACTOR_HEADER = "x-paykit-actor";
+export { ACTOR_HEADER } from "@potion.run/paykit";
 
 /** One cookie's value, without a dependency on a browser or a runtime. */
 export const cookieValue = (cookie: string | null, name: string): string | null => {

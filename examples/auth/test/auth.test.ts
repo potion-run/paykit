@@ -9,9 +9,10 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import { type AuthInstance, actorOf, Auth, authGuards } from "../src/Auth.ts";
+import { serve } from "../src/AuthWorker.ts";
 import { BillingTestLive } from "../src/Billing.ts";
-import { serve } from "../src/Worker.ts";
-import { tierCommand } from "./support.ts";
+import { free as freePlan, messages } from "../src/catalog.ts";
+import { subscribeInput } from "./support.ts";
 
 const secret = "test-secret-test-secret-test-secret";
 const adminEmail = "ops@example.com";
@@ -111,12 +112,12 @@ describe("the auth-gated billing app", () => {
 
         // The account id is the Better Auth user id. It is not a parameter the
         // caller may choose: a session for this user can only act for itself.
-        const free = yield* tierCommand("free");
+        const free = yield* subscribeInput(freePlan);
         yield* tenant.Subscribe(account, free, asUser);
 
         const receipt = yield* tenant.TrackUsage(
           account,
-          { feature: "messages", amount: 5, dedupeKey: "first" },
+          { feature: messages.id, amount: 5, dedupeKey: "first" },
           asUser,
         );
 
@@ -125,7 +126,7 @@ describe("the auth-gated billing app", () => {
 
         // A request with no session never reaches the model.
         const anonymous = yield* Effect.exit(
-          tenant.TrackUsage(account, { feature: "messages", amount: 1, dedupeKey: "anon" }),
+          tenant.TrackUsage(account, { feature: messages.id, amount: 1, dedupeKey: "anon" }),
         );
 
         expect(anonymous._tag).toBe("Failure");
@@ -135,7 +136,7 @@ describe("the auth-gated billing app", () => {
         const other = yield* Effect.exit(
           tenant.TrackUsage(
             accountOf("someone-else"),
-            { feature: "messages", amount: 1, dedupeKey: "other" },
+            { feature: messages.id, amount: 1, dedupeKey: "other" },
             asUser,
           ),
         );
@@ -157,7 +158,7 @@ describe("the auth-gated billing app", () => {
         const tenant = yield* BillingApi.clientInProcess;
         const admin = yield* BillingAdminApi.clientInProcess;
 
-        const free = yield* tierCommand("free");
+        const free = yield* subscribeInput(freePlan);
         yield* tenant.Subscribe(account, free, { headers: { cookie: user.cookie } });
 
         const refused = yield* Effect.exit(

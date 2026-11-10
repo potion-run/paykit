@@ -1,4 +1,4 @@
-import { InsecureDevGuards, type MoneyProvider } from "@potion.run/paykit";
+import { InsecureDevGuards, type MoneyProvider, type PaykitWorldOptions } from "@potion.run/paykit";
 import { Polar, type PolarClient } from "@potion.run/paykit-polar";
 import * as Redacted from "effect/Redacted";
 import { billingCatalog, messagePrice, proPrice } from "./catalog.ts";
@@ -47,10 +47,16 @@ export const providerOf = (
  * The world the Worker and the test build around one provider. The tenant
  * bindings supply `Paykit.Subscribe` and `Paykit.Webhook`, which the money
  * routes call; this example never mounts the Api itself.
+ *
+ * The return type is the options type with `B` fixed to `"tenant"`, so the
+ * world provides exactly the tenant bindings and a caller cannot ask this
+ * process for the operator surface it never built.
  */
-export const worldOptions = (provider: MoneyProvider) => ({
+export const worldOptions = (
+  provider: MoneyProvider,
+): PaykitWorldOptions<never, never, "tenant"> => ({
   catalog: billingCatalog,
   providers: [provider],
   guards: InsecureDevGuards,
-  bindings: "tenant" as const,
+  bindings: "tenant",
 });

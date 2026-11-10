@@ -13,15 +13,13 @@ import {
   type SqlValue,
 } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import { Catalog } from "../src/Billing.ts";
-import { billingCatalog } from "../src/catalog.ts";
+import { billingCatalog, free, messages } from "../src/catalog.ts";
 import { billingOnSql } from "../src/SqlBilling.ts";
-import { tierCommand } from "./support.ts";
+import { subscribeInput } from "./support.ts";
 
 const account = Subscription.ref("acct_sql_example");
 const asAccount = { headers: { "x-paykit-actor": account.id } };
-const free = Effect.runSync(tierCommand("free"));
+const freeInput = Effect.runSync(subscribeInput(free));
 
 /**
  * A prepared statement over `bun:sqlite`, carrying the SQL and the binds it
@@ -99,7 +97,7 @@ describe("the example on a SQL database", () => {
 
       const subscribed = yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
-        const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
+        const receipt = yield* tenant.Subscribe(account.id, freeInput, asAccount);
         const entitlements = yield* Entitlements;
         yield* entitlements.query(account, { atLeast: receipt });
 
@@ -107,7 +105,7 @@ describe("the example on a SQL database", () => {
       }).pipe(Effect.provide(world));
 
       const check = yield* Check(account.id).pipe(Effect.provide(world));
-      const answer = yield* check({ featureId: "messages", requiredBalance: 1 });
+      const answer = yield* check({ featureId: messages.id, requiredBalance: 1 });
       expect(answer.allowed).toBe(true);
       expect(answer.balance.remaining).toBe(100);
 
@@ -132,11 +130,11 @@ describe("the example on a SQL database", () => {
       const { world } = billingOnSql(d1Over(migrated()));
       yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
-        yield* tenant.Subscribe(account.id, free, asAccount);
+        yield* tenant.Subscribe(account.id, freeInput, asAccount);
 
         const tracked = yield* tenant.TrackUsage(
           account.id,
-          { feature: "messages", amount: 30 },
+          { feature: messages.id, amount: 30 },
           asAccount,
         );
 
@@ -145,7 +143,7 @@ describe("the example on a SQL database", () => {
       }).pipe(Effect.provide(world));
 
       const check = yield* Check(account.id).pipe(Effect.provide(world));
-      expect((yield* check({ featureId: "messages" })).balance.remaining).toBe(70);
+      expect((yield* check({ featureId: messages.id })).balance.remaining).toBe(70);
     }),
   );
 
@@ -154,7 +152,7 @@ describe("the example on a SQL database", () => {
       const { world } = billingOnSql(d1Over(migrated()));
       yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
-        const receipt = yield* tenant.Subscribe(account.id, free, asAccount);
+        const receipt = yield* tenant.Subscribe(account.id, freeInput, asAccount);
         const entitlements = yield* Entitlements;
         yield* entitlements.query(account, { atLeast: receipt });
       }).pipe(Effect.provide(world));
@@ -174,7 +172,7 @@ describe("the example on a SQL database", () => {
       const refused = yield* Effect.gen(function* () {
         const tenant = yield* BillingApi.clientInProcess;
 
-        return yield* Effect.exit(tenant.Subscribe(account.id, free));
+        return yield* Effect.exit(tenant.Subscribe(account.id, freeInput));
       }).pipe(Effect.provide(world));
 
       expect(refused._tag).toBe("Failure");
@@ -201,8 +199,10 @@ describe("the example on a SQL database", () => {
       expect(names).toContain("billing_rm_view_outbox");
       // The catalog the example declares is one `catalog()` validates.
       const validated = yield* catalog(billingCatalog);
-      expect(Catalog.tiers.map((tier) => tier.id)).toEqual(validated.tiers.map((tier) => tier.id));
-      expect(Option.isNone(Option.none())).toBe(true);
+
+      expect(billingCatalog.tiers.map((tier) => tier.id)).toEqual(
+        validated.tiers.map((tier) => tier.id),
+      );
     }),
   );
 });

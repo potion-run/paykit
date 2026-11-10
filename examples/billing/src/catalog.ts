@@ -5,14 +5,28 @@ import { Paykit } from "@potion.run/paykit";
  * catalog runs on `Manual`, Stripe or Polar. `Stack` validates this at deploy,
  * so a tier that grants a feature nobody declared is a deploy error rather
  * than a broken checkout.
+ *
+ * Every declaration here is also the only way the example names it: `Tenant`
+ * takes the `Feature` and `Plan` values rather than their ids, so a name that
+ * is not a declaration does not type-check, and a feature's `kind` decides
+ * which verbs accept it.
  */
 export const messages = Paykit.feature({ id: "messages", name: "Messages" });
-export const seats = Paykit.feature({ id: "seats", name: "Seats" });
+
+/**
+ * A quantity: the account holds a purchased count and reports how many are in
+ * use, and the two are different facts. A quantity is set with `SetQuantity`
+ * and `SetUsage`, never spent, which is why `kind` is part of the declaration.
+ */
+export const seats = Paykit.feature({ id: "seats", name: "Seats", kind: "non_consumable" });
 
 /**
  * An on/off capability. A flag is granted with `grant()`, not metered with
  * `allowance()`: there is no count behind it, so `check()` answers allowed and
  * `Track` refuses it.
+ *
+ * The `kind` is part of the declaration's type, which is how `Tenant.track`
+ * rejects a flag at compile time instead of recording nothing at runtime.
  */
 export const sso = Paykit.feature({ id: "sso", name: "SSO", kind: "flag" });
 
@@ -27,6 +41,9 @@ export const ai = Paykit.feature({
   creditRates: { default: 1, "gpt-large": 10 },
 });
 
+/** The price `pro` is sold at and the provider sells, stated once. */
+export const proPrice = { amount: 1900, currency: "usd", interval: "month" } as const;
+
 export const free = Paykit.plan({
   id: "free",
   name: "Free",
@@ -36,7 +53,7 @@ export const free = Paykit.plan({
 export const pro = Paykit.plan({
   id: "pro",
   name: "Pro",
-  price: { amount: 1900, currency: "usd", interval: "month" },
+  price: proPrice,
   grants: [
     // Rollover: what the month did not spend carries into the next one, at most
     // one month's worth. `check()` reports the carried amount as `remaining`.

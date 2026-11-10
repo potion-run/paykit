@@ -7,9 +7,10 @@ A subscription is not a payment. A payment is an event that changes a standing. 
 this package derives from that sentence. [PLAN.md](./PLAN.md) is the design of record; this
 README is the quickstart and the honest status of what ships today.
 
-> **Status:** the shipped surface below is command-level. The plan/customer/balance API in
-> [ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md) is in progress; the
-> examples here document what ships until the `Api` subpath lands.
+> **Status:** the plan/customer/balance API in
+> [ADR 0035](../../docs/adr/0035-plans-plan-items-and-balance-sources.md) has landed. The public
+> words are `Plan`, `PlanItem`, `Feature`, `Customer` and `Balance`; the bindings are named after
+> their commands, and `Paykit.plan()` / `Paykit.planItem()` are the authoring calls.
 
 :::warning
 The ledger is application data, not stack state. Use `RemovalPolicy.RETAIN` on catalog and account
@@ -419,12 +420,12 @@ refuses a mapping whose amount, currency or interval disagrees with the catalog
 
 | Binding | Answers |
 | --- | --- |
-| `Check()` | `{ allowed, remaining, resetsAt, standing }`, one local read (`remaining` is `null` when the allowance never runs out) |
-| `Track()` | records a usage fact, deduped by key, atomically with its allowance check |
-| `Subscribe()` | a hosted checkout URL, an invoice id, or `{ activated: true }` for a free tier |
-| `Portal()` | the provider's customer portal, when it declares one |
-| `Webhook()` | the webhook edge as a binding: `(event) => WebhookAction`, services resolved once |
-| `handleWebhook(event)` | the same edge, reading the model from the context |
+| `Paykit.Check(account)` | `{ allowed, balance, standing }`, one local read (`balance.remaining` is `null` when the allowance never runs out) |
+| `Paykit.TrackUsage(account)` | records a usage fact, deduped by `idempotencyKey`, atomically with its allowance check |
+| `Paykit.Subscribe(account)` | a hosted checkout URL, an invoice id, or `{ activated: true }` for a free tier |
+| `Paykit.Portal(account)` | the provider's customer portal, when it declares one |
+| `Paykit.Webhook()` | the webhook edge as a binding: `(event) => WebhookAction`, services resolved once |
+| `Paykit.handler({ provider })` | the deployment's paths as a request function and as `handler.fetch`, an `HttpEffect` that reads the ambient request |
 
 All money is `Schema.Int` minor units with a currency on every amount. A provider that does not
 implement an optional op fails with `ProviderCapabilityMissing`; nothing degrades silently.
@@ -433,6 +434,26 @@ A `Hold` is an addressable reservation for work in flight: `Settle` bills what r
 rest in the same call, `Release` returns all of it, and a hold left open is released by `HoldSweep`
 at its `expiresAt` (fifteen minutes by default). `reserved` on the read model is the fold of the
 open holds, not a counter a command writes.
+
+## SQL hosts
+
+`SqlEventLog`, `SqlPlatform` and `SqlBillingReadStore` are the SQL world; the
+driver is the one platform-specific piece. `Paykit.d1Executor` adapts a D1
+binding, and `Paykit.postgresExecutor` adapts Alchemy's
+`@alchemy.run/sql/Postgres` client (an `@effect/sql-pg` pool) — which is what a
+Worker uses through Hyperdrive. The driver owns the placeholder dialect, the
+transaction and its isolation; the store states what belongs together and the
+driver decides how.
+
+```ts
+const client = yield* SQL.Postgres({ url: hyperdrive.connectionString });
+const sql = Paykit.postgresExecutor(client);
+const log = Paykit.SqlEventLog(sql, { now, schema: "billing" });
+const { platform } = Paykit.SqlPlatform(sql, log, { now, schema: "billing" });
+```
+
+`examples/postgres` is the whole wiring: a Hyperdrive configuration, Alchemy's
+migration registry at deploy, and one Worker.
 
 ## Providers
 
@@ -531,8 +552,7 @@ Not shipped yet, and deliberately not faked:
 
 - A `paykit migrate` / `paykit doctor` CLI; the library effects (`migrate`, `migrateDryRun`,
   `doctor`) are ready for it.
-- The durable checkout saga (the checkout start/complete flow works today), scheduling a tier change
-  withdrawal, and scheduled dunning retries beyond the grace deadline.
+- A durable checkout saga across a crash (the checkout start/complete flow works today).
 
 ## Test layout
 

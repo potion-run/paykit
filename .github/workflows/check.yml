@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/smoke-artifact.mjs packages/paykit/lib/index.js \
-            Paykit BillingStack world httpStatus Preview Verify List ChargeProration SqlEventLog SqlPlatform SqlBillingReadStore
+            Paykit BillingStack world handler httpStatus accountFromHeaders postgresExecutor Preview Verify List ChargeProration SqlEventLog SqlPlatform SqlBillingReadStore
           node scripts/smoke-artifact.mjs packages/paykit-polar/lib/index.js \
             PolarBilling PolarPrices soldTiers Polar distilledPolarClient polarBindings polarBaseUrl polarWebhook
           node scripts/smoke-artifact.mjs packages/paykit-stripe/lib/index.js \

@@ -62,6 +62,17 @@ describe("migrations", () => {
     expect(sql).not.toContain('"public"');
   });
 
+  it("renders a Postgres index name unqualified on its qualified table", () => {
+    const [file] = migrationFiles({ dialect: "postgres", schema: "billing" });
+
+    const index = file!.statements.find((statement) =>
+      statement.startsWith('CREATE INDEX IF NOT EXISTS "billing_event_command"'),
+    );
+
+    expect(index).toContain('ON "billing"."billing_event"');
+    expect(index).not.toContain('"billing"."billing_event_command"');
+  });
+
   it("carries every migration as statements and a canonical SQL string", () =>
     Effect.gen(function* () {
       const records = yield* readMigrationFiles({ dialect: "sqlite" });
@@ -119,9 +130,19 @@ describe("migrations", () => {
               statement.startsWith("CREATE TABLE") || statement.startsWith("CREATE INDEX"),
           );
 
+          const tables = ddl.filter((statement) => statement.startsWith("CREATE TABLE"));
+          const indexes = ddl.filter((statement) => statement.startsWith("CREATE INDEX"));
+
           if (dialect === "postgres") {
-            // Every table and index is qualified with the chosen schema.
-            if (!ddl.every((statement) => statement.includes(`"${schema}".`))) return false;
+            // Tables are qualified; an index name is not (Postgres rejects
+            // `CREATE INDEX "schema"."name"`), only its `ON` table is.
+            if (!tables.every((statement) => statement.includes(`"${schema}".`))) return false;
+
+            const indexOnTable = new RegExp(
+              `^CREATE INDEX IF NOT EXISTS "[^"]+"\\s+ON "${schema}"\\.`,
+            );
+
+            if (!indexes.every((statement) => indexOnTable.test(statement))) return false;
           } else if (ddl.some((statement) => statement.includes(`"${schema}".`))) {
             return false;
           }
