@@ -53,6 +53,21 @@ sold at, and a version move is the ordinary `attach` / `update` / scheduled phas
 behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a bump). No deploy
 rewrites a standing and there is no automatic migration.
 
+The billing database is a port now. `Paykit.Database` gives a target one `DatabaseService` with a
+per-execution `runtime` connection and, when the target can migrate, a separate deploy-time
+`migrate.connect`; `Database/Sqlite`, `Database/Postgres` and `Database/D1` are imported from their
+own export condition because the driver is a peer. The schema is a description (`BILLING_SCHEMA`),
+`migrationFiles()` renders it, the committed `examples/*/migrations/*.sql` files are that rendering,
+and `pnpm migrations:check` fails when they disagree. A deploy applies those files through
+`@alchemy.run/sql/Migrations` and then converges the live database, adding missing columns and
+indexes and refusing every drop, rename or retype. `Paykit.Migrations` registers one Action per
+target keyed by `{ identity, schemaFingerprint, migrationFingerprint, dialect }`, so a new file, a
+description change or a replaced database re-runs it, an unchanged deploy is a no-op, and the Worker
+depends on its output. D1 keeps applying its own directory with `migrate: false`. Still open: MySQL,
+Drizzle as a schema owner, and an example that puts Better Auth's tables and paykit's `billing_*`
+tables in one database. The record is [ADR
+0049](./adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md).
+
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver` with a `carryCap`, credits with a rate card (a `creditRates` shorthand, or a
 `rateCard` with property `rules` and `multipliers`, overridable per tier), a spend cap (`cap`), a
