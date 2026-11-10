@@ -76,6 +76,18 @@
     },
     {
       "path": "./examples/tanstack/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/drizzle"
+    },
+    {
+      "path": "./examples/drizzle/tsconfig.test.json"
+    },
+    {
+      "path": "./examples/mysql"
+    },
+    {
+      "path": "./examples/mysql/tsconfig.test.json"
     }
   ]
 }

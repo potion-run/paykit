@@ -1,12 +1,6 @@
 import * as SQL from "@alchemy.run/sql/Postgres";
 import { describe, expect, it } from "@alchemy.run/test";
-import {
-  asyncOf,
-  migrationFiles,
-  Paykit,
-  postgresExecutor,
-  Subscription,
-} from "@potion.run/paykit";
+import { asyncOf, Paykit, postgresExecutor, sync, Subscription } from "@potion.run/paykit";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import { free, messages } from "../src/catalog.ts";
@@ -42,16 +36,16 @@ describe("the Postgres example", () => {
       const client = yield* SQL.Postgres({ url: Redacted.make(url) });
       const sql = asyncOf(postgresExecutor(client));
 
-      // A scratch database: start from the migration's own DDL, the same
-      // statements the deploy action applies through Alchemy's registry.
+      // A scratch database. `sync` is what the deploy Action runs: apply the
+      // shipped files through Alchemy's registry, then converge the shipped
+      // description against what the database actually has.
       yield* sql.query('DROP SCHEMA IF EXISTS "billing" CASCADE');
       yield* sql.query('CREATE SCHEMA IF NOT EXISTS "billing"');
 
-      const [init] = migrationFiles({ dialect: "postgres", schema: "billing" });
-
-      for (const statement of init.statements) {
-        yield* sql.query(statement);
-      }
+      const migrated = yield* sync(postgresExecutor(client), { schema: "billing" });
+      expect(migrated.applied).toEqual(["0001_init"]);
+      expect(migrated.created).toEqual([]);
+      expect(migrated.columns).toEqual([]);
 
       const { world } = billingOnPostgres(postgresExecutor(client));
 

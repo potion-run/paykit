@@ -15,7 +15,8 @@ import {
 } from "@alchemy.run/sql/Migrations";
 import { sha256 } from "alchemy/Util/sha256";
 import * as Effect from "effect/Effect";
-import type { SqlDialect, SqlExecutor, SqlValue } from "../Store/Sql.ts";
+import * as Result from "effect/Result";
+import { asyncOf, type SqlDialect, type SqlExecutor, type SqlValue } from "../Store/Sql.ts";
 import {
   BILLING_TABLES,
   DEFAULT_SCHEMA,
@@ -23,6 +24,13 @@ import {
   quoteIdentifier,
   tableName,
 } from "../Store/Tables.ts";
+import { converge } from "./Converge.ts";
+import {
+  BILLING_SCHEMA,
+  BILLING_SCHEMA_V1,
+  schemaStatementsOf,
+  type SchemaDefinition,
+} from "./Schema.ts";
 
 /** Where a migration's DDL is rendered: a dialect and, on Postgres, a schema. */
 export interface MigrationScope {
@@ -63,219 +71,16 @@ const scopeOf = (input: Partial<MigrationScope> | undefined): Required<Migration
   table: input?.table ?? DEFAULT_MIGRATION_TABLE,
 });
 
-const millisType = (dialect: SqlDialect): "BIGINT" | "INTEGER" =>
-  // Postgres INTEGER is 32-bit; every epoch-millis column needs 64.
-  dialect === "postgres" ? "BIGINT" : "INTEGER";
-
-const createTable = (
-  scope: Required<MigrationScope>,
-  table: string,
-  columns: ReadonlyArray<string>,
-): string => `CREATE TABLE IF NOT EXISTS ${tableName(table, scope)} (${columns.join(", ")})`;
-
-const createIndex = (
-  scope: Required<MigrationScope>,
-  name: string,
-  on: string,
-  columns: ReadonlyArray<string>,
-): string =>
-  // Postgres index names are never schema-qualified: the index lands in the
-  // table's schema, and `CREATE INDEX "schema"."name"` is a syntax error.
-  `CREATE INDEX IF NOT EXISTS ${quoteIdentifier(name)} ON ${tableName(on, scope)} (${columns.join(", ")})`;
-
 /** The schema creation, before any table. Postgres only. */
 export const schemaStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
   scope.dialect === "postgres"
-    ? [`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(scope.schema)}`]
+    ? [`CREATE SCHEMA IF NOT EXISTS ${quoteIdentifier(scope.schema, scope.dialect)}`]
     : [];
 
-const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-
-  const sequence =
-    scope.dialect === "postgres" ? "BIGSERIAL PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT";
-
-  return [
-    createTable(scope, BILLING_TABLES.event, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "seq INTEGER NOT NULL",
-      "command_id TEXT NOT NULL",
-      `at ${time} NOT NULL`,
-      "event TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account, seq)",
-    ]),
-    createIndex(scope, "billing_event_command", BILLING_TABLES.event, [
-      "aggregate",
-      "account",
-      "command_id",
-    ]),
-    createTable(scope, BILLING_TABLES.receipt, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "command_id TEXT NOT NULL",
-      "version INTEGER NOT NULL",
-      "receipt TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account, command_id)",
-    ]),
-    createTable(scope, BILLING_TABLES.state, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "version INTEGER NOT NULL",
-      "state TEXT NOT NULL",
-      "PRIMARY KEY (aggregate, account)",
-    ]),
-    createTable(scope, BILLING_TABLES.outbox, [
-      `seq ${sequence}`,
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "event_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    createIndex(scope, "billing_outbox_pending", BILLING_TABLES.outbox, ["delivered_at", "seq"]),
-    createTable(scope, BILLING_TABLES.schedule, [
-      "aggregate TEXT NOT NULL",
-      "account TEXT NOT NULL",
-      "command_id TEXT NOT NULL",
-      `due_at ${time} NOT NULL`,
-      "command TEXT NOT NULL",
-      `delivered_at ${time}`,
-      "PRIMARY KEY (aggregate, account, command_id)",
-    ]),
-    createIndex(scope, "billing_schedule_due", BILLING_TABLES.schedule, ["delivered_at", "due_at"]),
-    createTable(scope, BILLING_TABLES.readModel, [
-      "account TEXT PRIMARY KEY",
-      "tier TEXT NOT NULL",
-      "status TEXT NOT NULL",
-      "standing TEXT NOT NULL",
-      `period_start ${time} NOT NULL`,
-      `period_end ${time} NOT NULL`,
-      "cancel_at_period_end INTEGER NOT NULL",
-      "credits INTEGER NOT NULL",
-      "prepaid_credits INTEGER NOT NULL",
-      "dunning_attempts INTEGER NOT NULL",
-      "proration TEXT",
-      "proration_invoice TEXT",
-      "currency TEXT",
-      "features TEXT NOT NULL",
-      "entities TEXT",
-    ]),
-    createIndex(scope, "billing_rm_billing_read_standing", BILLING_TABLES.readModel, [
-      "standing",
-      "tier",
-    ]),
-    createTable(scope, BILLING_TABLES.backfill, [
-      "consumer TEXT PRIMARY KEY",
-      "generation INTEGER NOT NULL",
-      "plan TEXT NOT NULL",
-      `completed_at ${time} NOT NULL`,
-    ]),
-    createTable(scope, BILLING_TABLES.viewOutbox, [
-      `seq ${sequence}`,
-      "view TEXT NOT NULL",
-      "key TEXT NOT NULL",
-      "entry_seq INTEGER NOT NULL",
-      "delivery TEXT NOT NULL",
-      `delivered_at ${time}`,
-    ]),
-    createIndex(scope, "billing_rm_view_outbox_pending", BILLING_TABLES.viewOutbox, [
-      "view",
-      "key",
-      "delivered_at",
-      "seq",
-    ]),
-    ...consumerStatements(scope),
-  ];
-};
-
-/**
- * The consumer tables: a view's snapshot, its emitted entries, and the input
- * log each consumer dedupes by. All of them are `billing_rm_*`, so dropping
- * every one and rebuilding from `billing_event` is always allowed.
- */
-const consumerStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> => {
-  const time = millisType(scope.dialect);
-  const name = scope.dialect === "postgres" && scope.schema !== undefined;
-
-  const table = (logical: string) =>
-    name ? `${quoteIdentifier(scope.schema!)}.${quoteIdentifier(logical)}` : logical;
-
-  return [
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewState)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      generation INTEGER NOT NULL,
-      version INTEGER NOT NULL,
-      seq INTEGER NOT NULL,
-      checkpoints TEXT NOT NULL,
-      state TEXT,
-      PRIMARY KEY (view, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewEntry)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL DEFAULT 0,
-      event TEXT NOT NULL,
-      envelope TEXT NOT NULL,
-      state TEXT NOT NULL,
-      PRIMARY KEY (view, key, seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.viewInput)} (
-      view TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL,
-      PRIMARY KEY (view, key, source, source_seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionInput)} (
-      projection TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      generation INTEGER NOT NULL,
-      position INTEGER NOT NULL,
-      delivery TEXT NOT NULL,
-      accepted_at ${time} NOT NULL,
-      processed_at ${time},
-      PRIMARY KEY (projection, key, source, source_seq)
-    )`,
-    `CREATE INDEX IF NOT EXISTS ${quoteIdentifier("billing_rm_projection_pending")}
-      ON ${table(BILLING_TABLES.projectionInput)} (projection, key, processed_at, position)`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.projectionCursor)} (
-      projection TEXT NOT NULL,
-      key TEXT NOT NULL,
-      position INTEGER NOT NULL,
-      PRIMARY KEY (projection, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.policySeen)} (
-      policy TEXT NOT NULL,
-      key TEXT NOT NULL,
-      source TEXT NOT NULL,
-      source_seq INTEGER NOT NULL,
-      PRIMARY KEY (policy, key, source, source_seq)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamMeta)} (
-      stream TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      checkpoints TEXT NOT NULL,
-      origin_a INTEGER NOT NULL,
-      origin_b INTEGER NOT NULL,
-      PRIMARY KEY (stream, key)
-    )`,
-    `CREATE TABLE IF NOT EXISTS ${table(BILLING_TABLES.streamEntry)} (
-      stream TEXT NOT NULL,
-      key TEXT NOT NULL,
-      seq INTEGER NOT NULL,
-      event TEXT NOT NULL,
-      envelope TEXT NOT NULL,
-      PRIMARY KEY (stream, key, seq)
-    )`,
-  ];
-};
+// The DDL is a rendering of the one typed description, so the file a deploy
+// applies and the DDL a test or a dry run prints come from the same source.
+const initStatements = (scope: Required<MigrationScope>): ReadonlyArray<string> =>
+  schemaStatementsOf(BILLING_SCHEMA_V1, scope);
 
 /**
  * The migrations paykit ships, rendered for a dialect and schema. The list is
@@ -294,6 +99,34 @@ export const migrationFiles = (input?: Partial<MigrationScope>): ReadonlyArray<M
   const scope = scopeOf(input);
 
   return [fileOf("0001_init", initStatements(scope))];
+};
+
+/**
+ * The digest of the schema description rendered for a dialect: the DDL a
+ * deploy would apply, without the migration wrapper. Two builds that create
+ * the same tables hash the same, and adding a column, changing a type or
+ * moving a key moves it.
+ *
+ * `schema` defaults to `BILLING_SCHEMA`; a tool with a candidate description
+ * can fingerprint that instead.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { schemaFingerprint } from "@potion.run/paykit"
+ *
+ * const sqlite = yield* schemaFingerprint()
+ * const postgres = yield* schemaFingerprint({ dialect: "postgres" })
+ * ```
+ */
+export const schemaFingerprint = (
+  input?: Partial<MigrationScope>,
+  schema: SchemaDefinition = BILLING_SCHEMA,
+): Effect.Effect<string> => {
+  const statements = schemaStatementsOf(schema, scopeOf(input));
+
+  return sha256(`${statements.join(";\n")};`);
 };
 
 const fileOf = (id: string, statements: ReadonlyArray<string>): MigrationFile => ({
@@ -320,6 +153,40 @@ export const readMigrationFiles = (
       statements: [...file.statements],
     })),
   );
+};
+
+/**
+ * The digest of the shipped migration set for a scope: its file ids, their
+ * content hashes, and the dialect, schema and bookkeeping table it was
+ * rendered for. It answers "did what we ship change", where
+ * `schemaFingerprint` answers "did the table shape change". A schema or table
+ * change counts even when the DDL bytes happen to match, because the registry
+ * writes history under the table and routes DDL to the schema.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { migrationFingerprint } from "@potion.run/paykit"
+ *
+ * const shipped = yield* migrationFingerprint({ dialect: "postgres", schema: "billing" })
+ * ```
+ */
+export const migrationFingerprint = (input?: Partial<MigrationScope>): Effect.Effect<string> => {
+  const scope = scopeOf(input);
+
+  return Effect.gen(function* () {
+    const files = yield* readMigrationFiles(scope);
+
+    const payload = {
+      dialect: scope.dialect,
+      schema: scope.schema,
+      table: scope.table,
+      files: files.map((file) => ({ id: file.name, hash: file.hash })),
+    };
+
+    return yield* sha256(JSON.stringify(payload));
+  });
 };
 
 /**
@@ -365,61 +232,104 @@ const describeCause = (cause: unknown): string => {
 };
 
 /**
- * Adapt the store's synchronous `SqlExecutor` into the registry's Effect
- * executor. `batch` is the atomic unit both Alchemy and paykit rely on: a
- * migration's statements and its bookkeeping row commit together.
+ * The registry runs on whichever half the driver implements. A synchronous
+ * driver keeps its own transaction — one `BEGIN IMMEDIATE` around the batch —
+ * and a remote driver (Postgres, D1 over HTTP) goes through `asyncOf`'s
+ * `batch`, which is its atomic unit. `Paykit.migrate` is therefore the same
+ * call on every target.
  */
-// SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
+const isAsync = (sql: SqlExecutor): boolean => sql.query !== undefined;
+
+/**
+ * The registry's bookkeeping binds are strings, numbers and null. Narrowing
+ * here keeps every adapter honest about the values a migration can bind.
+ */
+const binds = (params: ReadonlyArray<unknown> | undefined): ReadonlyArray<SqlValue> =>
+  // SAFETY: the registry's params are migration bookkeeping values (name, hash, timestamp), never a caller's object.
+  (params ?? []) as ReadonlyArray<SqlValue>;
+
+const queryFailure = (scope: Required<MigrationScope>, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `${scope.dialect} query failed: ${cause.message}`,
+    cause,
+  });
+
+const batchFailure = (scope: Required<MigrationScope>, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `${scope.dialect} migration batch failed: ${cause.message}`,
+    cause,
+  });
+
+/**
+ * Adapt the store's executor into the registry's Effect executor. `batch` is
+ * the atomic unit both Alchemy and paykit rely on: a migration's statements and
+ * its bookkeeping row commit together.
+ */
 const migrationExecutor = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
-): MigrationSqlExecutor => ({
-  dialect: scope.dialect,
-  ...(scope.dialect === "postgres" ? { defaultSchema: scope.schema } : {}),
-  transactionalDdl: true,
-  query: (statement, params) =>
-    Effect.try({
-      try: () => [
-        ...sql.all<Record<string, unknown>>(statement, (params ?? []) as ReadonlyArray<SqlValue>),
-      ],
-      catch: (cause) =>
-        new MigrationError({
-          message: `${scope.dialect} query failed: ${describeCause(cause)}`,
-          cause,
+): MigrationSqlExecutor => {
+  const defaultSchema = scope.dialect === "postgres" ? { defaultSchema: scope.schema } : {};
+
+  if (!isAsync(sql)) {
+    return {
+      dialect: scope.dialect,
+      ...defaultSchema,
+      transactionalDdl: true,
+      query: (statement, params) =>
+        Effect.try({
+          try: () => [...sql.all<Record<string, unknown>>(statement, binds(params))],
+          catch: (cause) => queryFailure(scope, { message: describeCause(cause) }),
         }),
-    }),
-  batch: (statements) =>
-    Effect.try({
-      try: () => {
-        // A migration's statements and its bookkeeping row commit together:
-        // one transaction where the target has one, which is what the store's
-        // executor gives. A target without transactions supplies its own
-        // atomic batch through the asynchronous port instead.
-        sql.transaction(() => {
-          for (const statement of statements) sql.exec(statement);
-        });
-      },
-      catch: (cause) =>
-        new MigrationError({
-          message: `${scope.dialect} migration batch failed: ${describeCause(cause)}`,
-          cause,
+      batch: (statements) =>
+        Effect.try({
+          try: () => {
+            sql.transaction(() => {
+              for (const statement of statements) sql.exec(statement);
+            });
+          },
+          catch: (cause) => batchFailure(scope, { message: describeCause(cause) }),
         }),
-    }),
-});
+    };
+  }
+
+  const port = asyncOf(sql);
+
+  return {
+    dialect: scope.dialect,
+    ...defaultSchema,
+    transactionalDdl: true,
+    query: (statement, params) =>
+      port.query<Record<string, unknown>>(statement, binds(params)).pipe(
+        Effect.map((rows) => [...rows]),
+        Effect.mapError((cause) => queryFailure(scope, cause)),
+      ),
+    batch: (statements) =>
+      port.batch(statements).pipe(Effect.mapError((cause) => batchFailure(scope, cause))),
+  };
+};
+
+const statementFailure = (migration: string, cause: { readonly message: string }) =>
+  new MigrationError({
+    message: `migration ${migration} failed: ${cause.message}`,
+    cause,
+  });
 
 const tryExec = (
   sql: SqlExecutor,
   statement: string,
   migration = "setup",
 ): Effect.Effect<void, MigrationError> =>
-  Effect.try({
-    try: () => sql.exec(statement),
-    catch: (cause) =>
-      new MigrationError({
-        message: `migration ${migration} failed: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  isAsync(sql)
+    ? asyncOf(sql)
+        .batch([statement])
+        .pipe(Effect.mapError((cause) => statementFailure(migration, cause)))
+    : Effect.try({
+        try: () => {
+          sql.exec(statement);
+        },
+        catch: (cause) => statementFailure(migration, { message: describeCause(cause) }),
+      });
 
 const tryRun = (
   sql: SqlExecutor,
@@ -427,24 +337,41 @@ const tryRun = (
   params: ReadonlyArray<SqlValue>,
   migration = "setup",
 ): Effect.Effect<void, MigrationError> =>
-  Effect.try({
-    try: () => sql.run(statement, params),
-    catch: (cause) =>
-      new MigrationError({
-        message: `migration ${migration} failed: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  isAsync(sql)
+    ? asyncOf(sql)
+        .write(statement, params)
+        .pipe(Effect.mapError((cause) => statementFailure(migration, cause)))
+    : Effect.try({
+        try: () => {
+          sql.run(statement, params);
+        },
+        catch: (cause) => statementFailure(migration, { message: describeCause(cause) }),
+      });
 
 const readSearchPath = (sql: SqlExecutor): Effect.Effect<string | undefined, MigrationError> =>
-  Effect.try({
-    try: () => sql.get<{ search_path: string }>("SHOW search_path")?.search_path,
-    catch: (cause) =>
-      new MigrationError({
-        message: `could not read search_path: ${describeCause(cause)}`,
-        cause,
-      }),
-  });
+  Effect.map(
+    isAsync(sql)
+      ? asyncOf(sql)
+          .get<{ search_path: string }>("SHOW search_path")
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new MigrationError({
+                  message: `could not read search_path: ${cause.message}`,
+                  cause,
+                }),
+            ),
+          )
+      : Effect.try({
+          try: () => sql.get<{ search_path: string }>("SHOW search_path"),
+          catch: (cause) =>
+            new MigrationError({
+              message: `could not read search_path: ${describeCause(cause)}`,
+              cause,
+            }),
+        }),
+    (row) => row?.search_path,
+  );
 
 const useSearchPath = <A, E, R>(
   sql: SqlExecutor,
@@ -513,34 +440,64 @@ const recoverable = (cause: unknown): boolean => {
   );
 };
 
+const readNames = (
+  sql: SqlExecutor,
+  statement: string,
+): Effect.Effect<ReadonlyArray<string>, MigrationError> =>
+  isAsync(sql)
+    ? asyncOf(sql)
+        .query<{ name: string }>(statement)
+        .pipe(
+          Effect.map((rows) => rows.map((row) => row.name)),
+          Effect.mapError(
+            (cause) =>
+              new MigrationError({
+                message: `could not read the applied migrations: ${cause.message}`,
+                cause,
+              }),
+          ),
+        )
+    : Effect.try({
+        try: () => sql.all<{ name: string }>(statement).map((row) => row.name),
+        catch: (cause) =>
+          new MigrationError({
+            message: `could not read the applied migrations: ${describeCause(cause)}`,
+            cause,
+          }),
+      });
+
+/**
+ * The migration names a target records as applied. A missing bookkeeping table
+ * is a fresh database; a permission or connection failure is not, and must
+ * surface, or a migration run would replay over a database it cannot read.
+ */
 const readAppliedNames = (
   sql: SqlExecutor,
   scope: Required<MigrationScope>,
-): ReadonlyArray<string> => {
+): Effect.Effect<ReadonlyArray<string>, MigrationApplyError> => {
   const table = tableName(scope.table, scope);
 
-  try {
-    return sql
-      .all<{ name: string }>(`SELECT name FROM ${table} ORDER BY name ASC`)
-      .map((row) => row.name);
-  } catch (cause) {
-    // The registry creates the table; before the first run it does not exist.
-    // A permission or connection failure is not "fresh database" and must
-    // surface, or a migration run would replay over a database it cannot read.
-    if (!recoverable(cause)) throw cause;
+  return Effect.gen(function* () {
+    const primary = yield* readNames(sql, `SELECT name FROM ${table} ORDER BY name ASC`).pipe(
+      Effect.result,
+    );
+
+    if (Result.isSuccess(primary)) return primary.success;
+
+    if (!recoverable(primary.failure)) return yield* primary.failure;
 
     // The oldest Alchemy shape carries the name in `id`, so read that too —
     // otherwise a legacy upgrade would look like a fresh application.
-    try {
-      return sql
-        .all<{ name: string }>(`SELECT id AS name FROM ${table} ORDER BY id ASC`)
-        .map((row) => row.name);
-    } catch (fallback) {
-      if (!recoverable(fallback)) throw fallback;
+    const legacy = yield* readNames(sql, `SELECT id AS name FROM ${table} ORDER BY id ASC`).pipe(
+      Effect.result,
+    );
 
-      return [];
-    }
-  }
+    if (Result.isSuccess(legacy)) return legacy.success;
+
+    if (!recoverable(legacy.failure)) return yield* legacy.failure;
+
+    return [];
+  });
 };
 
 /** Name the pending file a registry failure belongs to, keeping its tag. */
@@ -583,7 +540,7 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
 ) {
   const scope = yield* normalizeScope(input, sql.dialect);
   const records = yield* readMigrationFiles(scope);
-  const before = new Set(readAppliedNames(sql, scope));
+  const before = new Set(yield* readAppliedNames(sql, scope));
   const executor = migrationExecutor(sql, scope);
   const pending = records.find((record) => !before.has(record.name))?.name;
 
@@ -605,8 +562,39 @@ export const migrate = Effect.fn("Paykit.migrate")(function* (
     yield* apply;
   }
 
-  return readAppliedNames(sql, scope).filter((name) => !before.has(name));
+  return (yield* readAppliedNames(sql, scope)).filter((name) => !before.has(name));
 });
+
+/**
+ * Apply every pending migration, then converge the shipped description against
+ * the target. This is what a deploy runs: the files are the baseline a reviewer
+ * read, and the convergence is the additive delta between the description and
+ * what the database actually has.
+ *
+ * A redeploy over an up-to-date target applies nothing and adds nothing.
+ *
+ * @primitive
+ * @example
+ * ```ts
+ * import * as Effect from "effect/Effect"
+ * import { sync } from "@potion.run/paykit"
+ *
+ * const result = yield* sync(sql, { schema: "billing" })
+ * console.log(result.applied, result.columns)
+ * ```
+ */
+export const sync = Effect.fn("Paykit.sync")(function* (sql: SqlExecutor, input?: MigrateOptions) {
+  const applied = yield* migrate(sql, input);
+
+  const converged = yield* converge(
+    sql,
+    input?.schema === undefined ? {} : { schema: input.schema },
+  );
+
+  return { applied, ...converged };
+});
+
+export { converge, type ConvergeOptions, type ConvergeResult } from "./Converge.ts";
 
 export {
   MigrationError,

@@ -1,7 +1,8 @@
-// `quoteIdentifier` and the schema-qualified naming rules mirror Alchemy's
-// Migrations/Utils.ts. Kept small and local because paykit's table set is
-// fixed; the migration registry itself is imported, not copied.
+// Identifier quoting is Alchemy's own (`quoteIdentifier` in
+// `@alchemy.run/sql/Migrations`), so a dialect the registry knows is a dialect
+// paykit renders correctly. Only the schema-qualified naming rule is local.
 // Source: https://github.com/alchemy-run/alchemy/blob/v2.0.0-beta.85/packages/sql/src/Migrations/Utils.ts
+import { quoteIdentifier } from "@alchemy.run/sql/Migrations";
 import type { SqlDialect } from "./Sql.ts";
 
 /**
@@ -55,14 +56,17 @@ const SCHEMA_NAME = /^[a-z_][a-z0-9_]*$/;
 export const isSchemaName = (schema: string): boolean =>
   schema !== "public" && SCHEMA_NAME.test(schema);
 
-/** Quote one SQL identifier. Double quotes work on SQLite and Postgres. */
-export const quoteIdentifier = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+export { quoteIdentifier };
 
-/** Resolve a logical table or index to the identifier a statement should use. */
+/**
+ * Resolve a logical table to the identifier a statement should use. Postgres
+ * qualifies with the schema; MySQL's namespace is the connection's database, so
+ * the table is quoted and left unqualified; SQLite has no schema either.
+ */
 export const tableName = (table: string, scope: TableScope): string =>
   scope.dialect === "postgres" && scope.schema !== undefined
-    ? `${quoteIdentifier(scope.schema)}.${quoteIdentifier(table)}`
-    : quoteIdentifier(table);
+    ? `${quoteIdentifier(scope.schema, scope.dialect)}.${quoteIdentifier(table, scope.dialect)}`
+    : quoteIdentifier(table, scope.dialect);
 
 /** Render a string as a SQL literal for the rare statement a driver batches. */
 export const stringLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;

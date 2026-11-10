@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
  * The dialect a `SqlExecutor` speaks. Migrations render their DDL per dialect
  * and the store quotes identifiers the same way on both.
  */
-export type SqlDialect = "sqlite" | "postgres";
+export type SqlDialect = "sqlite" | "postgres" | "mysql";
 
 /** A value one statement can bind. */
 export type SqlValue = string | number | null;

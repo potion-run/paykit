@@ -1,8 +1,11 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { BillingStack as BillingStackResource } from "./BillingStack.resource.ts";
 import type { BillingStore } from "./BillingStack.resource.ts";
 import type { BillingStackShape } from "./BillingStack.resource.ts";
 import { catalog, type Catalog, type CatalogInput } from "./Catalog.ts";
+import { Database } from "./Database/Database.ts";
+import { registerDatabaseMigration } from "./Database/Migrate.ts";
 import type { MoneyProvider } from "./Payments.ts";
 import {
   MemoryStore,
@@ -29,6 +32,18 @@ export interface BillingStackProps {
   readonly providers?: ReadonlyArray<MoneyProvider>;
   /** The store the deploy records. The runtime provides the matching layer. */
   readonly store?: Store;
+  /**
+   * Whether this declaration migrates its database. The default is to migrate
+   * when a `Paykit.Database` layer is provided around the call — the same
+   * opt-out `BetterAuth({ migrate: false })` has. `true` on a target without
+   * migration support fails the call with a message naming the target.
+   */
+  readonly migrate?: boolean;
+  /**
+   * The Postgres schema migrations use. Defaults to the database layer's, then
+   * `billing`. MySQL and SQLite have no separate schema.
+   */
+  readonly schema?: string;
 }
 
 /**
@@ -61,6 +76,8 @@ const storeKindOf = (store: Store): BillingStore => {
       return { _tag: "PostgresStore", schema: store.schema };
     case "SqliteStore":
       return { _tag: "SqliteStore", schema: store.schema };
+    case "MySQLStore":
+      return { _tag: "MySQLStore" };
   }
 };
 
@@ -114,6 +131,23 @@ export const BillingStack = Effect.fn("Paykit.BillingStack")(function* (
     providers: descriptors,
     store: storeKindOf(store),
   });
+
+  // A `Paykit.Database` layer in context is what turns the declaration into a
+  // migration. Absent — a test, a memory host — the call records the catalog and
+  // does no database work.
+  const database = yield* Effect.serviceOption(Database);
+
+  if (Option.isSome(database)) {
+    const effect: unknown = registerDatabaseMigration(database.value, id, {
+      ...(props.migrate === undefined ? {} : { migrate: props.migrate }),
+      ...(props.schema === undefined ? {} : { schema: props.schema }),
+    });
+
+    // SAFETY: the only caller-owned requirement is the database; `Stack` and
+    // `RuntimeContext` are ambient at stack evaluation and the body returns
+    // before touching them anywhere else.
+    yield* effect as Effect.Effect<void, never>;
+  }
 
   return {
     resource,

@@ -11,6 +11,8 @@ import { planItemsOf, planOf } from "./Catalog.ts";
 import { catalog, defineCatalog } from "./Catalog.ts";
 import { CatalogGuardLive } from "./CatalogGuard.ts";
 import { evaluateCheck } from "./Check.ts";
+import { Database } from "./Database/Database.ts";
+import { registerMigrations } from "./Database/Migrate.ts";
 import { doctor } from "./Doctor.ts";
 import { feature } from "./Feature.ts";
 import { handler, moneyRoutes } from "./Handler.ts";
@@ -23,9 +25,14 @@ import { PaymentsPolar } from "./PaymentsPolar.ts";
 import { PaymentsStripe } from "./PaymentsStripe.ts";
 import { plan } from "./Plan.ts";
 import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
-import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
+import { MemoryStore, MySQL, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
-import { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
+import { mysqlExecutor } from "./Store/MySQLDriver.ts";
+import {
+  pgPoolExecutor,
+  postgresExecutor,
+  toPostgresPlaceholders,
+} from "./Store/PostgresDriver.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
@@ -93,13 +100,18 @@ export const Paykit = {
   MemoryStore,
   Postgres,
   Sqlite,
+  MySQL,
   SqlAggregateStore,
   SqlPlatform,
   layerSqlPlatform,
   SqlBillingReadStore,
   d1Executor,
   postgresExecutor,
+  pgPoolExecutor,
+  mysqlExecutor,
   toPostgresPlaceholders,
+  Database,
+  registerMigrations,
   // runtime — the tenant surface, one binding per command
   Attach: Billing.Attach,
   Update: Billing.Update,

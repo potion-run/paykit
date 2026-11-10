@@ -53,6 +53,29 @@ sold at, and a version move is the ordinary `attach` / `update` / scheduled phas
 behind the state) and `PlanVersionDrift` (a fixed plan's terms changed without a bump). No deploy
 rewrites a standing and there is no automatic migration.
 
+The billing database is a port now. `Paykit.Database` gives a target one `DatabaseService` with a
+per-execution `runtime` connection and, when the target can migrate, a separate deploy-time
+`migrate.connect`; `Database/Sqlite`, `Database/Postgres`, `Database/MySQL`, `Database/D1` and
+`Database/Drizzle` are imported from their own export condition because the driver is a peer. The
+schema is a description (`BILLING_SCHEMA`), a frozen baseline (`BILLING_SCHEMA_V1`) is what
+`migrationFiles()` renders, and a test pins its hash — no `.sql` file is committed. A deploy applies
+the baseline through `@alchemy.run/sql/Migrations` and then converges the live database, adding
+missing tables, columns and indexes and refusing every drop, rename or retype. `BillingStack(id, {
+migrate })` registers one Action per target keyed by `{ identity, schemaFingerprint,
+migrationFingerprint, dialect }`, so a description change or a replaced database re-runs it, an
+unchanged deploy is a no-op, and the Worker depends on its output. It is the same boolean shape as
+`BetterAuth({ migrate })`. A database
+Drizzle already opened is a connection, not a schema owner: `Database/Drizzle` unwraps its `pg` pool
+and gives paykit the same executor, while `BILLING_SCHEMA` stays the source of truth.
+`examples/auth/test/coexistence.test.ts` runs both migrators — Better Auth's and paykit's — against
+one SQLite handle and proves the two table families never touch. MySQL is a target: key and index
+columns render as `VARCHAR(191)` because MySQL rejects `TEXT` in a key, convergence checks
+`information_schema.statistics` because MySQL 8 has no `CREATE INDEX IF NOT EXISTS`, and
+`Store/Upsert.ts` is the one place the three `ON CONFLICT` / `ON DUPLICATE KEY UPDATE` spellings
+live. `examples/mysql` and `examples/drizzle` are the two new hosts, each with a live case gated on
+its connection URL. The record is [ADR
+0049](./adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md).
+
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`
 grants, `carryOver` with a `carryCap`, credits with a rate card (a `creditRates` shorthand, or a
 `rateCard` with property `rules` and `multipliers`, overridable per tier), a spend cap (`cap`), a

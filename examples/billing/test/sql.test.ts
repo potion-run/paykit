@@ -1,5 +1,4 @@
 import { Database } from "bun:sqlite";
-import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "@alchemy.run/test";
 import {
   BillingApi,
@@ -9,6 +8,7 @@ import {
   List,
   type D1Like,
   type D1Prepared,
+  migrationFiles,
   Subscription,
   type SqlValue,
 } from "@potion.run/paykit";
@@ -71,20 +71,15 @@ const d1Over = (database: Database): D1Like => ({
 });
 
 /**
- * The schema a deployment applies, taken from the generated migration file —
- * so a test and a release run the same DDL, and a stale file fails here.
+ * The schema a deployment applies: the statements the renderer emits, in the
+ * same order `Paykit.sync` applies them. Nothing is read from disk, so a test
+ * and a release cannot disagree about the DDL.
  */
 const migrated = () => {
   const database = new Database(":memory:");
-  const directory = new URL("../migrations/", import.meta.url);
+  const [init] = migrationFiles({ dialect: "sqlite" });
 
-  // Apply what a deploy applies, in the order D1 walks the directory: a stale
-  // or missing file fails here instead of in a release.
-  for (const file of readdirSync(directory)
-    .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    database.exec(readFileSync(new URL(file, directory), "utf8"));
-  }
+  for (const statement of init!.statements) database.exec(statement);
 
   return database;
 };

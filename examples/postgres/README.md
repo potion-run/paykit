@@ -13,9 +13,9 @@ pnpm --filter @potion.run/example-postgres deploy
 ```
 
 `POSTGRES_URL` is read as an Effect during deploy: Hyperdrive is pointed at that
-origin, and the `MigrateBilling` action applies the committed migrations over
-`pg`. The Worker never sees the URL — it connects through the Hyperdrive
-binding.
+origin, and `Paykit.BillingStack` with `migrate: true` applies the frozen
+baseline over it. The Worker never sees the URL — it connects through the
+Hyperdrive binding.
 
 ```sh
 pnpm --filter @potion.run/example-postgres dev    # alchemy dev, using the dev origin
@@ -26,17 +26,19 @@ pnpm --filter @potion.run/example-postgres dev    # alchemy dev, using the dev o
 | `src/catalog.ts` | Two plans over one meter. Plain data, no provider ids. |
 | `src/billing.config.ts` | The provider, the catalog and the Postgres store record. |
 | `src/Hyperdrive.ts` | The Hyperdrive configuration, with a `dev` origin parsed from `POSTGRES_URL`. |
-| `src/Migrate.ts` | The `MigrateBilling` action: Alchemy's migration registry over `pg`. |
 | `src/SqlBilling.ts` | The model on the SQL log, platform and read store, in the `billing` schema. |
 | `src/PostgresWorker.ts` | One Worker: `/api`, `/checkout` and `/webhooks`, with `handler.fetch`. |
-| `migrations/0001_init.sql` | The Postgres DDL generated from `Paykit.migrationFiles`. |
-| `alchemy.run.ts` | `BillingStack`, the migration action, the Hyperdrive connection and the Worker. |
+| `alchemy.run.ts` | `BillingStack` with `migrate: true`, the Hyperdrive connection and the Worker. |
 
-Regenerate the migration whenever paykit's schema moves:
+## The schema
+
+There is no migration file. The deploy applies `Paykit.migrationFiles()` — the
+frozen `BILLING_SCHEMA_V1` rendered for Postgres — and then converges
+`BILLING_SCHEMA` against the live database. A new table, column or index is a
+delta the deploy applies; nothing a database already recorded is edited.
 
 ```sh
-node packages/paykit/scripts/schema.ts postgres --file=0001_init \
-  > examples/postgres/migrations/0001_init.sql
+node packages/paykit/scripts/schema.ts postgres --file=0001_init   # print the baseline
 ```
 
 ## Tests

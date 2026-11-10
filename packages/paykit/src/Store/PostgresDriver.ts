@@ -1,6 +1,8 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { SqlError, type SqlExecutor, type SqlValue } from "./Sql.ts";
+import { sqlClientExecutor } from "./SqlClientDriver.ts";
 
 /**
  * Rewrite paykit's `?` placeholders to Postgres's `$1..$n`.
@@ -115,14 +117,93 @@ const failure = (statement: string, cause: unknown) =>
  *
  * @primitive
  */
-export const postgresExecutor = (client: SqlClient.SqlClient): SqlExecutor => {
+export const postgresExecutor = (client: SqlClient.SqlClient): SqlExecutor =>
+  sqlClientExecutor(client, "postgres");
+
+// ── a raw `pg` pool ─────────────────────────────────────────────────────────
+//
+// The same port over a `pg.Pool` a caller already owns — the client a Drizzle
+// instance holds, or one an application opened itself. Kept structural so `pg`
+// stays an optional peer and this module never imports it.
+
+/** One row of a `pg` result, as the driver hands it back. */
+export interface PgResultLike {
+  readonly rows: ReadonlyArray<Record<string, unknown>>;
+}
+
+/** The query surface a pooled client has. */
+export interface PgQueryableLike {
+  query(sql: string, params?: ReadonlyArray<unknown>): Promise<PgResultLike>;
+}
+
+/** A checked-out client, released when its unit settles. */
+export interface PgClientLike extends PgQueryableLike {
+  release(): void;
+}
+
+/** A `pg.Pool`-shaped pool: query directly, or check out a client. */
+export interface PgPoolLike extends PgQueryableLike {
+  connect(): Promise<PgClientLike>;
+}
+
+/**
+ * The connection an open `atomic` unit is using. A `Context` reference because
+ * one pool serves many fibers: a statement from another fiber must go to the
+ * pool, never join this unit's transaction.
+ */
+const InClient = Context.Reference<PgQueryableLike | undefined>("paykit/PostgresDriver/InClient", {
+  defaultValue: () => undefined,
+});
+
+/**
+ * A `SqlExecutor` over a raw `pg` pool.
+ *
+ * `atomic` checks out one client for the unit and routes every statement the
+ * unit issues through it, so a read sees the writes before the commit — the
+ * isolation `postgresExecutor` gets from `@effect/sql-pg`'s `withTransaction`,
+ * without that dependency.
+ *
+ * ### A pool you already hold
+ * **Example:** An existing `pg.Pool`
+ * ```typescript
+ * const sql = Paykit.pgPoolExecutor(pool);
+ * yield* sql.atomic(Effect.gen(function* () {
+ *   yield* sql.write("UPDATE billing_state SET version = ? WHERE account = ?", [2, account]);
+ * }));
+ * ```
+ *
+ * @primitive
+ */
+export const pgPoolExecutor = (pool: PgPoolLike): SqlExecutor => {
+  const run = (target: PgQueryableLike, statement: string, params: ReadonlyArray<SqlValue>) =>
+    Effect.tryPromise({
+      try: async () => {
+        const result = await target.query(toPostgresPlaceholders(statement), params);
+
+        return result.rows;
+      },
+      catch: (cause) => failure(statement, cause),
+    });
+
   const query = <A = Record<string, unknown>>(
     statement: string,
     params: ReadonlyArray<SqlValue> = [],
   ): Effect.Effect<ReadonlyArray<A>, SqlError> =>
-    client
-      .unsafe<A & object>(toPostgresPlaceholders(statement), params)
-      .pipe(Effect.mapError((cause) => failure(statement, cause)));
+    Effect.flatMap(Effect.service(InClient), (client) =>
+      Effect.map(
+        run(client ?? pool, statement, params),
+        // SAFETY: pg types rows as objects; the statement decides the shape and each store decodes its own row.
+        (rows) => rows as ReadonlyArray<A>,
+      ),
+    );
+
+  const checkedOut = Effect.acquireRelease(
+    Effect.tryPromise({
+      try: () => pool.connect(),
+      catch: (cause) => failure("connect", cause),
+    }),
+    (client) => Effect.sync(() => client.release()),
+  );
 
   const refuse = (method: string) => (): never => {
     throw new Error(
@@ -143,16 +224,71 @@ export const postgresExecutor = (client: SqlClient.SqlClient): SqlExecutor => {
     write: (statement: string, params: ReadonlyArray<SqlValue> = []) =>
       Effect.asVoid(query(statement, params)),
     batch: (statements) =>
-      client
-        .withTransaction(Effect.forEach(statements, (statement) => client.unsafe(statement)))
-        .pipe(
-          Effect.asVoid,
-          Effect.catchTag("SqlError", (cause) => Effect.fail(failure("batch", cause))),
-        ),
-    atomic: (effect) =>
-      client
-        .withTransaction(effect)
-        .pipe(Effect.catchTag("SqlError", (cause) => Effect.fail(failure("transaction", cause)))),
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* checkedOut;
+          yield* Effect.tryPromise({
+            try: () => client.query("BEGIN"),
+            catch: (cause) => failure("BEGIN", cause),
+          });
+
+          const outcome = yield* Effect.exit(
+            Effect.forEach(statements, (statement) =>
+              Effect.provideService(run(client, statement, []), InClient, client),
+            ),
+          );
+
+          if (outcome._tag === "Failure") {
+            yield* Effect.orElseSucceed(
+              Effect.tryPromise({
+                try: () => client.query("ROLLBACK"),
+                catch: (cause) => failure("ROLLBACK", cause),
+              }),
+              () => undefined,
+            );
+
+            return yield* Effect.failCause(outcome.cause);
+          }
+
+          yield* Effect.tryPromise({
+            try: () => client.query("COMMIT"),
+            catch: (cause) => failure("COMMIT", cause),
+          });
+
+          return outcome.value;
+        }),
+      ).pipe(Effect.asVoid),
+    atomic: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* checkedOut;
+          yield* Effect.tryPromise({
+            try: () => client.query("BEGIN"),
+            catch: (cause) => failure("BEGIN", cause),
+          });
+
+          const outcome = yield* Effect.exit(Effect.provideService(effect, InClient, client));
+
+          if (outcome._tag === "Failure") {
+            yield* Effect.orElseSucceed(
+              Effect.tryPromise({
+                try: () => client.query("ROLLBACK"),
+                catch: (cause) => failure("ROLLBACK", cause),
+              }),
+              () => undefined,
+            );
+
+            return yield* Effect.failCause(outcome.cause);
+          }
+
+          yield* Effect.tryPromise({
+            try: () => client.query("COMMIT"),
+            catch: (cause) => failure("COMMIT", cause),
+          });
+
+          return outcome.value;
+        }),
+      ),
     isolation: "serializable",
   };
 };

@@ -260,7 +260,13 @@ export type {
 
 export { SqlError, asyncOf } from "./Store/Sql.ts";
 
-export { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
+export {
+  pgPoolExecutor,
+  postgresExecutor,
+  toPostgresPlaceholders,
+} from "./Store/PostgresDriver.ts";
+
+export { mysqlExecutor } from "./Store/MySQLDriver.ts";
 
 export type {
   SqlAsyncExecutor,
@@ -270,27 +276,61 @@ export type {
   SqlValue,
 } from "./Store/Sql.ts";
 
+export type {
+  PgClientLike,
+  PgPoolLike,
+  PgQueryableLike,
+  PgResultLike,
+} from "./Store/PostgresDriver.ts";
+
 export { d1Executor } from "./Store/D1.ts";
 
 export type { D1Like, D1Prepared } from "./Store/D1.ts";
 
 export {
+  converge,
   MigrationError,
   MigrationHistoryConflictError,
   RewrittenMigrationHistoryError,
   migrate,
   migrateDryRun,
   migrationFiles,
+  migrationFingerprint,
   readMigrationFiles,
+  schemaFingerprint,
+  sync,
 } from "./Migrations/index.ts";
 
 export type {
+  ConvergeOptions,
+  ConvergeResult,
   MigrationApplyError,
   MigrationFile,
   MigrationRecord,
   MigrationScope,
   MigrateOptions,
 } from "./Migrations/index.ts";
+
+// The billing DDL as a typed description, so a tool can render or fingerprint
+// the schema without parsing a migration file.
+export {
+  BILLING_SCHEMA,
+  indexStatement,
+  schemaStatementsOf,
+  tableStatement,
+} from "./Migrations/Schema.ts";
+
+export type { Column, ColumnType, Index, SchemaDefinition, Table } from "./Migrations/Schema.ts";
+
+// The billing database: one service, one deploy-time Action, a layer per target.
+export {
+  Database,
+  registerMigrations,
+  type DatabaseMigrate,
+  type DatabaseService,
+  type MigrateOutput,
+  type RegisterMigrationsOptions,
+} from "./Database/index.ts";
 
 // ── 2. runtime ──────────────────────────────────────────────────────────────
 /**

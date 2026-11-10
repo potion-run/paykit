@@ -1,9 +1,11 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import { Paykit } from "@potion.run/paykit";
+import { D1 } from "@potion.run/paykit/Database/D1";
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { billing } from "./src/billing.config.ts";
+import { BillingDatabase } from "./src/BillingDatabase.ts";
 import BillingWorker from "./src/BillingWorker.ts";
 
 /**
@@ -31,7 +33,13 @@ const BillingExample = Alchemy.Stack(
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
-    const recorded = yield* Paykit.BillingStack("Billing", billing).pipe(Effect.orDie);
+    // The database layer is what turns `migrate: true` into the deploy Action:
+    // it supplies the target's identity and its two-stage migration connection.
+    const recorded = yield* Paykit.BillingStack("Billing", { ...billing, migrate: true }).pipe(
+      Effect.provide(D1(BillingDatabase)),
+      Effect.orDie,
+    );
+
     const worker = yield* BillingWorker;
 
     return {
