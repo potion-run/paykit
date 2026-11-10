@@ -63,9 +63,13 @@ and `pnpm migrations:check` fails when they disagree. A deploy applies those fil
 indexes and refusing every drop, rename or retype. `Paykit.Migrations` registers one Action per
 target keyed by `{ identity, schemaFingerprint, migrationFingerprint, dialect }`, so a new file, a
 description change or a replaced database re-runs it, an unchanged deploy is a no-op, and the Worker
-depends on its output. D1 keeps applying its own directory with `migrate: false`. Still open: MySQL,
-Drizzle as a schema owner, and an example that puts Better Auth's tables and paykit's `billing_*`
-tables in one database. The record is [ADR
+depends on its output. D1 keeps applying its own directory with no `migrate` at all. A database
+Drizzle already opened is a connection, not a schema owner: `Database/Drizzle` unwraps its `pg` pool
+and gives paykit the same executor, while `BILLING_SCHEMA` stays the source of truth.
+`examples/auth/test/coexistence.test.ts` runs both migrators — Better Auth's and paykit's — against
+one SQLite handle and proves the two table families never touch. MySQL is not a target yet; ADR 0049
+records what would reopen it and why a `TEXT` primary key makes it a schema decision rather than a
+fourth dialect flag. The record is [ADR
 0049](./adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md).
 
 What the catalog can express today: units with `block | bill | allow`, `"unlimited"`, `kind: "flag"`

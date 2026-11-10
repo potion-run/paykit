@@ -35,11 +35,14 @@ import { Database, type DatabaseService } from "./Database.ts";
  * @peer @alchemy.run/cloudflare
  * @product D1
  */
-export const D1 = (database: Cloudflare.D1.Database) =>
+export const D1 = <R = never>(
+  database: Cloudflare.D1.Database | Effect.Effect<Cloudflare.D1.Database, never, R>,
+) =>
   Layer.effect(
     Database,
     Effect.gen(function* () {
-      const client = yield* Cloudflare.D1.QueryDatabase(database);
+      const resource = Effect.isEffect(database) ? yield* database : database;
+      const client = yield* Cloudflare.D1.QueryDatabase(resource);
 
       return {
         dialect: "sqlite",

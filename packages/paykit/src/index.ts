@@ -260,7 +260,11 @@ export type {
 
 export { SqlError, asyncOf } from "./Store/Sql.ts";
 
-export { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
+export {
+  pgPoolExecutor,
+  postgresExecutor,
+  toPostgresPlaceholders,
+} from "./Store/PostgresDriver.ts";
 
 export type {
   SqlAsyncExecutor,
@@ -269,6 +273,13 @@ export type {
   SqlSyncExecutor,
   SqlValue,
 } from "./Store/Sql.ts";
+
+export type {
+  PgClientLike,
+  PgPoolLike,
+  PgQueryableLike,
+  PgResultLike,
+} from "./Store/PostgresDriver.ts";
 
 export { d1Executor } from "./Store/D1.ts";
 

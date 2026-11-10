@@ -130,9 +130,13 @@ process.
 - A change that is not additive — dropping a column, retyping one, renaming a table — is a new ADR
   and a reviewed migration, not something a deploy infers. The event log is the truth and is never
   destroyed to make a schema agree.
-- MySQL is a third dialect and a new executor, not a flag. Drizzle as a first-class schema is a
-  different decision, because it makes the user's schema the source and this description a
-  generator.
+- MySQL is not a dialect flag. Its `TEXT` columns cannot be a primary key without a prefix length, so
+  the key columns would become `VARCHAR(n)` and the schema a different one; its upserts also spell
+  `ON DUPLICATE KEY UPDATE`, which is a store-level branch at every write. It stays out until that is
+  a decision rather than a fourth renderer case.
+- Drizzle is a connection, never the schema owner: `Database/Drizzle` unwraps the pool an application
+  already holds and paykit's stores write their own SQL through it. Letting Drizzle generate the
+  schema would make the user's ORM the source and this description a generator.
 - The registry stays Alchemy's. Paykit adds a description, a renderer, a convergence and a
   fingerprint; it does not grow a second migration framework.
 
@@ -150,8 +154,8 @@ process.
   needs.
 - **A general-purpose migration framework or an ORM as the source.** Rejected: the description is two
   table classes and a fixed set of columns, the registry already owns bookkeeping and drift refusal,
-  and a generated client is another runtime the model does not use. Drizzle remains an auth-layer
-  integration, not paykit's schema.
+  and a generated client is another runtime the model does not use. Drizzle's pool is welcome as a
+  connection; its schema is not paykit's source.
 - **Migrating from the Worker, at boot or on first request.** Rejected: workerd has no long-lived
   session, a deploy cannot order the Worker after its own boot, every concurrent cold start races the
   same migration, and a failed migration becomes an availability failure rather than a deploy
@@ -175,13 +179,14 @@ process.
 - **A destructive change the product requires**, such as dropping a column or retyping money. It
   needs its own record, an explicit retention or archive rule and a reviewed migration; it must not
   arrive through convergence.
-- **MySQL support**, which adds a third dialect to the renderer and the executor, and extends
-  `DatabaseService.dialect`.
+- **MySQL support.** It needs more than a third dialect: `TEXT` primary keys become `VARCHAR(n)`,
+  every `ON CONFLICT` upsert gains an `ON DUPLICATE KEY UPDATE` sibling, and a live test needs a
+  server this repo does not provision.
 - **A target that cannot be introspected** (an HTTP-only database with no catalog read). Convergence
   would need a different observation, or the target ships files only.
 - **Drizzle or another ORM as the schema owner.** The description would become a generator for
   someone else's schema rather than the source, and convergence would have to defer to their
-  migrator.
+  migrator. Using a Drizzle *pool* is already supported and does not reopen this.
 - **A schema per tenant.** `schema` becomes a decision at connect time and every fingerprint gains a
   tenant dimension.
 - **A migration that must backfill data**, not only DDL. That is a job with a progress record, not a

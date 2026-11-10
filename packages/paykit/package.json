@@ -27,7 +27,8 @@
     "./Database": "./src/Database/index.ts",
     "./Database/Postgres": "./src/Database/Postgres.ts",
     "./Database/Sqlite": "./src/Database/Sqlite.ts",
-    "./Database/D1": "./src/Database/D1.ts"
+    "./Database/D1": "./src/Database/D1.ts",
+    "./Database/Drizzle": "./src/Database/Drizzle.ts"
   },
   "publishConfig": {
     "exports": {
@@ -91,6 +92,11 @@
         "types": "./lib/Database/D1.d.ts",
         "bun": "./src/Database/D1.ts",
         "default": "./lib/Database/D1.js"
+      },
+      "./Database/Drizzle": {
+        "types": "./lib/Database/Drizzle.d.ts",
+        "bun": "./src/Database/Drizzle.ts",
+        "default": "./lib/Database/Drizzle.js"
       }
     },
     "access": "public"

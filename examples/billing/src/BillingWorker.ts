@@ -1,6 +1,7 @@
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as DomainCloudflare from "@alchemy.run/cloudflare/Domain";
 import { Paykit } from "@potion.run/paykit";
+import { D1 } from "@potion.run/paykit/Database/D1";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -8,7 +9,7 @@ import * as Layer from "effect/Layer";
 import { Provider } from "./billing.config.ts";
 import { BillingDatabase } from "./BillingDatabase.ts";
 import { toMcpHandler } from "./BillingMcp.ts";
-import { billingOnSql } from "./SqlBilling.ts";
+import { billingOn } from "./SqlBilling.ts";
 
 /**
  * The five paths, served from one model hosted on one database.
@@ -55,13 +56,18 @@ const handle = () =>
  * deferred accessor the platform hands back, and `D1Like` is the Promise-shaped
  * slice of it the store asks for.
  */
-const serve = (database: Cloudflare.D1.QueryDatabaseClient) => ({
+const serve = () => ({
+  // The port resolves the D1 binding on this execution's scope; the model
+  // never touches a driver, and `billingOn` is the same function a test calls
+  // with a SQLite executor. Provisioning the port here keeps the Worker shape
+  // free of the database requirement.
   fetch: Effect.gen(function* () {
-    const billing = billingOnSql(yield* database.raw);
+    const database = yield* Paykit.Database;
+    const billing = billingOn(yield* database.runtime);
     const world = Layer.mergeAll(billing.world, Provider.payments);
 
     return yield* handle().pipe(Effect.provide(world), Effect.orDie);
-  }),
+  }).pipe(Effect.provide(D1(BillingDatabase))),
 });
 
 /**
@@ -92,11 +98,6 @@ export default class BillingWorker extends Cloudflare.Worker<BillingWorker>()(
   "BillingWorker",
   { main: import.meta.url },
   Effect.gen(function* () {
-    return serve(yield* Cloudflare.D1.QueryDatabase(BillingDatabase));
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(DomainCloudflare.layerDurableObjects(), Cloudflare.D1.QueryDatabaseBinding),
-    ),
-    Effect.orDie,
-  ),
+    return serve();
+  }).pipe(Effect.provide(DomainCloudflare.layerDurableObjects()), Effect.orDie),
 ) {}

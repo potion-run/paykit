@@ -27,7 +27,11 @@ import { plan } from "./Plan.ts";
 import { planItem, prorationOf, resetOf, rolloverOf } from "./PlanItem.ts";
 import { MemoryStore, Postgres, Sqlite, validateStack } from "./Stack.ts";
 import { d1Executor } from "./Store/D1.ts";
-import { postgresExecutor, toPostgresPlaceholders } from "./Store/PostgresDriver.ts";
+import {
+  pgPoolExecutor,
+  postgresExecutor,
+  toPostgresPlaceholders,
+} from "./Store/PostgresDriver.ts";
 import { SqlAggregateStore } from "./Store/SqlAggregateStore.ts";
 import { SqlBillingReadStore } from "./Store/SqlBillingReadStore.ts";
 import { layerSqlPlatform, SqlPlatform } from "./Store/SqlPlatform.ts";
@@ -101,6 +105,7 @@ export const Paykit = {
   SqlBillingReadStore,
   d1Executor,
   postgresExecutor,
+  pgPoolExecutor,
   toPostgresPlaceholders,
   Database,
   registerMigrations,

@@ -49,6 +49,7 @@ The driver is a peer dependency, so a Worker that imports the package must not p
 | SQLite under Bun (dev, tests) | `@potion.run/paykit/Database/Sqlite` | `bun:sqlite` over one file | `migrate.connect` opens the same file |
 | D1 in a Worker | `@potion.run/paykit/Database/D1` | the D1 binding, asynchronous | none — the D1 resource applies the directory |
 | Postgres (Hyperdrive, Neon, Aurora, plain) | `@potion.run/paykit/Database/Postgres` | Hyperdrive inside a Worker, `pg` where sockets exist | `migrate.connect` uses the origin URL |
+| Postgres a Drizzle instance opened | `@potion.run/paykit/Database/Drizzle` | the `pg` pool behind `db.$client` | the same pool, unless `migrate: false` |
 
 Provide one layer where the deployment builds its world, and read the executor from the service:
 
@@ -93,6 +94,12 @@ service uses `pg` directly. When the runtime and the deploy use different creden
 Hyperdrive arrangement — `migrate.connect` names the origin connection and `runtime` keeps the
 binding. Neon, Aurora and a plain connection string are the same two obligations with a different
 driver.
+
+**Drizzle** is a connection, not a schema owner. `Database/Drizzle` unwraps the pool behind
+`db.$client` and every store statement runs on it, so an application keeps one pool and one
+transaction boundary. `BILLING_SCHEMA` is still the source: letting Drizzle generate the tables
+would make the ORM the source and the description a generator, which ADR 0049 rejects. Pass
+`migrate: false` if the application's own pipeline applies paykit's tables.
 
 ## The description, the files, and the delta
 
@@ -171,7 +178,10 @@ a version bump in one never rewrites the other's history.
 The split matters most on D1. Sessions are a small, transactional read/write workload that D1 serves
 well; the billing store is the event log, and a plugin that needs interactive transactions has no
 way to get one there. Put those on Postgres, either in a second database or in the same one under a
-different table family.
+different table family. `examples/auth/test/coexistence.test.ts` runs both migrators against one
+SQLite handle: Better Auth's `getMigrations` creates `user`/`session`/`account`/`verification`, `Paykit.sync`
+creates the `billing_*` family and records one `billing_schema_version` row, and neither migrator
+touches the other's tables or history.
 
 The decisions are [ADR 0049](https://github.com/potion-run/paykit/blob/main/docs/adr/0049-the-billing-schema-is-a-description-and-the-deploy-converges-it.md)
 for the port and the convergence, and [ADR 0003](https://github.com/potion-run/paykit/blob/main/docs/adr/0003-the-deploy-provisions-the-vendor.md)
