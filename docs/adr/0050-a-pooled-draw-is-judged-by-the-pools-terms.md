@@ -68,3 +68,5 @@ what bound it.
   terms, and the event carries the combined charge and the combined priced lines. A consumer that
   wants one rate per line still gets it; a consumer that reads `unitPrice` gets no shortcut when two
   rates are in play.
+- The money ceiling that judges a split draw once, and the conservative cap its read row carries,
+  are decided in [ADR 0051](./0051-a-pooled-draw-has-one-money-ceiling.md).

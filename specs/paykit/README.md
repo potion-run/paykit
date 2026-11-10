@@ -313,7 +313,7 @@ so a plan-class transfer has the same deadline on both ends; per-scope reset int
 | `archivedEntityHoldsNothing` | an archived entity has no plan, no grant and no pooled row | 0040 |
 | `spendOnlyFromOwnOrPooled` | a scope reaches the shared pool only after its own sources are empty; it has no third source | 0037, 0040 |
 | `noSpendAfterArchive` | nothing leaves an archived scope | 0040 |
-| `billedNeverExceedsCap` | a period's billed money never passes the feature's ceiling, unless the ceiling was lowered under money already billed | 0038, 0050 |
+| `billedNeverExceedsCap` | a period's billed money never passes the feature's ceiling, unless the ceiling was lowered under money already billed | 0038, 0050, 0051 |
 
 A pooled source is one number owned by the parent. The model keeps a per-scope `poolView` beside it,
 which is the row `Balance.breakdown` shows an entity: the invariant is that every attached scope's

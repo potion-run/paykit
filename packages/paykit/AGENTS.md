@@ -183,6 +183,15 @@ period, and `EnterGrace` is refused once the standing is terminal.
   the feature's period total, so a replay reproduces the bill and a catalog price change never
   reprices history. A money cap refuses in the same transaction as the usage and leaves the standing
   `good`.
+- **A split draw is one money request** ([ADR
+  0051](../../docs/adr/0051-a-pooled-draw-has-one-money-ceiling.md)). A scope spends its own source
+  first and the pool for the rest, and each part keeps its unit, count and pricing terms, but the
+  event carries one `charge`. `billed + ownCharge + poolCharge` is judged once against the lowest
+  `moneyCap` among the sources the request draws; a source it does not draw contributes no cap, and
+  the customer's `spendLimit` is one limit on the combined charge. The lower ceiling names the
+  refusal and a tie is `MoneyCapExceeded` (ADR 0038). An entity's feature row carries the lower of
+  its own cap and the customer's pooled cap so a scoped `check` is conservative; the read cannot
+  reproduce a future split exactly, so the write path is authoritative.
 - A one-off pack is a purchase, not a tier change: its credits arrive through `PurchaseCredits` /
   `CreditsPurchased`, never `PlanChanged`, and never create a second standing. The standing tracks
   `prepaidCredits` — the part of `credits` a pack bought — so a period close expires only

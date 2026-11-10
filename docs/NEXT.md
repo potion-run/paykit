@@ -145,7 +145,9 @@ fixed: a credit-priced feature's stored `remaining` is stale after
 its own `spent`. The pool's counter is in: `SubscribedState.poolSpent` folds
 `UsageRecorded.poolDrawn`, and a pooled item that bills is judged — and charged — from the child
 scope that spends it, against the pool's terms ([ADR
-0050](./adr/0050-a-pooled-draw-is-judged-by-the-pools-terms.md)). The lifecycle audit's twelve findings
+0050](./adr/0050-a-pooled-draw-is-judged-by-the-pools-terms.md)). A split draw's combined charge is
+judged once against the lower applicable ceiling ([ADR
+0051](./adr/0051-a-pooled-draw-has-one-money-ceiling.md)). The lifecycle audit's twelve findings
 are in [`specs/paykit/FINDINGS.md`](../specs/paykit/FINDINGS.md). F4, F5 and F7 are fixed by later
 ADRs; F1, F2, F3, F6, F8, F10, F11 and F12 are implemented in code (proration identity and
 `charged`, a single owner per quantity key, a fresh refill budget on `PlanChanged`, terminal windows

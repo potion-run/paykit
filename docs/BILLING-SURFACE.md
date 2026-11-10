@@ -36,14 +36,14 @@ documented billing surface, not a second implementation.
 | Credit systems | `Feature.creditRates` / `rateCard`, one pool per account | shipped |
 | Dimensions & rate cards | `RateRule`, `RateMultiplier`, `dimension` on a track | shipped |
 | Prepaid pricing | one-off packs, lifetime grants, `BalanceSource` | shipped |
-| Usage-based pricing | `overage: "bill"`, `unitPrice` / `pricing`, `PeriodCloseUsage` | shipped |
+| Usage-based pricing | `overage: "bill"`, `unitPrice` / `pricing`, `PeriodCloseUsage` | shipped — a split draw's combined pooled charge is one ceiling (ADR 0051) |
 | Per-unit pricing | `kind: "non_consumable"` seats, `SetQuantity` / `SetUsage` | shipped |
 | Rollovers | `carryOver` / `carryCap`, `balances.qnt` | shipped |
 | Proration | `Proration`, `ChargeProration`, `ChargeQuantityProration` | shipped |
 | Trials | `StartTrial`, `TrialStarted`, the trial latch | shipped — a card-required trial is the provider's checkout |
 | Plan commands over the Api | `BillingCommandsRpcs`, `Paykit.BillingCommandsServer`, `Atom.make({ url })` | shipped — the client names a plan, the deployment joins it (ADR 0048) |
 | Auto top-ups | `autoTopUp` policy, `topUp` line, cooldown and retry budget (ADRs 0013–0031) | shipped |
-| Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped |
+| Spend limits & usage alerts | `BillingControls`, `SpendLimitExceeded`, `UsageAlertFired` (ADR 0038) | shipped — the customer's limit is one limit on the combined pooled charge (ADRs 0038, 0051) |
 | Add-ons | `plans` plus `schedule`, `multiAttach` / `multiUpdate`, `addAddOn`, group cancellation, a bespoke custom add-on (ADRs 0039, 0042) | shipped |
 | Graduated pricing | `_tag: "graduated"`, one `PricedLine` per band | shipped |
 | Volume-based tiers | `_tag: "volume"`, the delta at the landed band | shipped |
