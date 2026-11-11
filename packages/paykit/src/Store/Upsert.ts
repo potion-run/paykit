@@ -1,6 +1,10 @@
 import type { SqlDialect } from "./Sql.ts";
+import { columnIdentifier } from "./Tables.ts";
 
-const columns = (names: ReadonlyArray<string>): string => names.join(", ");
+/** Every name as the dialect must spell it; `key` and `view` are MySQL keywords. */
+const columns = (dialect: SqlDialect, names: ReadonlyArray<string>): string =>
+  names.map((name) => columnIdentifier(name, dialect)).join(", ");
+
 const placeholders = (names: ReadonlyArray<string>): string => names.map(() => "?").join(", ");
 
 /**
@@ -15,15 +19,15 @@ export const insertIgnoring = (
   table: string,
   names: ReadonlyArray<string>,
 ): string => {
-  const insert = `INSERT INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})`;
+  const insert = `INSERT INTO ${table} (${columns(dialect, names)}) VALUES (${placeholders(names)})`;
 
   switch (dialect) {
     case "postgres":
       return `${insert} ON CONFLICT DO NOTHING`;
     case "mysql":
-      return `INSERT IGNORE INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})`;
+      return `INSERT IGNORE INTO ${table} (${columns(dialect, names)}) VALUES (${placeholders(names)})`;
     case "sqlite":
-      return `INSERT OR IGNORE INTO ${table} (${columns(names)}) VALUES (${placeholders(names)})`;
+      return `INSERT OR IGNORE INTO ${table} (${columns(dialect, names)}) VALUES (${placeholders(names)})`;
   }
 };
 
@@ -51,15 +55,19 @@ export const upsertRow = (
   const updated = names.filter((name) => !key.includes(name));
 
   const assignments = updated.map((name) =>
-    dialect === "mysql" ? `${name} = VALUES(${name})` : `${name} = excluded.${name}`,
+    dialect === "mysql"
+      ? `${columnIdentifier(name, dialect)} = VALUES(${columnIdentifier(name, dialect)})`
+      : `${columnIdentifier(name, dialect)} = excluded.${columnIdentifier(name, dialect)}`,
   );
 
-  for (const name of options.reset ?? []) assignments.push(`${name} = NULL`);
+  for (const name of options.reset ?? []) {
+    assignments.push(`${columnIdentifier(name, dialect)} = NULL`);
+  }
 
   const conflict =
     dialect === "mysql"
       ? `ON DUPLICATE KEY UPDATE ${assignments.join(", ")}`
-      : `ON CONFLICT (${key.join(", ")}) DO UPDATE SET ${assignments.join(", ")}`;
+      : `ON CONFLICT (${columns(dialect, key)}) DO UPDATE SET ${assignments.join(", ")}`;
 
-  return `INSERT INTO ${table} (${columns(names)}) VALUES (${placeholders(names)}) ${conflict}`;
+  return `INSERT INTO ${table} (${columns(dialect, names)}) VALUES (${placeholders(names)}) ${conflict}`;
 };

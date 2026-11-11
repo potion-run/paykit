@@ -45,7 +45,14 @@ describe("the Postgres example", () => {
       const migrated = yield* sync(postgresExecutor(client), { schema: "billing" });
       expect(migrated.applied).toEqual(["0001_init"]);
       expect(migrated.created).toEqual([]);
-      expect(migrated.columns).toEqual([]);
+      // The baseline is frozen, so the read model's later column arrives through
+      // convergence on the first deploy, and a second run adds nothing.
+      expect(migrated.columns).toEqual(["billing_rm_billing_read.customer"]);
+
+      const converged = yield* sync(postgresExecutor(client), { schema: "billing" });
+      expect(converged.applied).toEqual([]);
+      expect(converged.created).toEqual([]);
+      expect(converged.columns).toEqual([]);
 
       const { world } = billingOnPostgres(postgresExecutor(client), {
         now: () => 1_700_000_000_000,

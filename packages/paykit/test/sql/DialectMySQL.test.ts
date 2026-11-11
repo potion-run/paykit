@@ -40,6 +40,9 @@ describe("the MySQL dialect", () => {
     expect(readModel).toContain("`features` TEXT NOT NULL");
     // A column in an index but not in the key is keyed too.
     expect(readModel).toContain("`standing` VARCHAR(191) NOT NULL");
+    // The attention index names `status`, so MySQL types it keyed from the
+    // first `CREATE TABLE`; a `TEXT` column it could not index later.
+    expect(readModel).toContain("`status` VARCHAR(191) NOT NULL");
   });
 
   it("renders the surrogate key as AUTO_INCREMENT", () => {
@@ -54,6 +57,16 @@ describe("the MySQL dialect", () => {
 
     expect(init!.sql).toContain("CREATE INDEX `billing_event_command`");
     expect(init!.sql).not.toContain("CREATE INDEX IF NOT EXISTS");
+  });
+
+  it("ships the read model's attention index in the first release", () => {
+    const [init] = migrationFiles({ dialect: "mysql" });
+
+    // MySQL refuses an index over a `TEXT` column with no prefix length, and
+    // convergence never alters the column a later `CREATE INDEX` would meet.
+    expect(init!.sql).toContain(
+      "CREATE INDEX `billing_rm_billing_read_attention` ON `billing_rm_billing_read` (`status`, `cancel_at_period_end`, `usage_limited`)",
+    );
   });
 
   it("indexes the outbox by instance on keyed columns in the first release", () => {

@@ -53,13 +53,17 @@ describe("the Drizzle example", () => {
           expect(answer.balance.remaining).toBe(95);
         }).pipe(Effect.provide(world));
 
-        // The event log is a row in the pool Drizzle opened.
-        const events = yield* port.query<{ n: number }>(
-          'SELECT COUNT(*) AS n FROM "billing"."billing_event" WHERE aggregate = ?',
+        // The event log is a row in the pool Drizzle opened: the activation and
+        // the usage it recorded, in sequence.
+        const events = yield* port.query<{ event: string }>(
+          'SELECT event FROM "billing"."billing_event" WHERE aggregate = ? ORDER BY seq',
           ["Subscription"],
         );
 
-        expect(Number(events[0]?.n)).toBe(1);
+        expect(events.map((row) => (JSON.parse(row.event) as { _tag: string })._tag)).toEqual([
+          "SubscriptionActivated",
+          "UsageRecorded",
+        ]);
       }),
     ).pipe(
       Effect.provide(Drizzle(db, { schema: "billing" })),

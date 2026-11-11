@@ -68,5 +68,19 @@ export const tableName = (table: string, scope: TableScope): string =>
     ? `${quoteIdentifier(scope.schema, scope.dialect)}.${quoteIdentifier(table, scope.dialect)}`
     : quoteIdentifier(table, scope.dialect);
 
+/**
+ * The columns this schema names that a dialect reserves: MySQL parses `KEY`
+ * and `VIEW` as keywords, so a statement that names them as columns must quote
+ * them. A quoted identifier parses on every dialect, so exactly these are
+ * quoted everywhere and the rest stay bare, which keeps a statement readable.
+ * A new reserved name is added here — writing `key` or `view` by hand is the
+ * bug this prevents.
+ */
+const RESERVED_COLUMNS: ReadonlySet<string> = new Set(["key", "view"]);
+
+/** A column name as a statement must spell it. */
+export const columnIdentifier = (column: string, dialect: SqlDialect): string =>
+  RESERVED_COLUMNS.has(column) ? quoteIdentifier(column, dialect) : column;
+
 /** Render a string as a SQL literal for the rare statement a driver batches. */
 export const stringLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;

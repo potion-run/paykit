@@ -64,13 +64,17 @@ describe("the MySQL example", () => {
         expect(answer.balance.remaining).toBe(95);
       }).pipe(Effect.provide(world));
 
-      // The truth and the read model are rows in the same database.
-      const events = yield* port.query<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM `billing_event` WHERE aggregate = ?",
+      // The truth and the read model are rows in the same database: the
+      // activation and the usage it recorded, in sequence.
+      const events = yield* port.query<{ event: string }>(
+        "SELECT event FROM `billing_event` WHERE aggregate = ? ORDER BY seq",
         ["Subscription"],
       );
 
-      expect(Number(events[0]?.n)).toBe(1);
+      expect(events.map((row) => (JSON.parse(row.event) as { _tag: string })._tag)).toEqual([
+        "SubscriptionActivated",
+        "UsageRecorded",
+      ]);
 
       // A second sync is a no-op over the same schema.
       expect((yield* sync(sql)).applied).toEqual([]);

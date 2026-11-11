@@ -28,7 +28,7 @@ import {
   type SqlExecutor,
   type SqlValue,
 } from "./Sql.ts";
-import { BILLING_TABLES, tableName, type TableScope } from "./Tables.ts";
+import { BILLING_TABLES, columnIdentifier, tableName, type TableScope } from "./Tables.ts";
 import { insertIgnoring, upsertRow } from "./Upsert.ts";
 
 /** What every consumer store needs beyond the executor. */
@@ -120,6 +120,7 @@ export const SqlViewStore = (
   Effect.sync(() => {
     const sql: SqlAsync = asyncOf(executor);
     const table = (logical: string) => tableName(logical, scopeOf(options, executor.dialect));
+    const column = (name: string) => columnIdentifier(name, executor.dialect);
     const state = table(BILLING_TABLES.viewState);
     const entry = table(BILLING_TABLES.viewEntry);
     const input = table(BILLING_TABLES.viewInput);
@@ -161,7 +162,7 @@ export const SqlViewStore = (
           checkpoints: string;
           state: string | null;
         }>(
-          `SELECT generation, version, seq, checkpoints, state FROM ${state} WHERE view = ? AND key = ?`,
+          `SELECT generation, version, seq, checkpoints, state FROM ${state} WHERE ${column("view")} = ? AND ${column("key")} = ?`,
           [view, key],
         ),
         (row): StoredSnapshot => {
@@ -198,7 +199,7 @@ export const SqlViewStore = (
     const storedVersion = (key: string, generation: number) =>
       Effect.map(
         sql.get<{ version: number | string }>(
-          `SELECT version FROM ${state} WHERE view = ? AND key = ? AND generation = ?`,
+          `SELECT version FROM ${state} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation = ?`,
           [view, key, generation],
         ),
         (row) => (row === undefined ? 0 : Number(row.version)),
@@ -207,7 +208,7 @@ export const SqlViewStore = (
     const storedGeneration = (key: string) =>
       Effect.map(
         sql.get<{ generation: number | string }>(
-          `SELECT generation FROM ${state} WHERE view = ? AND key = ?`,
+          `SELECT generation FROM ${state} WHERE ${column("view")} = ? AND ${column("key")} = ?`,
           [view, key],
         ),
         (row) => (row === undefined ? undefined : Number(row.generation)),
@@ -232,7 +233,7 @@ export const SqlViewStore = (
           const placeholders = chunk.map(() => "?").join(", ");
 
           const rows = yield* sql.query<{ source_seq: number | string }>(
-            `SELECT source_seq FROM ${input} WHERE view = ? AND key = ? AND generation = ? AND source = ? AND source_seq IN (${placeholders})`,
+            `SELECT source_seq FROM ${input} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation = ? AND source = ? AND source_seq IN (${placeholders})`,
             [view, key, generation, source, ...chunk],
           );
 
@@ -265,17 +266,20 @@ export const SqlViewStore = (
 
           if (previous !== undefined && previous !== generation) {
             yield* sql.write(
-              `DELETE FROM ${entry} WHERE view = ? AND key = ? AND generation <> ?`,
+              `DELETE FROM ${entry} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation <> ?`,
               [view, key, generation],
             );
             yield* sql.write(
-              `DELETE FROM ${input} WHERE view = ? AND key = ? AND generation <> ?`,
+              `DELETE FROM ${input} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation <> ?`,
               [view, key, generation],
             );
             // A pending downstream delivery from the old fold would describe an
             // entry the new generation no longer has. Drop it; the rebuild
             // emits its own.
-            yield* sql.write(`DELETE FROM ${outbox} WHERE view = ? AND key = ?`, [view, key]);
+            yield* sql.write(
+              `DELETE FROM ${outbox} WHERE ${column("view")} = ? AND ${column("key")} = ?`,
+              [view, key],
+            );
           }
 
           for (const delivery of applied) {
@@ -334,7 +338,7 @@ export const SqlViewStore = (
           // not produce them again, so they must survive the process.
           for (const delivery of downstream) {
             yield* sql.write(
-              `INSERT INTO ${outbox} (view, key, entry_seq, delivery) VALUES (?, ?, ?, ?)`,
+              `INSERT INTO ${outbox} (${column("view")}, ${column("key")}, entry_seq, delivery) VALUES (?, ?, ?, ?)`,
               [view, key, after.seq, JSON.stringify(delivery)],
             );
           }
@@ -353,8 +357,8 @@ export const SqlViewStore = (
           state: string;
         }>(
           after === undefined
-            ? `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? AND generation = ? ORDER BY seq ASC`
-            : `SELECT seq, event, envelope, state FROM ${entry} WHERE view = ? AND key = ? AND generation = ? AND seq > ? ORDER BY seq ASC`,
+            ? `SELECT seq, event, envelope, state FROM ${entry} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation = ? ORDER BY seq ASC`
+            : `SELECT seq, event, envelope, state FROM ${entry} WHERE ${column("view")} = ? AND ${column("key")} = ? AND generation = ? AND seq > ? ORDER BY seq ASC`,
           after === undefined ? [view, key, generation] : [view, key, generation, after],
         ),
         (rows) =>
@@ -457,7 +461,7 @@ export const SqlViewStore = (
         while (true) {
           const pending = yield* sql.query<{ seq: number | string; delivery: string }>(
             `SELECT seq, delivery FROM ${outbox}
-             WHERE view = ? AND key = ? AND delivered_at IS NULL ORDER BY seq ASC LIMIT 100`,
+             WHERE ${column("view")} = ? AND ${column("key")} = ? AND delivered_at IS NULL ORDER BY seq ASC LIMIT 100`,
             [view, key],
           );
 
@@ -657,6 +661,7 @@ export const SqlProjectionStore = (
   Effect.sync(() => {
     const sql: SqlAsync = asyncOf(executor);
     const table = (logical: string) => tableName(logical, scopeOf(options, executor.dialect));
+    const column = (name: string) => columnIdentifier(name, executor.dialect);
     const input = table(BILLING_TABLES.projectionInput);
     const cursors = table(BILLING_TABLES.projectionCursor);
     const projection = options.name;
@@ -679,7 +684,7 @@ export const SqlProjectionStore = (
             accepted_at: number | string;
           }>(
             `SELECT position, delivery, accepted_at FROM ${input}
-             WHERE projection = ? AND key = ? AND generation = ? AND processed_at IS NULL ORDER BY position ASC`,
+             WHERE projection = ? AND ${column("key")} = ? AND generation = ? AND processed_at IS NULL ORDER BY position ASC`,
             [projection, key, bound.generation],
           ),
           (rows) =>
@@ -705,7 +710,7 @@ export const SqlProjectionStore = (
               [projection, key, last],
             );
             yield* sql.write(
-              `UPDATE ${input} SET processed_at = ? WHERE projection = ? AND key = ? AND position <= ?`,
+              `UPDATE ${input} SET processed_at = ? WHERE projection = ? AND ${column("key")} = ? AND position <= ?`,
               [options.now(), projection, key, last],
             );
           }),
@@ -735,23 +740,23 @@ export const SqlProjectionStore = (
               // primary key would drop the new generation's delivery for the
               // same `(source, seq)` as a duplicate.
               const existing = yield* sql.get<{ generation: number | string }>(
-                `SELECT generation FROM ${input} WHERE projection = ? AND key = ? LIMIT 1`,
+                `SELECT generation FROM ${input} WHERE projection = ? AND ${column("key")} = ? LIMIT 1`,
                 [projection, delivery.key],
               );
 
               if (existing !== undefined && Number(existing.generation) !== bound.generation) {
-                yield* sql.write(`DELETE FROM ${input} WHERE projection = ? AND key = ?`, [
-                  projection,
-                  delivery.key,
-                ]);
-                yield* sql.write(`DELETE FROM ${cursors} WHERE projection = ? AND key = ?`, [
-                  projection,
-                  delivery.key,
-                ]);
+                yield* sql.write(
+                  `DELETE FROM ${input} WHERE projection = ? AND ${column("key")} = ?`,
+                  [projection, delivery.key],
+                );
+                yield* sql.write(
+                  `DELETE FROM ${cursors} WHERE projection = ? AND ${column("key")} = ?`,
+                  [projection, delivery.key],
+                );
               }
 
               const last = yield* sql.get<{ position: number | string }>(
-                `SELECT COALESCE(MAX(position), 0) AS position FROM ${input} WHERE projection = ? AND key = ?`,
+                `SELECT COALESCE(MAX(position), 0) AS position FROM ${input} WHERE projection = ? AND ${column("key")} = ?`,
                 [projection, delivery.key],
               );
 
@@ -796,7 +801,7 @@ export const SqlProjectionStore = (
 
           const rows = yield* sql.query<{ source: string; seq: number | string }>(
             `SELECT source, MAX(source_seq) AS seq FROM ${input}
-             WHERE projection = ? AND key = ? AND generation = ? AND processed_at IS NOT NULL GROUP BY source`,
+             WHERE projection = ? AND ${column("key")} = ? AND generation = ? AND processed_at IS NOT NULL GROUP BY source`,
             [projection, key, bound.generation],
           );
 
@@ -833,6 +838,7 @@ export const SqlPolicyStore = (
   Effect.sync(() => {
     const sql: SqlAsync = asyncOf(executor);
     const seen = tableName(BILLING_TABLES.policySeen, scopeOf(options, executor.dialect));
+    const column = (name: string) => columnIdentifier(name, executor.dialect);
     const policy = options.name;
 
     let kit: PolicyKit | undefined;
@@ -846,7 +852,7 @@ export const SqlPolicyStore = (
             return yield* Effect.die("policy store used before it was built");
 
           const already = yield* sql.get<{ one: number }>(
-            `SELECT 1 AS one FROM ${seen} WHERE policy = ? AND key = ? AND source = ? AND source_seq = ?`,
+            `SELECT 1 AS one FROM ${seen} WHERE policy = ? AND ${column("key")} = ? AND source = ? AND source_seq = ?`,
             [policy, delivery.key, delivery.source, delivery.seq],
           );
 
@@ -892,6 +898,7 @@ export const SqlStreamStore = (
   Effect.sync(() => {
     const sql: SqlAsync = asyncOf(executor);
     const table = (logical: string) => tableName(logical, scopeOf(options, executor.dialect));
+    const column = (name: string) => columnIdentifier(name, executor.dialect);
     const metaTable = table(BILLING_TABLES.streamMeta);
     const entryTable = table(BILLING_TABLES.streamEntry);
     const pollMillis = options.pollMillis ?? DEFAULT_POLL;
@@ -906,7 +913,7 @@ export const SqlStreamStore = (
           origin_a: number | string;
           origin_b: number | string;
         }>(
-          `SELECT seq, checkpoints, origin_a, origin_b FROM ${metaTable} WHERE stream = ? AND key = ?`,
+          `SELECT seq, checkpoints, origin_a, origin_b FROM ${metaTable} WHERE stream = ? AND ${column("key")} = ?`,
           [stream, key],
         ),
         (row): StreamMeta =>
@@ -940,7 +947,7 @@ export const SqlStreamStore = (
     const storedSeq = (key: string) =>
       Effect.map(
         sql.get<{ seq: number | string }>(
-          `SELECT seq FROM ${metaTable} WHERE stream = ? AND key = ?`,
+          `SELECT seq FROM ${metaTable} WHERE stream = ? AND ${column("key")} = ?`,
           [stream, key],
         ),
         (row) => (row === undefined ? 0 : Number(row.seq)),
@@ -951,8 +958,8 @@ export const SqlStreamStore = (
       Effect.map(
         sql.query<{ seq: number | string; event: string; envelope: string }>(
           after === undefined
-            ? `SELECT seq, event, envelope FROM ${entryTable} WHERE stream = ? AND key = ? ORDER BY seq ASC`
-            : `SELECT seq, event, envelope FROM ${entryTable} WHERE stream = ? AND key = ? AND seq > ? ORDER BY seq ASC`,
+            ? `SELECT seq, event, envelope FROM ${entryTable} WHERE stream = ? AND ${column("key")} = ? ORDER BY seq ASC`
+            : `SELECT seq, event, envelope FROM ${entryTable} WHERE stream = ? AND ${column("key")} = ? AND seq > ? ORDER BY seq ASC`,
           after === undefined ? [stream, key] : [stream, key, after],
         ),
         (rows) =>

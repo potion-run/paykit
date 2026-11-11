@@ -139,8 +139,50 @@ jobs:
           require-lockfile: true
 
       # The example's integration case drops and recreates the `billing`
-      # schema, so the throwaway service is safe. It is the only case that
-      # exercises the Postgres executor, the migration registry and the SQL
-      # world together.
+      # schema, so the throwaway service is safe. It is the case that exercises
+      # the Postgres executor, the migration registry and the SQL world
+      # together.
       - name: Serve the model from Postgres
         run: pnpm --filter @potion.run/example-postgres test
+
+      # The same server, a second case: paykit adopts the pool Drizzle already
+      # opened, rather than building a client of its own. Two steps, because
+      # both cases own the `billing` schema and a recursive run is parallel.
+      - name: Serve the model from a Drizzle pool
+        run: pnpm --filter @potion.run/example-drizzle test
+
+  mysql:
+    name: MySQL example
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: mysql
+          MYSQL_DATABASE: paykit_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pmysql"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MYSQL_URL: mysql://root:mysql@localhost:3306/paykit_test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup pnpm, Node.js, Bun and install dependencies
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          cache: true
+          install: true
+          require-lockfile: true
+
+      # MySQL is the dialect with its own reserved words and its own upsert
+      # spelling, so it needs a real server: the case drops every `billing_*`
+      # table, applies the files, converges, and serves the model.
+      - name: Serve the model from MySQL
+        run: pnpm --filter @potion.run/example-mysql test

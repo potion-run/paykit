@@ -2,7 +2,7 @@
 // SQLite file and the Postgres file cannot drift from each other or from a
 // test. Table names, identifier quoting and schema qualification come from
 // `Store/Tables.ts`; this file owns the columns and the emission order.
-// The two table classes are the storage contract in packages/paykit/AGENTS.md:
+// The two table classes are the storage contract in PLAN.md § Storage:
 // `billing_event` is the only truth and every `billing_rm_*` table is a fold
 // that can be rebuilt from it.
 import type { SqlDialect } from "../Store/Sql.ts";
@@ -280,6 +280,7 @@ export const BILLING_SCHEMA_V1: SchemaDefinition = {
       { name: "period_start", type: "millis", notNull: true },
       { name: "period_end", type: "millis", notNull: true },
       { name: "cancel_at_period_end", type: "integer", notNull: true },
+      { name: "usage_limited", type: "integer", notNull: true, default: 0 },
       { name: "credits", type: "integer", notNull: true },
       { name: "prepaid_credits", type: "integer", notNull: true },
       { name: "dunning_attempts", type: "integer", notNull: true },
@@ -290,6 +291,16 @@ export const BILLING_SCHEMA_V1: SchemaDefinition = {
       { name: "entities", type: "text" },
     ]),
     index("billing_rm_billing_read_standing", BILLING_TABLES.readModel, ["standing", "tier"]),
+    // The ops list asks for every row that needs attention before it pages.
+    // It belongs to the first release, not to convergence, for the same reason
+    // `billing_outbox_account_pending` does: MySQL renders an indexed text
+    // column as `VARCHAR(191)`, and a `TEXT` column `CREATE TABLE` already
+    // built cannot become keyed later.
+    index("billing_rm_billing_read_attention", BILLING_TABLES.readModel, [
+      "status",
+      "cancel_at_period_end",
+      "usage_limited",
+    ]),
     table(BILLING_TABLES.backfill, [
       { name: "consumer", type: "text", primaryKey: true },
       { name: "generation", type: "integer", notNull: true },
@@ -433,25 +444,15 @@ const withColumn = (schema: SchemaDefinition, on: string, column: Column): Schem
   ),
 });
 
-const withIndex = (schema: SchemaDefinition, entry: Index): SchemaDefinition => ({
-  ...schema,
-  items: [...schema.items, entry],
-});
-
 /**
- * The target schema. It starts at the frozen baseline and adds only the
- * columns a later read model carries; convergence applies the delta, so an
- * existing deployment gets the column without rewriting the baseline.
+ * The target schema. It starts at the frozen baseline and adds only the column
+ * a later read model carries; convergence applies the delta, so an existing
+ * deployment gets the column without rewriting the baseline. A column an index
+ * covers stays in the baseline — MySQL types it at `CREATE TABLE` time, and
+ * convergence never alters a column.
  */
-export const BILLING_SCHEMA: SchemaDefinition = withIndex(
-  withColumn(
-    withColumn(BILLING_SCHEMA_V1, BILLING_TABLES.readModel, { name: "customer", type: "text" }),
-    BILLING_TABLES.readModel,
-    { name: "usage_limited", type: "integer", notNull: true, default: 0 },
-  ),
-  index("billing_rm_billing_read_attention", BILLING_TABLES.readModel, [
-    "status",
-    "cancel_at_period_end",
-    "usage_limited",
-  ]),
+export const BILLING_SCHEMA: SchemaDefinition = withColumn(
+  BILLING_SCHEMA_V1,
+  BILLING_TABLES.readModel,
+  { name: "customer", type: "text" },
 );

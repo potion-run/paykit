@@ -20,7 +20,7 @@ import {
   SqlViewStore,
 } from "./SqlConsumers.ts";
 import type { SqlEventLog } from "./SqlEventLog.ts";
-import { BILLING_TABLES, tableName } from "./Tables.ts";
+import { BILLING_TABLES, columnIdentifier, tableName } from "./Tables.ts";
 import { upsertRow } from "./Upsert.ts";
 
 /** What a SQL platform needs to host a model. */
@@ -143,7 +143,7 @@ export const SqlPlatform = (
         state: string;
       }>(
         `SELECT seq, event, envelope, state FROM ${viewEntryTable}
-         WHERE view = ? AND key = ? AND generation = ? ORDER BY seq ASC`,
+         WHERE ${columnIdentifier("view", scope.dialect)} = ? AND ${columnIdentifier("key", scope.dialect)} = ? AND generation = ? ORDER BY seq ASC`,
         [view, key, generation],
       ),
       (rows) =>

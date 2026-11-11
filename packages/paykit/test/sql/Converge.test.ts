@@ -41,10 +41,7 @@ describe("convergence", () => {
 
       const result = yield* converge(sql);
       expect(result.created).toEqual([]);
-      expect(result.columns).toEqual([
-        "billing_rm_billing_read.customer",
-        "billing_rm_billing_read.usage_limited",
-      ]);
+      expect(result.columns).toEqual(["billing_rm_billing_read.customer"]);
       expect(result.extra).toEqual([]);
       expect(result.indexes).toContain("billing_outbox_pending");
       expect(result.indexes).toContain("billing_outbox_account_pending");
@@ -128,10 +125,7 @@ describe("convergence", () => {
       const first = yield* sync(sql);
       expect(first.applied).toEqual(["0001_init"]);
       expect(first.created).toEqual([]);
-      expect(first.columns).toEqual([
-        "billing_rm_billing_read.customer",
-        "billing_rm_billing_read.usage_limited",
-      ]);
+      expect(first.columns).toEqual(["billing_rm_billing_read.customer"]);
 
       const second = yield* sync(sql);
       expect(second.applied).toEqual([]);

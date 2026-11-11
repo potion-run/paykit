@@ -47,15 +47,17 @@ const quotedScopes = scopes.filter((scope) => scope.dialect !== "mysql");
  * change here is a rewritten history, and it fails in this test rather than on
  * a deploy.
  *
- * The baseline moved once, before the first release, when
- * `billing_outbox_account_pending` was added: the library has never been
- * published, so there is no applied history to rewrite and the pin is the new
- * value. A later edit still fails here.
+ * The baseline has moved twice, before the first release: when
+ * `billing_outbox_account_pending` was added, and when the read model's
+ * `usage_limited` column and `billing_rm_billing_read_attention` index moved
+ * into it. The library has never been published, so there is no applied
+ * history to rewrite and the pin is the new value. A later edit still fails
+ * here.
  */
 const baselineHashes: ReadonlyArray<readonly [SqlDialect, string]> = [
-  ["sqlite", "a3bba57f7ba7fb8fb0f72f7a11ab9957c3e2e75147a972efee9a631c84f1b22d"],
-  ["postgres", "c857fedac783121ae37a3d20000cd961af5d0504e4a854002788a8aba2b1bf4d"],
-  ["mysql", "1099dee8159bb408de2b9b1e00dbb9628877581e551a043a435a64e0065d9b68"],
+  ["sqlite", "3e460f82119eb42f2927d3fe9c6765eb88f277a589880bf500c8b2784197e1c8"],
+  ["postgres", "c5fd4f3968ece0efbb2749875d49c64defe3d2f4b75117b3322ff48e79f4f72e"],
+  ["mysql", "1e480c2ecc762a69bc1b2f7cead18410ed11a513e45df69663a1343852f0fd51"],
 ];
 
 const renderedOf = (schema: SchemaDefinition, scope: Scope): ReadonlyArray<string> =>
@@ -77,11 +79,6 @@ const withColumn = (schema: SchemaDefinition, on: string, column: Column): Schem
   items: schema.items.map((item) =>
     "on" in item || item.name !== on ? item : { ...item, columns: [...item.columns, column] },
   ),
-});
-
-const withIndex = (schema: SchemaDefinition, entry: Index): SchemaDefinition => ({
-  ...schema,
-  items: [...schema.items, entry],
 });
 
 describe("the billing schema description", () => {
@@ -107,21 +104,10 @@ describe("the billing schema description", () => {
     Effect.gen(function* () {
       // A deliberate delta: convergence applies the added column, so the
       // baseline hash and its migration stay frozen.
-      const expected = withIndex(
-        withColumn(
-          withColumn(BILLING_SCHEMA_V1, BILLING_TABLES.readModel, {
-            name: "customer",
-            type: "text",
-          }),
-          BILLING_TABLES.readModel,
-          { name: "usage_limited", type: "integer", notNull: true, default: 0 },
-        ),
-        {
-          name: "billing_rm_billing_read_attention",
-          on: BILLING_TABLES.readModel,
-          columns: ["status", "cancel_at_period_end", "usage_limited"],
-        },
-      );
+      const expected = withColumn(BILLING_SCHEMA_V1, BILLING_TABLES.readModel, {
+        name: "customer",
+        type: "text",
+      });
 
       for (const scope of scopes) {
         expect(renderedOf(BILLING_SCHEMA, scope)).toEqual(renderedOf(expected, scope));
