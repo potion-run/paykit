@@ -1,5 +1,4 @@
-import { Subscription, planTermsOf, type PlanItem } from "@potion.run/paykit";
-import type { Catalog } from "@potion.run/paykit";
+import { Subscription, planTermsOf, type Catalog, type PlanItem } from "@potion.run/paykit/Read";
 import {
   type BillingStateView,
   type EntitlementsState,

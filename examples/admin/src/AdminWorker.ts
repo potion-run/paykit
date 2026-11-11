@@ -23,7 +23,9 @@ import { CookieGuards, exampleActor, sessionCookies } from "./Session.ts";
  */
 export default class AdminWorker extends Cloudflare.Worker<AdminWorker>()(
   "PaykitAdminWorker",
-  { main: import.meta.url },
+  // The console's dev server owns 1337; the Worker it calls keeps 1338 so
+  // both URLs are stable across restarts.
+  { main: import.meta.url, dev: { port: 1338 } },
   Effect.gen(function* () {
     const admin = yield* BillingAdminApi;
     const console = yield* AdminConsoleServer;

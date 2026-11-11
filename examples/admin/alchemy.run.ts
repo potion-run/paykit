@@ -29,9 +29,15 @@ const Example = Alchemy.Stack(
     const app = yield* Cloudflare.Website.Foldkit("PaykitAdmin", {
       rootDir: import.meta.dirname,
       main: "src/AppWorker.ts",
+      // Pin the console to the port the README and the alchemy dev output
+      // name, so a restart cannot swap it with the admin Worker's URL.
+      dev: { port: 1337 },
       env: { BILLING: worker },
       assets: {
         runWorkerFirst: ["/session", "/admin", "/admin/*", "/console", "/console/*"],
+        // The deployed build derives this from the Foldkit manifest. `alchemy
+        // dev` does not, so without it every client route except `/` 404s.
+        notFoundHandling: "single-page-application",
       },
     });
 

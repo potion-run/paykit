@@ -185,6 +185,12 @@ export {
 
 export { PlanItemReset } from "./Subscription/ResetAllowance.command.ts";
 
+/**
+ * The model's event registry. A reader uses its `definition.events` to
+ * describe what the aggregate can record; it is not a command surface.
+ */
+export { Subscription } from "./Subscription/Subscription.aggregate.ts";
+
 export {
   Balance,
   BalancePage,
@@ -220,6 +226,8 @@ export {
 export { plan } from "./Plan.ts";
 
 export { planItem } from "./PlanItem.ts";
+
+export type { PlanItem } from "./PlanItem.ts";
 
 export { planTermsOf, planVersionOf } from "./Catalog.ts";
 

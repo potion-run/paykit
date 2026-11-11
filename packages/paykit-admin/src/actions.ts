@@ -1,6 +1,6 @@
-import { schedulePlanChangeInputOf } from "@potion.run/paykit";
 import { AdminAction } from "@potion.run/paykit/Admin";
 import { BillingAdmin } from "@potion.run/paykit/Foldkit";
+import { schedulePlanChangeInputOf } from "@potion.run/paykit/Read";
 import type { Catalog, AccountId } from "@potion.run/paykit/Read";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";

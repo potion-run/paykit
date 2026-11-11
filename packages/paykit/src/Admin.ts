@@ -81,6 +81,8 @@ export type { AdminActionDescriptor } from "./AdminActions.ts";
 
 export { BillingAdminApi } from "./BillingAdminApi.api.ts";
 
+export { CrossOrigin } from "./Auth/CrossOrigin.rejection.ts";
+
 export { Forbidden } from "./Auth/Forbidden.rejection.ts";
 
 export { StandingEnded } from "./Subscription/StandingEnded.rejection.ts";

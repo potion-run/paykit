@@ -1,4 +1,4 @@
-import { BillingAdminApi, CrossOrigin, Forbidden, Unauthenticated } from "@potion.run/paykit";
+import { BillingAdminApi, CrossOrigin, Forbidden, Unauthenticated } from "@potion.run/paykit/Admin";
 import {
   type AdminAction,
   BillingOverview,

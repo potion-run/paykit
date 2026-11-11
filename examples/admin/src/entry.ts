@@ -1,6 +1,6 @@
 import * as Domain from "@alchemy.run/domain";
-import { BillingAdminApi } from "@potion.run/paykit";
 import { Console } from "@potion.run/paykit-admin";
+import { BillingAdminApi } from "@potion.run/paykit/Admin";
 import {
   AdminChangeTierClient,
   AdminReadsClient,

@@ -8,6 +8,11 @@ pnpm --filter @potion.run/example-admin dev
 pnpm --filter @potion.run/example-admin deploy
 ```
 
+In development the console is pinned to `http://localhost:1337` and the admin
+Worker to `http://localhost:1338`, so both URLs stay put across restarts. Open
+the console at `http://localhost:1337/`; `/admin` on the Worker is the Api, not
+a page.
+
 `alchemy.run.ts` records the catalog with `BillingStackResource`, deploys the
 admin Worker, and deploys the Foldkit Website with the Worker as a service
 binding. The Website Worker forwards `/session`, `/admin` and `/console` to the
@@ -16,8 +21,11 @@ admin Worker, so the app and every admin surface share one origin.
 The console owns the rest of that origin: `/` is the account list and
 `/accounts/:account` is one account, with the filters and the page cursor in
 the query. Refreshing or pressing back keeps the view, because the URL is the
-navigation state. A client-only Foldkit Website serves unmatched paths with
-`index.html`, so the account paths need no extra asset config.
+navigation state. The Website declares `notFoundHandling:
+"single-page-application"`, so unmatched paths such as `/accounts/:account`
+serve `index.html` in both `alchemy dev` and a deployment. A deployed build
+derives that setting from the Foldkit manifest; the local dev server does not,
+so the declaration is what keeps the account paths from 404ing there.
 
 `POST /session` mints a development identity as two same-origin `HttpOnly`
 cookies (`pk_actor`, `pk_kind`), and `src/Session.ts` reads them in the example's
