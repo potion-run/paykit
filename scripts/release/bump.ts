@@ -3,9 +3,10 @@
  *
  * This repo ships every `@potion.run/*` package at the same version, so a
  * release edits each `packages/*​/package.json` and nothing else: internal
- * dependencies are `workspace:*`, so no range is rewritten. No git operation —
- * `release.yml` tags what shipped, and a version that only exists in a commit
- * nobody tagged is not a release.
+ * dependencies are `workspace:*`, so no range is rewritten. No git operation
+ * here — `release.yml` commits the manifests beside the generated
+ * CHANGELOG.md entry and tags what shipped, and a version that only exists
+ * in a commit nobody tagged is not a release.
  *
  * Usage: `node scripts/release/bump.ts patch|minor|major|x.y.z`
  */
@@ -117,7 +118,10 @@ const bumpAll = Effect.fn("Release.bump")(function* (input: string) {
           manifest.file,
           `${JSON.stringify({ ...manifest.raw, version: next }, null, 2)}\n`,
         );
-        yield* Console.log(`${path.relative(root, manifest.file)}: ${current} -> ${next}`);
+        // Human log, not workflow output: stdout carries only `version=` so
+        // `release.yml` can pipe it straight into `$GITHUB_OUTPUT`, whose
+        // parser refuses any other line.
+        yield* Console.error(`${path.relative(root, manifest.file)}: ${current} -> ${next}`);
       }),
     { discard: true },
   );
