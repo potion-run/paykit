@@ -124,7 +124,10 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          for tarball in release-packages/*.tgz; do
+          # `./` is what makes npm read the argument as a tarball path. Without
+          # it, `release-packages/foo.tgz` is a `github:owner/repo` shorthand and
+          # npm reaches for git instead of the file packed above.
+          for tarball in ./release-packages/*.tgz; do
             echo "publishing $tarball"
             npm publish "$tarball" --provenance --access public
           done
