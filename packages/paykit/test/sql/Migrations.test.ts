@@ -10,7 +10,6 @@ import { describe, expect, it } from "@alchemy.run/test";
 import { sha256 } from "alchemy/Util/sha256";
 import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import {
   migrate,
@@ -42,6 +41,17 @@ const tables = (sql: SqlExecutor) =>
     .map((row) => row.name);
 
 const store = () => sqliteExecutor();
+
+/**
+ * A driver failure the way `@effect/sql` reports one: a generic wrapper whose
+ * diagnostic sits on the reason beneath it, not on the message a caller reads.
+ */
+const wrappedFailure = (statement: string, root: unknown): SqlError =>
+  new SqlError({
+    message: "PgConnection: Query failed",
+    statement,
+    cause: new SqlError({ message: "PgConnection: Query failed", statement, cause: root }),
+  });
 
 describe("migrations", () => {
   it("prints the DDL before anyone runs it", () => {
@@ -298,6 +308,36 @@ describe("migrations", () => {
     }),
   );
 
+  it.effect("treats a wrapped missing-table failure as a fresh database", () =>
+    Effect.gen(function* () {
+      const base = store();
+      const port = asyncOf(base);
+
+      // A fresh Postgres database answers the registry's first read with the
+      // generic wrapper around `relation … does not exist`. Reading only the
+      // top message would refuse to bootstrap it.
+      const wrapped: SqlExecutor = {
+        ...base,
+        query: <A = Record<string, unknown>>(statement: string, params?: ReadonlyArray<SqlValue>) =>
+          port
+            .query<A>(statement, params)
+            .pipe(
+              Effect.mapError((cause) =>
+                statement.includes("billing_schema_version")
+                  ? wrappedFailure(
+                      statement,
+                      new Error('relation "billing.billing_schema_version" does not exist'),
+                    )
+                  : cause,
+              ),
+            ),
+      };
+
+      expect(yield* migrate(wrapped)).toEqual([...shipped]);
+      expect(yield* migrate(wrapped)).toEqual([]);
+    }),
+  );
+
   it.effect("refuses to read an unreadable registry as a fresh database", () =>
     Effect.gen(function* () {
       const base = store();
@@ -307,13 +347,21 @@ describe("migrations", () => {
         ...base,
         query: (statement: string, params?: ReadonlyArray<SqlValue>) =>
           statement.includes("billing_schema_version")
-            ? Effect.fail(new SqlError({ message: "permission denied", statement }))
+            ? Effect.fail(
+                wrappedFailure(
+                  statement,
+                  new Error("permission denied for table billing_schema_version"),
+                ),
+              )
             : port.query(statement, params),
       };
 
       // A permission failure is not "no table yet": swallowing it would replay
-      // every migration over a database whose history nobody can read.
-      expect(Exit.isFailure(yield* Effect.exit(migrate(denied)))).toBe(true);
+      // every migration over a database whose history nobody can read. The
+      // message names the root cause, not the wrapper that reported it.
+      const error = yield* Effect.flip(migrate(denied));
+      expect(error).toBeInstanceOf(MigrationError);
+      expect(error.message).toContain("permission denied");
     }),
   );
 

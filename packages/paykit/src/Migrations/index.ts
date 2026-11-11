@@ -218,18 +218,63 @@ export const migrateDryRun = (input?: Partial<MigrationScope>): string => {
   return lines.join("\n");
 };
 
-const describeCause = (cause: unknown): string => {
-  if (typeof cause === "object" && cause !== null) {
-    // SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
-    const { message, _tag } = cause as { message?: unknown; _tag?: unknown };
+/** How far a driver's `cause` chain is walked; a wrapped SQL failure is a few links deep. */
+const causeDepth = 8;
 
-    if (typeof message === "string" && message.length > 0) return message;
+/**
+ * A failure and every cause beneath it, the root last. A driver wraps its
+ * diagnostic: `@effect/sql` reports a missing table as
+ * `PgConnection: Query failed` and keeps the `relation … does not exist` on the
+ * reason, so a reader that stops at the top layer cannot tell a fresh database
+ * from one it may not read.
+ */
+const causeChain = (cause: unknown): ReadonlyArray<unknown> => {
+  const chain: Array<unknown> = [];
+  const seen = new Set<unknown>();
 
-    if (typeof _tag === "string") return _tag;
+  let current: unknown = cause;
+
+  for (let depth = 0; depth < causeDepth; depth += 1) {
+    if (seen.has(current)) break;
+
+    seen.add(current);
+    chain.push(current);
+
+    if (typeof current !== "object" || current === null) break;
+
+    // SAFETY: a driver's error is untyped at this boundary; only `cause` is read, and a missing one ends the chain.
+    current = (current as { cause?: unknown }).cause;
   }
 
-  return String(cause);
+  return chain;
 };
+
+/** One link's text: its message, its tag when a tagged error carries none, or a thrown string. */
+const describeLink = (link: unknown): string | undefined => {
+  if (typeof link === "string") return link.length > 0 ? link : undefined;
+
+  if (typeof link !== "object" || link === null) return undefined;
+
+  // SAFETY: a migration row and an error cause are untyped at the storage boundary; the migration schema owns the value.
+  const { message, _tag } = link as { message?: unknown; _tag?: unknown };
+
+  if (typeof message === "string" && message.length > 0) return message;
+
+  if (typeof _tag === "string") return _tag;
+
+  return undefined;
+};
+
+const causeDescriptions = (cause: unknown): ReadonlyArray<string> =>
+  causeChain(cause)
+    .map(describeLink)
+    .filter((description): description is string => description !== undefined);
+
+/**
+ * The root cause is the specific one — a wrapper names the layer that failed,
+ * not the reason — so the deepest description wins.
+ */
+const describeCause = (cause: unknown): string => causeDescriptions(cause).at(-1) ?? String(cause);
 
 /**
  * The registry runs on whichever half the driver implements. A synchronous
@@ -425,18 +470,22 @@ const normalizeScope = (
 
 /**
  * Whether a driver's failure is the registry's table (or the legacy `name`
- * column) not existing yet. A permission or connection failure is not a fresh
- * database and must surface.
+ * column) not existing yet. Every link is read, because the wrapper's message
+ * is generic; a permission or connection failure matches none of them and must
+ * surface.
  */
 const recoverable = (cause: unknown): boolean => {
-  const message = describeCause(cause).toLowerCase();
+  const message = causeDescriptions(cause).join(" ").toLowerCase();
 
   return (
     message.includes("no such table") ||
     message.includes("no such column") ||
     message.includes("undefined table") ||
     message.includes("undefined column") ||
-    message.includes("does not exist")
+    message.includes("unknown table") ||
+    message.includes("unknown column") ||
+    message.includes("does not exist") ||
+    message.includes("doesn't exist")
   );
 };
 
@@ -452,7 +501,7 @@ const readNames = (
           Effect.mapError(
             (cause) =>
               new MigrationError({
-                message: `could not read the applied migrations: ${cause.message}`,
+                message: `could not read the applied migrations: ${describeCause(cause)}`,
                 cause,
               }),
           ),
