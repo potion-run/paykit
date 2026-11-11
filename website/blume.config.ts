@@ -27,9 +27,9 @@ export default defineConfig({
     },
   },
   deployment: {
-    // CHANGE_ME: the production origin, with no trailing slash. Blume uses it
+    // The production origin, with no trailing slash. Blume uses it
     // for canonical URLs, the sitemap, Open Graph images, and llms.txt.
-    site: "https://example.com",
+    site: "https://paykit.32stack.com",
   },
   redirects: [
     { from: "/quickstart", to: "/getting-started" },

@@ -8,8 +8,8 @@
 - Run the site from the repo root with `pnpm dev:website`, `pnpm build:website`
   and `pnpm check:website`. `blume check` owns the typecheck; this workspace is
   intentionally outside the `tsrs` project-reference graph.
-- `deployment.site` in `blume.config.ts` is still the placeholder. Set it to
-  the production origin before the first deploy.
+- `deployment.site` in `blume.config.ts` is the production origin
+  (`https://paykit.32stack.com`).
 
 > `CLAUDE.md` delegates here. Keep project instructions canonical in this file.
 

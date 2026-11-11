@@ -11,8 +11,9 @@ one read. The provider owns the money plane; it never decides an entitlement.
 | [`@potion.run/paykit-stripe`](./packages/paykit-stripe) | Stripe as a paykit provider, in one call |
 | [`@potion.run/paykit-admin`](./packages/paykit-admin) | a Foldkit ops console over `BillingAdminApi` |
 
-[`website/`](./website) is the docs site: a private Blume app, deployed as an
-Alchemy `Cloudflare.Website.StaticSite`. Run it with `pnpm dev:website` and
+[`website/`](./website) is the docs site, live at
+[https://paykit.32stack.com](https://paykit.32stack.com): a private Blume app, deployed as a
+Cloudflare static-asset Worker. Run it with `pnpm dev:website` and
 build it with `pnpm build:website`.
 
 ## Quickstart

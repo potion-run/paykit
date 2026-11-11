@@ -3,6 +3,8 @@
 The paykit docs site, built with [Blume](https://useblume.dev). It is a
 private workspace package, not a published one.
 
+Live at [https://paykit.32stack.com](https://paykit.32stack.com).
+
 ## Run it
 
 From the repo root:
@@ -54,11 +56,14 @@ needs a redirect in `blume.config.ts`.
   dependency is a root catalog entry.
 - The site is intentionally outside the `tsrs` project-reference graph.
   Blume owns its type check through `blume check`.
-- `alchemy.run.ts` is the deploy stack: a `Cloudflare.Website.StaticSite` that
-  runs `pnpm build` and serves `dist/` as a static Worker. There is no
-  Wrangler config; the repo's deploy path is Alchemy.
-- `deployment.site` in `blume.config.ts` is still the placeholder; set it to
-  the production origin before the first deploy so canonical URLs, the
-  sitemap, Open Graph images, and `llms.txt` point at the right site.
+- `alchemy.run.ts` is the Alchemy deploy stack: a `Cloudflare.Website.StaticSite` that
+  runs `pnpm build` and serves `dist/` as a static Worker.
+- `wrangler.toml` is the Cloudflare dashboard deploy: a static-asset Worker serving
+  `dist/`. Dashboard settings are Root directory `/`, Build
+  `pnpm --filter @potion.run/website build`, Deploy
+  `npx wrangler deploy --config website/wrangler.toml`.
+- `deployment.site` in `blume.config.ts` is the production origin
+  (`https://paykit.32stack.com`); it drives canonical URLs, the
+  sitemap, Open Graph images, and `llms.txt`.
 - Blume's own guidance ships in `node_modules/blume/docs/`. Run
   `npx blume --help` for the CLI.
