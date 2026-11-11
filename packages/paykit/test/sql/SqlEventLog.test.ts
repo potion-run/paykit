@@ -273,6 +273,25 @@ describe("SqlEventLog", () => {
       expect(
         (yield* log.readModelPage({ search: "ACCT_0" })).rows.map((row) => row.account),
       ).toEqual(["acct_0"]);
+      expect(
+        (yield* log.readModelPage({ search: "other@example.dev" })).rows.map((row) => row.account),
+      ).toEqual(["acct_0"]);
+      // The search reads the customer's values, not the JSON's keys: a search
+      // for "name" or "createdAt" must not match every recorded customer.
+      expect((yield* log.readModelPage({ search: "name" })).rows).toEqual([]);
+      expect((yield* log.readModelPage({ search: "createdAt" })).rows).toEqual([]);
+
+      // `%` and `_` are LIKE's wildcards; a search for them must still mean the
+      // characters the operator typed, exactly as the memory store matches.
+      yield* log.upsertReadModel({ ...readModelRow, account: "acct_100%" });
+      yield* log.upsertReadModel({ ...readModelRow, account: "acct_a_b" });
+      yield* log.upsertReadModel({ ...readModelRow, account: "acct_aXb" });
+      expect((yield* log.readModelPage({ search: "100%" })).rows.map((row) => row.account)).toEqual(
+        ["acct_100%"],
+      );
+      expect((yield* log.readModelPage({ search: "a_b" })).rows.map((row) => row.account)).toEqual([
+        "acct_a_b",
+      ]);
 
       yield* log.upsertReadModel({
         ...readModelRow,

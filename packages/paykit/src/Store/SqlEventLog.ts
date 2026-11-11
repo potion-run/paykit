@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import {
   DEFAULT_PAGE,
@@ -411,10 +412,27 @@ export const SqlEventLog = (executor: SqlExecutor, options: SqlEventLogOptions) 
       const search = query.search?.trim().toLowerCase();
 
       if (search !== undefined && search !== "") {
-        const needle = `%${search}%`;
+        // The memory store matches the needle literally against the account id
+        // and the customer's name and email. Escape LIKE's own wildcards, and
+        // read the two fields out of the customer JSON instead of matching the
+        // JSON keys themselves (`"name"` would otherwise match every row).
+        const needle = `%${search.replaceAll("!", "!!").replaceAll("%", "!%").replaceAll("_", "!_")}%`;
 
-        where.push("(LOWER(account) LIKE ? OR LOWER(customer) LIKE ?)");
-        params.push(needle, needle);
+        const field = (name: "name" | "email"): string =>
+          Match.value(executor.dialect).pipe(
+            Match.withReturnType<string>(),
+            Match.when("postgres", () => `LOWER((customer::jsonb) ->> '${name}')`),
+            Match.when("mysql", () => `LOWER(JSON_UNQUOTE(JSON_EXTRACT(customer, '$.${name}')))`),
+            Match.orElse(() => `LOWER(json_extract(customer, '$.${name}'))`),
+          );
+
+        const name = field("name");
+        const email = field("email");
+
+        where.push(
+          `(LOWER(account) LIKE ? ESCAPE '!' OR ${name} LIKE ? ESCAPE '!' OR ${email} LIKE ? ESCAPE '!')`,
+        );
+        params.push(needle, needle, needle);
       }
 
       if (query.after !== undefined) {

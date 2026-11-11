@@ -216,6 +216,27 @@ describe("the console view", () => {
     expect(text).not.toContain("$48.20");
   });
 
+  it("names the real milestone in the summary's last tile", () => {
+    const expired = textOf(rootOf(accountPage({ ...billing, status: "expired" })));
+    expect(expired).toContain("Ended");
+    expect(expired).toContain("Plan expired");
+    expect(expired).not.toContain("Renews");
+
+    const grace = textOf(rootOf(accountPage({ ...billing, status: "grace", graceUntil: midday })));
+    expect(grace).toContain("Access ends");
+    expect(grace).toContain("Payment is past due");
+
+    const trialing = textOf(
+      rootOf(accountPage({ ...billing, status: "trialing", trialEndsAt: midday })),
+    );
+
+    expect(trialing).toContain("Trial ends");
+
+    const canceling = textOf(rootOf(accountPage({ ...billing, cancelAtPeriodEnd: true })));
+    expect(canceling).toContain("Cancels");
+    expect(canceling).toContain("At period end");
+  });
+
   it("asks for granted credits in credits, not minor units", () => {
     expect(OperatorActions.GrantCredits.fields[0]?.label).toBe("Credits");
   });

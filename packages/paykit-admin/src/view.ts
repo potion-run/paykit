@@ -330,6 +330,64 @@ const statusSummaryOfRow = (row: BillingReadRow): StatusSummary => {
   };
 };
 
+/**
+ * What the summary's last tile should say. "Next bill · Renews" is the
+ * ordinary case; a trial, a grace deadline, a scheduled cancellation and a
+ * finished plan each name a different moment, and an operator should not have
+ * to infer it from the status pill.
+ */
+type NextBill = {
+  readonly label: string;
+  readonly value: string;
+  readonly detail: string;
+  readonly tone: Tone;
+};
+
+const nextBillOf = (billing: BillingStateView): NextBill => {
+  if (billing.status === "expired" || billing.status === "canceled") {
+    return {
+      label: "Ended",
+      value: formatDate(billing.periodEnd),
+      detail: billing.status === "expired" ? "Plan expired" : "Plan canceled",
+      tone: "neutral",
+    };
+  }
+
+  if (billing.status === "grace") {
+    return {
+      label: "Access ends",
+      value: formatDate(billing.graceUntil ?? billing.periodEnd),
+      detail: billing.dunningAttempts === 0 ? "Grace period" : "Payment is past due",
+      tone: "warning",
+    };
+  }
+
+  if (billing.status === "trialing") {
+    return {
+      label: "Trial ends",
+      value: formatDate(billing.trialEndsAt ?? billing.periodEnd),
+      detail: "Convert or end",
+      tone: "info",
+    };
+  }
+
+  if (billing.cancelAtPeriodEnd) {
+    return {
+      label: "Cancels",
+      value: formatDate(billing.periodEnd),
+      detail: "At period end",
+      tone: "warning",
+    };
+  }
+
+  return {
+    label: "Next bill",
+    value: formatDate(billing.periodEnd),
+    detail: "Renews",
+    tone: "neutral",
+  };
+};
+
 /** The plan's display name, from the catalog; the id is the fallback. */
 const planLabelOf = (catalog: Option.Option<Catalog>, tier: string): string =>
   Option.match(catalog, {
@@ -1184,7 +1242,9 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
                                 h.span([h.Class("pk-account-name")], [formatDate(row.periodEnd)]),
                                 ...(row.cancelAtPeriodEnd
                                   ? [h.span([h.Class("pk-account-meta")], ["Cancels"])]
-                                  : []),
+                                  : row.status === "expired" || row.status === "canceled"
+                                    ? [h.span([h.Class("pk-account-meta")], ["Ended"])]
+                                    : []),
                               ],
                             ),
                           ]),
@@ -1213,9 +1273,11 @@ const accountsView = (model: Model, h: HtmlBuilder<Message>): Html => {
               h.span(
                 [h.Class("pk-muted")],
                 [
-                  Option.isSome(model.accounts.next)
-                    ? "More customers match these filters."
-                    : "End of the current page.",
+                  model.accounts.state === "Loading"
+                    ? "Refreshing customers…"
+                    : Option.isSome(model.accounts.next)
+                      ? "More customers match these filters."
+                      : "End of the current page.",
                 ],
               ),
               Option.match(model.accounts.next, {
@@ -1860,7 +1922,10 @@ const featureTable = (
             cardDescription(h, ["What this plan includes, what is left and when it resets."]),
           ],
         ),
-        badge("holds", String(entries.length), h),
+        h.span(
+          [h.Class("pk-count-pill")],
+          [`${entries.length} ${entries.length === 1 ? "feature" : "features"}`],
+        ),
       ]),
       entries.length === 0
         ? empty(h, {
@@ -2066,7 +2131,7 @@ const holdsView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
                   asOf === undefined ? "unknown" : DateTime.formatIso(asOf),
                 ),
               ],
-              [readLabel(holds.asOf, holds.state === "Loading", true)],
+              [readLabel(holds.asOf, holds.state === "Loading")],
             ),
           ],
         ),
@@ -2651,14 +2716,16 @@ const draftView = (
     });
 
     return Option.match(model.catalog, {
-      onNone: () => [],
-      onSome: (catalog) =>
-        catalog.tiers
+      onNone: () => [{ value: "", label: "Choose a plan" }],
+      onSome: (catalog) => [
+        { value: "", label: "Choose a plan" },
+        ...catalog.tiers
           .filter((entry) => entry.id !== currentTier)
           .map((entry) => ({
             value: entry.id,
             label: entry.name === undefined ? entry.id : `${entry.name} (${entry.id})`,
           })),
+      ],
     });
   };
 
@@ -2909,10 +2976,12 @@ const timelineDetail = (entry: TimelineEntry, currency: string | undefined): str
 const timelineView = (account: AccountState, h: HtmlBuilder<Message>): Html => {
   const timeline = account.timeline;
 
-  const currency = Option.match(account.entitlements, {
-    onNone: () => undefined,
-    onSome: (value) => value.currency,
-  });
+  const currency = Option.getOrUndefined(
+    Option.firstSomeOf([
+      Option.flatMap(account.entitlements, (value) => Option.fromNullishOr(value.currency)),
+      Option.flatMap(account.billing, (value) => Option.fromNullishOr(value.currency)),
+    ]),
+  );
 
   const recent = timeline.entries.toReversed().slice(0, 50);
 
@@ -3047,6 +3116,8 @@ const accountSummaryView = (model: Model, account: AccountState, h: HtmlBuilder<
     onSome: (state) => usageSummaryOf(model.catalog, state.features, billing.credits),
   });
 
+  const nextBill = nextBillOf(billing);
+
   return h.div(
     [
       h.Class("pk-stats pk-stats-5"),
@@ -3073,13 +3144,7 @@ const accountSummaryView = (model: Model, account: AccountState, h: HtmlBuilder<
         "neutral",
         h,
       ),
-      stat(
-        "Next bill",
-        formatDate(billing.periodEnd),
-        billing.cancelAtPeriodEnd ? "Cancels at period end" : "Renews",
-        "neutral",
-        h,
-      ),
+      stat(nextBill.label, nextBill.value, nextBill.detail, nextBill.tone, h),
     ],
   );
 };
@@ -4098,8 +4163,8 @@ const overviewView = (model: Model, h: HtmlBuilder<Message>): Html => {
         [h.Class("pk-as-of")],
         [
           `Updated ${formatDateTime(overview.asOf)} · ${overview.accounts} customers${
-            attentionReported ? ` · ${attentionCount} need attention` : ""
-          }`,
+            labRows.length === 0 ? "" : ` (${labRows.length} local lab, shown in the totals only)`
+          }${attentionReported ? ` · ${attentionCount} need attention in the deployment` : ""}`,
         ],
       ),
     ],

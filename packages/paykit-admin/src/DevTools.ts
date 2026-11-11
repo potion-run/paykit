@@ -728,6 +728,10 @@ export const devToolsEntitlements = (
   const periodEnd = DateTime.add(at, { months: 1 });
   const allowances = Option.map(terms, (value) => value.allowances);
 
+  const price = Option.getOrUndefined(
+    Option.flatMap(terms, (value) => Option.fromNullishOr(value.price)),
+  );
+
   const reservedOf = (feature: string): number =>
     Array.reduce(holds, 0, (total, hold) =>
       hold.feature === feature && hold.status === "open" ? total + hold.amount : total,
@@ -776,6 +780,7 @@ export const devToolsEntitlements = (
       () => 0,
     ),
     dunningAttempts: status === "grace" ? 1 : 0,
+    ...(price === undefined ? {} : { currency: price.currency }),
     features,
   };
 };

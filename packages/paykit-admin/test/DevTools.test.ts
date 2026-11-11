@@ -9,6 +9,7 @@ import {
   messages,
   plan,
 } from "@potion.run/paykit";
+import { AdminQueries } from "@potion.run/paykit/Foldkit";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -18,6 +19,7 @@ import {
   decodeDevToolsEvent,
   devToolsEvents,
   initialDevToolsState,
+  simulatedAt,
   subscriptionEventTags,
 } from "../src/DevTools.ts";
 import { Flags } from "../src/Flags.ts";
@@ -83,6 +85,21 @@ const openAccount = (model: ReturnType<typeof opened>) => {
   if (Option.isNone(model.account)) throw new Error("expected an open account");
 
   return model.account.value;
+};
+
+/** Answer the list request the model is waiting for with an empty server page. */
+const answerList = (model: ReturnType<typeof seeded>): ReturnType<typeof seeded> => {
+  const requestId = Option.getOrThrow(model.accounts.requestId);
+
+  return update(
+    model,
+    Message.ReceivedAdminQuery({
+      message: AdminQueries.Message.SucceededListAccounts({
+        requestId,
+        page: BillingReadPage.make({ rows: [], next: null }),
+      }),
+    }),
+  ).model;
 };
 
 describe("the event lab", () => {
@@ -267,6 +284,63 @@ describe("the event lab", () => {
 
     if (Option.isNone(account.holds)) throw new Error("expected seeded holds");
     expect(account.holds.value.holds.length).toBe(3);
+  });
+
+  it("opens a lab row with the snapshot its row describes", () => {
+    const model = update(seeded(true), Message.ClickedSeedDevToolsAccounts()).model;
+    const labAccount = AccountId.make("acct_demo_03");
+
+    const result = update(model, Message.ClickedAccount({ account: labAccount }));
+    const account = openAccount(result.model);
+
+    expect(account.id).toBe(labAccount);
+    expect(result.commands?.map((command) => command.name)).toEqual(["ReflectRoute"]);
+
+    const billing = Option.getOrThrow(account.billing);
+    expect(billing.status).toBe("grace");
+    expect(billing.credits).toBe(250);
+    expect(billing.periodStart).toEqual(DateTime.add(simulatedAt(1), { days: 2 }));
+
+    const entitlements = Option.getOrThrow(account.entitlements);
+    expect(entitlements.status).toBe("grace");
+    // The row's usage is kept, and the seeded holds are folded into `reserved`.
+    expect(entitlements.features.messages?.used).toBe(
+      model.devTools.labRows.find((row) => row.account === labAccount)?.features.messages?.used,
+    );
+    expect(entitlements.features.messages?.reserved).toBe(160);
+
+    const holds = Option.getOrThrow(account.holds);
+    expect(holds.holds.length).toBe(3);
+    expect(holds.holds.filter((hold) => hold.status === "open").length).toBe(2);
+    expect(Option.getOrThrow(account.providerRefs).refs.manual?.customer).toBe(`cus_${labAccount}`);
+  });
+
+  it("keeps the list filter and search over the local lab rows", () => {
+    const model = update(seeded(true), Message.ClickedSeedDevToolsAccounts()).model;
+
+    const grace = update(model, Message.UpdatedStandingFilter({ value: "grace" })).model;
+    expect(answerList(grace).accounts.rows.map((row) => row.account)).toEqual([
+      "acct_demo_03",
+      "acct_demo_11",
+    ]);
+
+    const searched = update(model, Message.UpdatedSearch({ value: "demo_03" })).model;
+    expect(answerList(searched).accounts.rows.map((row) => row.account)).toEqual(["acct_demo_03"]);
+  });
+
+  it("keeps a lab page when the live watch reports no server state", () => {
+    const model = update(seeded(true), Message.ClickedSeedDevToolsAccounts()).model;
+    const labAccount = AccountId.make("acct_demo_03");
+    const openedModel = update(model, Message.ClickedAccount({ account: labAccount })).model;
+
+    const cleared = update(
+      update(openedModel, Message.ReceivedBilling({ state: Option.none() })).model,
+      Message.ReceivedEntitlements({ state: Option.none() }),
+    ).model;
+
+    const account = openAccount(cleared);
+    expect(Option.isSome(account.billing)).toBe(true);
+    expect(Option.isSome(account.entitlements)).toBe(true);
   });
 
   it("simulates the feed and read states, then resets them", () => {

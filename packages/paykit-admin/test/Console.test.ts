@@ -949,6 +949,8 @@ describe("the console model", () => {
       "ListAccounts",
       "ReflectRoute",
     ]);
+    // The previous page's cursor cannot be clicked while the next page loads.
+    expect(Option.isNone(next.model.accounts.next)).toBe(true);
     const reflected = next.commands?.find((command) => command.name === "ReflectRoute")?.args?.url;
     expect(reflected).toBe("/?after=acct_b");
     const list = next.commands?.find((command) => command.name === "ListAccounts");

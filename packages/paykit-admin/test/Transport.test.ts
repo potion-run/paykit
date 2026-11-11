@@ -28,7 +28,13 @@ import {
   AdminRefundClient,
   AdminRefundHandlers,
 } from "@potion.run/paykit/Admin";
-import { MemoryBillingReadStore, catalogLayer } from "@potion.run/paykit/Read";
+import {
+  BillingReadRow,
+  BillingReadStore,
+  MemoryBillingReadStore,
+  catalogLayer,
+} from "@potion.run/paykit/Read";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -133,6 +139,36 @@ it.live("serves the admin reads over HTTP with the Admin guard", () =>
     }).pipe(Effect.provide(client));
 
     expect(overview.accounts).toBe(0);
+
+    // The search travels through the RPC payload and the store, so the
+    // console's search box is not a client-only filter.
+    const store = yield* BillingReadStore;
+    const at = DateTime.makeUnsafe("2030-01-01T00:00:00Z");
+
+    yield* store.upsert(
+      BillingReadRow.make({
+        account: "acct_maya",
+        customer: { name: "Maya Chen", email: "maya@acme.dev", createdAt: at },
+        tier: "free",
+        status: "active",
+        standing: "good",
+        periodStart: at,
+        periodEnd: at,
+        cancelAtPeriodEnd: false,
+        credits: 0,
+        prepaidCredits: 0,
+        dunningAttempts: 0,
+        features: {},
+      }),
+    );
+
+    const searched = yield* Effect.gen(function* () {
+      const reads = yield* AdminReads;
+
+      return yield* reads.list({ search: "maya" });
+    }).pipe(Effect.provide(client));
+
+    expect(searched.rows.map((row) => row.account)).toEqual(["acct_maya"]);
   }).pipe(Effect.provide(World)),
 );
 

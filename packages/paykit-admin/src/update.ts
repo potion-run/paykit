@@ -10,7 +10,9 @@ import {
   standingOf,
   appendTimeline,
   initialTimeline,
+  queryRows,
 } from "@potion.run/paykit/Read";
+import type { BillingStateView } from "@potion.run/paykit/Read";
 import * as Array from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -89,6 +91,10 @@ const startList = (model: Model, filter: AccountFilter, after?: string): UpdateR
           filter: () => filter,
           state: () => "Loading",
           error: () => Option.none(),
+          // The cursor belongs to the page that returned it. A refresh or a
+          // new filter is asking a different question, so the old next page
+          // must not stay clickable until the new answer arrives.
+          next: () => Option.none(),
           requestId: () => Option.some(requestId),
         }),
     }),
@@ -147,11 +153,137 @@ const isCurrentRequest = (model: Model, requestId: number): boolean =>
 const openAccount = (model: Model): AccountState | null => Option.getOrNull(model.account);
 
 /**
+ * The local lab row for an account, or `null` when the account is not one of
+ * the lab's own. A lab row never reaches the server projection, so its reads
+ * are answered from the row rather than from a live watch.
+ */
+const labRowOf = (model: Model, account: string): BillingReadRow | null =>
+  model.devTools.isEnabled
+    ? Option.getOrNull(Array.findFirst(model.devTools.labRows, (row) => row.account === account))
+    : null;
+
+const isLabAccount = (model: Model, account: string): boolean => labRowOf(model, account) !== null;
+
+/**
+ * Give a lab row the account page the server would have given it. Opening a
+ * seeded row is the same navigation a real row uses, so the page cannot be
+ * empty just because the row is local. The lab's own snapshot wins when one is
+ * already open, because it carries the holds and refs the Reads tab configured.
+ */
+const seedLabAccount = (model: Model, account: AccountId): Model => {
+  const row = labRowOf(model, account);
+  const current = openAccount(model);
+
+  if (
+    row === null ||
+    (current !== null && current.id === account && Option.isSome(current.billing))
+  ) {
+    return model;
+  }
+
+  const at = row.periodStart;
+
+  const baseBilling = devToolsBilling(account, model.catalog, row.status, at, row.tier);
+  const holds = devToolsHolds(account, model.catalog, at);
+
+  const baseEntitlements = devToolsEntitlements(
+    account,
+    model.catalog,
+    row.status,
+    at,
+    holds,
+    row.tier,
+  );
+
+  // The row's usage is the snapshot. Fold the holds into it the way the live
+  // entitlement view does, so the allowance table and the holds panel agree.
+  const features = Object.fromEntries(
+    Object.entries(row.features).map(([feature, value]) => {
+      const reserved = holds.reduce(
+        (total, hold) =>
+          hold.feature === feature && hold.status === "open" ? total + hold.amount : total,
+        0,
+      );
+
+      return [
+        feature,
+        {
+          ...value,
+          reserved,
+          remaining:
+            value.included === null || value.included === "unlimited"
+              ? null
+              : Math.max(0, value.included - value.used - reserved),
+        },
+      ];
+    }),
+  );
+
+  const billing: BillingStateView = {
+    ...baseBilling,
+    credits: row.credits,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+    dunningAttempts: row.dunningAttempts,
+    ...(row.currency === undefined ? {} : { currency: row.currency }),
+    ...(row.customer === undefined ? {} : { customer: row.customer }),
+  };
+
+  const entitlements: EntitlementsState = {
+    ...baseEntitlements,
+    status: row.status,
+    standing: row.standing,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEnd,
+    cancelAtPeriodEnd: row.cancelAtPeriodEnd,
+    credits: row.credits,
+    prepaidCredits: row.prepaidCredits,
+    dunningAttempts: row.dunningAttempts,
+    features,
+    ...(row.currency === undefined ? {} : { currency: row.currency }),
+    ...(row.customer === undefined ? {} : { customer: row.customer }),
+  };
+
+  const holdsState: HoldsState = HoldsStateSchema.make({
+    requestId: 0,
+    account,
+    state: "Loaded",
+    asOf: Option.some(at),
+    holds,
+    error: Option.none(),
+  });
+
+  const providerRefs: ProviderRefsState = ProviderRefsStateSchema.make({
+    requestId: 0,
+    account,
+    state: "Loaded",
+    asOf: Option.some(at),
+    refs: devToolsProviderRefs(account),
+    error: Option.none(),
+  });
+
+  return modifyFields(model, {
+    account: () =>
+      Option.some(
+        modifyFields(current ?? openedAccount(account), {
+          billing: () => Option.some(billing),
+          entitlements: () => Option.some(entitlements),
+          holds: () => Option.some(holdsState),
+          providerRefs: () => Option.some(providerRefs),
+          error: () => Option.none(),
+        }),
+      ),
+  });
+};
+
+/**
  * Read one account's holds. A hold is an entity, not a count, so it comes from
  * the aggregate rather than a view; the previous rows stay on screen and the
  * panel says it is refreshing, exactly like the list.
  */
 const startHolds = (model: Model, account: AccountState): UpdateReturn => {
+  if (isLabAccount(model, account.id)) return { model };
   const requestId = model.queryIds.sent;
   const previous = Option.getOrNull(account.holds);
 
@@ -179,6 +311,7 @@ const startHolds = (model: Model, account: AccountState): UpdateReturn => {
 
 /** Read the vendor ids the aggregate has attached to one account. */
 const startProviderRefs = (model: Model, account: AccountState): UpdateReturn => {
+  if (isLabAccount(model, account.id)) return { model };
   const requestId = model.queryIds.sent;
   const previous = Option.getOrNull(account.providerRefs);
 
@@ -320,6 +453,10 @@ const updateCurrentHolds = (
 
   if (account === null || current === null || current.requestId !== requestId) return { model };
 
+  // A lab account has no server aggregate, so its answer would be empty. The
+  // row's own holds are the only ones that exist.
+  if (isLabAccount(model, account.id)) return { model };
+
   return updateAccount(model, (value) =>
     modifyFields(value, { holds: () => Option.some(change(current)) }),
   );
@@ -348,6 +485,8 @@ const updateCurrentProviderRefs = (
   const current = account === null ? null : Option.getOrNull(account.providerRefs);
 
   if (account === null || current === null || current.requestId !== requestId) return { model };
+
+  if (isLabAccount(model, account.id)) return { model };
 
   return updateAccount(model, (value) =>
     modifyFields(value, { providerRefs: () => Option.some(change(current)) }),
@@ -676,15 +815,19 @@ const applyRoute = (model: Model, route: ConsoleRoute): UpdateReturn => {
           : Option.some(openedAccount(account)),
   });
 
+  // A lab row is local to this browser, so its page is rebuilt from the row
+  // instead of waiting for a live read that can never answer.
+  const seeded = account === null ? followed : seedLabAccount(followed, account);
+
   const listChanged =
     !sameFilter(filter, model.accounts.filter) || !samePage(after, afterOf(model.route));
 
   const listRead = listChanged
-    ? startList(followed, filter, Option.getOrUndefined(after))
-    : ({ model: followed } satisfies UpdateReturn);
+    ? startList(seeded, filter, Option.getOrUndefined(after))
+    : ({ model: seeded } satisfies UpdateReturn);
 
   const overviewRead =
-    route._tag === "Overview" && model.route._tag !== "Overview" ? startOverview(followed) : null;
+    route._tag === "Overview" && model.route._tag !== "Overview" ? startOverview(seeded) : null;
 
   const base = overviewRead === null ? listRead : andThen(listRead, overviewRead);
   // A newly opened account has no holds or refs snapshot yet; the previous
@@ -951,10 +1094,22 @@ const mergeRows = (
 
   for (const row of additions) byAccount.set(row.account, row);
 
+  // The same byte order the server's `ORDER BY account` and the page cursor
+  // use. `localeCompare` disagrees with it, so it cannot order a merged list.
   return [...byAccount.values()].toSorted((left, right) =>
-    left.account.localeCompare(right.account),
+    left.account < right.account ? -1 : left.account > right.account ? 1 : 0,
   );
 };
+
+/** Whether a local lab row belongs under the list's current filters. */
+const labRowMatches = (filter: AccountFilter, row: BillingReadRow): boolean =>
+  queryRows([row], { ...queryOf(filter), take: 1 }).rows.length > 0;
+
+/** The lab rows the server query would have returned, so the merge cannot undo a filter. */
+const visibleLabRows = (model: Model): ReadonlyArray<BillingReadRow> =>
+  model.devTools.isEnabled
+    ? model.devTools.labRows.filter((row) => labRowMatches(model.accounts.filter, row))
+    : [];
 
 const rowOf = (
   account: AccountId,
@@ -1031,7 +1186,10 @@ const seedOpenSnapshot = (model: Model): UpdateReturn => {
         labRows: mergeRows(devTools.labRows, [row]),
       }),
       accounts: (accounts) =>
-        modifyFields(accounts, { rows: () => mergeRows(accounts.rows, [row]) }),
+        modifyFields(accounts, {
+          rows: () =>
+            mergeRows(accounts.rows, labRowMatches(model.accounts.filter, row) ? [row] : []),
+        }),
       account: () =>
         Option.some(
           modifyFields(account, {
@@ -1100,6 +1258,8 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
     return rowOf(account, tier, status, billing, entitlements);
   });
 
+  const visible = rows.filter((row) => labRowMatches(model.accounts.filter, row));
+
   return {
     model: modifyFields(model, {
       devTools: (devTools) => ({
@@ -1107,7 +1267,7 @@ const seedDevToolsAccounts = (model: Model): UpdateReturn => {
         labRows: mergeRows(devTools.labRows, rows),
       }),
       accounts: (accounts) =>
-        modifyFields(accounts, { rows: () => mergeRows(accounts.rows, rows) }),
+        modifyFields(accounts, { rows: () => mergeRows(accounts.rows, visible) }),
     }),
   };
 };
@@ -1257,7 +1417,7 @@ export const update = (model: Model, message: Message): UpdateReturn =>
                 model: modifyFields(model, {
                   accounts: (accounts) =>
                     modifyFields(accounts, {
-                      rows: () => mergeRows(page.rows, model.devTools.labRows),
+                      rows: () => mergeRows(page.rows, visibleLabRows(model)),
                       next: () => Option.fromNullishOr(page.next),
                       state: () => "Loaded",
                       error: () => Option.none(),
@@ -1622,18 +1782,25 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       ),
 
     ReceivedBilling: ({ state }) =>
-      updateAccount(model, (account) =>
-        Option.isSome(state) && state.value.account !== account.id
-          ? account
-          : modifyFields(account, { billing: () => state }),
-      ),
+      // A watch opens with `none` before it has read anything, and a lab account
+      // never has a server state. Clearing here would erase the seeded first
+      // frame before the live read could replace it.
+      Option.isNone(state)
+        ? { model }
+        : updateAccount(model, (account) =>
+            state.value.account !== account.id
+              ? account
+              : modifyFields(account, { billing: () => state }),
+          ),
 
     ReceivedEntitlements: ({ state }) =>
-      updateAccount(model, (account) => {
-        if (Option.isSome(state) && state.value.account !== account.id) return account;
-
-        return modifyFields(account, { entitlements: () => state });
-      }),
+      Option.isNone(state)
+        ? { model }
+        : updateAccount(model, (account) =>
+            state.value.account !== account.id
+              ? account
+              : modifyFields(account, { entitlements: () => state }),
+          ),
 
     ReceivedEvent: (event) => recordEvent(model, event),
 
