@@ -3,6 +3,7 @@ import { describe, expect, it } from "@alchemy.run/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { allowance } from "../../src/Allowance.ts";
 import { InsecureDevGuards } from "../../src/Auth/FromHeaders.ts";
 import { BillingApiLayer } from "../../src/Billing/BillingApi.layer.ts";
@@ -29,7 +30,7 @@ import { subscribeOperation } from "../../src/Billing/Subscribe.operation.ts";
 import { TrackUsage } from "../../src/Billing/TrackUsage.binding.ts";
 import { Webhook } from "../../src/Billing/Webhook.binding.ts";
 import { BillingApi } from "../../src/BillingApi.api.ts";
-import { MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
+import { BillingReadStore, MemoryBillingReadStore } from "../../src/BillingReadStore.ts";
 import { catalog } from "../../src/Catalog.ts";
 import { CatalogGuardLive } from "../../src/CatalogGuard.ts";
 import { catalogLayer } from "../../src/CatalogService.ts";
@@ -37,8 +38,11 @@ import { feature, messages } from "../../src/Feature.ts";
 import { PaykitHandlers, PaykitModel } from "../../src/Paykit.model.ts";
 import { PaymentsManual } from "../../src/PaymentsManual.ts";
 import { PaymentsMemory } from "../../src/PaymentsMemory.ts";
+import { Entitlements } from "../../src/Subscription/Entitlements.view.ts";
+import { Subscription } from "../../src/Subscription/Subscription.aggregate.ts";
 import type { AccountId } from "../../src/Subscription/Subscription.state.ts";
 import { tier } from "../../src/Tier.ts";
+import { waitForProjection } from "../support/ReadModel.ts";
 
 /**
  * A catalog that exercises every shape the bindings answer:
@@ -523,6 +527,13 @@ describe("paykit bindings", () => {
   it.live("pages every account, in one cursor order", () =>
     Effect.gen(function* () {
       yield* subscribe;
+      // `Subscribe` guarantees the `Entitlements` view, not the projection that
+      // reads it: the row trails that view under a loaded suite, so wait for it
+      // before paging a read that comes from the store.
+      const entitlements = yield* Entitlements;
+      const view = Option.getOrNull(yield* entitlements.query(Subscription.ref(account)));
+      yield* waitForProjection(yield* BillingReadStore, account, view);
+
       const list = yield* List();
       const page = yield* list({ take: 10 });
       expect(page.rows.map((row) => row.account)).toContain(account);
