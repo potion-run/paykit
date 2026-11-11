@@ -124,6 +124,9 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
+          # npm reads `NODE_AUTH_TOKEN` only because an `.npmrc` names it;
+          # `pnpm/setup` does not write the one `actions/setup-node` would.
+          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' >> "$HOME/.npmrc"
           # `./` is what makes npm read the argument as a tarball path. Without
           # it, `release-packages/foo.tgz` is a `github:owner/repo` shorthand and
           # npm reaches for git instead of the file packed above.
