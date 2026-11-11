@@ -1,6 +1,6 @@
 {
   "name": "@potion.run/paykit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Billing and entitlement for Alchemy.",
   "license": "Apache-2.0",
   "repository": {

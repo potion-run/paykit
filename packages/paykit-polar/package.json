@@ -1,6 +1,6 @@
 {
   "name": "@potion.run/paykit-polar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Polar for paykit: a merchant of record in one call.",
   "license": "Apache-2.0",
   "repository": {
