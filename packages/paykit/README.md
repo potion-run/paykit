@@ -572,4 +572,4 @@ Run the gates from the repo root: `pnpm format:check`, `pnpm lint`, `pnpm typech
 ## Further reading
 
 - [PLAN.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md) — the design of record.
-- [AGENTS.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/AGENTS.md) — the rules for changing this package.
+- [AGENTS.md](https://github.com/potion-run/paykit/blob/main/AGENTS.md) — the rules for changing any package in this repo.

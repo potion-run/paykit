@@ -1,5 +1,5 @@
 // Stripe for paykit: one call that returns a `Payments` provider.
-// This package is paykit-shaped on purpose — see ../AGENTS.md.
+// This package is paykit-shaped on purpose — see ../../AGENTS.md (Providers are ports).
 export { Stripe, stripeClientBindings, stripePriceOf } from "./Stripe.ts";
 
 export type {

@@ -1,6 +1,6 @@
 // Polar for paykit: one call that returns a `Payments` provider, and the
 // products its tiers are sold as, provisioned from the catalog.
-// This package is paykit-shaped on purpose — see ../AGENTS.md.
+// This package is paykit-shaped on purpose — see ../../AGENTS.md (Providers are ports).
 export { Polar, polarBindings, polarLayer, polarPriceOf } from "./Polar.ts";
 
 export type { PolarClient, PolarProps, PolarServer, PolarTier } from "./Polar.ts";

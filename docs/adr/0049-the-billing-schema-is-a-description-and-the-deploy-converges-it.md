@@ -206,7 +206,8 @@ process.
   what a bill references.
 - [0047](./0047-a-plan-is-versioned-and-a-move-is-its-migration.md) — a deploy never
   rewrites state a customer already bought; here it never rewrites DDL a database already applied.
-- [Database](../../website/docs/database.mdx) (the site page) and `packages/paykit/AGENTS.md` § Storage
-  for the two table classes and the store guarantees.
+- [Database](../../website/docs/database.mdx) (the site page) and
+  [`PLAN.md` § Storage](../../packages/paykit/PLAN.md#storage) for the two table classes and the
+  store guarantees.
 - Alchemy's `@alchemy.run/sql/Migrations` registry and `@alchemy.run/better-auth`'s `DatabaseService`
   for the port and the Action shape this decision follows.

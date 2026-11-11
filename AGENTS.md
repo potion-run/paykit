@@ -1,81 +1,38 @@
 # @potion.run
 
-The repo that publishes every `@potion.run` package, the way the Alchemy repo publishes `alchemy`
-and `@alchemy.run/*`. Each package is built on Alchemy and Effect and carries its own doctrine
-beside its source.
+The repo that publishes every `@potion.run` package, the way Alchemy publishes `alchemy` and
+`@alchemy.run/*`. Each package is built on Alchemy and Effect. This file is the rule set;
+[PLAN.md](./packages/paykit/PLAN.md) is the design of record, the [ADRs](./docs/adr/) are the
+decisions, and each package has a README for its surface.
 
-## Packages
+| Directory | Package | Owns |
+| --- | --- | --- |
+| `packages/paykit` | `@potion.run/paykit` | the model, the tenant and admin Apis, the stores, the ports |
+| `packages/paykit-stripe` | `@potion.run/paykit-stripe` | Stripe as a processor: prices, meters, webhook |
+| `packages/paykit-polar` | `@potion.run/paykit-polar` | Polar as a merchant of record: products, webhook |
+| `packages/paykit-admin` | `@potion.run/paykit-admin` | the Foldkit ops console over `BillingAdminApi` |
 
-| Package | Directory | What it is | Read next |
-| --- | --- | --- | --- |
-| `@potion.run/paykit` | `packages/paykit` | Billing and entitlement for Alchemy | [AGENTS.md](./packages/paykit/AGENTS.md) · [PLAN.md](./packages/paykit/PLAN.md) |
-| `@potion.run/paykit-polar` | `packages/paykit-polar` | Polar as a paykit provider, and the products its tiers are sold as | [AGENTS.md](./packages/paykit-polar/AGENTS.md) |
-| `@potion.run/paykit-stripe` | `packages/paykit-stripe` | Stripe as a paykit provider, and the prices and meters its tiers are sold as | [README.md](./packages/paykit-stripe/README.md) |
-| `@potion.run/paykit-admin` | `packages/paykit-admin` | Foldkit ops console for a paykit deployment | [AGENTS.md](./packages/paykit-admin/AGENTS.md) · [README.md](./packages/paykit-admin/README.md) |
-
-`examples/billing` is the full Worker on D1: the tenant Api, the console, MCP, the two money routes,
-and a typed `Tenant` API over the catalog declarations. `examples/memory` is the same model as the
-smallest deployment — `MemoryStore`, the `Manual` provider, no database and no key.
-`examples/polar` and `examples/stripe` show `PolarBilling` / `StripeBilling` provisioning a product
-and handing its ids or lookup keys to the Worker through the environment. `examples/postgres` hosts
-the model on Postgres through Cloudflare Hyperdrive, reusing Alchemy's `Hyperdrive.Connection` and
-`@alchemy.run/sql/Postgres` and `Paykit.postgresExecutor`. `examples/admin` mounts the Foldkit
-console against the same kind of stack and forwards `/admin` and `/console` to its Worker.
-`examples/auth` gates the same model with a Better Auth session through the provider-neutral
-`Paykit.SessionFrom` / `Paykit.AdminFrom` resolver, so the identity provider is the only file that
-changes. `examples/tanstack` deploys a TanStack Start app on Cloudflare and makes its billing UI the
-first-class Effect Atom client: `PaykitAtom.make({ layer })` over the tenant Api, with
-account-keyed queries and command atoms that refresh them. `examples/mysql` hosts the model on
-MySQL through Alchemy's `@effect/sql-mysql2` client, and `examples/drizzle` adopts the `pg` pool a
-Drizzle instance already opened. `examples/saas` is the vertical: an org signs up, opens projects,
-answers conversations with a model, and pays for a shared pool, seats and credits — the entity,
-transfer, add-on, guardrail and metered-path example. All eleven are in the workspace, in the root
-`tsconfig.json` and in `pnpm test`, so an API change that breaks the advertised usage breaks a gate.
-
-A new package is `packages/<name>`, named `@potion.run/<name>`. Give it an `AGENTS.md` when it
-carries rules a reader needs before touching it, and add it to the workspace globs and the root
-`tsconfig.json` project references in the same commit.
+Every `examples/*` deployment is an advertised usage and runs under `pnpm test`, so an API change
+that breaks one breaks a gate. `billing` is the full Worker on D1, `saas` the vertical (entity,
+transfer, add-on, guardrail, metered), `memory` the smallest deployment. A new package is
+`packages/<name>`, named `@potion.run/<name>`, added to the workspace globs and the root
+`tsconfig.json` project references in the same commit, with its own tests.
 
 ## Repo rules
 
-- **One scope.** Every published package is `@potion.run/<name>`. Nothing unscoped, nothing under
-  a second scope.
+- **One scope.** Every published package is `@potion.run/<name>`.
 - **One version line.** Packages share a version and release together, like Alchemy's
-  `2.0.0-beta.N`. Internal dependencies are `workspace:*`, and an optional peer pins the
-  matching range, so two packages never drift.
+  `2.0.0-beta.N`. Internal dependencies are `workspace:*`, and an optional peer pins the matching
+  range, so two packages never drift.
 - **The root does not publish.** Root `package.json` holds scripts and dev dependencies;
   `packages/*` publishes, while `examples/*`, `website/*` and `docs/*` do not.
 - **Project references.** Each package owns a `tsconfig.json` and a `tsconfig.test.json`, and
-  `scripts/` owns `scripts/tsconfig.json`; the root one references them all. `pnpm typecheck` is
-  `tsrs -b` over that graph, so a change in one package cannot land with a broken consumer, and a
-  tooling script is typechecked like any other source.
-- **Tests live with the package.** `pnpm test` fans out. A package with no tests is not done.
-
-## Tooling
-
-- **pnpm 12** with one catalog in `pnpm-workspace.yaml`. A package declares `catalog:`, never a
-  version; the catalog is the only place a version is written.
-- **tsrs** compiles the type graph (`pnpm typecheck`), with `tsc` as the reference compiler where
-  tsrs ships no binary. `scripts/build-package.ts` runs `tsrs -b --force` for `pnpm build`.
-- **oxlint** (`pnpm lint`) runs type-aware rules; **oxfmt** (`pnpm format`) formats source and
-  `package.json`, and `pnpm format:check` is the gate. The pre-commit hook runs the formatter.
-- **anti-slop** (`tools/oxlint/anti-slop`) vendors the generic and Effect Oxlint plugins from
-  `dmmulroy/anti-slop`; `pnpm lint` loads them through their TypeScript entry points, and
-  `@oxlint/plugins` is pinned to the installed `oxlint`. Rule policy lives in `oxlint.config.ts`;
-  provenance and the update procedure are in `tools/oxlint/anti-slop/UPSTREAM.md`.
-- **effect-tsgo** (`pnpm prepare:patch`, run by `prepare`) patches the installed `oxlint` and
-  `oxlint-tsgolint` binaries so the `effecttsgo/*` rules in `oxlint.config.ts` run type-aware.
-  The patch lives in `node_modules`, so an install that skips `prepare` fails `pnpm lint` with
-  `Unknown plugin: 'effecttsgo'`. Bump `@effect/tsgo` only alongside `oxlint`,
-  `oxlint-tsgolint` and `tsrs`: its README names the versions each release supports.
-- **manifest gates** (`pnpm exports:check`, `pnpm validate:publish-packages`) read every
-  `package.json` through Effect's `FileSystem`/`Path`. The export map must match `src/` and the
-  form npm publishes, packages must share one version, and an internal dependency is
-  `workspace:*`.
-- **alchemy-test** (`@alchemy.run/test`) runs each package's `test/*.test.ts` under Bun.
-- **husky** owns the git hooks; `pnpm prepare` installs them on install.
-- **agent sources** (`pnpm vendor:agent-sources`) shallow-clones Effect, Alchemy and Foldkit
-  into `.agent_sources/` for source-first reading; see [Source-first](#source-first).
+  `scripts/` owns `scripts/tsconfig.json`; the root one references them all, so `pnpm typecheck` is
+  `tsrs -b` over the whole graph and a broken consumer cannot land.
+- **Tests live with the package.** A package with no tests is not done.
+- **Four export groups and nothing else**: deploy-time resources, runtime bindings, model,
+  providers. If a user can import it, it is API. An opt-in integration is an optional peer plus a
+  dev dependency.
 
 ## Effect discipline
 
@@ -94,228 +51,261 @@ generator can call them a million times.
 | `throw` | a typed error the caller can match |
 
 The `effecttsgo/*` rules in `oxlint.config.ts` encode most of this table and report from
-`pnpm lint`. A rule at `error` is a gate. A rule at `warn` has a finding outstanding: fix it, or
-raise the rule by fixing its last site — never by adding a disable comment.
+`pnpm lint`. A finding is fixed at its last site, which is also what raises a rule from `warn` to
+`error`.
 
 ## Alchemy API conventions
 
-The Alchemy source is the tie-breaker for API shape. Read the mirror before designing a public
-type or constructor; these are the rules this repo follows. Paths below are relative to
+The Alchemy source is the tie-breaker for API shape. Paths below are relative to
 `.agent_sources/github.com/alchemy-run/alchemy/`.
 
-- **A `Resource` owns state; a value does not.** Use `Resource<...>("Type")` only when there is
-  something to `Diff` / `Read` / `Reconcile` / `Delete` and a provider to own it. A declaration
-  that another resource validates and records is plain `Schema.Struct` data, not a resource
-  (`packages/alchemy/src/Resource.ts`, `Contributions.ts`).
-- **`Input` / `PropsInput` stops at the resource boundary.** Resource props may be `Output`,
-  `Config` or `Effect`; plain config values must stay plain, or a provider id leaks somewhere
-  that should not know it (`packages/alchemy/src/Input.ts`).
-- **Pure constructors, one validating Effect.** Declaration functions are total and
-  side-effect-free. The effectful entry point decodes and maps schema failures to a tagged error
-  with context: `Contributions.make` for the declaration, `readManifest` for the validator
-  (`packages/alchemy/src/Contributions.ts`).
-- **Schema is the source of truth.** Serializable values are `Schema.Struct`; domain messages are
-  `Schema.Class`; failures are `Schema.TaggedError`; a failure channel is one `Schema.Union` of
-  them (`packages/domain/src/Command.ts`, `Rejection.ts`).
-- **Brand identities.** Ids are `Schema.String.pipe(Schema.brand("..."))`, so a bare string cannot
-  stand in for one (`packages/domain/src/Aggregate.ts`).
-- **Errors carry evidence and are matched by tag.** No `throw`, no generic `Error`, no
-  message-string matching. Use `Schema.TaggedError` when the error is serialized or declared as a
-  rejection; `Data.TaggedError` when it does not cross a schema boundary. Include a `cause` when
-  wrapping (`Contributions.ContributionError`, `State/HttpStateApi.ts`).
+- **A `Resource` owns state; a value does not.** `Resource<...>("Type")` is for something to
+  `Diff` / `Read` / `Reconcile` / `Delete` with a provider to own it. A declaration another
+  resource validates and records is plain `Schema.Struct` data (`src/Resource.ts`,
+  `Contributions.ts`).
+- **`Input` stops at the resource boundary.** Resource props may be `Output`, `Config` or `Effect`;
+  plain config values stay plain (`src/Input.ts`). A Props interface states plain types.
+- **Pure constructors, one validating Effect.** Declarations are total and side-effect-free; the
+  effectful entry point decodes and maps schema failures to a tagged error with context.
+- **Schema is the source of truth.** Serializable values are `Schema.Struct`, domain messages
+  `Schema.Class`, failures `Schema.TaggedError`, and a failure channel is one `Schema.Union` of
+  them (`domain/src/Command.ts`, `Rejection.ts`). An id is
+  `Schema.String.pipe(Schema.brand(…))`, so a bare string cannot stand in for one.
+- **Errors carry evidence and are matched by tag**, never by message. `Schema.TaggedError` when the
+  error is serialized or declared as a rejection, `Data.TaggedError` otherwise, with a `cause` when
+  wrapping.
 - **Name effectful spans; keep pure functions plain.** `Effect.fn("Namespace.operation")` for a
-  handler, `Effect.fromResult` to lift a pure `Result` (`Contributions.load`, `Auth/Demand.ts`).
-- **One Layer, provided once.** Build with `Layer.mergeAll` and provide with `Layer.provide`;
-  never chain `Effect.provide` through every call site.
-- **Secrets are redacted; payloads are not traced by default.** Anything secret is
-  `Redacted` / `Schema.Redacted`, and a span records only what a declaration's `attributes`
-  returns (`packages/domain/src/Command.ts`, Alchemy AGENTS.md).
+  handler, `Effect.fromResult` to lift a pure `Result`.
+- **One Layer, provided once.** Build with `Layer.mergeAll`, provide with `Layer.provide`.
+- **Secrets are redacted; payloads are not traced.** Anything secret is `Redacted`, and a span
+  records only what a declaration's `attributes` returns.
 - **Public primitives carry examples.** JSDoc on an exported primitive, binding, layer or resource
-  includes a runnable example and the tag the docs generator reads (`@primitive`, `@binding`,
-  `@layer`, `@resource`); the source is the docs source of truth, and the reference under
-  `website/docs/reference` is generated from it (`packages/stripe/src/Price.ts`, Alchemy
-  AGENTS.md).
-
-## Versioning and history
-
-There are two different version stories in Alchemy, and mixing them up is how a deploy either
-rewrites data it cannot read or silently serves half a read model.
-
-### Resource state
-
-- **`provider.version` is the resource's own generation.** Alchemy persists it beside the state,
-  so the engine can tell two generations of the same resource apart. Bump it in the same change
-  that changes what state means, and keep it equal to the shape version in the attributes.
-- **Read, diff and reconcile accept older, refuse newer.** An older record is upgraded by the next
-  reconcile; a record from a newer build is a typed refusal, because an older build must never move
-  that state back to an older layout. `read` alone is not enough: it runs on a cold start or an
-  interrupted create, so `diff` and `reconcile` refuse the same record on a normal deploy. Alchemy's
-  `DomainVersionTooNew` (`cloudflare/src/Domain/Version.ts`) is the same rule for Domain layouts.
-- **A version bump forces the reconcile.** The engine only calls `reconcile` for an `update`; when
-  props did not change it would otherwise be a no-op. The provider's `diff` returns
-  `{ action: "update" }` whenever the recorded shape is older, so the new record is written.
-  Alchemy's `ProviderService.version` and `Apply.ts` persist the generation; the diff is ours.
-- **Never encode migration in `read`.** `read` observes and judges; `reconcile` converges and
-  writes the current shape.
-
-### Consumers (views, projections, streams)
-
-- **A consumer's `version` is its generation.** Alchemy folds a consumer's own version and the
-  generations of every view it reads into a target id: `view:Entitlements#2`,
-  `projection:BillingRead#1`, or `@<generation>` for a view rebuilt in place. That id is what
-  sources route history to; a changed id means a new consumer, not an old one with new code.
-- **Backfill is the deploy's job.** A platform that keeps events across deploys implements
-  `Platform.start(targets, planOf, backfill)`: it replays the sources of every target that is new
-  or whose generation changed, then records completion. A view keyed by the one aggregate it
-  reads is excluded from `backfill` and instead carries `ViewKit.catchUp`: each key reads its own
-  instance's history before it answers. Both are mechanical applications of
-  `kit.history(target, source, id, rows)` — never a hand-built fold.
-- **Order follows the graph.** A projection that reads a rebuilt view runs after that view. The
-  four roles that make this durable at scale (directory, run, scanners, relays) are in
-  `.agent_sources/github.com/alchemy-run/alchemy/packages/domain/src/Backfill.ts`; the
-  Cloudflare platform's `start` is the reference wiring.
-- **A changed plan needs a version bump.** The sources a consumer reads are part of its identity.
-  A platform that finds a different plan under the same target id refuses the build (Alchemy's
-  `Backfill.PlanChanged`), so a consumer is never silently rebuilt from the wrong history.
-- **`history(target)` reports completeness.** `{ complete: false }` means a read covers only part
-  of the log; a platform that has no `history` is claiming it keeps nothing across deploys.
-  Never report complete for a consumer the backfill has not finished.
-- **Generation is part of dedupe.** A consumer rebuilt from an earlier generation starts over:
-  drop deliveries routed to the old generation, reset its input log and cursor, and never count
-  an old generation's `(source, seq)` as already applied. `test/sql/ModelOnSql.test.ts` proves
-  the drop-and-rebuild path.
-
-### Events and migrations
-
-- **Events are append-only API.** Add a field; never rename or repurpose one. A projection change
-  is a rebuild through the consumer's `version`, not a rewrite of the log.
-- **SQL migrations are additive and forward-only.** Append a record; never edit one already in
-  `migrationFiles`. The registry (`@alchemy.run/sql/Migrations`) owns the bookkeeping table,
-  content hashes and the refusal of a rewritten or removed applied file.
-- **A money table is never dropped to migrate it.** A vendor object that a bill references is
-  retained or archived (ADR 0003), and state that a customer was sold is rewritten by reconcile,
-  not destroyed.
+  has a runnable example, `###` sections, `**Example:**` labels, a field-level comment on every
+  prop and attribute, and the generator tag last (`@primitive`, `@binding`, `@layer`, `@resource`).
+  `website/docs/reference` is generated from that source, so a changed tagged block means
+  `pnpm docs:reference` in the same commit.
 
 ## Resource providers
 
-The vendor packages (`paykit-stripe`, `paykit-polar`) own Alchemy resources, so the rules in
-Alchemy's [AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) apply here. This
-section copies the resource part of that file — the lifecycle, the Reconciler doctrine, ownership
-testing and the test conventions — so a change to a resource does not have to leave the repo to find
-them. Where an ADR says something narrower (a price is never deleted, a hold is an entity), the ADR
-wins.
+`paykit-stripe` and `paykit-polar` own Alchemy resources, so the rules in Alchemy's
+[AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) apply. Where an ADR says
+something narrower (a price is never deleted, a hold is an entity), the ADR wins.
 
-### Lifecycle operations
+**Lifecycle.** **Diff** decides update or replace: `undefined` for the default update,
+`{ action: "replace" }` when a create-only prop changed. **Read** may run without output, so derive
+the physical identity deterministically or find the object by ownership metadata; a foreign object
+is `Unowned(attrs)`, a missing one is `undefined`. **Pre-create/Observe** is for a real bootstrap
+identity problem only — financial resources have none. **Reconcile** converges from every starting
+point. **Delete** is idempotent, and for a financial record it is retention or archival. **List**
+returns what `read` returns, or sets `nuke: { skip: true }`.
 
-A provider implements:
+**Reconciler doctrine.** `reconcile` gets `output` and `olds`, in three shapes: greenfield
+(`undefined`/`undefined`), routine update (defined/defined) and adoption (defined/`undefined`).
+Write one flow for all three — a create body beside an update body re-introduces every assumption
+the old split made:
 
-- **Diff** — compares new props with old props and decides update or replace. For an update it may
-  name stable properties. Use it as an optimization and to identify replacement, not as a third
-  path: return `undefined` / `void` for the default update, `{ action: "replace" }` when a
-  create-only prop changed, and never return `no-op` unless the change is deliberately ignored.
-- **Read** — reads current cloud attributes. It can run without current output (state was lost), so
-  derive the physical identity deterministically or find the object by ownership metadata. Return
-  `Unowned(attrs)` for an existing object that is not ours; the engine refuses adoption unless
-  `--adopt` is set. A missing object is `undefined`, not a failure.
-- **Pre-create / Observe** — only for a real bootstrap identity problem (a Function whose ARN is
-  needed by a dependency cycle). Financial resources do not need them; there is nothing to stub
-  before the real object exists.
-- **Reconcile** — converges actual cloud state to desired state for every starting point.
-- **Delete** — idempotent; a missing object is not an error. For financial records delete is
-  retention or archival, never destruction (ADR 0003).
-- **List** — enumerates every object in the scope for account-wide teardown, returning the same
-  attributes `read` does. A resource that cannot meaningfully be deleted sets
-  `nuke: { skip: true }`.
+1. **Observe** — derive the physical identifier, read live cloud state.
+2. **Ensure** — create if missing, catch `AlreadyExists` / `Conflict` as a race, wait for active.
+3. **Sync** — per mutable aspect, diff *observed* cloud state against desired and apply only the
+   delta, skipping the API when nothing changed.
+4. **Return** — re-read and return fresh attributes.
 
-### Reconciler doctrine
+Cloud state is authoritative and `olds` is only a hint to skip a no-op call; `output` is a cache for
+stable identifiers, not proof of existence; each sync step is independently idempotent; `NotFound`
+and `ResourceInUse` are races, not failures; tags diff against observed metadata. The canonical
+reconcilers are `aws/src/{S3/Bucket,SQS/Queue,DynamoDB/Table,EC2/Vpc}.ts` and
+`cloudflare/src/Workers/Worker.ts` — read one before writing a new lifecycle.
 
-`reconcile` receives `output` and `olds`:
+**Ownership and identity.** Stamp `createInternalTags(id)` on every resource, mapped to the vendor's
+metadata constraints (ours: each vendor package's `Metadata.ts`). Identity is the vendor's own
+field — a Stripe lookup key, a Polar `metadata.paykit_tier` plus a stage-qualified name — so a
+restored state reconciles to the same object, and a vendor id is only a cache. A name derives from
+the stack, stage and logical id, never from a UUID, `Date.now()` or a random suffix. A Polar product
+name is capped at 64 characters and `encodeVendorPart` expands non-alphanumerics (`_` becomes
+`_5f_`), so the stage and tier fit that budget together;
+`patches/@distilled.cloud__polar@1.0.0-rc.18.patch` is a type-only correction for `seat_tiers` to
+remove when a catalog bump lands an SDK that names the current field, with the seat case in
+`test/Prices.live.test.ts` as the check.
 
-| `output` | `olds` | Meaning |
-| --- | --- | --- |
-| `undefined` | `undefined` | Greenfield — no prior physical resource |
-| defined | defined | Routine update — engine-owned resource |
-| defined | `undefined` | Adoption — engine-owned through `read` |
+**Tests.** Use `test.provider` with `stack.deploy`, start and end with `stack.destroy()`, and
+exercise create, update, replacement and removal — a replace proves the old object is retained or
+archived. Verify cloud state out of band through the vendor SDK, the assertion of deletion included.
+A fast fake may sit beside the live case as a contract test if its header says so; the deployment is
+the authority for the vendor path.
 
-It must work for all three. Do not branch the body on `output === undefined` and run a “create
-body” versus an “update body”; that is rename-and-branch and re-introduces every assumption the old
-create/update split made. Write one flow:
+## Versioning and history
 
-1. **Observe** — derive the physical identifier and read live cloud state via `getX` / `describeX`.
-2. **Ensure** — if the resource is missing, create it. Catch `AlreadyExists` / `Conflict` as a race
-   and continue. Wait for active state if the vendor has one.
-3. **Sync** — for each mutable aspect (settings, sub-resources, tags, policy): read *observed* cloud
-   state, compute desired state from `news`, diff, and apply only the delta. Skip the API entirely
-   when there is no change.
-4. **Return** — re-read the final state if needed and return fresh attributes.
+### Resource state
 
-Invariants:
+**`provider.version` is the resource's own generation**: bump it in the same change that changes
+what state means, and keep it equal to the shape version in the attributes.
 
-- **Observation beats assumption.** Cloud state is authoritative; `olds` is at most a hint to skip
-  a no-op call, never the source of truth for what is deployed.
-- **Each sync step is independently idempotent.** Crash mid-reconcile, re-run, converge.
-- **`output` is a cache** for stable identifiers (physical name, ARN, immutable id). It is not proof
-  the object still exists; if it does not, observation falls through to “missing” and ensure
-  recreates it.
-- **Catch the races.** `AlreadyExists` / `NotFound` / `ResourceInUse` are races or eventual
-  consistency, not failures to propagate.
-- **Tags diff against observed tags.** Adoption may hand you an object whose tags do not match what
-  was last persisted.
+- **Read, diff and reconcile accept older, refuse newer.** An older record is upgraded by the next
+  reconcile; a newer one is a typed refusal, because an older build must never move that state back
+  to an older layout. `read` alone is not enough — it also runs on a cold start — so `diff` and
+  `reconcile` refuse the same record on a normal deploy
+  (`cloudflare/src/Domain/Version.ts`).
+- **A version bump forces the reconcile.** `diff` returns `{ action: "update" }` whenever the
+  recorded shape is older, so the new record is written even when props did not change.
+- **Migration lands in `reconcile`.** `read` observes and judges; `reconcile` converges and writes
+  the current shape.
 
-The canonical reference reconcilers live in the Alchemy mirror under
-`.agent_sources/github.com/alchemy-run/alchemy/packages/`:
-`aws/src/S3/Bucket.ts`, `aws/src/SQS/Queue.ts`, `aws/src/DynamoDB/Table.ts`, `aws/src/EC2/Vpc.ts`
-and `cloudflare/src/Workers/Worker.ts`. Read one before writing a new lifecycle.
+### Consumers (views, projections, streams)
 
-### Ownership, adoption and identity
+- **A consumer's `version` is its generation.** Alchemy folds it and the generations of every view
+  it reads into a target id (`view:Entitlements#2`, `projection:BillingRead#1`). That id is what
+  sources route history to; a changed id means a new consumer, not an old one with new code.
+- **Backfill is the deploy's job.** `Platform.start(targets, planOf, backfill)` replays the sources
+  of every target that is new or whose generation changed. A view keyed by the one aggregate it
+  reads carries `ViewKit.catchUp` instead. Both are `kit.history(target, source, id, rows)`, never a
+  hand-built fold.
+- **Order follows the graph**, and **a changed plan needs a version bump**: a platform that finds a
+  different plan under the same target id refuses the build (`Backfill.PlanChanged`).
+- **`history(target)` reports completeness.** A consumer the backfill has not finished is never
+  complete.
+- **Generation is part of dedupe.** A consumer rebuilt from an earlier generation starts over: drop
+  deliveries routed to the old generation, reset its input log and cursor.
 
-- **Brand the object.** Stamp `createInternalTags(id)` on every resource, mapped to the vendor's
-  metadata constraints; ours lives in each vendor package's `Metadata.ts` (`alchemy::stack` →
-  `alchemy_stack`, and so on).
-- **Diff with `diffTags` against observed metadata**, never `olds.tags` or `output.metadata`.
-- **Refuse a foreign object.** `read` returns `Unowned(attrs)` when the object exists but lacks our
-  ownership tags, so a deploy cannot silently take over a hand-made object.
-- **The vendor id is a cache, not the identity.** Identity is the vendor's own field — a Stripe
-  lookup key, a Polar `metadata.paykit_tier` plus a stage-qualified name — so a restored state
-  reconciles to the same object instead of duplicating it.
-- **Do not construct a name from randomness.** Derive it from the stack, stage and logical id, or
-  from the catalog identity; a test must find the same object on every run.
+### Events and migrations
 
-### Props, attributes and JSDoc
+- **Events are append-only API.** Add a field; never rename or repurpose one. A projection change is
+  a rebuild through the consumer's `version`, not a rewrite of the log.
+- **SQL migrations are additive and forward-only.** Append a record; never edit one already in
+  `migrationFiles`. `@alchemy.run/sql/Migrations` owns the bookkeeping table, the content hashes and
+  the refusal of a rewritten or removed applied file.
+- **A money table is never dropped to migrate it.** A vendor object a bill references is retained or
+  archived ([ADR 0003](./docs/adr/0003-the-deploy-provisions-the-vendor.md)), and the state a
+  customer was sold is rewritten by reconcile.
 
-- Props are plain types. **Never write `Input<T>` in a Props interface**; the engine applies
-  `Input` deeply. `Input<T>` is only for a helper that genuinely receives unresolved values.
-- A resource is `Resource<"Vendor.Resource", Props, Attributes, Binding, Providers>` and its
-  contract and provider live in the same file. Attributes are plain data.
-- Resource JSDoc uses `###` sections and `**Example:**` labels, with the generator tags last:
-  `@resource` and `@product Product` on a resource, `@primitive` / `@product Stripe` on a helper,
-  `@layer` on a provider layer. Every prop and attribute gets a field-level doc comment. The source
-  is the docs source of truth.
-- **Pure constructors, one validating Effect.** A declaration is total and side-effect-free; the
-  effectful entry point maps schema failures to a tagged error with context.
+## The paykit model
 
-### Resource tests
+[PLAN.md](./packages/paykit/PLAN.md) is the design of record and wins where this file is silent; its
+non-goals are commitments, and its `## Storage`, `## Surfaces`, `### Auth` and `## Correctness bar`
+carry the rules for those areas. Read the section you are about to touch, and read [ADR
+0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
+express.
 
-- Lifecycle and reconciliation use `test.provider` with `stack.deploy`: start and end with
-  `stack.destroy()`, and exercise create, update, replacement and removal. A replace must prove the
-  old object is retained or archived as the ADR says.
-- Verify cloud state **out of band** through the vendor SDK, not from the provider's own attributes.
-  Assert deletion (or archival) through the vendor too.
-- Do not mock HTTP or SDK responses as a substitute for a deployment. A gated live test is the
-  authority for the vendor path; a fast fake may sit beside it as a contract test, and must say so
-  in its header.
-- Use deterministic identities; never `Date.now()`, a UUID or a random suffix in a name. When a
-  name is genuinely needed, derive it from `stack.stage`.
-- Resource code and its tests follow the [Effect discipline](#effect-discipline) above: no
-  `async` / `await`, raw `Promise`, `process.env`, `fetch` or `node:fs`.
+**Two planes: entitlement is ours, money is the provider's.** `check()` answers from one local read,
+returning allowed, remaining, `resetsAt` and standing, so an entitlement is never a provider round
+trip and provider vocabulary never reaches the model. Checkout, cards, tax, invoices and retries sit
+behind the `Payments` port.
+
+The public words are those in PLAN's `## Vocabulary`. `Tier` and `Allowance` are internal names
+while the state migrates, not a second public API; a second spelling of an existing word is a
+breaking change.
+
+The per-command loop, under `src/`, in this order:
+
+1. **Rejection** — `<Rejection>.rejection.ts`, one per way the command can refuse, carrying what
+   an operator needs to explain it.
+2. **Command** — `<Command>.command.ts`: the payload, and the catalog fields a handler must not
+   invent.
+3. **`decide`** — the guard, the events, and the numbers those events carry forward. Pure: no I/O,
+   no clock, no provider, no `Actor`, no ambient read.
+4. **`evolve`** — copy the event's outcome into state, unchanged.
+5. **Views** — fold the event if it moves a number a user sees.
+6. **Story** — the happy path and every rejection, one `Story` each.
+7. **Property** — add the command to the generated sequence.
+
+Done when `Domain.verify(Model)` returns empty and the stories and properties are green. A rejection
+without a story is unimplemented, and a property that has never failed proves nothing: it is written
+red first.
+
+A counter is a fold of the event log — a number replaying the log cannot reproduce is a bug, not a
+cache. Every price a command records travels on its event (`price`, `priceBefore`, `priceAfter`,
+`UsageRecorded.charge`), so the log answers "what were we charging" without the catalog, and a
+catalog price change never moves a standing that already exists. A write that would exceed a
+blocking allowance is refused in the same transaction that would have recorded it, deduped by
+`dedupeKey`. `decide` moves a standing only where `STANDING_PHASE_TRANSITIONS` names the edge
+(`test/standing/Phase.test.ts` walks the table).
+
+## The console
+
+`paykit-admin` is a client of `BillingAdminApi`, not a second billing model: `BillingState` and
+`Entitlements` are the truth, `AccountEvents` the history, and the Model holds routes, filters,
+drafts, command ids, query ids and pending outcomes.
+
+- The URL is the navigation state (`reflectRoute` / `routeOf`), so a selection the URL cannot
+  reproduce is dropped. A seeded snapshot is the first frame of a live read, not a second source.
+- Every write is a `BillingAdmin` command whose `commandId` comes from `next(model.commandIds)`; a
+  retry of `Unknown` reuses it. A read is applied only while its `requestId` is the one being
+  waited for.
+- Keep the typed failure (`Rejected`, `Denied`, `Unknown`) so an operator sees the evidence behind
+  a refusal; a transport failure keeps the RPC reason tag as well as the message.
+- A preview is a question and records nothing. A tier change is a quote, then an apply.
+- Credits are counts (`formatCredits`), money is integer minor units (`formatMoney`), and both are
+  formatted at the view edge.
+- Compose `@foldkit/ui` and the local `src/ui` kit; a new button, field or table imports the kit,
+  and colour comes from the `--pk-*` tokens.
+
+## Providers are ports
+
+`Payments` is the only door to money and no provider owns its shape: `Memory`, `Manual`, `Stripe`
+and `Polar` pass one conformance suite parameterized by declared capabilities (`checkout`,
+`invoice`, `charge`, `refund`, `portal`, `usage`, `quantity`, `setup`). That suite, not a vendor's
+docs, is the definition of the port; if the port only fits Stripe it is not a port. `Manual` is the
+reference.
+
+- The model never imports a provider. Vendor ids live in `refs`, keyed by provider, and the catalog
+  carries none: the tier → vendor mapping is provider config, with `CatalogPriceMismatch` as the
+  deploy-time backstop.
+- A missing capability is `ProviderCapabilityMissing` naming provider and op.
+- A webhook translates at the edge, with the provider's event id as the `commandId`, so a
+  redelivery is a replay rather than a second charge.
+- A refund is capped by the log — `RefundExceedsCharged` rather than a negative payment — and it
+  moves money without touching the credit pool ([ADR
+  0019](./docs/adr/0019-a-refund-names-the-charge-it-reverses.md)).
+- The value a vendor package returns is a `MoneyProvider`: Alchemy owns `Provider` for the service
+  that reconciles a resource.
+- `paykit-stripe` and `paykit-polar` are paykit-shaped on purpose. They import `@potion.run/paykit`
+  and stay the shortest path from a catalog to a working vendor; a general Stripe provider is
+  `@alchemy.run/stripe`, and a general Polar one would be a new package.
+- A vendor resource is retained ([ADR 0003](./docs/adr/0003-the-deploy-provisions-the-vendor.md),
+  [ADR
+  0010](./docs/adr/0010-a-price-that-leaves-the-catalog-is-archived-not-deleted.md)), so a tier that
+  leaves the catalog leaves a financial record. **Money outlives the stack**: the ledger is
+  application data, so a delete path cancels, refunds and deletes no provider state — a `destroy`
+  that cancels a live subscription is a support incident.
+A new provider lands as: the vendor package or Alchemy bindings, the `Payments<V>.ts` adapter
+delegating to them, the webhook translation, the provider config, and a conformance run green
+beside `Manual`'s plus a story that signs a webhook and reads the answer back out of `check()`. Done
+when `Manual` and the new provider pass the same cases and no `Subscription/*` file changed.
+
+## Tests are the spec
+
+`test/stories` covers every command's happy path and every rejection; `test/properties` the eight
+properties in [the correctness bar](./packages/paykit/PLAN.md#correctness-bar) plus money as a fold
+of the log, read/write agreement and delivery dedupe; `test/conformance` every `Payments`
+implementation; `test/surfaces` the derived MCP tool list and CLI; `test/Api.test.ts` each guard's
+refusals.
+
+A bug found in the wild lands as the smallest story that reproduces it, with the event log that
+produced it pasted beside it. `TestClock` everywhere, deterministic ids derived from the test name,
+and bounded `Effect.repeat` + `Schedule` polling.
+
+## Tooling
+
+- **One catalog.** A package declares `catalog:`, never a version; `pnpm-workspace.yaml` is the only
+  place a version is written.
+- **anti-slop** (`tools/oxlint/anti-slop`) vendors the generic and Effect Oxlint plugins from
+  `dmmulroy/anti-slop`; rule policy is `oxlint.config.ts`, provenance and the update procedure are
+  `tools/oxlint/anti-slop/UPSTREAM.md`.
+- **effect-tsgo** (`pnpm prepare:patch`, run by `prepare`) patches `oxlint` and `oxlint-tsgolint` in
+  `node_modules` so the `effecttsgo/*` rules run type-aware. An install that skips `prepare` fails
+  `pnpm lint` with `Unknown plugin: 'effecttsgo'`, and `@effect/tsgo` bumps together with `oxlint`,
+  `oxlint-tsgolint` and `tsrs`.
+- **Manifest gates** (`pnpm exports:check`, `pnpm validate:publish-packages`) read every
+  `package.json` through Effect's `FileSystem`/`Path`: the export map matches `src/`, packages share
+  one version, an internal dependency is `workspace:*`.
+- **husky** owns the git hooks; the pre-commit hook formats staged files.
 
 ## Source-first
 
 Effect, Alchemy and Foldkit are read from source before their APIs are guessed. `pnpm
-vendor:agent-sources` shallow-clones them under `.agent_sources/github.com/<owner>/<repo>/` at
-the refs their catalog pins name, and writes `.agent-source.json` metadata beside each clone.
-Read the installed `packages/*/node_modules/effect/AGENTS.md` first when it exists: it ships with
-the version, so it is never stale. Then the mirrors:
+vendor:agent-sources` shallow-clones them under `.agent_sources/github.com/<owner>/<repo>/` at the
+refs the catalog pins, with `.agent-source.json` beside each clone; `--refresh` on
+`scripts/vendor-agent-sources.sh` re-clones at the current pins. Read the installed
+`packages/*/node_modules/effect/AGENTS.md` first: it ships with the version and never goes stale.
 
 | Mirror | Read for |
 | --- | --- |
@@ -323,103 +313,57 @@ the version, so it is never stale. Then the mirrors:
 | `.agent_sources/github.com/alchemy-run/alchemy/` | resources, Cloudflare and Stripe providers, Stack API |
 | `.agent_sources/github.com/foldkit/foldkit/` | Foldkit UI, effects and subscriptions |
 
-```sh
-pnpm vendor:agent-sources                        # clone the missing mirrors
-./scripts/vendor-agent-sources.sh --refresh      # re-clone at the current pins
-```
-
-Refs are derived from the catalog in `pnpm-workspace.yaml`, so a bump and a re-run stay matched;
-the script fails when a pin has no upstream tag or a mirror's version disagrees with its pin.
-Inventory and rationale live in [`.agent_sources/README.md`](./.agent_sources/README.md).
-
-Mirrors are reference material, never runtime dependencies: they are gitignored and excluded
-from typecheck, lint and format. Do not import from them and do not commit them.
+The mirrors are reference material, gitignored and excluded from typecheck, lint and format.
 
 ## Formal model
 
-The billing protocols are modelled in Quint, the way [ADR
-0034](./docs/adr/0034-one-quint-model-per-protocol.md) records: **one model per protocol, not one
-per module**. `specs/paykit/paykit.qnt` is the spend path (activation, counted and credit usage,
-holds, the pool, the standing, the clock), and `standing.qnt`, `windows.qnt`, `plans.qnt`,
-`schedules.qnt`, `balances.qnt`, `entities.qnt`, `money.qnt` and `controls.qnt` are the phase
-machine, the other clocks, the plan operations, the plan set, the balance sources, the entity
-scopes, the money facts and the customer's own ceiling and alerts. `specs/paykit/README.md` maps
-every action to its command, every invariant to its ADR, and lists what each slice deliberately
-leaves out.
+The billing protocols are modelled in Quint, **one model per protocol, not one per module**
+([ADR 0034](./docs/adr/0034-one-quint-model-per-protocol.md)). `specs/paykit/paykit.qnt` is the
+spend path; `standing.qnt`, `windows.qnt`, `plans.qnt`, `schedules.qnt`, `balances.qnt`, `entities.qnt`,
+`money.qnt` and `controls.qnt` are the other slices. `specs/paykit/README.md` maps every action to
+its command, every invariant to its ADR, and says what each slice leaves out.
 
-- **A refusing command is a disabled action.** `quint` never reports a rejection tag, so the model
-  checks the accept-set and a `run` checks the refusal. A rule that conserves nothing — "a terminal
-  standing may not settle" — is a test and not an invariant, on purpose.
+- **A refusing command is a disabled action.** The model checks the accept-set and a `run` checks
+  the refusal; a rule that conserves nothing is a test, not an invariant.
 - **The model is smaller than the code.** `int` credits, a step counter instead of a clock, three
-  features, one account. Derived where the state is a cache, a history variable where the log is the
-  truth. Do not model the arithmetic: `Pricing.test.ts` owns the formulas.
-- **`scripts/spec-mutants.ts` proves the invariants bite.** It inverts one rule at a time and fails when
-  the named invariant does not notice, so an invariant cannot survive as a tautology. Adding an
-  invariant means adding its mutant in the same change.
-- **`scripts/spec-coverage.ts` is the drift gate.** Every `*.command.ts` needs a row: the action that
-  models it, or why it is out of the slice. A new command fails `pnpm spec:coverage` until it is
-  classified, which is the one place this repo asks for a decision per command rather than per
-  protocol.
-- **`quint run` is the gate, `quint verify` is not.** Simulation is seconds and needs no JVM;
-  Apalache is minutes and a JVM, so it is a manual run for a named property, recorded in the
-  `specs/paykit/README.md` when it happens. Same split as `check.yml` and `live.yml`.
-- **Quint 0.33 ships no formatter.** `specs/**` is ignored by `oxfmt`; the files are laid out by hand.
-- **The spec is not a second implementation.** When a modelled command changes what it accepts or
-  writes, run `pnpm spec` before changing the command: a red model is cheaper than a red deploy.
+  features, one account. The arithmetic is not modelled — `Pricing.test.ts` owns the formulas.
+- **`scripts/spec-mutants.ts` proves the invariants bite**, so an invariant lands with its mutant
+  in the same change. **`scripts/spec-coverage.ts` is the drift gate**: every `*.command.ts` needs
+  a row.
+- **`quint run` is the gate, `quint verify` is not.** Apalache is a manual run recorded in
+  `specs/paykit/README.md`.
+- **The spec is not a second implementation.** Run `pnpm spec` before changing a modelled command.
 
 ## Gates
 
-Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`,
-`pnpm test`, `pnpm spec`, `pnpm build`. None of the gates before
-`pnpm build` compile `lib/`; that build and `node scripts/smoke-artifact.mjs` are what prove a
-published artifact loads.
+Before you commit: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm spec`,
+`pnpm build`, then `node scripts/smoke-artifact.mjs`. No gate before `pnpm build` compiles `lib/`,
+so that build and the smoke script are what prove a published artifact loads. Formatting is
+fixable in place (`pnpm format`, `pnpm lint:fix`); the type check, the tests and the manifest gates
+are fixed in the code.
 
-`pnpm docs:reference:check` is part of `pnpm check:website` and the website
-build. Run `pnpm docs:reference` after changing a tagged JSDoc block, so the
-reference under `website/docs/reference` reflects the source.
-
-`.github/workflows/live.yml` is the one gate that needs a vendor account. The provisioning packages
-carry a live case that skips without `STRIPE_API_KEY` / `POLAR_API_KEY`, so `check.yml` stays
-green with no secrets; the manual workflow is where those cases actually run, and it fails rather than
-skips when a secret is missing. Keep the two apart: the cases mutate a real test account, and a secret
-must not sit in the path of a pull request from a fork.
-
-`.github/workflows/check.yml` runs every gate on every push and pull request, and is modelled on
-alchemy's `check.yml`: one job, steps in the order that makes each later step meaningful, every
-action pinned to a commit rather than a tag, and `cancel-in-progress` only for pull requests.
-`.github/workflows/release.yml` is a manual run on `main` that re-runs the gates, bumps the shared
-version (`scripts/release/bump.ts`), packs every published tarball, and publishes with provenance only when
-`dry-run` is off. Run
-`pnpm exports:check` and `pnpm validate:publish-packages` when you move a module out of `src/`,
-touch an export map, or bump a version. Formatting is fixable in place (`pnpm format`,
-`pnpm lint:fix`); the type check, the tests and the manifest gates are not. If a gate is missing,
-add it; if a gate fails, fix the code rather than the gate.
+`.github/workflows/check.yml` runs every gate on every push and pull request.
+`.github/workflows/live.yml` is the one gate that needs a vendor account: its cases skip without
+`STRIPE_API_KEY` / `POLAR_API_KEY` and mutate a real test account, so a secret stays out of the path
+of a pull request from a fork.
 
 ## Commits and PRs
 
 - Conventional commit titles, scoped to the package: `feat(paykit): record usage in the same
   transaction that checks the allowance`.
-- PR body starts with plain prose, then snippets or bullets. `###` is the deepest heading —
-  never `#`/`##` in a description, and never a heading repeating the PR title.
-- Prefer a snippet over a paragraph explaining it, and omit a "Test plan" section entirely.
-- Outstanding work means: mark the PR draft and say what is missing in the chat that opened it.
+- A PR body starts with plain prose, then snippets or bullets. `###` is the deepest heading,
+  never `#`/`##`, and never a heading repeating the PR title.
+- A snippet over a paragraph explaining it, and no "Test plan" section.
+- Outstanding work: mark the PR draft and say in the chat that opened it what is missing.
 
 ## Further reading
 
-- [What to build next](./docs/NEXT.md) — the state of the work, the queue, the traps, and the
-  invariants a next slice must not break.
-- [Billing surface](./docs/BILLING-SURFACE.md) — what the library owns, what the provider owns, what
-  the deployment owns, and which gaps are still the library's.
-- [ADRs](./docs/adr/) — decisions that shaped the model, oldest first. Read
-  [0001](./docs/adr/0001-catalog-states-the-pricing-model.md) before changing what the catalog can
-  express: it is the record that says pricing is catalog data and the deploy provisions the vendor.
-  [0006](./docs/adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) is the one to read before
-  touching `unitPrice`, `moneyCap` or `UsageRecorded.charge`.
+- [What to build next](./docs/NEXT.md) — the queue, the traps, and the invariants a next slice
+  must not break.
+- [Billing surface](./docs/BILLING-SURFACE.md) — what the library, the provider and the deployment
+  each own, and which gaps are still the library's.
+- [ADRs](./docs/adr/) — read
+  [0006](./docs/adr/0006-postpaid-usage-is-a-unit-price-in-the-catalog.md) before touching
+  `unitPrice`, `moneyCap` or `UsageRecorded.charge`.
 - [Alchemy AGENTS.md](https://github.com/alchemy-run/alchemy/blob/main/AGENTS.md) — engine
-  concepts, the Reconciler doctrine, the Typed Error Doctrine and the binding conventions every
-  provider package here follows.
-- [Alchemy source mirror](./.agent_sources/github.com/alchemy-run/alchemy/) — once vendored
-  (`pnpm vendor:agent-sources`), the pinned source behind
-  [Alchemy API conventions](#alchemy-api-conventions):
-  `packages/alchemy/src/{Resource,Input,Contributions}.ts`,
-  `packages/domain/src/{Command,Event,Rejection}.ts`, `packages/stripe/src/Price.ts`.
+  concepts, the Reconciler doctrine, the Typed Error Doctrine and the binding conventions.
