@@ -42,8 +42,8 @@ a bespoke allowance set travels on the plan command and into the event.
 
 `@potion.run/paykit` is at `0.1.0`. Four packages publish together (`paykit`, `paykit-polar`,
 `paykit-stripe`, `paykit-admin`) on one version line: `release.yml` is a manual run off `main` that
-defaults to a dry run, so nothing publishes on a push and the `v<version>` tag is the record of what
-shipped. The gates are green: `format:check`, `exports:check`, `validate:publish-packages`, `lint`,
+defaults to a dry run, so nothing publishes on a push and the `chore(release)` commit, its
+`CHANGELOG.md` entry and the `v<version>` tag are the record of what shipped. The gates are green: `format:check`, `exports:check`, `validate:publish-packages`, `lint`,
 `typecheck`, `test` (every project; the vendor live cases skip without a key), `spec`, `build`.
 
 A plan now states its generation ([ADR

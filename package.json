@@ -40,6 +40,7 @@
     "@potion.run/paykit": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
+    "changelogen": "catalog:",
     "effect": "catalog:",
     "husky": "catalog:",
     "oxfmt": "catalog:",
