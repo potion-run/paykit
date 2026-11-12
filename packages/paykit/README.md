@@ -1,7 +1,7 @@
 # @potion.run/paykit
 
-Billing and entitlement for Alchemy. You declare a catalog next to your stack, paykit keeps each
-account's **standing**, and `check()` answers from one local read.
+Billing and entitlement for [Alchemy](https://alchemy.run). You declare a catalog next to your stack,
+paykit keeps each account's **standing**, and `check()` answers from one local read.
 
 A subscription is not a payment. A payment is an event that changes a standing. Every rule in
 this package derives from that sentence. [PLAN.md](https://github.com/potion-run/paykit/blob/main/packages/paykit/PLAN.md) is the design of record; this
@@ -568,6 +568,11 @@ Properties are generated and shrunk with `effect/Arbitrary`. A failing property 
 smallest counterexample and a replay token; the token goes back into `replay` to reproduce it.
 
 Run the gates from the repo root: `pnpm format:check`, `pnpm lint`, `pnpm typecheck`, `pnpm test`.
+
+## Credits
+
+Parts of this package are adapted from [Alchemy](https://github.com/alchemy-run/alchemy). Thanks to
+the Alchemy team.
 
 ## Further reading
 

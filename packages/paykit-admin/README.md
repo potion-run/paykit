@@ -454,3 +454,8 @@ allowances and holds. The Api-side read port has its own tests in
 `packages/paykit/test/admin`, including a property test that every action
 `actionsFor` offers is one `Subscription.predict` accepts, and a test that
 `holds` returns the entities the views fold into `reserved`.
+
+## Credits
+
+Parts of this package are adapted from [Alchemy](https://github.com/alchemy-run/alchemy). Thanks to
+the Alchemy team.

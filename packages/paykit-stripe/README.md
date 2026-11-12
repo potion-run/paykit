@@ -65,3 +65,9 @@ Worker's `GET /checkout?tier=pro`, `POST /webhooks/stripe`, and a test with a fa
 client and a signed delivery.
 
 Read the [paykit README](https://www.npmjs.com/package/@potion.run/paykit) and the [billing surface](https://github.com/potion-run/paykit/blob/main/docs/BILLING-SURFACE.md).
+
+## Credits
+
+Parts of this package are adapted from [Alchemy](https://github.com/alchemy-run/alchemy). Thanks to
+the Alchemy team.
+

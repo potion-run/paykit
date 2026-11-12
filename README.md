@@ -148,6 +148,11 @@ pnpm build         # emits lib/ for each published package
 A published artifact is a different artefact from a passing test suite, so CI also builds and loads
 each `lib/index.js` in plain Node — the check that catches a runtime-only import reaching the root.
 
+## Credits
+
+Parts of this repository are adapted from [Alchemy](https://github.com/alchemy-run/alchemy). Thanks
+to the Alchemy team.
+
 ## License
 
 Apache-2.0.
